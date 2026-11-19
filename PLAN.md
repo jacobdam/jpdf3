@@ -153,15 +153,18 @@ a **conformance test suite** that any implementation must pass, so swapping one 
 | `OcrEngine` *(Phase 2)* | text recognition | `ocrs` (pure Rust) |
 | `TextShaper` | shaping for edited/added text | `rustybuzz` / `harfrust` |
 
-**Admission rules for any third-party crate** (enforced in CI):
-1. The license is in the allowlist: MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0,
-   OFL-1.1 (fonts only). No GPL/LGPL/AGPL. MPL-2.0 only with a human-approved exception.
-2. `cargo geiger`: no `unsafe` in the crate itself. Transitive `unsafe` only in an allowlist
-   of foundational crates (e.g. `core`/`alloc` users like `bytemuck`), each approved by a human.
-3. `cargo vet`: audited, either by importing audits from Google, Mozilla, Bytecode Alliance and
-   ZcashFoundation, or by our own recorded audit.
-4. Fuzzed by our harness through the trait before it becomes the default.
+**Admission rules for any third-party crate** (enforced by the protected judge, no human step;
+full rules in AUTOMATION.md §6.4):
+1. License in the allowlist (MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0, OFL-1.1 for fonts).
+2. **No `unsafe` anywhere in the dependency tree.** Sole exception: RustCrypto cryptographic
+   primitives that carry an imported audit (listed in the protected `ops/judge/unsafe-allowlist.txt`).
+3. `cargo vet` with **imported audits only** (Google, Mozilla, Bytecode Alliance, Zcash).
+4. No build scripts / proc-macros unless audited; fuzzed through our trait before becoming default.
 5. Pinned version; updates go through the same gates.
+
+If a candidate fails any rule, we write our own implementation behind the trait. Several
+candidates in the table above (e.g. `hayro-*`, `vello_cpu`, `moxcms`) may fail rule 3, so
+plan for our own JPX/JBIG2/rasterizer/ICC code.
 
 Bundled data: Adobe `cmap-resources` (BSD-3) and standard-14 substitute fonts with
 permissive licenses (e.g. PDFium's Foxit fonts (BSD) or Liberation (OFL)).
@@ -325,18 +328,18 @@ signature from the native layer is rejected.
 
 ## 8. Milestones
 
-Each milestone ends at an **automated gate** (`tools/gate`): CI green + exit criteria met on nightly data.
+Each milestone ends at an **automated gate** (`cargo xtask gate`, criteria in protected `ops/judge/gates.toml`): judge metrics + held-out exam corpus + every user journey assigned to the milestone green (AUTOMATION.md §5.1).
 Milestones M4+ can overlap once their dependencies are met.
 
 | M | Name | Main deliverables | Exit criteria |
 |---|---|---|---|
-| **M0** | Foundation | Workspace, CI with all gates, `jpdf-traits`, backend crates selected + vetted, corpus fetch + tiers, oracle harness, bench harness, fuzz infra, Arlington ingestion, spec template | Pipeline runs end to end on a stub; licenses/vet/geiger reports clean |
+| **M0** | Foundation | Workspace, protected judge + gates.toml, project CI via xtask, guard hooks, driver, `jpdf-traits`, backend crates selected + vetted, corpus tiers + exam set, bench harness, fuzz infra, Arlington ingestion, spec template, user journeys (from PDFGear research) + UI spec, judge self-tests, metrics + forecast dashboard | Judge self-tests green; judge runs end to end on a stub `jpdf-cli`; pilot fire drill passed (AUTOMATION.md §14) |
 | **M1** | Syntax & security | lexer, objects, xref (table/stream/hybrid), object streams, **repair**, all filters, standard security handler R2–R6 | `wide` corpus: 0 panics/timeouts; opens ≥ 99.5% of what qpdf opens |
 | **M2** | Rendering core | content interpreter, display list, graphics state, paths, clipping, all fonts, images, all color spaces, shadings 1–7, patterns, transparency/blend/soft masks, OCGs, annotation appearances | ≥ 95% consensus pass on `regress`; bench within 2× PDFium |
 | **M3** | Text | extraction, reading order, search, selection geometry, ToUnicode/ActualText, structure tree | text metric parity with pdf.js on corpus |
 | **M4** | Engine API + Reader apps | command protocol, validation, sessions, jobs/cancel, tiles; **web reader** + **macOS reader** (XPC) | all reader features of §4; E2E green; first-page/fps targets met |
-| **M5** | Annotations | all types + appearance generation, threads, flatten, XFDF | round-trip clean; Acrobat-compatible appearances (oracle render) |
-| **M6** | Writer & pages | incremental + full save, object streams, page ops, merge/split, encrypt/permissions | `qpdf --check` clean on all outputs; re-render equal |
+| **M5** | Annotations + basic save | all types + appearance generation, threads, flatten, XFDF; **minimal incremental save** (pulled forward so annotations persist) | journeys J-ANN-* green (annotate → save → reopen, renders in MuPDF/Poppler) |
+| **M6** | Writer & pages | full rewrite, Save As, object streams, page ops, merge/split, encrypt/permissions | `qpdf --check` clean on all outputs; re-render equal |
 | **M7** | Forms | fill/create/flatten, safe built-in calculations | form corpus round-trip; no JS executed |
 | **M8** | Content editing | text/image edit, add text/images/links, watermark, header/footer, Bates, crop, redaction, compress | redaction verified by text-extraction + render; compress ratio vs qpdf/gs reported |
 | **M9** | Signatures | verify (all PAdES levels, MDP), sign via platform signer, LTV/DSS, timestamps | external validators accept our signatures; known-bad corpus rejected |

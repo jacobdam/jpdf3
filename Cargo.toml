@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/jpdf-traits",
+    "crates/jpdf-syntax",
+    "crates/jpdf-crypt",
+    "crates/jpdf-filters",
+    "crates/jpdf-cos",
+    "crates/jpdf-font",
+    "crates/jpdf-color",
+    "crates/jpdf-content",
+    "crates/jpdf-render",
+    "crates/jpdf-text",
+    "crates/jpdf-annot",
+    "crates/jpdf-forms",
+    "crates/jpdf-edit",
+    "crates/jpdf-write",
+    "crates/jpdf-sign",
+    "crates/jpdf-engine",
+    "crates/jpdf-backends",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/jacobdam/jpdf3"
+rust-version = "1.99"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# Hostile input must never cause a panic (CONSTITUTION §4).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+exit = "deny"
+mem_forget = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+overflow-checks = true   # security over speed: arithmetic overflow panics are caught, never wrap silently
+
+[profile.dev]
+overflow-checks = true
