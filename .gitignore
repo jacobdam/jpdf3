@@ -9,3 +9,11 @@ xcuserdata/
 DerivedData/
 fuzz/corpus/
 fuzz/artifacts/
+
+# agent runtime state (local only)
+/ops/logs/
+/ops/state/
+/ops/HALT
+/.claude/settings.local.json
+/.claude/worktrees/
+__pycache__/

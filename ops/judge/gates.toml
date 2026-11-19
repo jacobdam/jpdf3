@@ -1,0 +1,41 @@
+# PROTECTED. Mechanical milestone exit criteria (AUTOMATION.md §9, PLAN.md §8).
+# Gates are cumulative: passing Mn requires every criterion of M0..Mn.
+# Metric prefixes: smoke_* (pdf.js corpus), exam_* (held-out corpus, aggregate only).
+# Every gate also requires: judge self-test green, 0 crashes on smoke and exam, and every
+# non-superseded journey with milestone <= Mn passing.
+
+[M0]
+require = ["binary_present", "ui_spec_present"]
+min = { journeys = 60 }
+
+[M1]   # syntax, filters, encryption
+min = { smoke_open_rate = 0.98, exam_open_rate = 0.97, smoke_probe_decrypt = 0.95 }
+
+[M2]   # rendering
+min = { smoke_render_match = 0.95, exam_render_match = 0.90 }
+max = { smoke_bench_ratio = 2.0 }
+
+[M3]   # text
+min = { smoke_text_f1 = 0.92, exam_text_f1 = 0.88 }
+
+[M4]   # engine API + reader apps: journeys only
+
+[M5]   # annotations + basic incremental save
+min = { smoke_probe_annotate = 0.95 }
+
+[M6]   # writer, pages, encryption on write
+min = { smoke_probe_rewrite = 0.98, smoke_probe_encrypt = 0.95 }
+
+[M7]   # forms
+min = { smoke_probe_fill = 0.90 }
+
+[M8]   # content editing + redaction
+min = { smoke_probe_redact = 0.90 }
+max = { smoke_redact_leaks = 0 }
+
+[M9]   # signatures
+min = { smoke_probe_sign = 0.95, smoke_probe_verify = 0.95 }
+
+[M10]  # hardening + 1.0
+min = { smoke_render_match = 0.97, exam_render_match = 0.95, fuzz_clean_nights = 30 }
+max = { smoke_bench_ratio = 1.5 }

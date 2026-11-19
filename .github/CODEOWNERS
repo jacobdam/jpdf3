@@ -1,0 +1,15 @@
+# Protected paths (CONSTITUTION.md rule 12). PRs touching these need the owner's review
+# and therefore never auto-merge. Everything else needs no human review.
+/CONSTITUTION.md        @jacobdam
+/LICENSE                @jacobdam
+/.github/               @jacobdam
+/ops/judge/             @jacobdam
+/ops/driver/            @jacobdam
+/ops/rulesets/          @jacobdam
+/deny.toml              @jacobdam
+/supply-chain/          @jacobdam
+/clippy.toml            @jacobdam
+/.cargo/                @jacobdam
+/.config/nextest.toml   @jacobdam
+/.claude/settings.json  @jacobdam
+/.claude/hooks/         @jacobdam

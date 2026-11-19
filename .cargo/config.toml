@@ -1,0 +1,3 @@
+# PROTECTED. Never add rustflags here: lints and overflow checks are judged as configured.
+[alias]
+xtask = "run --quiet --locked --package xtask --"

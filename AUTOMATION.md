@@ -52,6 +52,7 @@ GitHub (public repo jacobdam/jpdf3)
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
 | `ops/STATUS.md` | current state, ≤ 1 page, rewritten every session | agent |
 | `ops/journal/YYYY-MM-DD.md` | append-only session log | agent |
+| `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
 | `ops/proposals/*.md` | proposed changes to protected files (never blocking) | agent |
 | `docs/retros/NNNN.md` | retrospectives + action items (§11) | agent |
@@ -113,7 +114,8 @@ the secret must not appear in `pdftotext`/`mutool` output, **nor in the raw byte
 saved file, including earlier incremental revisions.
 
 ### 5.3 Completeness audit
-Every audit session compares the journeys + PLAN §4 with PDFGear's public feature list
+Every audit session compares the journeys + PLAN §4 with PDFGear's feature inventory
+(extracted from the installed `/Applications/PDFgear.app`: UI strings and screen names) and public feature list
 and platform conventions (Save As, the unsaved-changes prompt, file changed on disk, recent
 files, keyboard shortcuts, drag & drop). Each gap becomes a new journey plus a `discovery` issue.
 
@@ -121,6 +123,9 @@ files, keyboard shortcuts, drag & drop). Each gap becomes a new journey plus a `
 - **UI spec** (`specs/ui/`, written in M0): PDFGear-style information architecture
   (toolbar, left sidebar for thumbnails/outline/comments, right inspector, tool modes,
   context menus, keyboard shortcuts), with wireframes for macOS (Apple HIG) and web (Material/MUI).
+- **PDFgear side by side.** The same journeys run in the installed PDFgear app for comparison.
+  Its screenshots stay in `~/jpdf-research/`, never in the repo. Its code, icons and strings
+  are never copied (CONSTITUTION 20).
 - **Dogfooding session** (part of every audit). An agent uses the real apps like a person
   would:
   - web through Chrome DevTools automation
@@ -139,14 +144,17 @@ files, keyboard shortcuts, drag & drop). Each gap becomes a new journey plus a `
 
 ### 6.1 Protected paths (CODEOWNERS = owner; PRs touching them never auto-merge)
 ```
-/CONSTITUTION.md          /LICENSE
-/.github/**               /ops/judge/**                 /deny.toml
-/supply-chain/**          /clippy.toml                  /rust-toolchain.toml
+/CONSTITUTION.md          /LICENSE                      /deny.toml
+/.github/**               /ops/judge/**                 /ops/driver/**
+/ops/rulesets/**          /supply-chain/**              /clippy.toml
 /.cargo/**                /.config/nextest.toml         /.claude/settings.json
 /.claude/hooks/**
 ```
 The agent never edits these. It writes `ops/proposals/<topic>.md` instead and keeps
-working under the current rules.
+working under the current rules. `rust-toolchain.toml` is deliberately **not** protected,
+so the agent can keep Rust current; the judge requires an exact stable version.
+CI also **pins** protected config: before building PR code, it overwrites `deny.toml`,
+`clippy.toml`, `supply-chain/`, `.cargo/` and `.config/` with the base commit's copies.
 
 ### 6.2 The judge (protected; runs on every PR and on main)
 - **Isolation:** grading scripts are checked out from the **base commit (main)**, not from
@@ -215,7 +223,9 @@ Block:
 - any GitHub write to repos other than `jacobdam/jpdf3`
 
 ### 6.6 Sandbox
-Sessions run with the Claude Code sandbox on. File writes are limited to the repo,
+**Not enabled at bootstrap**: the sandbox makes `.git/worktrees` read-only and may break `gh`
+and `xcodebuild`. The pilot tests it (§14), and it is enabled through a proposal once it
+works. Target configuration: sessions run with the Claude Code sandbox on. File writes are limited to the repo,
 worktrees, `~/jpdf-corpus` and caches. Network is limited to crates.io, GitHub, npm and the
 corpus hosts. This matters because building Rust dependencies executes their build code on the Mac mini.
 
@@ -357,6 +367,13 @@ Single worker to start with. Parallel workers (2–3 drivers, separate worktrees
 crate areas) come once M1 is stable.
 
 ## 14. Pilot (before leaving it alone)
+
+**Owner setup, once:**
+1. Repo Settings → Rules → Rulesets → **Import** `ops/rulesets/main.json`.
+2. Repo Settings → Pages → Source: **GitHub Actions**.
+3. System Settings → Privacy & Security: give the terminal app **Screen Recording** and
+   **Accessibility** (macOS UI tests, PDFgear comparison).
+4. Start: `cd ~/work/jpdf3 && ops/driver/driver.sh --pilot`.
 
 The first stretch, M0 through the start of M1 (~1–2 weeks), runs **lightly supervised**:
 1. **Shakedown:** the first 5 sessions run one at a time, and the owner skims each PR.

@@ -1,0 +1,425 @@
+# PROTECTED (CONSTITUTION 12). The only workflow. Grading runs from the BASE commit's
+# ops/judge (never from the PR), and the agent's code never runs in a grading job.
+# Project-specific steps live in `cargo xtask` (ops/judge/CONTRACT.md §2).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"   # nightly: exam corpus, fuzzing, gates
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  JUDGE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+  NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  CARGO_TERM_COLOR: never
+
+jobs:
+  # ---------------------------------------------------------------- trusted: references + judge self-test
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - &judge-checkout
+        name: Checkout judge (base commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.JUDGE_REF }}
+          path: judge
+          persist-credentials: false
+          sparse-checkout: |
+            ops/judge
+            specs/journeys
+            deny.toml
+            supply-chain
+            clippy.toml
+            .cargo
+            .config
+      - &tools
+        name: Install reference tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mupdf-tools poppler-utils qpdf openssl
+      - &python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - &pydeps
+        run: pip install --quiet pillow==13.0.0 numpy==2.5.5 pyhanko==0.38.1
+      - &corpus-cache
+        name: Corpus cache (smoke)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus/smoke
+          key: corpus-smoke-${{ hashFiles('judge/ops/judge/corpus/smoke.tsv') }}
+      - name: Fetch smoke corpus
+        run: python3 judge/ops/judge/fetch_corpus.py judge/ops/judge/corpus/smoke.tsv corpus/smoke
+      - &ref-cache
+        name: Reference cache (smoke)
+        id: refcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ref/smoke
+            probes
+          key: ref-smoke-v1-${{ hashFiles('judge/ops/judge/corpus/smoke.tsv', 'judge/ops/judge/reference.py', 'judge/ops/judge/lib/common.py') }}
+      - name: Reference renders + probe plan
+        if: steps.refcache.outputs.cache-hit != 'true'
+        run: python3 judge/ops/judge/reference.py judge/ops/judge/corpus/smoke.tsv corpus/smoke ref/smoke --probes probes 2>/dev/null
+      - name: Judge self-test
+        run: python3 judge/ops/judge/selftest.py --e2e --corpus corpus/smoke
+      - name: Exam corpus + references (nightly)
+        if: env.NIGHTLY == 'true'
+        run: |
+          python3 judge/ops/judge/fetch_corpus.py judge/ops/judge/corpus/exam.tsv corpus/exam
+          python3 judge/ops/judge/reference.py judge/ops/judge/corpus/exam.tsv corpus/exam ref/exam 2>/dev/null
+      - name: Keep exam references for the verdict job
+        if: env.NIGHTLY == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            corpus/exam
+            ref/exam
+          key: exam-${{ github.run_id }}
+      - name: Hand probe plan to the untrusted job (no reference renders inside)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe-plan
+          path: probes
+          retention-days: 3
+
+  # ---------------------------------------------------------------- trusted: static policy
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - *judge-checkout
+      - &pr-checkout
+        name: Checkout code under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+          persist-credentials: false
+      - &pin-config
+        name: Pin protected config from the judge copy
+        run: |
+          for f in deny.toml clippy.toml supply-chain .cargo .config; do
+            rm -rf "pr/$f"; cp -r "judge/$f" "pr/$f"
+          done
+      - *python
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: cargo-deny,cargo-vet
+      - name: Fetch dependency sources (no build scripts run)
+        working-directory: pr
+        run: cargo fetch --locked
+      - name: Policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 judge/ops/judge/policy.py --root pr --deps --summary policy.md
+      - name: cargo deny
+        working-directory: pr
+        run: cargo deny check
+      - name: cargo vet (imported audits only)
+        working-directory: pr
+        run: cargo vet --locked
+      - if: always()
+        run: cat policy.md >> "$GITHUB_STEP_SUMMARY" || true
+
+  # ---------------------------------------------------------------- UNTRUSTED: builds and runs agent code
+  untrusted:
+    needs: reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - *judge-checkout
+      - *pr-checkout
+      - *pin-config
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: cargo-nextest
+      - *corpus-cache
+      - name: Fetch smoke corpus
+        run: python3 judge/ops/judge/fetch_corpus.py judge/ops/judge/corpus/smoke.tsv corpus/smoke
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: probe-plan
+          path: probes
+      - name: fmt
+        working-directory: pr
+        run: cargo fmt --all --check
+      - name: clippy
+        working-directory: pr
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: tests (graded by the judge from JUnit)
+        working-directory: pr
+        continue-on-error: true
+        run: cargo nextest run --workspace --locked --profile ci --no-tests=warn
+      - name: build jpdf-cli (if it exists)
+        working-directory: pr
+        run: |
+          if cargo metadata --no-deps --format-version 1 | grep -q '"name":"jpdf-cli"'; then
+            cargo build --release --locked -p jpdf-cli
+          fi
+      - name: Run jpdf-cli on smoke corpus + probes
+        run: |
+          python3 judge/ops/judge/run_untrusted.py --bin pr/target/release/jpdf-cli \
+            --manifest judge/ops/judge/corpus/smoke.tsv --corpus corpus/smoke --probes probes --out results/smoke
+          cp pr/target/nextest/ci/junit.xml results/smoke/junit.xml 2>/dev/null || true
+      - name: Exam corpus (nightly)
+        if: env.NIGHTLY == 'true'
+        run: |
+          python3 judge/ops/judge/fetch_corpus.py judge/ops/judge/corpus/exam.tsv corpus/exam
+          python3 judge/ops/judge/run_untrusted.py --bin pr/target/release/jpdf-cli \
+            --manifest judge/ops/judge/corpus/exam.tsv --corpus corpus/exam --out results/exam
+      - name: Fuzz (nightly)
+        if: env.NIGHTLY == 'true'
+        working-directory: pr
+        run: |
+          echo '{"result": "none"}' > ../fuzz.json
+          if [ -d fuzz ]; then
+            rustup toolchain install nightly --profile minimal
+            cargo install cargo-fuzz --locked --quiet
+            result=clean
+            deadline=$(( $(date +%s) + 3600 ))
+            for t in $(cargo +nightly fuzz list); do
+              [ "$(date +%s)" -ge "$deadline" ] && break
+              cargo +nightly fuzz run "$t" -- -max_total_time=300 -rss_limit_mb=2048 || result=crash
+            done
+            echo "{\"result\": \"$result\"}" > ../fuzz.json
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: results-smoke
+          path: results/smoke
+          retention-days: 7
+      - if: env.NIGHTLY == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: results-exam
+          path: |
+            results/exam
+            fuzz.json
+          retention-days: 1
+
+  # ---------------------------------------------------------------- UNTRUSTED: project tasks (xtask)
+  project-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - *judge-checkout
+      - *pr-checkout
+      - *pin-config
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: cargo xtask ci linux
+        working-directory: pr
+        run: cargo xtask ci linux --out ../e2e-linux
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-linux
+          path: e2e-linux
+          retention-days: 7
+
+  project-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - *judge-checkout
+      - *pr-checkout
+      - *pin-config
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: cargo xtask ci macos
+        working-directory: pr
+        run: cargo xtask ci macos --out ../e2e-macos
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-macos
+          path: e2e-macos
+          retention-days: 7
+
+  project-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - *judge-checkout
+      - *pr-checkout
+      - *pin-config
+      - name: "cargo xtask nightly (agent-owned - long fuzz, regress corpus, bench, files issues)"
+        working-directory: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: cargo xtask nightly --out ../nightly
+
+  # ---------------------------------------------------------------- trusted: the verdict
+  verdict:
+    name: judge-verdict
+    needs: [reference, policy, untrusted, project-linux, project-macos]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write   # read baselines; delete the exam results artifact after grading
+    steps:
+      - name: All upstream jobs must have succeeded (skipped/cancelled = fail)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | python3 -c "
+          import json,sys
+          bad={k:v['result'] for k,v in json.load(sys.stdin).items() if v['result']!='success'}
+          print('upstream:', bad or 'all success')
+          sys.exit(1 if bad else 0)"
+      - *judge-checkout
+      - *pr-checkout
+      - *tools
+      - *python
+      - *pydeps
+      - *corpus-cache
+      - *ref-cache
+      - name: References must come from the reference job's cache
+        if: steps.refcache.outputs.cache-hit != 'true'
+        run: |
+          echo "JUDGE-INFRA-FAILURE: reference cache missing"
+          exit 1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: results-smoke
+          path: results/smoke
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: probe-plan
+          path: probes
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-*
+          path: e2e
+      - name: Locate ratchet baseline (latest successful main run)
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ids=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success \
+                 --limit 30 --json databaseId,event -q '.[] | select(.event=="push" or .event=="schedule") | .databaseId')
+          if [ -z "$ids" ]; then echo "status=none-ever" >> "$GITHUB_OUTPUT"; exit 0; fi
+          latest=$(echo "$ids" | head -1)
+          if gh run download "$latest" -R "$GITHUB_REPOSITORY" -n ratchet-baseline -D baseline; then
+            echo "status=found" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+          fi
+          gh run download "$latest" -R "$GITHUB_REPOSITORY" -n gates-report -D prev-gates || true
+      - name: Verdict (smoke)
+        id: verdict
+        run: |
+          python3 judge/ops/judge/verdict.py --tier smoke --ref ref/smoke --results results/smoke \
+            --corpus corpus/smoke --probes probes \
+            --baseline-status "${{ steps.base.outputs.status }}" --baseline baseline/baseline.json \
+            --journeys pr/specs/journeys --base-journeys judge/specs/journeys \
+            --e2e e2e/e2e-linux/e2e.json e2e/e2e-macos/e2e.json \
+            --junit results/smoke/junit.xml --out report
+      - if: always()
+        run: cat report/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Download exam results (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: results-exam
+          path: exam-results
+      - name: Restore exam references (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            corpus/exam
+            ref/exam
+          key: exam-${{ github.run_id }}
+      - name: Grade exam (aggregate only) and evaluate gates (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 judge/ops/judge/verdict.py --tier exam --ref ref/exam --results exam-results/results/exam \
+            --corpus corpus/exam --out exam-report || true
+          fuzz=$(python3 -c "import json;print(json.load(open('exam-results/fuzz.json'))['result'])" 2>/dev/null || echo none)
+          python3 judge/ops/judge/gate.py --smoke report/report.json --exam exam-report/report.json \
+            --repo pr --prev prev-gates/gates.json --fuzz "$fuzz" --selftest pass --out gates
+          cat exam-report/summary.md gates/summary.md >> "$GITHUB_STEP_SUMMARY"
+          # Seal the exam: per-file results never outlive grading (CONSTITUTION 13).
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" -q '.artifacts[] | select(.name=="results-exam") | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+          done
+      - name: Upload judge report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: judge-report
+          path: |
+            report/report.json
+            report/summary.md
+            exam-report/report.json
+            gates/gates.json
+          retention-days: 30
+      - name: Upload gates report (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gates-report
+          path: gates/gates.json
+          retention-days: 90
+      - name: Publish new ratchet baseline (main only, on pass)
+        if: success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ratchet-baseline
+          path: report/baseline.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------- deploy the web app + dashboard
+  pages:
+    needs: verdict
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-linux
+          path: e2e-linux
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: judge-report
+          path: judge-report
+      - name: Assemble site (agent-built site + judge reports)
+        run: |
+          mkdir -p site/judge
+          [ -d e2e-linux/site ] && cp -r e2e-linux/site/. site/
+          cp -r judge-report/. site/judge/
+          [ -f site/index.html ] || echo '<!doctype html><title>jpdf</title><p>jpdf: web app not built yet. <a href="judge/report/summary.md">Judge report</a></p>' > site/index.html
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
