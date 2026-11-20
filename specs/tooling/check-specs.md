@@ -23,14 +23,17 @@ exits **0** when there are no problems, **1** when there are, **2** on a usage e
    - Each section needs content: some visible text outside `<!-- -->` comments before the next
      `#`/`##` heading. Comment markers inside inline code (`` `<!--` ``) are text.
    - A section heading that appears twice is a problem.
-   - Headings inside fenced code blocks and HTML comments don't count. One toggle covers both
-     fence styles (a `~~~` line inside a ```` ``` ```` block closes it), which can only make the
-     check stricter.
+   - Headings inside fenced code blocks and HTML comments don't count. Fences follow
+     CommonMark §4.5: up to 3 spaces of indent, at least 3 backticks or tildes; a block closes
+     only on the same character with at least as long a run and nothing after it.
+   - "Whitespace" everywhere means what Python's `\s` matches (the judge's regexes): Unicode
+     White_Space plus U+001C–U+001F.
 2. **Journeys.** Every `specs/journeys/*.md` is parsed like the judge (CONTRACT §4):
    - a `## J-<AREA>-<NN>: <title>` heading (`AREA` = `[A-Z0-9]+`, `NN` = digits) starts a
      journey; the title must be non-empty;
    - a heading outside a code fence that the judge would silently skip is a problem:
-     `## J-…` not matching that form, and `### J-…`, ` ## J-…`, `##J-…`, `# J-…`;
+     `## J-…` not matching that form, and `### J-…`, ` ## J-…`, `##J-…`, `# J-…`, and a
+     heading after a UTF-8 BOM;
    - a bare `##` line is a problem anywhere (the judge's `\s+` crosses newlines and would read
      the following text as a heading);
    - journey files in subdirectories of `specs/journeys/` are a problem (the judge ignores them);
@@ -54,7 +57,8 @@ exits **0** when there are no problems, **1** when there are, **2** on a usage e
    - Every `specs/…md` path it mentions must exist. A mention starts at `specs/` not preceded
      by a word character, `.`, `-` or `/` (so `x/specs/a.md` is not a mention). Surrounding
      `*`/`_` emphasis and a `#anchor` are dropped; globs (containing `*`) are not mentions.
-   - Every relative Markdown link target `](….md)` must exist under `specs/`.
+   - Every relative Markdown link target `](….md)` must exist under `specs/`; a target with a
+     `..` component is reported and never resolved, so nothing outside `specs/` is touched.
 
 ## Persistence
 Read-only: the checker never writes files except `e2e.json` through `ci`, which it already did.
@@ -74,7 +78,9 @@ Not applicable (read-only tool).
 Runs on repository files written by the agent, not on user input. Still, no `unwrap`/panicking
 index (workspace lints); files above 1 MiB are reported as a problem and not parsed; directory
 walks do not follow symlinks; a symlink under `specs/` is reported as a problem (the judge
-would follow it, so skipping it silently could hide a spec).
+would follow it, so skipping it silently could hide a spec). Files are selected by name ending
+in `.md` (so a file named exactly `.md` counts, as in the judge's glob), and a directory whose
+name ends in `.md` is reported (the judge's glob would match it and fail to read it).
 
 ## Security
 Repository text is data. The checker only reads files under `specs/`; it never executes or

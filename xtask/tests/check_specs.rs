@@ -68,6 +68,8 @@ fn ci_linux_runs_the_check_after_writing_e2e() {
     };
     assert_eq!(o.status.code(), Some(1));
     assert!(dir.join("e2e.json").is_file());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.ends_with("check-specs: 14 problem(s)\n"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -98,6 +100,8 @@ fn filesystem_and_supersede_edge_cases() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(specs.join("_TEMPLATE.md"), specs.join("area/link.md")).unwrap();
     std::fs::write(specs.join("journeys/nested/n.md"), "").unwrap();
+    std::fs::create_dir_all(specs.join("area/dir.md")).unwrap();
+    std::fs::write(specs.join("area/.md"), "nothing\n").unwrap();
     std::fs::write(
         specs.join("journeys/s.md"),
         "## J-S-1: self\n- milestone: M1\n- platform: web\n- superseded_by: J-S-1\n\n\
@@ -115,19 +119,30 @@ fn filesystem_and_supersede_edge_cases() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(o.status.code(), Some(1), "{err}");
     let mut want = vec![
+        "specs/TRACE.md: feature spec specs/area/.md is not traced",
+        "specs/area/.md: missing checklist section `## Behavior` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Persistence` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Undo` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Errors` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Limits` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Security` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Accessibility` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Platforms` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Performance` (see specs/_TEMPLATE.md)",
+        "specs/area/.md: missing checklist section `## Tests` (see specs/_TEMPLATE.md)",
         "specs/area/big.md: file is 1048577 bytes, above the 1048576-byte limit",
         "specs/area/bin.md: not valid UTF-8",
+        "specs/area/dir.md: directory named like a Markdown file (the judge would try to read it)",
         "specs/journeys/nested/n.md: journey files must be directly in specs/journeys/ (the judge ignores subdirectories)",
         "specs/journeys/s.md: J-S-1: superseded_by names itself",
         "specs/journeys/s.md: J-S-2: superseded_by chain is a cycle (it must end in a journey with tests)",
         "specs/journeys/s.md: J-S-3: superseded_by chain is a cycle (it must end in a journey with tests)",
     ];
     if cfg!(unix) {
-        want.insert(
-            2,
-            "specs/area/link.md: symlink not followed; specs must be regular files",
-        );
+        want.push("specs/area/link.md: symlink not followed; specs must be regular files");
     }
+    // The checker sorts by (path, message); no path here contains ": ", so string order matches.
+    want.sort_unstable();
     let n = format!("check-specs: {} problem(s)", want.len());
     want.push(&n);
     assert_eq!(err.lines().collect::<Vec<_>>(), want);

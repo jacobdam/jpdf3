@@ -215,9 +215,17 @@ fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path
                 "symlink not followed; specs must be regular files",
             ));
         } else if ft.is_dir() {
+            // The judge's `glob("*.md")` matches directories too, then fails to read them.
+            if entry.file_name().to_string_lossy().ends_with(".md") {
+                out.push(problem(
+                    &rel_display(root, &path),
+                    "directory named like a Markdown file (the judge would try to read it)",
+                ));
+            }
             walk(&path, files, out, root);
         } else if ft.is_file()
-            && path.extension().is_some_and(|e| e == "md")
+            // Not `extension()`: a file named exactly `.md` has none, but the judge's glob matches it.
+            && entry.file_name().to_string_lossy().ends_with(".md")
             && let Ok(rel) = path.strip_prefix(&specs)
         {
             let parts: Vec<String> = rel
@@ -280,9 +288,45 @@ fn visible_text(line: &str, in_comment: &mut bool) -> String {
     out
 }
 
-fn is_fence(line: &str) -> bool {
-    let t = line.trim_start();
-    t.starts_with("```") || t.starts_with("~~~")
+/// Whitespace as Python's `\s` (the judge's regexes) sees it: Rust's `White_Space` plus the
+/// information separators U+001C–U+001F.
+fn py_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// Fenced code blocks per CommonMark §4.5: an opening fence is up to 3 spaces of indent and a
+/// run of at least 3 backticks or tildes; it closes only on the same character, at least as
+/// long a run, and nothing but whitespace after it.
+#[derive(Debug, Default)]
+struct Fence {
+    open: Option<(char, usize)>,
+}
+
+impl Fence {
+    /// Feeds one line; returns true if it is a fence line or inside a fenced block.
+    fn line(&mut self, line: &str) -> bool {
+        let indent = line.bytes().take_while(|b| *b == b' ').count();
+        let t = line.get(indent..).unwrap_or_default();
+        let marker = t
+            .chars()
+            .next()
+            .filter(|c| indent <= 3 && (*c == '`' || *c == '~'));
+        let run = marker.map_or(0, |m| t.chars().take_while(|c| *c == m).count());
+        // The marker is ASCII, so `run` chars are `run` bytes.
+        let after = t.get(run..).unwrap_or_default();
+        match (self.open, marker) {
+            (None, Some(m)) if run >= 3 && (m == '~' || !after.contains('`')) => {
+                self.open = Some((m, run));
+                true
+            }
+            (None, _) => false,
+            (Some((m, n)), Some(c)) if c == m && run >= n && after.trim().is_empty() => {
+                self.open = None;
+                true
+            }
+            (Some(_), _) => true,
+        }
+    }
 }
 
 /// A `## ` section: its first word (as the judge reads it) and whether it has content.
@@ -297,18 +341,11 @@ pub struct Section {
 /// headings count as content.
 pub fn sections(text: &str) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
-    let mut in_fence = false;
+    let mut fence = Fence::default();
     let mut in_comment = false;
     let mut open = false;
     for line in text.lines() {
-        if !in_comment && is_fence(line) {
-            in_fence = !in_fence;
-            if open && let Some(s) = out.last_mut() {
-                s.has_content = true;
-            }
-            continue;
-        }
-        if in_fence {
+        if !in_comment && fence.line(line) {
             if open && let Some(s) = out.last_mut() {
                 s.has_content = true;
             }
@@ -318,10 +355,10 @@ pub fn sections(text: &str) -> Vec<Section> {
         let visible = visible_text(line, &mut in_comment);
         if !starts_in_comment {
             if let Some(rest) = line.strip_prefix("##")
-                && rest.starts_with(char::is_whitespace)
+                && rest.starts_with(py_space)
             {
                 let name: String = rest
-                    .trim_start()
+                    .trim_start_matches(py_space)
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
@@ -408,15 +445,18 @@ fn split_journey_id(s: &str) -> Option<(&str, &str)> {
 
 fn is_journey_heading(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("##")?;
-    let trimmed = rest.trim_start();
+    let trimmed = rest.trim_start_matches(py_space);
     (trimmed.len() < rest.len()).then_some(trimmed)
 }
 
 /// Headings the judge would silently skip: `### J-…`, ` ## J-…`, `##J-…`, `# J-…`.
 fn is_almost_journey_heading(line: &str) -> bool {
-    let t = line.trim_start();
+    // A leading BOM or indent also hides the heading from the judge's `^##`.
+    let t = line.trim_start_matches(|c| py_space(c) || c == '\u{feff}');
     t.starts_with('#')
-        && t.trim_start_matches('#').trim_start().starts_with("J-")
+        && t.trim_start_matches('#')
+            .trim_start_matches(py_space)
+            .starts_with("J-")
         && is_journey_heading(line).is_none_or(|h| !h.starts_with("J-"))
 }
 
@@ -426,12 +466,10 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
     let mut problems = Vec::new();
     // (id, field lines) per journey; the judge's body runs to the next journey heading.
     let mut bodies: Vec<(String, Vec<String>)> = Vec::new();
-    let mut in_fence = false;
+    let mut fence = Fence::default();
     for (n, line) in text.lines().enumerate() {
         let lineno = n + 1;
-        if is_fence(line) {
-            in_fence = !in_fence;
-        }
+        let in_fence = fence.line(line);
         if let Some(head) = is_journey_heading(line) {
             if let Some((id, rest)) = split_journey_id(head) {
                 match rest.strip_prefix(':') {
@@ -450,7 +488,10 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
         }
         // The judge's `^##\s+` crosses newlines: a bare `##` line takes the next lines' text
         // as its heading.
-        if line.strip_prefix("##").is_some_and(|r| r.trim().is_empty()) {
+        if line
+            .strip_prefix("##")
+            .is_some_and(|r| r.chars().all(py_space))
+        {
             problems.push(format!(
                 "line {lineno}: bare `##` line (the judge reads the following text as a heading)"
             ));
@@ -662,9 +703,11 @@ fn mentioned_spec_paths(text: &str) -> BTreeSet<String> {
     out
 }
 
-/// Relative Markdown link targets `](target.md)` in `text`, resolved against `specs/`.
-fn link_targets(text: &str) -> BTreeSet<String> {
+/// Relative Markdown link targets `](target.md)` in `text`, resolved against `specs/`, and
+/// targets that would leave `specs/` (contain a `..` component; never resolved).
+fn link_targets(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut out = BTreeSet::new();
+    let mut escaping = BTreeSet::new();
     let mut rest = text;
     while let Some(i) = rest.find("](") {
         let tail = rest.get(i + 2..).unwrap_or_default();
@@ -672,11 +715,15 @@ fn link_targets(text: &str) -> BTreeSet<String> {
         let target = tail.get(..len).unwrap_or_default();
         let external = target.contains("://") || target.starts_with('/') || target.starts_with('#');
         if !external && let Some(t) = clean_md_path(target) {
-            out.insert(format!("specs/{t}"));
+            if t.split('/').any(|c| c == "..") {
+                escaping.insert(t.to_owned());
+            } else {
+                out.insert(format!("specs/{t}"));
+            }
         }
         rest = tail;
     }
-    out
+    (out, escaping)
 }
 
 /// TRACE.md cross-checks.
@@ -709,10 +756,14 @@ pub fn check_trace(
             out.push(format!("mentions missing file {p}"));
         }
     }
-    for p in link_targets(text) {
+    let (links, escaping) = link_targets(text);
+    for p in links {
         if !paths.contains(&p) && !exists(&p) {
             out.push(format!("links to missing file {p}"));
         }
+    }
+    for p in escaping {
+        out.push(format!("link target {p} leaves specs/ (not checked)"));
     }
     out
 }
@@ -1058,6 +1109,71 @@ mod tests {
         ] {
             assert_eq!(problems_for(line), vec![want.to_owned()], "input {line:?}");
         }
+    }
+
+    #[test]
+    fn judge_whitespace_includes_information_separators() {
+        assert_eq!(
+            problems_for("##\u{1c}J-A-1: x\n- milestone: M1\n- platform: web\n- test: e2e.web.a\n"),
+            Vec::<String>::new()
+        );
+        assert_eq!(parse_journeys("##\u{1c}J-A-1: x\n").0.len(), 1);
+        assert_eq!(
+            problems_for("##\u{1f}\nJ-A-1"),
+            vec![
+                "line 1: bare `##` line (the judge reads the following text as a heading)"
+                    .to_owned()
+            ]
+        );
+        let text = full_spec().replace("## Undo", "##\u{1c}Undo");
+        assert_eq!(check_feature_spec(&text, &req()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn bom_before_a_journey_heading_is_reported() {
+        assert_eq!(
+            problems_for("\u{feff}## J-A-1: x\n"),
+            vec![
+                "line 1: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn fences_follow_commonmark() {
+        // A 3-backtick line inside a 4-backtick block does not close it, and `~~~` does not
+        // close a backtick block: the bad headings after the real close are still reported.
+        let text =
+            "````md\n```text\n~~~\n## J-bad-1: in code\n````\n## J-ann-02: b\n### J-ANN-03: c\n";
+        assert_eq!(
+            problems_for(text),
+            vec![
+                "line 6: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)"
+                    .to_owned(),
+                "line 7: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)"
+                    .to_owned(),
+            ]
+        );
+        // Four spaces of indent is not a fence; a closing fence may not have an info string.
+        let mut f = Fence::default();
+        assert!(!f.line("    ```"));
+        assert!(f.line("```rust"));
+        assert!(f.line("``` rust"));
+        assert!(f.line("```  "));
+        assert!(!f.line("text"));
+        assert!(!f.line("``` a`b"));
+    }
+
+    #[test]
+    fn link_leaving_specs_is_reported_not_resolved() {
+        let p = check_trace("[x](../../etc/x.md)", &BTreeSet::new(), &[], |_| {
+            panic!("must not be resolved")
+        });
+        assert_eq!(
+            p,
+            vec!["link target ../../etc/x.md leaves specs/ (not checked)".to_owned()]
+        );
     }
 
     #[test]
