@@ -193,3 +193,53 @@ pub trait CcittDecoder {
         limits: &DecodeLimits,
     ) -> Result<Decoded<Bitmap>, BackendError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image(width: u32, height: u32, components: u16, bits: u8) -> DecodedImage {
+        DecodedImage {
+            width,
+            height,
+            components,
+            bits_per_component: bits,
+            color: ImageColor::Unknown,
+            has_alpha: false,
+            samples: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn image_expected_len() {
+        assert_eq!(image(4, 3, 3, 8).expected_len(), Some(36));
+        assert_eq!(image(4, 3, 3, 16).expected_len(), Some(72));
+        assert_eq!(image(0, 3, 3, 8).expected_len(), None);
+        assert_eq!(image(4, 0, 3, 8).expected_len(), None);
+        assert_eq!(image(4, 3, 0, 8).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 4).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 1).expected_len(), None);
+    }
+
+    #[test]
+    fn image_expected_len_overflow_is_none() {
+        let huge = image(u32::MAX, u32::MAX, u16::MAX, 16);
+        assert_eq!(huge.expected_len(), None);
+    }
+
+    #[test]
+    fn bitmap_stride_and_len() {
+        let bitmap = |width, height| Bitmap {
+            width,
+            height,
+            data: Vec::new(),
+        };
+        assert_eq!(bitmap(1, 1).stride(), 1);
+        assert_eq!(bitmap(8, 1).stride(), 1);
+        assert_eq!(bitmap(9, 2).stride(), 2);
+        assert_eq!(bitmap(9, 2).expected_len(), Some(4));
+        assert_eq!(bitmap(0, 2).expected_len(), None);
+        assert_eq!(bitmap(9, 0).expected_len(), None);
+        assert_eq!(bitmap(u32::MAX, 1).stride(), 536_870_912);
+    }
+}
