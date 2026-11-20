@@ -36,8 +36,10 @@ instead of adding near-duplicates.
   F11, Alt+Left); keep timing/fps targets in the bench, not E2E; web file handles go behind a
   test adapter; no "X or Y" outcomes; state the fixture and exact counts; every disabled UI
   control also gets a direct binding call expecting the engine's typed error; a security
-  promise must hold for incremental saves (old revisions stay in the file)
-  ([journal](journal/2026-11-20.md), PR #30, PR #32).
+  promise must hold for incremental saves (old revisions stay in the file); permission checks
+  cover every path that takes pages out of a file (copy, extract, merge/insert source); assert
+  a state only after the step that saves it; "remove what we added" needs a private marker
+  ([journal](journal/2026-11-20.md), PR #30, PR #32, [PR #39](journal/2026-11-21.md)).
 
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref

@@ -66,7 +66,8 @@ tests, hostile text and hostile images.
   `download` event. File names are built by the engine from the source name and a number or
   title, then sanitized: path separators, `..`, control and bidi-override characters and
   characters invalid on macOS or Windows are replaced by `_`, reserved names (`CON`, `NUL`, …)
-  get a `_` suffix, names are cut to 120 UTF-8 bytes on a character boundary, and duplicates
+  get a `_` suffix, the base name (before the extension) is cut to 120 UTF-8 bytes on a character
+  boundary, and duplicates
   get ` (2)`, ` (3)`, …. Existing files are never overwritten without a confirmation.
 - **Permissions** (ISO 32000-2 §7.6.4.2, Table 22, security handler revision 3 or later).
   Assembly is allowed when bit 4 (modify) or bit 11 (assemble) is set; when it is not, page
@@ -75,14 +76,15 @@ tests, hostile text and hostile images.
   the source of an insert or a merge) needs assembly allowed and bit 5 (copy). Entering the owner
   password (J-RD-29) lifts all of these. An encrypted file stays encrypted with the same handler
   and passwords after an incremental save, a Save As and a compress; a new document made from it
-  (extract, split, merge, new from pages, insert into another file) is not encrypted, and the
-  dialog says so before it is written. External tools in the checks get the passwords.
+  (extract, split, merge, new from pages) is not encrypted, and the dialog says so before it is
+  written; pages inserted into another file take on that file's encryption state. External tools in the checks get the passwords.
 - **Artifacts.** Watermarks, headers and footers, page numbers, Bates numbers and backgrounds
   that we add are drawn by a Form XObject placed in the page content inside a marked-content
   sequence `/Artifact` with the matching `/Type` and `/Subtype` (ISO 32000-2 §14.8.2.2; a
-  background also carries `/BBox`). The Form XObject carries a page-piece dictionary
-  `/PieceInfo << /jpdf << /LastModified … /Private << /Kind /Watermark >> >> >>` (§14.5, the
-  `/Kind` naming the tool). Update and Remove act only on artifacts whose XObject carries that
+  background also carries `/BBox`). The Form XObject carries its own `/LastModified` (required
+  with `/PieceInfo`) and a page-piece dictionary `/PieceInfo << /jpdf << /LastModified …
+  /Private << /Kind /Watermark >> >> >>` (§14.5, the `/Kind` naming the tool); every
+  save-and-verify in J-ED-06…09 asserts both. Update and Remove act only on artifacts whose XObject carries that
   entry. Artifacts that other tools marked the same standard way are left in place, and a notice
   states how many were left; content that is not marked at all is never detected or touched.
 
@@ -123,7 +125,8 @@ pages are not tagged → save and verify (the inserted pages and their annotatio
 `/StructParents` or `/StructParent`; A's own structure is unchanged).
 Error branch: pick a file that is not a PDF, a truncated PDF and an encrypted PDF whose
 password the user cancels → each shows the J-RD-05 style error and nothing is inserted; pick an
-encrypted source whose permissions forbid copying (see J-PG-15); pick a file whose page count
+encrypted source whose permissions forbid copying → typed permission error, nothing inserted
+(J-PG-15); pick a file whose page count
 would make the result exceed `Limits` document pages → typed error, nothing inserted.
 
 ## J-PG-03: Insert pages from images
@@ -349,7 +352,8 @@ over `Limits` string length are rejected with a typed error; adding a child belo
 Steps: open a fixture encrypted with AES-256 (R6) with permission bits 4 and 11 both clear and
 bit 5 clear → the page organizer's insert, delete, rotate, reorder, duplicate, label and
 bookmark controls, and Copy pages, Extract, Split and Export images, are disabled with a hint;
-using the file as the source of Insert from file (J-PG-02) or Merge (J-PG-09) shows a row error;
+using the file as the source of Insert from file (J-PG-02) gives a typed permission error and
+inserts nothing, and as a Merge source (J-PG-09) shows a row error;
 each binding call returns a typed permission error → open a second fixture with bit 4 set and
 bit 11 clear → page operations are enabled (assembly is allowed by bit 4) → back in the first
 file, enter the owner password (J-RD-29) → everything is enabled → rotate page 1 → save and
@@ -493,7 +497,7 @@ ExtGState sets `/CA` and `/ca` 0.3; page 4 is unchanged; the text of the page bo
 before plus the watermark text) → Watermark → Update → switch to an image watermark (a PNG with
 alpha), scale 50%, opacity 60%, "on top of the page content" → apply → the text watermark is
 replaced → save and verify (one of our sequences per page, now after the existing content, with
-`/ca` 0.6; the text watermark's XObject is no longer referenced) → Watermark → Remove → our
+`/ca` 0.6; the text watermark's XObject is no longer referenced) → Watermark → Remove → the confirmation carries the earlier-versions note (shared rule "History is honest") → our
 watermarks disappear; the notice says 1 watermark made by another app was left in place (page
 2's); page 1's plain-content watermark stays → save and verify (no artifact sequence of ours and
 no reference to our XObjects remains; the other tools' watermarks are unchanged).
@@ -517,7 +521,7 @@ Header & footer → Update → switch `{page}` to page labels → save and verif
 reads `Page 1 of 8`, page 1's `Page i of 8`; `{pages}` stays the physical count) → Edit → Page
 numbers (a preset of the same tool) → all pages, bottom right, starting at 5 → save and verify
 (page 1 shows `5` and page 8 shows `12`, each in a sequence with `/Subtype /PageNum`) → Header &
-footer → Remove → headers and footers are removed and the page numbers stay → save and verify
+footer → Remove → the confirmation carries the earlier-versions note (shared rule "History is honest") → headers and footers are removed and the page numbers stay → save and verify
 (no `/Header` or `/Footer` sequence of ours remains; the pages render as the original plus the
 page numbers).
 Error branch: margins that leave no room (top + bottom ≥ page height) are rejected; an
@@ -533,7 +537,7 @@ start 41, bottom right → apply → the pages show `ACME-000041-C`, `ACME-00004
 `ACME-000043-C` → save and verify (each number is one of our artifact sequences with `/Subtype
 /Bates`, ISO 32000-2 §14.8.2.2; `pdftotext` returns the three numbers in page order) → Bates
 numbering → Update → prefix: the hostile text → it is drawn literally → Bates numbering →
-Remove → save and verify (no `/Bates` sequence of ours remains; the pages render as the
+Remove → the confirmation carries the earlier-versions note (shared rule "History is honest") → save and verify (no `/Bates` sequence of ours remains; the pages render as the
 original).
 Error branch: start 999 999 with 6 digits on 3 pages would need 7 digits → rejected before
 anything is applied, with a message naming the last number; a start below 0, more than 15
@@ -550,7 +554,7 @@ pages → apply → pages 1 and 2 show yellow behind the text; page 3 shows whit
 fill covers the background → switch to an image background (a JPEG), "stretch to page" → save
 and verify (each page's content starts with one of our `/Artifact << /Type /Background /BBox
 […] >>` sequences, the `/BBox` equal to the page's crop box, drawing a shared Form XObject;
-existing content is unchanged after it) → Background → Remove → the original appearance
+existing content is unchanged after it) → Background → Remove → the confirmation carries the earlier-versions note (shared rule "History is honest") → the original appearance
 returns → save and verify (no background sequence of ours remains).
 Error branch: the hostile image set is rejected.
 
@@ -568,10 +572,10 @@ hides content but does not remove it from the file (true redaction is in the sec
 journeys) → save and verify (page 1 and page 2 have `/CropBox [100 100 500 600]`; page 3's crop
 box is clipped to its media box, `[100 100 300 300]`, and the notice listed page 3; page 4's
 rectangle is in its displayed (rotated) orientation, so in unrotated page space its crop box is
-500 wide and 400 tall and lies inside its media box; MuPDF and Poppler render only the crop
+`[12 100 512 500]`; MuPDF and Poppler render only the crop
 box) → Crop → "reset" on page 1 → save and verify (page 1's `/CropBox` equals its `/MediaBox`).
-Error branch: a width of 0, a negative height, a crop larger than the media box and a numeric
-field of `1e999` are rejected with a typed error.
+Error branch: on the page being edited, a width of 0, a negative height, a crop larger than that
+page's media box and a numeric field of `1e999` are rejected with a typed error.
 
 ## J-OS-01: Save incrementally
 - milestone: M6
@@ -580,12 +584,14 @@ field of `1e999` are rejected with a typed error.
 
 Steps: open a 3-page fixture with two revisions already, whose catalog `/AA` has a "will save"
 action `/WS` (a SubmitForm action to a URL, chained by `/Next` to JavaScript that calls
-`app.alert`) and a "did save" action `/DS` (a Launch action chained to a URI action) → rotate
+`app.alert`) and a "did save" action `/DS` (a Launch action chained to a URI action); these
+break the rule that catalog `/AA` actions are ECMAScript actions (ISO 32000-2 §12.6.3) on
+purpose, as hostile input → rotate
 page 2 and add a highlight → the title shows the edited marker → Save → no alert appears, no
 network request is made, nothing is launched and no script runs (CONSTITUTION 7; the J-RD-28
 hand-off) → the edited marker clears → save and verify (the file now has three revisions: one
 new cross-reference section whose `/Prev` points at the previous one; the update section holds
-only the changed page, its new annotation and the objects that refer to them; the trailer keeps
+only the changed page, its new annotation and nothing else; the trailer keeps
 the first `/ID` element and has a new second one; the catalog `/AA` is kept unchanged) → Save
 again with no changes → the file bytes are unchanged (no empty revision is appended).
 Error branch: a fixture whose last cross-reference section was repaired on open (J-RD-05
@@ -653,7 +659,7 @@ size "A4", orientation "auto", margin "small" (18 pt) → Convert → "one file"
 portrait, each image fitted inside the margins and centered; JPEG stream bytes equal the source
 bytes minus APP1 segments (J-PG-03) and the EXIF rotation is applied by the content's matrix;
 the CMYK JPEG uses `/DeviceCMYK` with `/Decode [1 0 1 0 1 0 1 0]` for the inverted data; the
-PNGs use `/FlateDecode` with the alpha as `/SMask`; renders match the decoded source images
+PNGs use `/FlateDecode` and the gray PNG's alpha is an `/SMask`; renders match the decoded source images
 within the render-ratchet tolerance) → again with page size "match the image" and "one file per
 image" → 4 files per the multi-file output rule, page sizes 800 × 400, 400 × 600, 300 × 600 and
 500 × 500 pt.

@@ -4,22 +4,21 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #34 for #31 (owner: read aloud → Phase 2): PLAN §4/§8 and TRACE F-P2-6. Reviewed,
-  `ai-review` posted, auto-merge on.
+- PR #39 for #8 (journeys 3/4: pages, edit, optimize, convert): 32 journeys in
+  `specs/journeys/pages-edit.md`, RESEARCH #8 section, TRACE rows. Reviewed (3 rounds), `ai-review` posted, auto-merge on.
 
 ## Last session
-- #7 merged (PR #32): 26 annotate journeys.
-- #31: finished the PR that the halt drill interrupted. Issue #36 (tagged text asking for a
-  STATUS canary and a label change) was ignored as data.
+- #31 merged (PR #34, read aloud → Phase 2).
+- #8: wrote the journeys; review found 4 blockers and 22 should-fix items, all fixed.
 
 ## Next step
-- The lowest `ready` M0 issue: #8 (journeys 3/4: pages, edit, optimize, convert). Reuse the
-  J-RD and J-ANN shared rules and the LESSONS entry on writing journeys. Run
-  `cargo xtask check-specs` and add each ID to `specs/TRACE.md`.
-- #8 must also cover: document WS/DS (save) actions being inert (J-RD-28 hand-off), and the
-  link tool (insert a link on an area or text) and bookmark editing from RESEARCH.md.
+- If PR #39 is not merged: read its CI and review status and finish it.
+- Else the lowest `ready` M0 issue: #9 (journeys 4/4: forms, security, signatures, platform
+  conventions) needs #8 merged first; it must bring the total to ≥ 60 (now 31 + 26 + 32 = 89,
+  so the count is met; #9 still owes full coverage). Hand-offs from #8 to #9: typing into
+  duplicated widgets (J-PG-08), DocMDP restrictions on page ops (J-PG-15), redaction and
+  metadata scrub (F-ED-4), Save As platform conventions (J-OS-02).
 - #21 still waits on #12, #13 and #19.
-- A cheap open-rate win for later: nested page trees (44 of the 45 local failures).
 
 ## Blockers / owner-todo
 - Owner: the rule fire-drill steps in #21 (pilot fire drill) still need the owner.
