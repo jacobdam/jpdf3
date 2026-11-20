@@ -11,10 +11,10 @@ Every feature spec fills its `## Accessibility` section against this file.
 
 - **Every pointer action has a keyboard path.** Opening, navigating, selecting text, every
   command in every mode, panel actions, dialogs and the page organizer. Drawing tools: with
-  the document view focused and a tool chosen, Return places the object with a default size at
-  the keyboard caret position (the top-left of the visible page area for the first object),
-  then arrows move it and Shift+Option+arrows (web Shift+Alt+arrows) resize it; the
-  journeys that need a keyboard path name it (J-ANN-04, J-PG-06).
+  the document view focused, a drawing tool chosen and nothing focused, Return places the
+  object with a default size at the centre of the visible part of the current page
+  (shortcuts.md rule 10); arrows then move it and the inspector's width and height fields
+  resize it. The journeys that need a keyboard path name it (J-ANN-04, J-PG-06).
 - **Focus order** follows the visual layout: tabs → main toolbar → mode tool row → sidebar →
   find bar → document view → inspector → status bar. macOS supports Full Keyboard Access; web
   provides a "skip to document" link as the first focusable element and landmark regions
@@ -22,7 +22,9 @@ Every feature spec fills its `## Accessibility` section against this file.
   the inspector, `contentinfo` for the status bar).
 - **Inside the document view**, Tab moves through the annotations, links and form fields of
   the current page in the engine's order (the structure tree order for tagged files, else the
-  page's annotation order), then to the next page's (J-ANN-04).
+  page's annotation order); after the last one, Tab leaves the document view for the next
+  region. To reach another page's objects, change page (Page Down, the page field) and Tab
+  again (J-ANN-04). This keeps Tab from walking a 2,000-page file.
 - **Focus is always visible** (web: a focus ring with at least 3:1 contrast against both the
   page and the chrome; macOS: the system focus ring) and never hidden behind the toolbar or a
   panel (WCAG 2.2 SC 2.4.11).
@@ -33,9 +35,10 @@ Every feature spec fills its `## Accessibility` section against this file.
 
 - **Page text is exposed** from the engine: the text of the visible pages in reading order
   (structure tree for tagged files, else the engine's reading-order heuristic), as an
-  accessible text layer (macOS: accessibility elements per text block; web: an off-screen,
-  selectable text layer with roles). The native layer does not extract text itself
-  (CONSTITUTION 6).
+  accessible text layer exposed only to assistive technology (macOS: accessibility elements
+  per text block; web: visually hidden elements with roles). Pointer text selection is an
+  engine hit-test that the UI draws (J-RD-16), not a selection in that layer. The native layer
+  does not extract text itself (CONSTITUTION 6).
 - **Every page** is a group labelled "Page N of M" plus its page label when it has one.
 - **Annotations and links** are elements with role, type, author and text ("Note by Ann:
   check figure 2"); links announce their target as the engine's display string (J-RD-18).
@@ -73,16 +76,17 @@ Every feature spec fills its `## Accessibility` section against this file.
 ## 4. Pointer and input
 
 - Drags have a non-drag alternative (WCAG 2.2 SC 2.5.7): reorder pages with the move
-  commands (J-PG-06), move and resize annotations with arrows (J-ANN-17), outline moves
-  through cut and paste in the outline panel (J-PG-14).
+  commands (J-PG-06), move annotations with arrows and resize them in the inspector (J-ANN-17), outline moves
+  through the context menu's cut and paste in the outline panel (J-PG-14).
 - Pinch zoom and trackpad gestures always have menu and key equivalents (J-RD-08).
 - Single-key shortcuts follow shortcuts.md rule 5 (SC 2.1.4).
 
 ## 5. Verification
 
 - Web: the Playwright harness (#12) runs `axe-core` on the start screen, a document in each
-  mode, each sidebar panel and each dialog, and fails on any violation of WCAG 2.2 A or AA
-  rules; a keyboard-only Playwright pass opens a fixture, navigates, searches and adds a note
+  mode, each sidebar panel and each dialog, and fails on any axe-core violation tagged
+  `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa` or `wcag22aa` (axe covers only part of WCAG; the
+  rest is reviewed in the audit); a keyboard-only Playwright pass opens a fixture, navigates, searches and adds a note
   without any pointer event.
 - macOS: the XCUITest harness (#13) runs `performAccessibilityAudit()` on the same screens,
   and journeys drive controls through their accessibility identifiers and labels, which
