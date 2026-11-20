@@ -6,6 +6,13 @@ import XCTest
 final class StartWindowTests: XCTestCase {
     private let reason = "Opening files is not available yet"
 
+    /// The visible text: macOS reports a static text's string as its value and a button's
+    /// title as its label.
+    @MainActor
+    private static func text(of element: XCUIElement) -> String {
+        element.label.isEmpty ? (element.value as? String ?? "") : element.label
+    }
+
     override func setUp() {
         continueAfterFailure = false
     }
@@ -34,13 +41,13 @@ final class StartWindowTests: XCTestCase {
         ]
         for (query, label) in expected {
             XCTAssertEqual(query.count, 1, label)
-            XCTAssertEqual(query.firstMatch.label, label)
+            XCTAssertEqual(Self.text(of: query.element), label)
         }
-        let open = openQuery.firstMatch
+        let open = openQuery.element
         // Top-to-bottom order of W-02.
-        XCTAssertLessThan(heading.firstMatch.frame.minY, drop.firstMatch.frame.minY)
-        XCTAssertLessThan(drop.firstMatch.frame.minY, open.frame.minY)
-        XCTAssertLessThan(open.frame.minY, recent.firstMatch.frame.minY)
+        XCTAssertLessThan(heading.element.frame.minY, drop.element.frame.minY)
+        XCTAssertLessThan(drop.element.frame.minY, open.frame.minY)
+        XCTAssertLessThan(open.frame.minY, recent.element.frame.minY)
 
         // Rule 5: inert, not disabled, so keyboard navigation still reaches it.
         XCTAssertTrue(open.isEnabled)
@@ -55,7 +62,7 @@ final class StartWindowTests: XCTestCase {
 
         let window = app.windows["jpdf"]
         XCTAssertTrue(window.waitForExistence(timeout: 20), "start window")
-        window.buttons.matching(identifier: "start.open").firstMatch.click()
+        window.buttons.matching(identifier: "start.open").element.click()
         let shown = app.popovers.staticTexts[reason]
         XCTAssertTrue(shown.waitForExistence(timeout: 5), "reason popover")
         // Nothing else happened: no open panel, no sheet, no new window.
