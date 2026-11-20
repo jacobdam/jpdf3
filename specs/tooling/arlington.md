@@ -12,13 +12,26 @@ Status: implemented (tables); the valid/boundary object generator is #61
    (`tools/arlington/src/fetch.rs` `COMMIT`, `TSV_TREE`; 613 files, 3985 rows at the pin).
    The data is **never committed** (ADR 0006; the license question is with the owner in #60).
 2. **Pinning.** `fetch::load_pinned(cache)` keeps a bare git repository at
-   `<cache>/arlington-pdf-model.git`. If the pinned commit is missing it runs
-   `git fetch --depth 1 --no-tags <url> <COMMIT>` (once; later runs are offline). It then
-   checks that `rev-parse --verify <COMMIT>^{commit}` is exactly `COMMIT` and that
-   `<COMMIT>:tsv/latest` is exactly `TSV_TREE`, lists that tree, rejects any entry that is not a
-   `.tsv` blob, and reads the blobs through `git cat-file --batch`. Nothing in the cache outside
-   git's content-addressed object store is trusted. Git runs with `GIT_TERMINAL_PROMPT=0` and
-   `GIT_CONFIG_NOSYSTEM=1`.
+   `<cache>/arlington-pdf-model.git` (created with `git init --bare` if the path does not
+   exist; an existing path that `git --git-dir` does not accept as a bare repository is an
+   error asking to delete it). If the pinned commit is missing it runs
+   `git fetch --depth 1 --no-tags <url> <COMMIT>` and keeps it alive with the ref
+   `refs/jpdf/pinned` (once; later runs are offline). Then `load_verified`:
+   1. runs `git fsck --full --strict --no-dangling`, which re-hashes every object, so an
+      object file whose bytes no longer match its id is refused;
+   2. checks that `rev-parse --verify <COMMIT>^{commit}` is exactly `COMMIT` and that
+      `<COMMIT>:tsv/latest` is exactly `TSV_TREE`;
+   3. lists that tree (its size checked first), rejecting any entry that is not a `.tsv` blob;
+   4. reads every blob size with `git cat-file --batch-check` and applies the limits;
+   5. only then reads the blobs with `git cat-file --batch`, checking each header, size and
+      framing byte and that no output is left over.
+   Every git call uses `--no-replace-objects` and `--git-dir` (no repository discovery, so a
+   broken cache never resolves to a parent repository), removes inherited `GIT_DIR`,
+   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
+   `GIT_REPLACE_REF_BASE`, `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`,
+   `GIT_CEILING_DIRECTORIES` and `GIT_SHALLOW_FILE`, and sets `GIT_TERMINAL_PROMPT=0`,
+   `GIT_NO_REPLACE_OBJECTS=1`, `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`.
 3. **Grammar** (`parse.rs`). Each file must start with the 12-column header
    `Key Type SinceVersion DeprecatedIn Required IndirectReference Inheritable DefaultValue
    PossibleValues SpecialCase Link Note` (tab-separated); every non-empty row has exactly 12
@@ -76,7 +89,8 @@ Not applicable (development tool).
 ## Errors
 - Grammar: `<Object>.tsv:<line>: <Column>: <problem>`, exit 1.
 - Checks: `N model problem(s):` then one `<Object>/<Key>: <problem>` per line, exit 1.
-- Pinning: `fetch: commit is X, pinned Y`, `fetch: tsv/latest tree is X, pinned Y`,
+- Pinning: `fetch: <cache> is not a usable cache (…); delete it`, `fetch: git fsck … failed (…): <stderr>`,
+  `fetch: commit is X, pinned Y`, `fetch: tsv/latest tree is X, pinned Y`,
   `fetch: tsv/latest/<name> is not a .tsv file`, `fetch: git … failed (…): <stderr>`, exit 1.
 - Limits: `limit exceeded: …`, exit 1.
 - Usage (unknown command/flag, missing value, `--tsv` with `--cache`, `generate` without
@@ -85,16 +99,19 @@ Not applicable (development tool).
 
 ## Limits
 The data is pinned but still outside input, so sizes are capped before use: ≤ 4096 files,
-≤ 1 MiB per file (checked from the file size or the git object header before reading),
+≤ 1 MiB per file and ≤ 64 MiB in total (pinned: from `cat-file --batch-check` sizes before
+any blob is read, tree object ≤ 1 MiB; `--tsv`: reads are bounded at the cap + 1 byte),
 ≤ 4096 rows per file, ≤ 16 KiB per field, nesting depth ≤ 16, ≤ 8 gates per value. Indexes
 must fit in `u32`. The largest pinned file is far below each cap. No panics: no `unwrap`,
 `expect` or indexing on input-derived data (workspace lints).
 
 ## Security
 - Supply chain: the commit id and the `tsv/latest` tree id are both pinned; git verifies
-  object ids when it indexes fetched packs, and we read only from objects reached through the
-  pinned ids. Git's SHA-1 has collision detection; the data is test input, not code, and is
-  only parsed, never executed.
+  object ids when it indexes fetched packs, `fsck --full` re-hashes the cache on every run,
+  replace refs are disabled, and git can't be redirected to another repository or config
+  through inherited variables. Git's SHA-1 has collision detection; the data is test input,
+  not code, and is only parsed, never executed. The cache is still a local build artifact: a
+  local attacker who can rewrite it between `fsck` and the read is out of scope.
 - No new crate dependencies (the crate uses only `std`), so CONSTITUTION 8–11 are unaffected.
 - License: Arlington is Apache-2.0 for software, CC-BY-4.0 for "other documentation"
   (NOTICE.txt). Until the owner rules which covers the TSV files, neither the data nor the
@@ -125,7 +142,9 @@ First fetch about 10 s (shallow fetch of one commit); later runs read the cache 
   deterministic, keep control characters out of code, and compile with `rustc --test` plus
   a read-back test (sorted, counts, values); pinned loading from a local git repository
   matches `read_dir`, and a wrong tree, an unknown commit, a symbolic name, and a non-TSV
-  entry are refused; the pins are full lowercase ids; CLI exit codes 0/1/2 and
+  entry are refused; a hand-written replace ref is ignored; a swapped loose object file is
+  caught by `fsck`; an oversized blob is refused from its size before reading; a broken
+  cache (only `HEAD`) inside another repository is refused without touching the parent; the pins are full lowercase ids; CLI exit codes 0/1/2 and
   `generate` output equal to the library's.
 - `src/main.rs` unit test: argument parsing.
 - `xtask/tests/check_specs.rs`: `arlington <extra>` exits 2; `ci linux` outside the repo

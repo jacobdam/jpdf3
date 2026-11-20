@@ -47,13 +47,15 @@ pub fn load(source: &Source) -> Result<Model, Error> {
 }
 
 /// Reads every `*.tsv` file in `dir` (not recursive), sorted by name. Other files are
-/// ignored; files over the size limit are an error before they are read whole.
+/// ignored; files over the size limit are an error, and no read goes past the limit.
 pub fn read_dir(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    use std::io::Read as _;
     let io = |source| Error::Io {
         path: dir.display().to_string(),
         source,
     };
     let mut files = Vec::new();
+    let mut total: usize = 0;
     for entry in std::fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -67,14 +69,30 @@ pub fn read_dir(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, Error> 
             )));
         }
         let path = entry.path();
-        let len = entry.metadata().map_err(io)?.len();
-        if len > parse::MAX_FILE_BYTES as u64 {
-            return Err(Error::Limit(format!("{name} is {len} bytes")));
+        // Bounded read: a file that grows after `metadata` still can't exceed the cap.
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)
+            .and_then(|f| {
+                f.take(parse::MAX_FILE_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+            })
+            .map_err(|source| Error::Io {
+                path: path.display().to_string(),
+                source,
+            })?;
+        if bytes.len() > parse::MAX_FILE_BYTES {
+            return Err(Error::Limit(format!(
+                "{name} is over {} bytes",
+                parse::MAX_FILE_BYTES
+            )));
         }
-        let bytes = std::fs::read(&path).map_err(|source| Error::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
+        total = total.saturating_add(bytes.len());
+        if total > parse::MAX_TOTAL_BYTES {
+            return Err(Error::Limit(format!(
+                "more than {} bytes in all files",
+                parse::MAX_TOTAL_BYTES
+            )));
+        }
         files.push((name, bytes));
     }
     files.sort();

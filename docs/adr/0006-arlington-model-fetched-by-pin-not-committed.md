@@ -17,10 +17,13 @@ without going through admission.
    Committed tests use invented fixtures written in Arlington's grammar.
 2. **Pin by git ids.** `tools/arlington/src/fetch.rs` names the commit and the git tree id
    of `tsv/latest`. A bare cache repository in `target/arlington/` gets the commit once
-   (`git fetch --depth 1`). Every run checks both ids and reads the files only from git
-   objects reached through them. Git hashes every object it receives, so a tampered cache
-   or mirror can't change the bytes without changing the ids. The data is parsed, never
-   executed, so git's SHA-1 (with collision detection) is enough here.
+   (`git fetch --depth 1`, kept by `refs/jpdf/pinned`). Every run executes
+   `git fsck --full --strict` (git does not re-hash objects on read, so a swapped object file
+   would otherwise go unnoticed), checks both ids, checks blob sizes before reading, and reads
+   only through the pinned ids. Git runs with replace objects off, `--git-dir` (no
+   discovery), and without inherited `GIT_*` variables or system/global config. The data is
+   parsed, never executed, so git's SHA-1 (with collision detection) is enough here. The
+   cache is a local build artifact; rewriting it between `fsck` and the read is out of scope.
 3. **Generated tables live in `target/arlington/tables.rs`**, one self-contained file that
    carries the Arlington copyright and Apache-2.0 notice. `cargo xtask arlington` writes it
    and type-checks it. `cargo xtask ci linux` runs the same on every PR, so the pin keeps

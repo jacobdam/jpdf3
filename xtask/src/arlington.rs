@@ -26,7 +26,8 @@ pub fn run(root: &Path) -> Result<String, String> {
     std::fs::write(&out, generate::render(&model, &source.describe()))
         .map_err(|e| format!("{}: {e}", out.display()))?;
     // Type-check only (`--emit=metadata`): the tables are data, so this is fast.
-    let status = Command::new("rustc")
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let status = Command::new(rustc)
         .args([
             "--edition",
             "2024",

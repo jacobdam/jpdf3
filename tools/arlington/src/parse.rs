@@ -26,6 +26,8 @@ pub const HEADER: [&str; 12] = [
 
 pub const MAX_FILES: usize = 4096;
 pub const MAX_FILE_BYTES: usize = 1 << 20;
+/// All files together (the pinned `tsv/latest` is about 2.4 MB).
+pub const MAX_TOTAL_BYTES: usize = 64 << 20;
 pub const MAX_ROWS: usize = 4096;
 pub const MAX_FIELD_BYTES: usize = 16 << 10;
 /// Maximum bracket/parenthesis nesting inside one field.
@@ -39,6 +41,14 @@ pub fn parse_files(files: &[(String, Vec<u8>)]) -> Result<Model, Error> {
         return Err(Error::Limit(format!(
             "{} files (max {MAX_FILES})",
             files.len()
+        )));
+    }
+    let total = files
+        .iter()
+        .fold(0usize, |t, (_, b)| t.saturating_add(b.len()));
+    if total > MAX_TOTAL_BYTES {
+        return Err(Error::Limit(format!(
+            "{total} bytes in all files (max {MAX_TOTAL_BYTES})"
         )));
     }
     let mut model = Model::default();

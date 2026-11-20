@@ -255,17 +255,17 @@ fn fixture_repo(name: &str) -> (PathBuf, String, String) {
 #[test]
 fn pinned_loading_checks_commit_and_tree() {
     let (dir, commit, tree) = fixture_repo("pin-repo");
-    let files = fetch::load_verified(&dir, &commit, &tree).unwrap();
+    let files = fetch::load_verified(&dir.join(".git"), &commit, &tree).unwrap();
     assert_eq!(files, jpdf_arlington::read_dir(&fixtures()).unwrap());
     let model = parse::parse_files(&files).unwrap();
     assert_eq!(model, good());
 
-    let e = fetch::load_verified(&dir, &commit, &commit).unwrap_err();
+    let e = fetch::load_verified(&dir.join(".git"), &commit, &commit).unwrap_err();
     assert!(e.to_string().contains("tree is"), "{e}");
     let other = "0000000000000000000000000000000000000000";
-    assert!(fetch::load_verified(&dir, other, &tree).is_err());
+    assert!(fetch::load_verified(&dir.join(".git"), other, &tree).is_err());
     // A symbolic name that resolves to the commit is not the pin.
-    let e = fetch::load_verified(&dir, "HEAD", &tree).unwrap_err();
+    let e = fetch::load_verified(&dir.join(".git"), "HEAD", &tree).unwrap_err();
     assert!(e.to_string().contains("pinned HEAD"), "{e}");
 }
 
@@ -277,8 +277,72 @@ fn pinned_loading_rejects_non_tsv_entries() {
     git(&dir, &["commit", "-q", "--no-gpg-sign", "-m", "extra"]);
     let commit = git(&dir, &["rev-parse", "HEAD"]);
     let tree = git(&dir, &["rev-parse", "HEAD:tsv/latest"]);
-    let e = fetch::load_verified(&dir, &commit, &tree).unwrap_err();
+    let e = fetch::load_verified(&dir.join(".git"), &commit, &tree).unwrap_err();
     assert!(e.to_string().contains("notes.md is not a .tsv file"), "{e}");
+}
+
+/// The id of `path` in HEAD, and the path of its loose object file.
+#[cfg(test)]
+fn loose(dir: &Path, path: &str) -> (String, PathBuf) {
+    let id = git(dir, &["rev-parse", &format!("HEAD:{path}")]);
+    let file = dir.join(".git/objects").join(&id[..2]).join(&id[2..]);
+    assert!(file.is_file(), "{file:?}");
+    (id, file)
+}
+
+#[test]
+fn pinned_loading_ignores_replace_refs() {
+    let (dir, commit, tree) = fixture_repo("pin-replace");
+    let (leaf, _) = loose(&dir, "tsv/latest/Leaf.tsv");
+    let (readme, _) = loose(&dir, "README.md");
+    // `git replace` written by hand: Leaf.tsv's blob would read as README.md.
+    let refs = dir.join(".git/refs/replace");
+    std::fs::create_dir_all(&refs).unwrap();
+    std::fs::write(refs.join(&leaf), format!("{readme}\n")).unwrap();
+    let files = fetch::load_verified(&dir.join(".git"), &commit, &tree).unwrap();
+    assert_eq!(files, jpdf_arlington::read_dir(&fixtures()).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn pinned_loading_detects_a_swapped_object_file() {
+    let (dir, commit, tree) = fixture_repo("pin-swap");
+    let (_, leaf) = loose(&dir, "tsv/latest/Leaf.tsv");
+    let (_, readme) = loose(&dir, "README.md");
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&leaf, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::copy(&readme, &leaf).unwrap();
+    let e = fetch::load_verified(&dir.join(".git"), &commit, &tree).unwrap_err();
+    assert!(e.to_string().contains("git fsck"), "{e}");
+}
+
+#[test]
+fn pinned_loading_checks_blob_sizes_before_reading() {
+    let (dir, _, _) = fixture_repo("pin-big");
+    let big = format!("{}\n", "x".repeat(parse::MAX_FILE_BYTES));
+    std::fs::write(dir.join(fetch::TSV_DIR).join("Big.tsv"), big).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "--no-gpg-sign", "-m", "big"]);
+    let commit = git(&dir, &["rev-parse", "HEAD"]);
+    let tree = git(&dir, &["rev-parse", "HEAD:tsv/latest"]);
+    match fetch::load_verified(&dir.join(".git"), &commit, &tree) {
+        Err(Error::Limit(m)) => assert!(m.starts_with("Big.tsv is 1048577 bytes"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A broken cache inside another repository is refused; git never walks up to the parent.
+#[test]
+fn a_broken_cache_is_refused_not_discovered_upwards() {
+    let parent = scratch("pin-parent");
+    git(&parent, &["init", "-q"]);
+    let cache = parent.join("target/arlington");
+    let repo = fetch::repo_path(&cache);
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("HEAD"), "").unwrap();
+    let e = fetch::load_pinned(&cache).unwrap_err();
+    assert!(e.to_string().contains("not a usable cache"), "{e}");
+    assert!(!parent.join(".git/shallow").exists());
 }
 
 #[test]
