@@ -31,6 +31,11 @@ instead of adding near-duplicates.
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27).
 
+- Writing journeys (append-only gates) → give every step one checkable result and a test
+  mechanism Playwright/XCUITest can drive; never use browser-reserved keys (Ctrl+Tab/W/N/T/R,
+  F11, Alt+Left); keep timing/fps targets in the bench, not E2E; web file handles go behind a
+  test adapter ([journal](journal/2026-11-20.md), PR #30).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects
@@ -47,6 +52,9 @@ instead of adding near-duplicates.
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).
+- Finishing a PR → post the `ai-review` status (it is a required check) before enabling
+  auto-merge and writing the journal; a session that ends early otherwise leaves the PR blocked
+  ([journal](journal/2026-11-20.md), PR #30).
 - Re-review after a push: `gh pr diff` can return the previous diff for a while → give the
   reviewer `git diff origin/main...HEAD` instead ([journal](journal/2026-11-20.md)).
 - The guard blocks force pushes → once a branch is pushed, bring in main with `git merge
