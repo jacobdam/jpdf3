@@ -85,6 +85,11 @@ instead of adding near-duplicates.
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
   ([journal](journal/2026-11-21.md), PR #58).
 
+- Timing tests with shell-script fake engines → on macOS the first exec of a freshly written
+  script can take ~2 s; give timed assertions a warmup run and generous upper bounds, and
+  test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
+  the session's shell) ([journal](journal/2026-11-21.md), PR #59).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects

@@ -11,6 +11,13 @@ name = "jpdf-backends"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-bench"
+version = "0.0.0"
+dependencies = [
+ "jpdf-testgen",
+]
+
+[[package]]
 name = "jpdf-cli"
 version = "0.0.0"
 dependencies = [

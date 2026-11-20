@@ -1,6 +1,7 @@
 //! Project task runner (NOT protected; the agent extends it). Contract: ops/judge/CONTRACT.md §2.
 #![forbid(unsafe_code)]
 
+mod bench;
 mod fuzz;
 mod json;
 mod macos;
@@ -11,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | check-specs [--root DIR] \
-     | fuzz [--short] [--seconds N] [--target NAME]";
+     | fuzz [--short] [--seconds N] [--target NAME] \
+     | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -85,6 +87,23 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("xtask: fuzz: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/bench.md. `cargo xtask nightly` (#19) will call this.
+        (Some("bench"), _) => {
+            let opts = match bench::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: bench: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match bench::run(Path::new("."), &opts) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("xtask: bench: {e}");
                     ExitCode::from(1)
                 }
             }
