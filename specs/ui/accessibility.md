@@ -25,8 +25,10 @@ Every feature spec fills its `## Accessibility` section against this file.
   (`banner`, `navigation` for the sidebar, `main` for the document view, `complementary` for
   the inspector, `contentinfo` for the status bar).
 - **Inside the document view**, Tab moves through the annotations, links and form fields of
-  the current page in the engine's order (the structure tree order for tagged files, else the
-  page's annotation order); after the last one, Tab leaves the document view for the next
+  the current page in the engine's order: the page's `/Tabs` entry when present (`/R` row,
+  `/C` column, `/S` structure, `/A` annotation array, `/W` widget order; ISO 32000-2 Table 31),
+  otherwise the structure tree order for tagged files, else the page's annotation order
+  (J-FM-04, J-FM-09); after the last one, Tab leaves the document view for the next
   region. To reach another page's objects, change page (Page Down, the page field) and Tab
   again (J-ANN-04). This keeps Tab from walking a 2,000-page file.
 - **Focus is always visible** (WCAG 2.2 SC 2.4.7, 1.4.11): web uses a two-tone focus ring (a

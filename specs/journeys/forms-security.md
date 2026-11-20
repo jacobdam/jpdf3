@@ -61,10 +61,19 @@ verify, history is honest, permissions.
      with its box within 0.5 pt of where it was; the renders outside the areas (each area grown
      by 2 pt) match the renders before redaction within the render-ratchet tolerance.
   4. Write and verify holds (one revision; `qpdf --check` clean).
-- **Passwords.** Passwords are entered twice (password and confirm), are prepared with SASLprep
-  and limited to 127 UTF-8 bytes after preparation (ISO 32000-2 §7.6.4.3.3); the engine rejects
-  a longer password with a typed error instead of truncating it, and rejects text that SASLprep
-  prohibits (control characters, unassigned code points, bidi violations). Passwords are never
+  5. Residue: page thumbnails (`/Thumb`) of redacted pages are removed; fonts used by removed
+     text are re-subset so that glyphs and `/ToUnicode` entries no remaining text uses are gone;
+     images re-encoded by the engine drop JPEG metadata segments (EXIF, XMP, embedded
+     thumbnails) and `/Alternates`; crash-recovery copies of the document (#42) that hold
+     pre-redaction content are deleted when the redacted file is saved. Known residual risk,
+     stated in the redaction help text: the width of the gap left by removed text is kept so
+     that the remaining text does not move.
+- **Passwords.** New passwords are entered twice (password and confirm), are prepared with
+  SASLprep and limited to 127 UTF-8 bytes after preparation (ISO 32000-2 §7.6.4.3.3); when a
+  password is set, the engine rejects a longer one with a typed error instead of truncating it,
+  and rejects text that SASLprep prohibits (control characters, unassigned code points, bidi
+  violations). When a file is opened or unlocked, a longer password is truncated to 127 bytes as
+  the standard's algorithm does, so files made by other tools still open. Passwords are never
   stored, logged, put in recent files or kept after the document closes; each journey that types
   a password ends with the J-RD-04 storage search for it. Key material and file keys come from
   the platform's secure random source through the engine's random trait.
@@ -74,8 +83,9 @@ verify, history is honest, permissions.
   revisions 2–5 are read (J-RD-30) but never created. A file that already uses an older handler
   keeps it as it is through incremental saves (the update is encrypted with the file's own
   key); a full rewrite of such a file upgrades it to AES-256 R6 with the same passwords and
-  permissions when the permissions password is known (entered, or no permissions password is
-  set and the open password was entered), with a notice that the encryption was upgraded;
+  permissions when the permissions password is known (entered, or the file restricts nothing,
+  i.e. every permission bit is set, and the open password was entered; the same condition
+  enables Change security and Remove security, J-SC-03, J-SC-04), with a notice that the encryption was upgraded;
   otherwise the full rewrite keeps the original encryption dictionary, file key and first `/ID`
   element, and a notice suggests Change security (J-SC-03) to upgrade. `/P` is written with bits 1–2 clear, bits 7–8 and 13–32 set, and
   bit 10 set (Table 22: accessibility extraction is always allowed); `/Perms` is present and
@@ -146,7 +156,7 @@ call setting `size` to `/XL` (no such on state) returns a typed error and change
 Steps: open a fixture with a dropdown `country` (`/Ff` bit 18, `/Opt` of 200 `[export display]`
 pairs, `/Ff` bit 20 Sort set), an editable dropdown `title` (bits 18 and 19), a single-select
 list box `plan` with five plain options, and a multi-select list box `toppings` (bit 22) with
-eight options → open `country` → the engine's option list shows 200 display names in file order (the Sort flag only tells authoring tools to keep `/Opt`
+eight options and `/TI 1` → open `country` → the engine's option list shows 200 display names in file order (the Sort flag only tells authoring tools to keep `/Opt`
 sorted)
 → type `Vi` → the list jumps to the first display name starting with "Vi" → choose
 `Viet Nam` (export value `VN`) → open `title` and type `Dr. med.` (not in the list) → choose
@@ -155,7 +165,7 @@ primary modifier of shortcuts.md rule 2 + click), then 7 with Shift+click (2, 5,
 the fields read: `country` `/V (VN)`; `title` `/V (Dr. med.)`; `plan` its third option;
 `toppings` `/V` an array of the four export values with `/I [1 4 5 6]` (sorted zero-based
 indices, ISO 32000-2 §12.7.5.4) → the appearance check holds; the `toppings` appearance shows the
-four selected rows highlighted and the scroll position starting at `/TI`.
+four selected rows highlighted and its first visible row is option 2 (`/TI 1`, zero-based).
 Error branch: the binding call setting `plan` to a value not in its options returns a typed
 error (non-editable choice); setting two values on `plan` (single select) returns a typed
 error; a list whose `/Opt` has more items than `Limits` choice options, or whose items are
@@ -176,8 +186,10 @@ widget shows the highlight tint and the required one also an outline in the requ
 our page render, the print output (J-RD-21) and the saved file are unchanged by the highlight
 (an app overlay from engine rectangles) → click the first field → Tab moves focus through
 page 1 in row order (left to right, then the next row), skipping the read-only field → Tab
-from the last page 1 field goes to page 2, which scrolls into view, in structure order →
-Shift+Tab goes back → with focus on a field, Esc removes focus from it (J-FM-01) → Tab with no field
+after the last page 1 field leaves the document view for the next region
+(specs/ui/accessibility.md) → go to page 2 (Page Down) and press Tab until the document view
+has focus again → focus visits page 2's three fields in structure order → Shift+Tab goes back
+one field → with focus on a field, Esc removes focus from it (J-FM-01) → Tab with no field
 focused focuses the first field of the current page → turn the highlight off → the overlay is
 gone.
 VoiceOver/accessibility check: each focused field exposes its tooltip (`/TU`) as its label, or
@@ -206,11 +218,11 @@ type `7` → accepted → type `abc` into `custom` → it shows `abc` (the scrip
 one-time scripts notice counts 1 field → save and verify (incremental; field values check:
 `amount` `/V (1234.5)`, `rate` `(0.125)`, `due` `(2026-02-28)`, `start` `(14:05)`, `qty` `(7)`,
 `custom` `(abc)`; the appearance check holds and the `amount` appearance draws `€1,234.50`).
-Grammar check: script variants that wrap a recognized call in anything else (`AFNumber_Format(2,
-0, 0, 0, "€", true); app.alert(1)`, a trailing comment, a call through a variable, an argument
-that is an expression) are not recognized, so the field shows raw values and counts in the
-notice; arguments out of the standard range (decimals 99, unknown separator style 9) are not
-recognized either.
+Grammar check: open a second fixture with six fields, each with one format script variant:
+`AFNumber_Format(2, 0, 0, 0, "€", true); app.alert(1)`, the recognized call followed by a
+comment, a call through a variable, an argument that is an expression (`1+1`), decimals 99 and
+separator style 9 → type `1234.5` into each → each shows `1234.5` (no format applied) and the
+scripts notice counts 6 fields.
 
 ## J-FM-06: Calculated fields with the built-in functions
 - milestone: M7
@@ -218,8 +230,8 @@ recognized either.
 - test: e2e.web.fm_calculate, e2e.macos.fm_calculate
 
 Steps: open a fixture with number fields `a`, `b`, `c` (each `AFNumber_Format(2, 0, 0, 0, "",
-false)`), and calculated read-only fields `sum` = `AFSimple_Calculate("SUM", new Array("a",
-"b", "c"))`, `avg` (`"AVG"`, same fields), `min`, `max`, `prd` (`"PRD"`) and `total` =
+false)`), and calculated read-only fields (each also with `AFNumber_Format(2, 0, 0, 0, "", false)`)
+`sum` = `AFSimple_Calculate("SUM", new Array("a", "b", "c"))`, `avg` (`"AVG"`, same fields), `min`, `max`, `prd` (`"PRD"`) and `total` =
 `AFSimple_Calculate("SUM", "sum, prd")` (the comma-separated string form), with `/AcroForm /CO`
 listing `sum, avg, min, max, prd, total` → type `0.1` into `a`, `0.2` into `b` and leave `c`
 empty → after each committed value the calculated fields update: `sum` shows `0.30` (decimal
@@ -233,8 +245,12 @@ verify (incremental; field values check: `sum` `/V (3.3)`, `avg` `(1.1)`, `min` 
 Error branch: a fixture where `x` sums `y` and `y` sums `x` (a cycle through `/CO`) → the
 engine computes each field at most once per change in `/CO` order and shows a notice that the
 form has a circular calculation; a calculation naming a field that does not exist treats it as
-0 and lists it in the notice; values past ±10^15 or with more than 15 significant digits give a
-typed range error shown in the calculated field instead of a rounded number; a `/CO` holding
+0 and lists it in the notice; results are rounded half-even to 15 significant digits before
+formatting (`avg` of 0.7, 0 and 0 stores `0.233333333333333`); a result past ±10^15 shows a
+typed range error in the calculated field instead of a number; typed values `1e400`, `NaN`,
+`Infinity` and a value with more than 15 significant digits are rejected by the keystroke rule,
+and `-0` is accepted and shown as `0.00`; `AVG` over an empty field list (`new Array()`) gives
+`0` (no division by zero); a `/CO` holding
 more entries than `Limits` form fields, a non-field object or the same field twice opens with
 calculation off and a notice.
 
@@ -246,13 +262,17 @@ calculation off and a notice.
 Steps: open a fixture with filled fields `first`, `last`, `email` (each with `/DV` defaults)
 and push buttons: `reset_all` (ResetForm action, no `/Fields`), `reset_last` (ResetForm with
 `/Fields [(last)]`), `send` (SubmitForm to `https://example.com/submit`), `load` (ImportData
-action) and `script` (a JavaScript action that sets `first` to `x` and shows an alert) → click
+action), `run` (a Launch action), `web` (a URI action to `https://example.com/help`) and
+`script` (a JavaScript action that sets `first` to `x` and shows an alert) → click
 `reset_last` → only `last` returns to its default → click `reset_all` → every field returns to
 its `/DV` (or empty without one) → undo → the values from before the reset are back → click
 `send` → nothing is sent (the web network policy holds and macOS makes no network request);
 a notice says that the form tried to send its data to `example.com` (the engine's normalized
 host) and that jpdf never sends forms → click `load` → nothing is read; a notice says
-importing form data from the file is not supported → click `script` → `first` is unchanged and
+importing form data from the file is not supported → click `run` → nothing is launched and a
+notice says launching programs is never allowed (CONSTITUTION 7) → click `web` → the external
+link confirmation of J-RD-18 appears with the engine's display string → Cancel → nothing opens →
+click `script` → `first` is unchanged and
 no alert appears; the scripts notice counts this button → save and verify (incremental; the
 fields read: `first` and `email` as filled, `last` its `/DV` (the state after `reset_last`,
 restored by the undo); the buttons' actions are kept byte-identical).
@@ -269,26 +289,37 @@ typed error.
 Steps: open a 2-page fixture without an `/AcroForm` → switch to Forms mode → choose Text field
 and drag a rectangle on page 1 → the field is created with the name `Text1`, selected, and its
 properties in the inspector → set Name `customer.name`, Tooltip `Full name`, Required on,
-Font size 12, Alignment center, Default value `Jane`, Maximum length 40 → choose Check box and
-click once on page 1 → a default-size check box `Check1` is created → set its export value
-`yes` → choose Radio button and place three widgets, naming them all `plan` with export values
-`basic`, `pro` and `team` (the inspector explains that buttons sharing a name form one group in
-which only one can be on) → choose Dropdown, place it, add items `Red`, `Green` and `Blue` with
-export values `r`, `g` and `b`, and turn on Allow custom text → choose List box and place it
-with items `one` to `four` and Multiple selection on → choose Button, label it `Clear`, set its
-action to Reset form → choose Signature field and place it on page 2 → set visibility of
-`Check1` to "Visible but not printed" → switch to Read mode → fill each field once → save and
-verify (incremental) → the catalog has an `/AcroForm` with `/Fields` holding exactly
-`customer` (with kid `name`), `Check1`, `plan`, `Dropdown1`, `List1`, `Button1` and
-`Signature1`, `/DR` with Helvetica, and no `/NeedAppearances` → each field has the type and
-flags it was given (`/FT /Tx` with bit 2 and `/MaxLen 40`; `/FT /Btn` check box with on state
-`/yes`; radio group `plan` with `/Ff` bits 15 and 16 and on states `/basic`, `/pro`, `/team`;
-`/FT /Ch` with bits 18 and 19 and `/Opt [[(r) (Red)] [(g) (Green)] [(b) (Blue)]]`; list with
-bit 22; push button with bit 17, `/MK /CA (Clear)` and a ResetForm action; `/FT /Sig` with no
-`/V`) → every widget has `/P` to its page, appears in that page's `/Annots`, has `/F` Print
-except `Check1` (no Print flag), and the appearance check holds → `qpdf --json` lists the seven
-fields → reopen and press Tab from the top of page 1 → focus visits the fields in the order
-they were created.
+Font size 12, Alignment center, Default value `Jane`, Maximum length 40 → add a second text
+field named `customer.id` with Comb on, Maximum length 6, Read only on, border color RGB 1 0 0,
+fill color RGB 0.9 0.9 0.9 and visibility "Hidden but printed" (the visibility menu offers
+Visible, Hidden, Visible but not printed and Hidden but printed) → add a third text field named
+`customer.notes` with Multiline on → choose Check box and click once on page 1 → a
+default-size check box `Check1` is created → set its export value `yes` and its visibility to
+"Visible but not printed" → choose Radio button, place one widget and name it `plan` with
+export value `basic` → with that radio selected, place two more → they join the `plan` group (a
+radio placed while a radio is selected joins its group; the inspector explains that buttons
+sharing a name form one group in which only one can be on) → set their export values `pro` and
+`team` → choose Dropdown, place it, add items `Red`, `Green` and `Blue` with export values `r`,
+`g` and `b`, and turn on Allow custom text → choose List box and place it with items `one` to
+`four` and Multiple selection on → choose Button, label it `Clear`, set its action to Reset form
+→ choose Signature field and place it on page 2 → switch to Read mode → fill every field except
+`customer.id` (read-only) and `Signature1` (signing is #42) → save and verify (incremental) →
+the catalog has an `/AcroForm` with `/Fields` holding exactly `customer` (with kids `name`,
+`id` and `notes`), `Check1`, `plan`, `Dropdown1`, `List1`, `Button1` and `Signature1`, `/DR`
+with Helvetica, and no `/NeedAppearances` → each field has the type, flags and entries it was
+given: `customer.name` `/FT /Tx`, `/Ff` bit 2, `/MaxLen 40`, `/TU (Full name)`, `/Q 1`,
+`/DV (Jane)` and `12 Tf` in `/DA`; `customer.id` `/Ff` bits 1 and 25, `/MaxLen 6`, `/MK` with
+`/BC [1 0 0]` and `/BG [0.9 0.9 0.9]`, `/F` Hidden and Print; `customer.notes` `/Ff` bit 13;
+`Check1` `/FT /Btn` with on state `/yes` and `/F` without Print; radio group `plan` with `/Ff`
+bits 15 and 16 and on states `/basic`, `/pro`, `/team`; `Dropdown1` `/FT /Ch` with bits 18 and
+19 and `/Opt [[(r) (Red)] [(g) (Green)] [(b) (Blue)]]`; `List1` bit 22; `Button1` bit 17,
+`/MK /CA (Clear)` and a ResetForm action; `Signature1` `/FT /Sig` with no `/V` → every widget
+has `/P` to its page and appears in that page's `/Annots`; every widget not named above for
+`/F` has `/F` Print; the pages get no `/Tabs` entry (annotation order, which is creation order);
+the appearance check holds → the unique full names in `qpdf --json`'s `acroform` fields (one
+entry per widget) are exactly the nine terminal fields → reopen and press Tab from the top of
+page 1 → focus visits the page 1 fields in the order they were created, skipping `customer.id`
+(read-only and hidden).
 Error branch: names that are empty, start or end with `.`, contain `..`, or exceed `Limits`
 string length are rejected with a typed error and the name in the inspector reverts; a name
 already used by a field of another type is rejected; a name that equals a non-terminal
@@ -311,8 +342,8 @@ Distribute vertically → equal gaps between them → rename `Dropdown1` to `col
 → choose "Manual" and move `List1` first on page 1 → the page gets `/Tabs /W` (ISO 32000-2
 Table 31, widget order) and its widgets are reordered in `/Annots` → delete `Signature1` and
 `customer.name_2` → undo the last delete → `customer.name_2` is back → save and verify
-(incremental) → `/Fields` no longer holds `Signature1`; `customer` has kids `name` and
-`name_2`; `Button1` has two widgets in `/Kids`, one per page; `color` replaced `Dropdown1`;
+(incremental) → `/Fields` no longer holds `Signature1`; `customer` has kids `name`, `id`,
+`notes` and `name_2`; `Button1` has two widgets in `/Kids`, one per page; `color` replaced `Dropdown1`;
 page 1's tab order matches the manual order in the saved file; the appearance check holds for
 every moved, resized or renamed widget → switch to Read mode → Tab visits `List1` first.
 Error branch: renaming to a name another field already uses asks whether to merge the two into
@@ -381,7 +412,17 @@ back to an ancestor (cycle); a field tree deeper than `Limits` form depth; more 
 /Im1 Do`) or a font size of `1e30` (the engine draws only with the allowed operators and clamps
 the size to `Limits` font size); a widget listed by two different fields; a field with `/V` of
 the wrong type (a dictionary for a text field); a widget not listed in any page's `/Annots`
-(shown nowhere and left untouched) → after each, the app opens a valid fixture normally.
+(shown nowhere and left untouched); a comb field with `/MaxLen 0` and one with `/MaxLen -3`; a
+widget with a zero-width `/Rect` and auto font size; `/Q 7`; `/MK /R 45` (not a multiple of
+90); a list with `/I [-1 99]` and `/TI 500` past the end of its options; a border width larger
+than the widget; `/Ff` given as a real number and as a negative number → after each, the app
+opens a valid fixture normally → open a fixture with `/NeedAppearances true` whose widgets have
+no `/AP` → the fields show their values with engine-generated appearances → fill one field →
+save and verify (incremental; every widget now has an `/AP /N` and `/NeedAppearances` is
+removed) → open a fixture with a rich-text field (`/Ff` bit 26 with `/RV`) and a file-select
+field (bit 21) → the rich-text field shows its plain `/V` text and, when edited, the save writes
+the new `/V` and removes `/RV` (a notice says formatting was dropped); the file-select field is
+shown read-only with a reason, and no file picker opens.
 
 ## J-SC-01: Protect a document with an open password
 - milestone: M6
@@ -394,8 +435,9 @@ password and a different text in Confirm → the dialog says the passwords don't
 Encrypt button stays disabled → enter `open-pw` in both → leave the permissions password empty (no
 restrictions) → the dialog says the file will be rewritten with AES-256 encryption and earlier
 versions removed → Encrypt → the document is marked as edited (information-architecture.md §7)
-→ save (the save is a full rewrite of the same file, with the J-OS-06 safety) → write and verify, given the password (the first `/ID` element is kept): one revision; `qpdf --show-encryption
---password=open-pw` reports R6, V5, AESV3, 256-bit, all permissions allowed; `/EncryptMetadata`
+→ save (the save is a full rewrite of the same file, with the J-OS-06 safety) → write and verify, given the password (the first `/ID` element is kept): one revision; `qpdf --json --json-key=encrypt
+--password=open-pw` reports V 5, R 6, the AESv3 method for strings, streams and files, a 256-bit
+key and every permission allowed; `/EncryptMetadata`
 true; `/Perms` matches `/P` → opening the output in MuPDF and Poppler without a password fails
 → with the password, the page order check holds and the renders match ours → no page sentinel,
 outline title, annotation text, Info title or XMP text appears in the output bytes in clear
@@ -417,10 +459,11 @@ defaults to Cancel.
 Steps: open an unencrypted fixture with a form field and text → Secure mode → Encrypt → leave
 the open password empty → enter the permissions password `owner-pw` twice → set the permission
 choices: Printing "Low resolution", Changing the document off, Copying text and images off,
-Commenting off, Filling form fields on, Assembling pages off (each choice maps to ISO 32000-2
-Table 22 bits as written in the shared rules: print bit 3 on and bit 12 off, bits 4, 5, 6 and 11
-off, bit 9 on, bit 10 on) → save → write and verify (one revision) → `qpdf --show-encryption`
-(no password) reports the same permissions and R6 → reopen in our app → it opens without a
+Commenting off, Filling form fields on, Assembling pages off (the choices map to ISO 32000-2
+Table 22: print bit 3 on and bit 12 off, bits 4, 5, 6 and 11 off, bit 9 on, bit 10 on) → because
+the open password is empty, the dialog notes that the restrictions are honored only by software
+that follows the standard → save → write and verify (one revision) → `qpdf --json --json-key=encrypt`
+(no password) reports R 6 and the same permissions → reopen in our app → it opens without a
 prompt → Document Properties' security summary lists each restriction (J-RD-22) → Copy,
 annotation tools, Edit tools and page operations are disabled with the reason (J-RD-29,
 J-ANN-23, J-PG-15), filling the form field works (J-FM-11), and Print offers only low
@@ -430,7 +473,13 @@ no `owner-pw`.
 Error branch: any restriction with an empty permissions password is rejected (the dialog
 explains that restrictions need a permissions password; the binding returns a typed error);
 an open password equal to the permissions password is rejected; a permissions password with no
-restriction chosen is allowed and recorded with all permission bits set.
+restriction chosen is allowed and recorded with all permission bits set → open a copy of the
+output whose `/P` was edited to allow everything while `/Perms` still holds the original
+permissions → the engine applies the more restrictive of the two (the original restrictions)
+and Document Properties warns that the permission entries disagree → hostile encryption
+dictionaries each give a typed error at open, never a crash: `/U`, `/O`, `/UE` or `/Perms` of
+the wrong length; `/R 99`; `/V 5` with no `/StdCF` and with `/CFM /None`; `/Length 7` → a `/P`
+written unsigned (`4294967292`) is read leniently as `-4`.
 
 ## J-SC-03: Change passwords and permissions
 - milestone: M6
@@ -444,7 +493,7 @@ error → unlock with `o1` → Change security → the dialog shows the current 
 (RC4 128-bit, R3, printing not allowed) and states that the file will be saved with AES-256 →
 change the open password to `u2`, keep `o1`, allow printing → save → write and verify (one
 revision, R6 AESV3) → reopen: `u1` is rejected with "incorrect password", `u2` opens it, Print
-is enabled without unlocking → `qpdf --show-encryption --password=u2` reports printing allowed →
+is enabled without unlocking → `qpdf --json --json-key=encrypt --password=u2` reports printing allowed →
 open an R6 fixture with an open password `p` and no restrictions (its permissions password
 unknown, all permission bits set) → Change security is enabled with only `p` (nothing is
 restricted) → set a permissions password and forbid copying → save → reopen with `p` → Copy is
@@ -461,7 +510,7 @@ security is disabled with the reason; the binding call returns a typed permissio
 unlock with `o` → Remove security → the confirmation says that anyone will be able to open,
 copy, print and change the file, and that it will be rewritten without earlier versions
 (Cancel is the default) → confirm → save → write and verify (one revision; the trailer has no
-`/Encrypt`; `qpdf --show-encryption` reports the file is not encrypted; every stream and string
+`/Encrypt`; `qpdf --json --json-key=encrypt` reports the file is not encrypted; every stream and string
 reads in clear text, including the thumbnail and XMP, and the page sentinels are found by
 `pdftotext` without a password) → reopen → no prompt, every command enabled; Document Properties
 shows "No security" → open an R6 fixture with open password `u` and no restrictions → Remove
@@ -480,8 +529,8 @@ certificates from files (a DER `.cer` and a PEM `.pem`, both RSA-2048, fixtures 
 OpenSSL) → for the second recipient turn off printing → save → write and verify:
 the trailer's `/Encrypt` uses `/Filter /Adobe.PubSec`, `/SubFilter /adbe.pkcs7.s5`, a crypt
 filter `/AESV3` with one `/Recipients` CMS EnvelopedData per permission set (ISO 32000-2
-§7.6.5) → pyHanko (an external program) decrypts the output with each recipient's key, and its
-text extraction of each page contains that page's sentinel → reopen in our app → the open
+§7.6.5) → pyHanko (an external program) decrypts the output with each recipient's key into a new
+file, and `pdftotext` on each decrypted file finds every page's sentinel → reopen in our app → the open
 prompt offers "Open with a digital ID" → choose the first recipient's PKCS#12 file (made with
 AES-256-CBC key and certificate encryption and an SHA-256 MAC) and its password → the document opens with all permissions → close →
 reopen with the second recipient's PKCS#12 → it opens with printing disabled → reopen with a
@@ -503,11 +552,11 @@ split across a line break on page 2, an image on page 3 and other text → Secur
 redaction → drag across `red-secret-1` → the selected glyphs get a mark (outline in the mark
 color) → drag a rectangle over part of the page 3 image → an area mark → Find and mark → search
 `red-secret` → the results list shows 2 matches (including the one across a line break) →
-"Mark all results" → 2 more marks, one with two quads → the inspector of a selected mark sets
-its fill color to dark blue and overlay text `[removed]` → the status says "4 marks; content is
+"Mark all results" → 2 more marks, one with two quads → the inspector of the `red-secret-1` mark sets
+its fill color to RGB 0 0 0.5 and overlay text `[removed]` → the status says "4 marks; content is
 not removed until you apply redactions" → save and verify (incremental: 4 Redact annotations,
 ISO 32000-2 §12.5.6.23, with `/QuadPoints` for text marks and `/Rect` for the area mark,
-`/IC` fill color, `/OverlayText` on the one changed; the marked content is still in the page
+`/IC` fill color (`[0 0 0.5]` on the `red-secret-1` mark), `/OverlayText` only on that mark; the marked content is still in the page
 content and every sentinel is still extracted by `pdftotext`, because marks only mark) →
 reopen → the 4 marks are listed in the annotation list → delete one mark → undo → it is back.
 Hidden-information note: marks never claim removal; the apply step is J-SC-07.
@@ -519,23 +568,30 @@ Hidden-information note: marks never claim removal; the apply step is J-SC-07.
 
 Steps: open a 2-page fixture with three earlier revisions (the oldest holds `red-secret-0` on
 page 1 in a content stream later replaced), with marks already present (J-SC-06 output style)
-over: text `red-secret-1` between `keep-1` and `keep-2` on the same line; an image whose
-marked part holds marker-color pixels; a marker-color vector stroke crossing the mark; a
+over: text `red-secret-1` between `keep-1` and `keep-2` on the same line; a Flate-compressed
+image whose marked part holds marker-color pixels; a page `/Thumb` showing page 1; a marker-color vector stroke crossing the mark; a
 highlight annotation and a filled text field inside the area; and a Link annotation half inside
-it; also an outline item titled `red-secret-3` and an Info `/Title` holding `red-secret-4` →
+it; also, outside the marks: an outline item titled `red-secret-3`, an Info `/Title` holding
+`red-secret-4`, a sticky note whose `/Contents` holds `red-secret-5`, a text field whose value
+is `red-secret-6`, a named destination `red-secret-7` used by a link, and an embedded file named
+`red-secret-8.txt` →
 Apply redactions → the confirmation says that the marked content will be removed permanently
 when the file is saved, that the file will be rewritten without earlier versions, and that
-other places still contain the marked text: "Bookmarks: 1, Document information: 1" (found by
-the engine), each with a "Remove these too" check box (off by default) → turn both on → Apply
+other places still contain the marked text: "Bookmarks: 1, Document information: 1,
+Comments: 1, Form fields: 1, Named destinations: 1, Attached files: 1" (found by the engine),
+each with a "Remove these too" check box (off by default) → turn all on → Apply
 → the marks become the painted areas; the document is edited → Save (a normal save now writes a
 full rewrite; a notice says why) → the redaction check holds: `red-secret-0` … `red-secret-4`
-are gone from every place it searches; `keep-1` and `keep-2` stay at their positions; the image
-is re-encoded with the marked pixels replaced by the fill color and its other pixels unchanged;
+… `red-secret-8` are gone from every place it searches; `keep-1` and `keep-2` stay at their
+positions; the image is re-encoded losslessly with the marked pixels replaced by the fill color
+and its other pixels unchanged; the page has no `/Thumb`;
 the stroke is cut at the area's edges and still drawn outside; the highlight annotation and the
 text field widget inside the area are removed, and the field is removed from `/AcroForm /Fields`;
 the Link annotation that crossed the area is removed, with a notice; the outline item's title
 is replaced by `[redacted]` (the item and its destination are kept); `/Title` is removed from
-`/Info` and from the XMP → undo after saving is not offered for the redaction (the undo stack
+`/Info` and from the XMP; the note's `/Contents` is replaced by `[redacted]`; the field's value
+is cleared; the named destination is renamed `redacted-1` and the link uses the new name; the
+embedded file is removed → undo after saving is not offered for the redaction (the undo stack
 is cleared at the save; the in-memory copies of the removed content are dropped).
 Error branch: Apply with no marks is disabled (binding: typed error); a mark whose `/QuadPoints`
 count is not a multiple of 8, or holds `NaN` or a value beyond `Limits` page side, is reported
@@ -560,9 +616,13 @@ view inside the area (removed even though not visible); (8) an image used throug
 `/Pattern` fill and an image inside a soft mask group; (9) a marked-content sequence whose
 `/ActualText` and a structure element whose `/Alt` hold `red-secret-9` (both removed, the
 structure element kept with an empty `/Alt`); (10) text in an annotation appearance stream
-(the annotation is removed); (11) an image larger than `Limits` image pixels on page 11 → that
-mark is refused with a typed error naming the limit, the other marks still apply, and the
-confirmation lists the refused one before applying.
+(the annotation is removed); (11) an image larger than `Limits` image pixels on page 11, which
+the engine cannot decode to edit its pixels → the confirmation lists that mark as not
+redactable within the limit and offers "Remove the whole image" (the image's full area is
+painted) → declined, Apply is refused as a whole with a typed error naming the limit (as for
+invalid marks in J-SC-07) and every mark stays a mark → accepted, all marks apply; (12) a
+DCT (JPEG) image with EXIF data partly under a mark (pixels outside the area match the original
+within the render-ratchet tolerance, since JPEG re-encoding is lossy; the EXIF segment is gone).
 
 ## J-SC-09: Remove hidden information
 - milestone: M8
@@ -572,7 +632,9 @@ confirmation lists the refused one before applying.
 Steps: open a fixture with: Info entries (title, author, subject, keywords, creator, producer,
 dates) and an XMP stream on the catalog and on one image, page `/PieceInfo` and a document
 `/PieceInfo` from another tool, an embedded page thumbnail (`/Thumb`), a document-level
-JavaScript name tree and an `/OpenAction` JavaScript, two embedded files, a hidden optional
+JavaScript name tree and an `/OpenAction` JavaScript, Launch, SubmitForm and ImportData
+actions on link annotations, two embedded files, a FileAttachment annotation, a PDF 2.0
+associated file (`/AF`) on a page, a hidden optional
 content group with text, a filled form, comments, bookmarks, earlier revisions and unused
 objects, each carrying its own sentinel `hid-n` → Secure > Remove hidden information → the
 dialog lists each category with the count the engine found: Document information and metadata
@@ -582,11 +644,15 @@ line saying earlier versions and unused objects are always removed → turn on A
 and Hidden layers → Remove → save → write and verify (one revision) → the sentinels of the
 chosen categories appear nowhere in the output bytes (`qpdf --qdf` decompressed; ASCII,
 UTF-16BE and hex); the catalog has no `/Metadata`, `/Info` is absent, no object has
-`/PieceInfo` or `/Thumb`, `/Names` has no `/JavaScript` or `/EmbeddedFiles`, no object has a JavaScript action, the
+`/PieceInfo` or `/Thumb`, `/Names` has no `/JavaScript` or `/EmbeddedFiles`, no `/EmbeddedFile` stream, FileAttachment
+annotation or `/AF` entry remains, no object has a JavaScript, Launch, SubmitForm or ImportData
+action (the links keep their rectangles with no action), the
 script `/OpenAction` is gone, and the catalog, pages and widgets have no `/AA`, the hidden layer's content and its `/OCProperties` entry
 are removed → the sentinels of the categories left off (comments, form values, bookmark titles)
 are still present → both `/ID` elements are new (an exception to the write-and-verify `/ID`
-rule, because the first element can identify the source file) → the renders of every page match the
+rule, because the first element can identify the source file; for a file that keeps an older
+handler's file key under the encryption rules, the first element is kept, since that key
+depends on it) → the renders of every page match the
 renders before (hidden content was not drawn) → the dialog's counts on the saved file are all 0
 for the removed categories.
 Error branch: on a signed fixture the confirmation warns that signatures will no longer verify
@@ -604,8 +670,8 @@ information are disabled with the reason; each binding call returns a typed perm
 → unlock with `o` → apply → save → the redaction check holds with the passwords given to the
 external tools; the output stays encrypted with AES-256 R6 and the same passwords and
 permissions → Remove hidden information on the same file keeps the encryption too → open an
-RC4-40 (R2) fixture with open password `u2` and permissions password `o2`, opening it with `u2`
-only → mark and apply → save → the saved file keeps the R2 encryption dictionary and file key
+RC4-40 (R2) fixture with open password `u2`, permissions password `o2`, bit 4 set and bit 3
+(printing) clear, opening it with `u2` only → mark and apply → save → the saved file keeps the R2 encryption dictionary and file key
 (the permissions password is unknown) and a notice suggests Change security → unlock with `o2`,
 mark and apply again → save → the file is AES-256 R6 with the same passwords and permissions,
 and a notice says the encryption was upgraded (shared encryption rules).
