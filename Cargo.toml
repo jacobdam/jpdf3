@@ -20,6 +20,7 @@ members = [
     "crates/jpdf-backends",
     "tools/bench",
     "tools/jpdf-cli",
+    "tools/arlington",
     "tools/jpdf-testgen",
     "xtask",
 ]

@@ -1,0 +1,82 @@
+//! Arlington PDF Model ingestion (specs/tooling/arlington.md, issue #20, ADR 0006).
+//!
+//! Fetches a pinned commit of the PDF Association's Arlington model (machine-readable
+//! ISO 32000-2 object definitions), parses its TSV files into a typed [`Model`], checks it,
+//! and renders Rust tables for tests and fuzz seeds. Development tool only: nothing here
+//! ships, and the data is fetched, never committed.
+#![forbid(unsafe_code)]
+
+pub mod check;
+mod error;
+pub mod fetch;
+pub mod generate;
+pub mod model;
+pub mod parse;
+
+pub use error::Error;
+pub use model::Model;
+
+/// Where a model's files come from.
+#[derive(Debug, Clone)]
+pub enum Source {
+    /// The pinned commit, cached in this directory.
+    Pinned(std::path::PathBuf),
+    /// A local directory of `.tsv` files (tests, offline experiments).
+    Dir(std::path::PathBuf),
+}
+
+impl Source {
+    /// A one-line description for generated headers and logs.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Pinned(_) => format!("commit {} ({})", fetch::COMMIT, fetch::TSV_DIR),
+            Self::Dir(d) => format!("local directory {}", d.display()),
+        }
+    }
+}
+
+/// Loads, parses and checks the model.
+pub fn load(source: &Source) -> Result<Model, Error> {
+    let files = match source {
+        Source::Pinned(cache) => fetch::load_pinned(cache)?,
+        Source::Dir(dir) => read_dir(dir)?,
+    };
+    let model = parse::parse_files(&files)?;
+    check::check(&model)?;
+    Ok(model)
+}
+
+/// Reads every `*.tsv` file in `dir` (not recursive), sorted by name. Other files are
+/// ignored; files over the size limit are an error before they are read whole.
+pub fn read_dir(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    let io = |source| Error::Io {
+        path: dir.display().to_string(),
+        source,
+    };
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(io)? {
+        let entry = entry.map_err(io)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".tsv") || !entry.file_type().map_err(io)?.is_file() {
+            continue;
+        }
+        if files.len() >= parse::MAX_FILES {
+            return Err(Error::Limit(format!(
+                "more than {} files",
+                parse::MAX_FILES
+            )));
+        }
+        let path = entry.path();
+        let len = entry.metadata().map_err(io)?.len();
+        if len > parse::MAX_FILE_BYTES as u64 {
+            return Err(Error::Limit(format!("{name} is {len} bytes")));
+        }
+        let bytes = std::fs::read(&path).map_err(|source| Error::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        files.push((name, bytes));
+    }
+    files.sort();
+    Ok(files)
+}
