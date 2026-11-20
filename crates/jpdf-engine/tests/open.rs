@@ -246,9 +246,9 @@ fn objects_nested_in_strings_are_rejected_as_overlapping() {
 }
 
 /// Each trailer's /Prev points to a section hidden inside its own string, so every section
-/// rescans the rest of the file. The lexing budget must stop it before 1024 sections.
+/// would rescan the rest of the file. The second section starts inside the first one's span.
 #[test]
-fn overlapping_prev_sections_hit_the_lexing_budget() {
+fn overlapping_prev_sections_are_rejected() {
     let sections = 1000;
     let mut file = b"%PDF-1.7\n".to_vec();
     let start = file.len();
@@ -270,7 +270,10 @@ fn overlapping_prev_sections_hit_the_lexing_budget() {
     file.extend(format!("\nstartxref\n{start}\n%%EOF\n").as_bytes());
     assert_eq!(
         open(&file),
-        Err(EngineError::LimitExceeded("bytes lexed per document"))
+        Err(EngineError::Malformed {
+            what: "cross-reference sections overlap",
+            offset: Some(offsets[1]),
+        })
     );
 }
 

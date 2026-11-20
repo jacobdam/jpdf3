@@ -78,8 +78,9 @@ from the judge).
 - `max_xref_entries` 10 000 000 across all sections;
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
 - `max_pages` 1 000 000 kids;
-- no overlapping indirect objects: each resolved object's byte span is recorded and an object
-  that starts inside, or extends over, an earlier one is malformed (exit 2). Objects in
+- no overlapping indirect objects or xref sections: each parsed section's and resolved object's
+  byte span is recorded, and one that starts inside, or extends over, an earlier one is
+  malformed (exit 2). Objects in
   well-formed files never overlap (§7.3.10, §7.5.3); hostile files overlap them so that many
   references re-parse the same expensive bytes (e.g. 600 kids sharing one 2 M-entry body: 30 s
   before this check). Total object parsing is therefore about one pass over the file;
@@ -101,7 +102,9 @@ per-object caps, peak memory ≈ file + 12 B × xref entries + one capped parse.
 Measured (Linux, release, real `ulimit -v 2097152` as in the judge): every adversarial file
 from review — 512 MiB with 10 M xref entries and four maximal objects, 500 MiB nested
 strings, overlapping objects/sections, 600 kids sharing one 2 M-object body — finishes with
-exit 0 or 2 in ≤ 2.3 s. macOS peak footprint for the worst one: 1.31 GB.
+exit 0 or 2 in ≤ 3.4 s (1 000 `/Prev` sections over one 2 M-name trailer: 36 s before
+section spans were checked; 127 dense non-overlapping kids: 9.9 s before the per-document
+object budget). macOS peak footprint for the worst one: 1.31 GB.
 
 All input-derived arithmetic is checked; numbers that overflow `i64` are malformed input.
 Work is linear in file size: the lexing budget bounds total lexing to 4× the file.
@@ -128,7 +131,7 @@ resolves only the catalog, the page-tree root and its kids.
 - `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3/50 pages, `/Prev` updates, `/Prev`
   loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
   page limits, objects nested in strings and kids sharing one body (overlap rejection),
-  overlapping `/Prev` sections (lexing budget), out-of-range xref offsets (read as free).
+  overlapping `/Prev` sections (rejected), per-document object budget, out-of-range xref offsets (read as free).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.

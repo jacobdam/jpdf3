@@ -31,7 +31,7 @@ pub struct XrefDocument<'a> {
     entries: Vec<Entry>,
     trailer: Dict,
     budget: LexBudget,
-    /// Byte spans (start → end) of indirect objects parsed so far. Objects in a well-formed
+    /// Byte spans (start → end) of xref sections and indirect objects parsed so far. Objects in a well-formed
     /// file never overlap (ISO 32000-2 §7.3.10, §7.5.3); hostile files overlap them so that
     /// many references re-parse the same expensive bytes. Rejecting overlap keeps total object
     /// parsing to about one pass over the file.
@@ -47,6 +47,7 @@ impl<'a> XrefDocument<'a> {
         let budget = LexBudget::new(data.len(), limits);
         let mut offset = find_startxref(data, limits, &budget)?;
         let mut entries: Vec<Entry> = Vec::new();
+        let mut spans: BTreeMap<usize, usize> = BTreeMap::new();
         let mut trailer: Option<Dict> = None;
         let mut visited = HashSet::new();
         let mut total_entries: usize = 0;
@@ -57,7 +58,12 @@ impl<'a> XrefDocument<'a> {
             if visited.len() > limits.max_xref_sections {
                 return Err(SyntaxError::LimitExceeded("cross-reference sections"));
             }
-            let section_trailer = parse_section(
+            // Sections, like objects, never overlap in a well-formed file; hostile files stack
+            // many sections over one expensive trailer body.
+            if overlaps(&spans, offset, None) {
+                return Err(malformed("cross-reference sections overlap", offset));
+            }
+            let (section_trailer, end) = parse_section(
                 data,
                 offset,
                 limits,
@@ -65,6 +71,10 @@ impl<'a> XrefDocument<'a> {
                 &mut entries,
                 &mut total_entries,
             )?;
+            if overlaps(&spans, offset, Some(end)) {
+                return Err(malformed("cross-reference sections overlap", offset));
+            }
+            spans.insert(offset, end);
             if section_trailer.get(b"XRefStm").is_some() {
                 return Err(SyntaxError::Unsupported(
                     "hybrid cross-reference (/XRefStm)",
@@ -97,7 +107,7 @@ impl<'a> XrefDocument<'a> {
             entries,
             trailer,
             budget,
-            spans: RefCell::new(BTreeMap::new()),
+            spans: RefCell::new(spans),
         })
     }
 
@@ -151,25 +161,30 @@ impl<'a> XrefDocument<'a> {
     /// Fails if an object starting at `start` (and ending at `end`, once known) overlaps an
     /// object parsed earlier. Re-reading the same object (same start) is allowed.
     fn check_no_overlap(&self, start: usize, end: Option<usize>) -> Result<(), SyntaxError> {
-        let spans = self.spans.borrow();
-        if spans.contains_key(&start) {
-            return Ok(());
-        }
-        let inside_earlier = spans
-            .range(..start)
-            .next_back()
-            .is_some_and(|(_, e)| *e > start);
-        let covers_later = end.is_some_and(|end| {
-            spans
-                .range(start.saturating_add(1)..)
-                .next()
-                .is_some_and(|(s, _)| *s < end)
-        });
-        if inside_earlier || covers_later {
+        if overlaps(&self.spans.borrow(), start, end) {
             return Err(malformed("indirect objects overlap", start));
         }
         Ok(())
     }
+}
+
+/// Whether a range starting at `start` (ending at `end`, once known) overlaps a recorded span.
+/// A range with the same start as a recorded one is the same object re-read: not an overlap.
+fn overlaps(spans: &BTreeMap<usize, usize>, start: usize, end: Option<usize>) -> bool {
+    if spans.contains_key(&start) {
+        return false;
+    }
+    let inside_earlier = spans
+        .range(..start)
+        .next_back()
+        .is_some_and(|(_, e)| *e > start);
+    let covers_later = end.is_some_and(|end| {
+        spans
+            .range(start.saturating_add(1)..)
+            .next()
+            .is_some_and(|(s, _)| *s < end)
+    });
+    inside_earlier || covers_later
 }
 
 /// Keeps only the trailer entries the engine reads (ISO 32000-2 §7.5.5, Table 15), so a hostile
@@ -211,7 +226,7 @@ fn find_startxref(data: &[u8], limits: &Limits, budget: &LexBudget) -> Result<us
 
 /// ISO 32000-2 §7.5.4: `xref`, subsections `start count` + entries, then `trailer << … >>`.
 /// Entries are appended to `entries` in file order (deduplicated by the caller). Returns the
-/// trailer dictionary.
+/// trailer dictionary and the offset just past it.
 fn parse_section(
     data: &[u8],
     offset: usize,
@@ -219,7 +234,7 @@ fn parse_section(
     budget: &LexBudget,
     entries: &mut Vec<Entry>,
     total_entries: &mut usize,
-) -> Result<Dict, SyntaxError> {
+) -> Result<(Dict, usize), SyntaxError> {
     let mut p = Parser::new(data, offset, limits, budget);
     match p.lexer.next_token()? {
         Some(Token::Keyword(b"xref")) => {}
@@ -296,7 +311,7 @@ fn parse_section(
     }
     let at = p.lexer.pos();
     match p.parse_object()? {
-        Object::Dict(d) => Ok(d),
+        Object::Dict(d) => Ok((d, p.lexer.pos())),
         _ => Err(malformed("trailer is not a dictionary", at)),
     }
 }
