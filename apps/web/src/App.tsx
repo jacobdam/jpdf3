@@ -36,7 +36,12 @@ export function App() {
                 variant="contained"
                 aria-disabled="true"
                 onClick={(event) => event.preventDefault()}
-                sx={{ opacity: 0.6, cursor: "default" }}
+                sx={{
+                  opacity: 0.6,
+                  cursor: "default",
+                  // A disabled control must not look interactive: no hover darkening or lift.
+                  "&:hover": { bgcolor: "primary.main", boxShadow: "none" },
+                }}
               >
                 Open file
               </Button>

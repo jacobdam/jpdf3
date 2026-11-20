@@ -76,6 +76,9 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   expect(chooser).toBe(false);
 
   // Emotion's styles applied under the CSP: the theme's primary color (light appearance).
+  // The pointer is still over the button after the click above: a disabled control keeps its
+  // resting color on hover (no hover darkening).
+  await open.hover({ force: true });
   await expect(open).toHaveCSS("background-color", "rgb(21, 101, 192)");
   await expect(open).toHaveCSS("text-transform", "none");
   await expect(page.getByText("Files you open appear here.", { exact: true })).toHaveCSS(
