@@ -72,7 +72,9 @@ from the judge).
 - `max_objects_per_parse` 2 000 000 objects produced while parsing one indirect object
   (memory bound for huge arrays/dictionaries);
 - `max_objects_per_document` 20 000 000 objects across all parses (time bound: `[]` is 2 bytes
-  but costs an allocation; 1 M pages × ~20 objects fits);
+  but costs an allocation). This is the effective ceiling for very large documents: 1 M
+  pages with > 20 objects per page dictionary exit 2 even though `max_pages` allows them.
+  Scaling it with the page count is a follow-up;
 - `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
   bound; the reference look-ahead never decodes strings).
 - `max_xref_entries` 10 000 000 across all sections;
