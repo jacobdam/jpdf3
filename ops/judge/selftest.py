@@ -85,6 +85,17 @@ def unit(tmp: Path) -> None:
     expect(any("J-ANN-02" in p and "deleted" in p for p in probs), "journeys are append-only")
     st, probs = V.grade_journeys(V.parse_journeys(bd), V.parse_journeys(bd), {"t1": "pass", "t2": "fail"})
     expect(st["J-ANN-01"]["pass"] and not st["J-ANN-02"]["pass"] and not probs, "journey pass requires all tests")
+    (bd / "m.md").write_text("## J-M-01: m\n- milestone: M5\n- test: e2e.web.a, e2e.macos.a\n")
+    st, _ = V.grade_journeys(V.parse_journeys(bd), {}, {"e2e.web.a": "pass"})
+    expect(st["J-M-01"]["pass"] is None, "journey with an unrun platform is unknown, not a pass")
+    st2, _ = V.grade_journeys(V.parse_journeys(bd), {}, {"e2e.web.a": "fail"})
+    expect(st2["J-M-01"]["pass"] is False, "a known failing test still fails the journey")
+    st3, _ = V.grade_journeys(V.parse_journeys(bd), {}, {"e2e.web.a": "pass", "e2e.macos.b": "pass"})
+    expect(st3["J-M-01"]["pass"] is False, "a missing test on a platform that ran is a failure")
+    jb = {"files": {}, "pages": {}, "probes": {}, "journeys": {"J-M-01": True}, "tests_passed": 0}
+    jc = {**jb, "journeys": {"J-M-01": None}}
+    expect(V.ratchet(jc, jb) == [], "unknown journey is not a ratchet regression")
+    expect(V.ratchet({**jb, "journeys": {"J-M-01": False}}, jb) != [], "failed journey is a ratchet regression")
     ju = tmp / "junit.xml"
     ju.write_text('<testsuites><testsuite><testcase name="a"/><testcase name="b"><failure/></testcase>'
                   '<testcase name="c"><flakyFailure/></testcase><testcase name="d"><skipped/></testcase></testsuite></testsuites>')
@@ -107,6 +118,54 @@ def policy_unit(tmp: Path) -> None:
                    "missing #![forbid(unsafe_code)]", "lib.rs:2: `unsafe`", "relaxing denied lint", "#[ignore] needs"):
         expect(needle in out, f"policy detects: {needle}")
     expect("lib.rs:7" not in out, "policy ignores `unsafe` in strings/comments")
+    signed_unit(tmp)
+
+
+def signed_unit(tmp: Path) -> None:
+    """Protected-path changes need every commit signed by an allowed key."""
+    import policy as P  # noqa: E402
+    if not shutil.which("ssh-keygen"):
+        return expect(False, "ssh-keygen available for the signature test")
+    key = tmp / "k"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    signers = tmp / "signers"
+    signers.write_text('owner namespaces="git" ' + (tmp / "k.pub").read_text())
+    other = tmp / "o"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+    repo = tmp / "sigrepo"
+    repo.mkdir()
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                              env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+    def commit(path, signer=None):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(path + str(len(git("log", "--oneline", "--all") or "")))
+        git("add", "-A")
+        sign = ["-c", "gpg.format=ssh", "-c", f"user.signingkey={signer}", "commit", "-S"] if signer else ["commit"]
+        git(*sign, "-qm", path)
+        return git("rev-parse", "HEAD")
+
+    def run(base, head):
+        r = P.Report()
+        P.check_protected_signatures(repo, base, head, r, signers)
+        return r.v
+
+    git("init", "-q")
+    base = commit("README.md")
+    plain = commit("crates/a.rs")
+    expect(run(base, plain) == [], "unsigned non-protected change passes")
+    git("reset", "-q", "--hard", base)
+    good = commit("ops/judge/x.py", key)
+    expect(run(base, good) == [], "owner-signed protected change passes")
+    stacked = commit("ops/judge/y.py")
+    expect(run(base, stacked) != [], "unsigned commit stacked on a signed one fails")
+    git("reset", "-q", "--hard", base)
+    expect(run(base, commit(".github/workflows/ci.yml")) != [], "unsigned protected change fails")
+    git("reset", "-q", "--hard", base)
+    expect(run(base, commit("ops/judge/z.py", other)) != [], "protected change signed by another key fails")
 
 
 def e2e(corpus: Path, manifest: Path, work: Path) -> None:

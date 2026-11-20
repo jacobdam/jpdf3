@@ -1,5 +1,7 @@
-# Protected paths (CONSTITUTION.md rule 12). PRs touching these need the owner's review
-# and therefore never auto-merge. Everything else needs no human review.
+# Protected paths (CONSTITUTION.md rule 12), mirrored from ops/judge/protected.txt.
+# The agent shares the owner's GitHub account, so review cannot separate them. Enforcement is
+# the judge's policy check: PRs touching these paths pass only if every commit is signed with
+# the owner's key (ops/judge/allowed_signers). This file is informational.
 /CONSTITUTION.md        @jacobdam
 /LICENSE                @jacobdam
 /.github/               @jacobdam

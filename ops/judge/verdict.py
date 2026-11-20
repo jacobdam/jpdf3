@@ -264,10 +264,17 @@ def grade_journeys(cur: dict, base: dict, e2e: dict) -> tuple[dict, list]:
             problems.append(f"journey {jid} superseded by unknown {j['superseded_by']}")
         if not j["tests"] and not j["superseded_by"]:
             problems.append(f"journey {jid} has no test ids")
+    # A platform whose e2e results were not produced in this run (macOS runs only on main and
+    # nightly) leaves its journeys "unknown" (None): never a pass, never a ratchet regression.
+    platforms = {k.split(".")[1] for k in e2e if k.count(".") >= 2}
     status = {}
     for jid, j in cur.items():
-        status[jid] = {"milestone": j["milestone"], "superseded": bool(j["superseded_by"]),
-                       "pass": bool(j["tests"]) and all(e2e.get(t) == "pass" for t in j["tests"])}
+        known = [t for t in j["tests"] if t in e2e or t.count(".") < 2 or t.split(".")[1] in platforms]
+        if not j["tests"] or any(e2e.get(t) != "pass" for t in known):
+            ok = False
+        else:
+            ok = True if len(known) == len(j["tests"]) else None
+        status[jid] = {"milestone": j["milestone"], "superseded": bool(j["superseded_by"]), "pass": ok}
     return status, problems
 
 
@@ -306,7 +313,7 @@ def ratchet(cur: dict, base: dict) -> list[str]:
         if v and not cur["probes"].get(k, False):
             reg.append(f"probe regressed: {k}")
     for k, v in base.get("journeys", {}).items():
-        if v and not cur["journeys"].get(k, False):
+        if v and cur["journeys"].get(k, False) is False:
             reg.append(f"journey regressed: {k}")
     if cur["tests_passed"] < base.get("tests_passed", 0):
         reg.append(f"passing test count dropped: {base['tests_passed']} -> {cur['tests_passed']}")
@@ -405,7 +412,7 @@ def main() -> None:
 
     metrics = {**corpus["metrics"], **probe_metrics(probes),
                "tests_passed": tests["passed"], "tests_failed": tests["failed"], "tests_flaky": tests["flaky"],
-               "journeys": len(journeys), "journeys_passing": sum(j["pass"] for j in journeys.values()),
+               "journeys": len(journeys), "journeys_passing": sum(j["pass"] is True for j in journeys.values()),
                "binary": res.get("binary", "missing")}
     report = {"tier": "smoke", "pass": not failures, "failures": failures, "metrics": metrics,
               "regressions": regressions, "crashes": crashes,

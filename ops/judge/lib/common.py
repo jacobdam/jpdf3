@@ -111,6 +111,18 @@ def run_limited(cmd: list[str], timeout_s: float, cwd: Path | None = None) -> Ru
     return RunResult(classify(p.returncode, False), p.returncode, ms, p.stdout[-65536:], p.stderr[-8192:])
 
 
+REF_MEM_LIMIT_BYTES = 3 * 1024**3  # reference tools: one hostile file must not OOM the runner
+
+
+def _limit_reference() -> None:  # runs in the child before exec
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (REF_MEM_LIMIT_BYTES, REF_MEM_LIMIT_BYTES))
+    except (ValueError, OSError, ImportError):
+        pass
+    os.setsid()
+
+
 def run_tool(cmd: list[str], timeout_s: float = 120) -> subprocess.CompletedProcess:
     """Run a trusted reference tool (mutool, pdftoppm, qpdf, ...).
 
@@ -118,7 +130,8 @@ def run_tool(cmd: list[str], timeout_s: float = 120) -> subprocess.CompletedProc
     never a judge crash.
     """
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False, stdin=subprocess.DEVNULL)
+        return subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False, stdin=subprocess.DEVNULL,
+                              preexec_fn=_limit_reference)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(cmd, 124, b"", b"reference tool timed out")
     except OSError as e:

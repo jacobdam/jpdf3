@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse guard for jpdf agent sessions. PROTECTED (CONSTITUTION rule 12).
 
-First layer only: CI (the judge + CODEOWNERS) is the real enforcement.
+First layer only: CI (the judge, incl. owner-signed protected changes) is the real enforcement.
 Exit 0 = allow, exit 2 = block (reason on stderr). Any crash exits 1, which does NOT block,
 so a guard bug can never lock a session.
 
@@ -25,6 +25,9 @@ PROTECTED = (
     ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
 )
 SECRET_READ = ("/.ssh/", "/.config/gh/")
+# Every issue/PR/comment the agent writes starts with this tag. The agent shares the owner's
+# GitHub account; ops/driver/owner-issues.sh treats only UNTAGGED owner text as instructions.
+TAG = "\U0001F916 jpdf-agent"
 DENIED_LINTS = ("unsafe_code", "unwrap_used", "expect_used", "panic", "indexing_slicing",
                 "unimplemented", "todo", "unreachable", "dbg_macro", "exit", "mem_forget",
                 "cast_possible_truncation", "cast_sign_loss", "cast_possible_wrap")
@@ -133,6 +136,13 @@ def check_bash(cmd, cwd):
         raise Block("changing Claude permissions/hooks is not allowed")
     if re.search(r"\bgh\s+auth\s+(token|refresh|login|logout|setup-git)\b|--show-token", c):
         raise Block("credential commands are not allowed")
+    if re.search(r"(api|uploads)\.github\.com", low):
+        raise Block("call GitHub only through `gh` (no direct API URLs)")
+    if re.search(r"\bcmux\b", low):
+        raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
+    if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
+        raise Block("scripting keystrokes into other apps is not allowed")
+    check_gh_posts(cmd)
     if re.search(r"\bsecurity\s+(find-|dump-keychain|export)", c):
         raise Block("keychain access is not allowed")
     if re.search(r"\bgit\s+config\b.*\bcredential", c):
@@ -165,6 +175,10 @@ def check_bash(cmd, cwd):
             if re.search(r"/(rulesets|branches/[^/\s]+/protection|collaborators|keys|hooks|actions/secrets|"
                          r"actions/permissions|environments|invitations)", target):
                 raise Block("changing repo security settings is not allowed")
+            if re.search(r"/(contents|git)/", target + "/"):
+                raise Block("committing through the API is not allowed; use git in a worktree")
+            if re.search(r"/(issues|pulls)(/|$)|/comments(/|$)|/reviews(/|$)", target):
+                raise Block("write issues/PRs/comments with `gh issue|pr ... --body \"%s ...\"`, not gh api" % TAG)
     if re.search(r"\bcargo\s+vet\s+(certify|trust|add-exemption|regenerate|prune|import|record-violation)", c):
         raise Block("cargo vet audits are imported only (CONSTITUTION 9)")
     if re.search(r"\bunsafe\b", c) and re.search(r"\.rs\b", c) and re.search(r"(>|\btee\b|sed\s+-i|perl\s+-[a-z]*i)", c):
@@ -189,7 +203,14 @@ def check_bash(cmd, cwd):
             continue
         prog = os.path.basename(toks[0])
         args = toks[1:]
-        if prog == "git" and args[:1] in (["rm"], ["mv"], ["checkout"], ["restore"], ["apply"]):
+        if prog == "git" and args[:1] in (["apply"], ["am"]) and not any(a in ("--check", "--stat", "--numstat", "--summary") for a in args):
+            raise Block("git apply/am can rewrite protected files unseen; edit files directly instead")
+        if prog == "git" and args[:1] and args[0] in ("update-index", "commit-tree", "hash-object", "read-tree", "mktree",
+                                                       "fast-import", "filter-branch", "filter-repo", "replace"):
+            raise Block("git plumbing that builds commits/trees is not allowed (CONSTITUTION 12)")
+        if prog == "patch":
+            raise Block("patch can rewrite protected files unseen; edit files directly instead")
+        if prog == "git" and args[:1] in (["rm"], ["mv"], ["checkout"], ["restore"]):
             if protected_tokens(args[1:], cwd):
                 raise Block("modifying protected paths via git is not allowed (CONSTITUTION 12)")
         if prog == "git" and args[:1] in (["commit"], ["add"], ["stash"]):
@@ -207,6 +228,52 @@ def check_bash(cmd, cwd):
                 targets = [a for a in args if not a.startswith("-")][-1:]
             if protected_tokens(targets, cwd):
                 raise Block("modifying protected paths is not allowed (CONSTITUTION 12)")
+
+
+GH_POST_VERBS = {
+    "issue": {"create", "comment", "edit", "close", "reopen"},
+    "pr": {"create", "comment", "edit", "close", "reopen", "review"},
+}
+GH_BODY_FLAGS = {"-b", "--body", "-c", "--comment"}
+GH_NO_FLAGS = {"--body-file", "-F", "--fill", "-f", "--fill-first", "--fill-verbose", "--editor", "-e",
+               "--web", "-w", "--template", "-T", "--recover"}
+
+
+def check_gh_posts(cmd):
+    """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's."""
+    if not re.search(r"\bgh\s+(issue|pr)\s+(%s)\b" % "|".join(sorted(GH_POST_VERBS["pr"] | GH_POST_VERBS["issue"])), cmd):
+        return
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        raise Block("could not parse this gh command; use one simple `gh ... --body \"%s ...\"`" % TAG)
+    for i, t in enumerate(toks):
+        if os.path.basename(t) != "gh" or i + 2 >= len(toks):
+            continue
+        group, verb = toks[i + 1], toks[i + 2]
+        if verb not in GH_POST_VERBS.get(group, ()):
+            continue
+        if group == "pr" and verb == "review":
+            raise Block("PR reviews are not allowed (the account is the owner's); post the ai-review status instead")
+        bodies = []
+        j = i + 3
+        while j < len(toks) and not re.fullmatch(r"&&|\|\||;|\|", toks[j]):
+            a = toks[j]
+            flag = a.split("=", 1)[0]
+            if flag in GH_NO_FLAGS:
+                raise Block("gh %s %s: %s is not allowed; pass the text inline with --body \"%s ...\"" % (group, verb, flag, TAG))
+            if flag in GH_BODY_FLAGS and (group, flag) != ("pr", "-c") or (flag in ("-c", "--comment") and verb in ("close", "reopen")):
+                if "=" in a and a.startswith("--"):
+                    bodies.append(a.split("=", 1)[1])
+                elif j + 1 < len(toks):
+                    bodies.append(toks[j + 1])
+                    j += 1
+            j += 1
+        if verb in ("create", "comment") and not bodies:
+            raise Block("gh %s %s needs --body \"%s ...\" (CONSTITUTION 1: agent text is tagged)" % (group, verb, TAG))
+        for b in bodies:
+            if not b.lstrip().startswith(TAG):
+                raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
 
 
 def changed_files(cwd):
@@ -311,7 +378,8 @@ def selftest():
         ("Bash", {"command": "gh pr merge 5 --auto --squash"}, False),
         ("Bash", {"command": "gh auth token"}, True),
         ("Bash", {"command": "gh issue create -R someone/else -t hi -b x"}, True),
-        ("Bash", {"command": "gh issue create -R jacobdam/jpdf3 -t hi -b x"}, False),
+        ("Bash", {"command": "gh issue create -R jacobdam/jpdf3 -t hi -b x"}, True),
+        ("Bash", {"command": "gh issue create -R jacobdam/jpdf3 -t hi -b '%s x'" % TAG}, False),
         ("Bash", {"command": "gh api -X PUT repos/jacobdam/jpdf3/rulesets/1 -f x=y"}, True),
         ("Bash", {"command": "gh api repos/other/repo/issues -f title=x"}, True),
         ("Bash", {"command": "gh api repos/jacobdam/jpdf3/statuses/abc -f state=success -f context=ai-review"}, False),
@@ -330,6 +398,31 @@ def selftest():
         ("Bash", {"command": "git checkout -- ops/judge/verdict.py"}, True),
         ("Bash", {"command": "git checkout -b t/1-x"}, False),
         ("Bash", {"command": "security find-generic-password -s x"}, True),
+        ("Bash", {"command": "git apply /tmp/p.diff"}, True),
+        ("Bash", {"command": "git apply --check /tmp/p.diff"}, False),
+        ("Bash", {"command": "git am < x.mbox"}, True),
+        ("Bash", {"command": "patch -p1 < x.diff"}, True),
+        ("Bash", {"command": "git update-index --cacheinfo 100644,abc,ops/judge/x.py"}, True),
+        ("Bash", {"command": "git hash-object -w f"}, True),
+        ("Bash", {"command": "gh api -X PUT repos/jacobdam/jpdf3/contents/ops/judge/x.py -f message=m"}, True),
+        ("Bash", {"command": "gh api repos/jacobdam/jpdf3/git/blobs -f content=x"}, True),
+        ("Bash", {"command": "curl -H x https://api.github.com/repos/jacobdam/jpdf3/issues"}, True),
+        ("Bash", {"command": "cmux send --surface surface:2 'rm -rf ~'"}, True),
+        ("Bash", {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}, True),
+        ("Bash", {"command": "gh issue comment 5 --body 'done'"}, True),
+        ("Bash", {"command": "gh issue comment 5 --body '%s done'" % TAG}, False),
+        ("Bash", {"command": "gh issue comment 5 --body-file /tmp/b.md"}, True),
+        ("Bash", {"command": "gh issue create -t x -b \"%s\nline2; with semicolon\"" % TAG}, False),
+        ("Bash", {"command": "gh issue create -t x -l human"}, True),
+        ("Bash", {"command": "gh pr create --draft --fill"}, True),
+        ("Bash", {"command": "gh pr create --draft -t x -B main -b \"%s body\"" % TAG}, False),
+        ("Bash", {"command": "gh pr create --draft -t x -B main -b \"$(cat /tmp/b)\""}, True),
+        ("Bash", {"command": "gh issue close 5 -c 'fixed'"}, True),
+        ("Bash", {"command": "gh issue close 5"}, False),
+        ("Bash", {"command": "gh issue edit 5 --add-label ready"}, False),
+        ("Bash", {"command": "gh pr review 5 --approve"}, True),
+        ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
+        ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
     ]
     failures = 0
     for tool, ti, should in cases:
@@ -341,6 +434,12 @@ def selftest():
         if blocked != should:
             failures += 1
             print("FAIL: %s %s -> blocked=%s, expected %s" % (tool, json.dumps(ti)[:100], blocked, should))
+    listed = os.path.join(root, "ops/judge/protected.txt")
+    if os.path.isfile(listed):
+        want = sorted(l.strip() for l in open(listed) if l.strip() and not l.startswith("#"))
+        if want != sorted(PROTECTED):
+            failures += 1
+            print("FAIL: PROTECTED differs from ops/judge/protected.txt")
     print("guard selftest: %d/%d passed" % (len(cases) - failures, len(cases)))
     return 1 if failures else 0
 

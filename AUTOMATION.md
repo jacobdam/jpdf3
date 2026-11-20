@@ -34,7 +34,7 @@ Mac mini (always on)
 GitHub (public repo jacobdam/jpdf3)
  ├─ Issues + Milestones = task queue + progress bars
  ├─ PRs = units of change, auto-merged when all required checks pass
- ├─ Ruleset on main: required checks + CODEOWNERS review for protected paths
+ ├─ Ruleset on main: required checks (judge-verdict pinned to GitHub Actions, ai-review)
  ├─ Actions "judge" (PROTECTED): grading; the agent can't change it   (§6.2)
  ├─ Actions "project" (PROTECTED shell, calls `cargo xtask …`; the agent extends xtask)
  └─ Pages: web app (deployed every merge) + metrics dashboard
@@ -142,7 +142,7 @@ files, keyboard shortcuts, drag & drop). Each gap becomes a new journey plus a `
 
 ## 6. Guardrails
 
-### 6.1 Protected paths (CODEOWNERS = owner; PRs touching them never auto-merge)
+### 6.1 Protected paths (changed only by owner-signed commits)
 ```
 /CONSTITUTION.md          /LICENSE                      /deny.toml
 /.github/**               /ops/judge/**                 /ops/driver/**
@@ -153,6 +153,26 @@ files, keyboard shortcuts, drag & drop). Each gap becomes a new journey plus a `
 The agent never edits these. It writes `ops/proposals/<topic>.md` instead and keeps
 working under the current rules. `rust-toolchain.toml` is deliberately **not** protected,
 so the agent can keep Rust current; the judge requires an exact stable version.
+**One account, two actors.** The agent uses the owner's GitHub account with a fine-grained
+token (this repo only; no Administration, no Workflows permission). Authorship therefore
+proves nothing, so identity comes from two other places:
+- **Instructions:** the guard forces every agent issue/PR/comment to start with
+  `🤖 jpdf-agent`; `ops/driver/owner-issues.sh` drops tagged text.
+- **Protected changes:** the policy check (from the base commit) fails any PR touching
+  `ops/judge/protected.txt` paths unless *every* commit verifies against
+  `ops/judge/allowed_signers`. The owner's signing key lives on the owner's laptop, out of
+  the agent's reach. Code review can't do this job: GitHub forbids approving your own PR.
+
+**Owner flow for a protected change** (usually after an `ops/proposals/` file or an
+`owner-todo` issue), on the laptop:
+```sh
+git pull && git switch -c owner/<topic>
+JPDF_OWNER=1 claude              # or edit by hand; commits are signed (commit.gpgsign=true)
+git commit -am "..." && git push -u origin HEAD && gh pr create --fill
+gh api repos/jacobdam/jpdf3/statuses/$(git rev-parse HEAD) -f state=success -f context=ai-review -f description="owner change"
+gh pr merge --squash --auto
+```
+
 CI also **pins** protected config: before building PR code, it overwrites `deny.toml`,
 `clippy.toml`, `supply-chain/`, `.cargo/` and `.config/` with the base commit's copies.
 
@@ -198,8 +218,11 @@ CI also **pins** protected config: before building PR code, it overwrites `deny.
      doesn't pile up unmergeable work
 
 ### 6.3 Required checks for merge
-`judge-verdict`, `project-linux`, `project-macos`, `ai-review`, plus CODEOWNERS review
-when protected paths are touched.
+`judge-verdict` (must come from GitHub Actions, app id 15368, so a hand-posted status can't
+satisfy it) and `ai-review`. `judge-verdict` requires every upstream job, except that
+`project-macos` runs only on main and nightly (macOS runners are scarce): on PRs its journeys
+are "unknown", never regressions, and the nightly gates require it. Protected paths also need
+owner-signed commits (6.1).
 
 ### 6.4 Dependencies
 - **License:** allowlist only (MIT, Apache-2.0, BSD-2/3, Zlib, ISC, Unicode-3.0, OFL-1.1 for fonts).
@@ -347,7 +370,7 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 | reasoning | PRs, `docs/adr/`, `ops/journal/` |
 | weekly summary | a digest issue (GitHub emails it to you): progress, metrics trends, latest retro, ADRs, proposals, `owner-todo` items |
 | speed & forecast | in the digest: tasks/week, usage per merged PR, and a **forecast finish date per milestone** from the trailing 4-week rate. An alert fires if the forecast slips by more than 25% in a week |
-| live | `ssh` to the Mac mini, then `tmux attach -t jpdf` |
+| live | on the Mac mini: `cmux tmux attach jpdf` (desktop notifications on halt, repeated failures, usage limits, judge alarm); remotely: `ssh mac-mini -t tmux attach -t jpdf` |
 
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.
@@ -359,7 +382,8 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 ## 13. Driver (`ops/driver.sh`)
 
 ```sh
-tmux new -s jpdf ops/driver.sh    # start; also how to restart after a power cut
+tmux new -d -s jpdf ops/driver/driver.sh   # start; also how to restart after a power cut
+cmux tmux attach jpdf                      # watch it in cmux
 touch ops/HALT                    # stop after the current session
 ops/status.sh                     # one-line progress
 ```
@@ -373,7 +397,11 @@ crate areas) come once M1 is stable.
 2. Repo Settings → Pages → Source: **GitHub Actions**.
 3. System Settings → Privacy & Security: give the terminal app **Screen Recording** and
    **Accessibility** (macOS UI tests, PDFgear comparison).
-4. Start: `cd ~/work/jpdf3 && ops/driver/driver.sh --pilot`.
+4. cmux Settings: set a **socket password** (any process can otherwise type into any cmux tab;
+   the guard also blocks agents from calling `cmux`).
+5. Laptop: clone the repo and set `gpg.format=ssh`, `user.signingkey=<key>.pub`,
+   `commit.gpgsign=true` (for protected changes, 6.1).
+6. Start: `cd ~/work/jpdf3 && ops/driver/driver.sh --pilot`.
 
 The first stretch, M0 through the start of M1 (~1–2 weeks), runs **lightly supervised**:
 1. **Shakedown:** the first 5 sessions run one at a time, and the owner skims each PR.
@@ -409,6 +437,10 @@ hosting/domain, App Store listing). Phase 2 starts only when the owner opens a `
   scripts, tests) runs on the runner before results are uploaded. The design stops lazy or
   accidental gaming, not a determined attacker.
 - **`ai-review` runs locally and could be faked.** The judge is the backstop.
+- **Shared GitHub account.** The agent acts as `jacobdam`. GitHub shows its posts as the
+  owner's (the tag tells them apart), and the owner's local credentials (`~/.ssh`, keychain)
+  are protected only by the guard, not by OS user separation. A separate macOS user for the
+  agent closes the second gap if ever needed.
 - **Weakened tests are hard to detect mechanically.** Mitigated by reviewer rules, mutation
   testing and corpus ratchets.
 - **The journey list bounds the product.** It is agent-written and unreviewed. It is

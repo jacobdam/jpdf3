@@ -1,0 +1,17 @@
+# PROTECTED (CONSTITUTION 12). Paths only the owner may change. A trailing "/" means the whole
+# directory. A PR touching any of these passes policy only if EVERY commit in it is signed by a
+# key in ops/judge/allowed_signers. The guard (.claude/hooks/guard.py) mirrors this list.
+CONSTITUTION.md
+LICENSE
+.github/
+ops/judge/
+ops/driver/
+ops/rulesets/
+deny.toml
+supply-chain/
+clippy.toml
+.cargo/
+.config/nextest.toml
+.claude/settings.json
+.claude/settings.local.json
+.claude/hooks/

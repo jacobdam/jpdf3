@@ -239,7 +239,7 @@ def main() -> None:
     missing = [e.blob for e in entries if not (a.corpus / f"{e.blob}.pdf").exists()]
     if missing:
         C.infra_fail(f"{len(missing)} corpus files missing locally")
-    with ThreadPoolExecutor(os.cpu_count() or 4) as ex:
+    with ThreadPoolExecutor(min(os.cpu_count() or 4, 4)) as ex:
         recs = list(ex.map(lambda e: (e.blob, ref_file(e.blob, a.corpus / f"{e.blob}.pdf", a.out)), entries))
     ref = dict(recs)
     C.dump(a.out / "reference.json", {"tools": tool_versions(), "files": ref})

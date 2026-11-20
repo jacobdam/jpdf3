@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PROTECTED (CONSTITUTION 12). Runs one fresh Claude Code session per task, forever.
-#   ops/driver/driver.sh            unattended loop (run inside tmux)
+#   ops/driver/driver.sh            unattended loop (run inside tmux; watch it with `cmux tmux attach jpdf`)
 #   ops/driver/driver.sh --pilot    exactly one session, then exit (pilot shakedown)
 # Stop: `touch ops/HALT`, or open an issue labeled `halt` (owner only).
 set -uo pipefail
@@ -16,6 +16,9 @@ MODE="loop"; [[ "${1:-}" == "--pilot" || "${1:-}" == "--once" ]] && MODE="once"
 cd "$REPO_DIR" || exit 1
 mkdir -p ops/logs ops/state
 log() { echo "[driver $(date -u +%FT%TZ)] $*" | tee -a ops/logs/driver.log; }
+# Desktop notification through cmux when it is running (the guard stops agents calling cmux;
+# the driver is not an agent). Silent no-op otherwise.
+notify() { command -v cmux >/dev/null 2>&1 && cmux notify --title "jpdf" --body "$*" >/dev/null 2>&1 || true; }
 
 halted() {
   [[ -f ops/HALT ]] && { log "HALT file present"; return 0; }
@@ -76,20 +79,22 @@ run_session() {
 
 backoff=300; limit_wait=1800
 while true; do
-  if halted; then log "halted; exiting"; exit 0; fi
+  if halted; then log "halted; exiting"; notify "loop halted"; exit 0; fi
   if ! disk_ok; then sleep 3600; continue; fi
   sync_main || { log "git sync failed"; sleep 600; continue; }
   run_session; rc=$?
   [[ "$MODE" == "once" ]] && exit "$rc"
   if (( rc == 42 )); then
-    log "usage limit: sleeping ${limit_wait}s"; sleep "$limit_wait"
+    log "usage limit: sleeping ${limit_wait}s"; notify "usage limit: sleeping $((limit_wait/60)) min"; sleep "$limit_wait"
     limit_wait=$(( limit_wait * 2 > 7200 ? 7200 : limit_wait * 2 )); continue
   fi
   limit_wait=1800
   if (( rc != 0 )); then
-    log "session failed rc=$rc: backing off ${backoff}s"; sleep "$backoff"
+    log "session failed rc=$rc: backing off ${backoff}s"
+    (( backoff >= 1200 )) && notify "sessions keep failing (rc=$rc); see ops/logs/driver.log"
+    sleep "$backoff"
     backoff=$(( backoff * 2 > 3600 ? 3600 : backoff * 2 )); continue
   fi
   backoff=300
-  if slow_mode; then log "judge alarm > 7 days: slow mode (24 h)"; sleep 86400; else sleep "$PAUSE"; fi
+  if slow_mode; then log "judge alarm > 7 days: slow mode (24 h)"; notify "judge alarm: slow mode"; sleep 86400; else sleep "$PAUSE"; fi
 done

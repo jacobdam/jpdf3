@@ -122,10 +122,22 @@ jobs:
       - name: Fetch dependency sources (no build scripts run)
         working-directory: pr
         run: cargo fetch --locked
+      - name: Full history for commit-signature check (PRs only)
+        if: github.event_name == 'pull_request'
+        working-directory: pr
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --quiet --no-tags --unshallow origin "$BASE_SHA" "$HEAD_SHA"
       - name: Policy
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 judge/ops/judge/policy.py --root pr --deps --summary policy.md
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          range=()
+          if [ -n "$BASE_SHA" ]; then range=(--signed-range "$BASE_SHA" "$HEAD_SHA"); fi
+          python3 judge/ops/judge/policy.py --root pr --deps --summary policy.md "${range[@]}"
       - name: cargo deny
         working-directory: pr
         run: cargo deny check
@@ -232,6 +244,9 @@ jobs:
           retention-days: 7
 
   project-macos:
+    # macOS runners are scarce: run on main and nightly, not on every PR. Its journeys are
+    # "unknown" (never regressions) on PRs; milestone gates use the nightly run.
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -278,13 +293,14 @@ jobs:
       contents: read
       actions: write   # read baselines; delete the exam results artifact after grading
     steps:
-      - name: All upstream jobs must have succeeded (skipped/cancelled = fail)
+      - name: All upstream jobs must have succeeded (skipped/cancelled = fail; macOS only nightly)
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | python3 -c "
-          import json,sys
-          bad={k:v['result'] for k,v in json.load(sys.stdin).items() if v['result']!='success'}
+          import json,os,sys
+          opt=set() if os.environ['NIGHTLY']=='true' else {'project-macos'}
+          bad={k:v['result'] for k,v in json.load(sys.stdin).items() if v['result']!='success' and k not in opt}
           print('upstream:', bad or 'all success')
           sys.exit(1 if bad else 0)"
       - *judge-checkout

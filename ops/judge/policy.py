@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static policy checks on a source tree. PROTECTED.
 
-usage: policy.py --root TREE [--deps] [--summary FILE]
+usage: policy.py --root TREE [--deps] [--summary FILE] [--signed-range BASE HEAD]
 Exit 0 = pass, 1 = violations (listed on stdout and in the summary file).
 """
 from __future__ import annotations
@@ -209,11 +209,57 @@ def check_deps(root: Path, r: Report):
             r.add(f"dependency {pkg['name']} {pkg['version']} contains `unsafe` ({hits} files) and is not allowlisted")
 
 
+JUDGE_DIR = Path(__file__).resolve().parent
+
+
+def protected_list() -> list[str]:
+    return [l.strip() for l in (JUDGE_DIR / "protected.txt").read_text().splitlines()
+            if l.strip() and not l.startswith("#")]
+
+
+def is_protected(rel: str, plist: list[str]) -> bool:
+    return any(rel == p.rstrip("/") or (p.endswith("/") and rel.startswith(p)) for p in plist)
+
+
+def check_protected_signatures(root: Path, base: str, head: str, r: Report,
+                               signers: Path | None = None) -> None:
+    """Protected paths change only through commits signed by the owner (CONSTITUTION 12).
+
+    The agent shares the owner's GitHub account, so authorship proves nothing; a signature by a
+    key the agent cannot reach does. Every commit in the PR must verify, so nobody can stack an
+    unsigned commit on top of a signed one.
+    """
+    signers = signers or JUDGE_DIR / "allowed_signers"
+    git = ["git", "-C", str(root)]
+    d = subprocess.run([*git, "diff", "--name-only", f"{base}...{head}"], capture_output=True, text=True, check=False)
+    if d.returncode != 0:
+        return r.add(f"cannot diff {base[:12]}...{head[:12]}: {d.stderr.strip()[-300:]}")
+    plist = protected_list()
+    hits = [f for f in d.stdout.splitlines() if is_protected(f, plist)]
+    if not hits:
+        return
+    revs = subprocess.run([*git, "rev-list", f"{base}..{head}"], capture_output=True, text=True, check=False)
+    commits = revs.stdout.split()
+    if revs.returncode != 0 or not commits:
+        return r.add(f"cannot list commits {base[:12]}..{head[:12]}")
+    bad = []
+    for c in commits:
+        v = subprocess.run([*git, "-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={signers}",
+                            "verify-commit", c], capture_output=True, text=True, check=False)
+        if v.returncode != 0:
+            bad.append(c[:12])
+    if bad:
+        r.add(f"protected path(s) changed ({', '.join(hits[:5])}) but commit(s) {', '.join(bad[:10])} "
+              f"are not signed by the owner's key (ops/judge/allowed_signers). Agents: write "
+              f"ops/proposals/<topic>.md instead.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--deps", action="store_true")
     ap.add_argument("--summary", type=Path)
+    ap.add_argument("--signed-range", nargs=2, metavar=("BASE", "HEAD"))
     a = ap.parse_args()
     r = Report()
     check_toolchain(a.root, r)
@@ -224,6 +270,8 @@ def main():
     check_supply_chain(a.root, r)
     if a.deps:
         check_deps(a.root, r)
+    if a.signed_range:
+        check_protected_signatures(a.root, a.signed_range[0], a.signed_range[1], r)
     text = "## Policy: " + ("PASS" if not r.v else f"FAIL ({len(r.v)})") + "\n\n" + "".join(f"- {v}\n" for v in r.v[:200])
     print(text)
     if a.summary:
