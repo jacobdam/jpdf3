@@ -56,6 +56,11 @@ instead of adding near-duplicates.
   strings (empty states, option names, page-field format, notice wording) instead of
   paraphrasing, and check new web keys against `specs/ui/shortcuts.md` rule 3 (the
   browser-reserved list) ([journal](journal/2026-11-20.md), PR #40).
+- Drawing wireframes or naming UI components → check each component's real constraints before
+  writing sizes or behavior: MUI small fields are 40 px, `Tab` has `minWidth` 90, no focusable
+  control inside `role="tab"`, temporary drawers are modal; SwiftUI `.disabled()` drops out of
+  Full Keyboard Access, NSDocument autosave writes silently, the macOS split view has no
+  overlay sidebar ([journal](journal/2026-11-20.md), PR #44).
 
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref

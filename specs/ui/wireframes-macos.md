@@ -148,8 +148,8 @@ another symbol; it must be an SF Symbol, never a copied icon.
 - Create buttons are `.bordered`, stacked, 8 apart.
 - Recent: a `List` with file icon (`NSWorkspace` icon for the type), name, size and date
   (`.secondary`); a single click (or Return on the focused row) opens the file (J-RD-03);
-  each row has a small remove button (`xmark.circle`, shown on hover and on keyboard focus;
-  Delete on a focused row does the same); a `Clear` button sits right of the "Recent"
+  each row has a small remove button (`xmark.circle`, shown on hover and on keyboard focus);
+  a `Clear` button sits right of the "Recent"
   header. The same files appear in File > Open Recent (system, with its Clear Menu).
 - A recent file that no longer exists: the row is removed and an inline line under the list
   says `«name»: file not found` (J-RD-03).
@@ -212,7 +212,8 @@ The window opens at once with the file name in the title. Progress is a `Progres
   there are unsaved changes. Show in Finder is in the proxy-icon menu and the File menu.
 - Toolbar (`.toolbar`, customizable, default set as drawn): leading the sidebar toggle;
   Open, Save, Print; principal the mode `Picker` (`.segmented`, labels with symbols); the Read
-  mode's Select / Hand `Picker`; undo / redo; zoom out / in; back / forward; rotate view left
+  mode's Select / Hand `Picker`; the "Highlight fields" toggle (off by default for a newly
+  opened file, J-FM-04); undo / redo; zoom out / in; back / forward; rotate view left
   / right; Find (shows the find bar); trailing the inspector toggle. Full screen is the system's (green button, View menu).
 - Sidebar: `NavigationSplitView` sidebar column; at its top a segmented `Picker` of seven
   symbol-only segments (Thumbnails, Outline, Annotations, Attachments, Layers, Search results,
@@ -409,8 +410,8 @@ Each is posted as an accessibility announcement.
 └──────────────────────────────────────────────────────┘
 ```
 
-A plain `SecureField` (no content type set, so the system has no reason to offer AutoFill;
-as in IA §8, only J-RD-04's storage check is promised), paste allowed; the error appears
+A plain `SecureField` (the system may still offer password AutoFill; as in IA §8, only
+J-RD-04's storage check is promised), paste allowed; the error appears
 in place, the field keeps focus with its text selected. Open is the default button. The window
 behind shows no page content or thumbnails (the sidebar and document view are empty
 `underPageBackgroundColor`). Cancel closes the window.
@@ -474,10 +475,11 @@ original file was not changed." / `[OK]`.
 The system print panel (`NSPrintOperation` with the engine-rendered pages) with an accessory
 view (`NSPrintPanelAccessorizing`) holding the options the standard panel lacks: Content
 pop-up ("document only", "document and annotations"), a "Print comment contents on extra
-pages" checkbox (J-ANN-25), Scale (fit / actual size / custom %), a Current Page choice next
-to the panel's page range, and Auto-rotate. Pages per sheet uses the panel's Layout pane. The
-page range "2-4,7" is typed into our accessory's Range field (the system From/To range can't
-hold a list) and the engine validates it; an invalid range ("9-3", "0") shows a hint under
+pages" checkbox (J-ANN-25), Pages (All / Current / Range, the range typed as "2-4,7"), Scale
+(fit / actual size / custom %) and Auto-rotate. The panel's own page range and scaling
+controls are hidden (`showsPageRange` and `showsScaling` cleared from `NSPrintPanel.Options`),
+so each option has one control; pages per sheet stays in the panel's Layout pane. The engine
+validates the range; an invalid range ("9-3", "0") shows a hint under
 the field and the job doesn't start (J-RD-21). The engine builds the print job from these
 values. The accessory view has 20 pt margins and `.regular` controls.
 
@@ -497,7 +499,8 @@ The app's `Settings` scene (App menu > Settings…, the current HIG name for the
 Preferences) with a toolbar-style `TabView`: General (appearance Light / Dark / Follow
 system, "Restore open documents at launch", author name), Viewing (default zoom and layout),
 Annotations (alignment guides), Printing (choose print content each time), Keyboard
-(single-key shortcuts). `Form` with `.formStyle(.grouped)`, fixed width 520, changes apply
+(single-key shortcuts), plus highlight fields in newly opened files (J-FM-04) under
+General. `Form` with `.formStyle(.grouped)`, fixed width 520, changes apply
 at once.
 
 ### W-28 Full screen and presentation (IA §9; J-RD-19)
@@ -536,6 +539,7 @@ The system handles it: the close button shows the edited dot and the title adds 
  jpdf  File  Edit  Format  View  Go  Tools  Window  Help
        ┌─────────────────────────────────┐
        │ New Blank Document          ⌘N  │
+       │ New from Copied Pages           │
        │ New from Images…                │
        │ Merge Files…                    │
        │ Open…                       ⌘O  │
@@ -560,8 +564,10 @@ The system handles it: the close button shows the edited dot and the title adds 
   item. Cmd+I belongs to Document Properties except while text is being edited, when the
   Format menu's Italic takes it and Document Properties shows no key (shortcuts.md rule 11).
 - Format is present but its items are disabled except while editing text.
-- An unavailable item is disabled (menus are not in the Full Keyboard Access tab loop, so the
-  §0 rule 5 exception isn't needed here) and its help tag gives the engine's reason.
+- An unavailable item is a disabled `NSMenuItem` whose help text (`toolTip`, exposed as its
+  accessibility help) gives the engine's reason; VoiceOver reads it on the item. Keyboard-only
+  users read the same reason where the command also lives: the tool-row reason line (W-16)
+  or the disabled toolbar control (§0 rule 5). An XCUITest asserts the item's help text.
 
 ### W-33 Creator sheets (IA §8 Creators)
 
@@ -573,8 +579,9 @@ journeys' quoted strings. Per-creator details are drawn in #45.
 ### W-34 Save As (IA §6; J-OS-02)
 
 The system save panel (`NSSavePanel`) with an accessory view holding the "Remove Earlier
-Versions" checkbox (J-OS-02's "remove earlier versions", off by default) and, for a signed
-file, the warning line from J-OS-02's error branch under it.
+Versions" checkbox (J-OS-02's "remove earlier versions", off by default). On a signed file,
+checking it first shows a W-23 alert that the signatures will no longer verify, with Cancel
+as the default (J-OS-02 error branch, IA §8); Cancel unchecks the box.
 
 ### W-35 Keyboard shortcuts list (IA §6 Help)
 
@@ -590,7 +597,8 @@ close button; Esc or clicking outside closes it and keeps the text (shortcuts.md
 
 ### W-37 Magnifier (IA §9; J-RD-25)
 
-A 200 pt circular loupe with a 1 pt separator ring and a system shadow, following the pointer,
+A 200 pt circular loupe with a 1 pt separator ring and a system shadow, its centre 24 pt up
+and right of the pointer (flipped near the window edges) so the hot spot is never covered,
 showing the engine's rendering at 4× the current zoom ("+" / "-" change the factor); the
 factor in a `.caption` capsule at the bottom of the ring.
 

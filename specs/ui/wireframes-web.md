@@ -85,7 +85,7 @@ Arial, sans-serif`; no web-font download (strict CSP, no third-party requests). 
 | control boundary (field outlines, dividers that bound a control) | `#8a8a8a` | `#8a8a8a` | ≥ 3.1:1 / ≥ 4.8:1 (SC 1.4.11) |
 | focus ring | 2 px `#0b0b0b` inside a 2 px `#ffffff` outline (both appearances) | | ≥ 3:1 against any background (accessibility.md §1) |
 
-| `action.selected` (selected tool, selected list row) | `primary.main` at 16 % with a 2 px `primary.main` bottom bar on tools | `primary.main` at 24 % with the same bar | the bar is ≥ 5.2:1 / ≥ 9.5:1, so the state never relies on the tint alone (SC 1.4.11) |
+| `action.selected` (selected tool, selected list row) | `primary.main` at 16 % with a 2 px `primary.main` bottom bar on tools | `primary.main` at 24 % with the same bar | the bar against the tinted button is 4.55:1 / 5.46:1 (≥ 3:1), so the state never relies on the tint alone (SC 1.4.11) |
 | `action.disabled` (disabled icon and label) | `#5f5f5f` at 60 % | `#b0b0b0` at 60 % | disabled controls are exempt from contrast; they also carry the reason (W-16) |
 | `info.main` / `warning.main` / `success.main` (Alert icons and borders) | `#0b6bcb` / `#9a5b00` / `#2e7d32` | `#7cc4fa` / `#ffb74d` / `#81c784` | ≥ 4.5:1 on paper and default; Alert text uses `text.primary` |
 
@@ -224,12 +224,12 @@ is the user gesture that re-grants file access. Files that no longer exist are l
   the document title when the file sets `/DisplayDocTitle` (J-RD-27; the file name stays in
   the tooltip), middle-truncated at 240 px, with an 8 px dot when edited. The close button is
   an `IconButton` placed **next to** the `Tab` element, not inside it (`role="tab"` can't
-  contain a focusable control; axe `nested-interactive`); Delete on a focused tab also closes
-  it. The tab bar is shown even with one document.
+  contain a focusable control; axe `nested-interactive`); the tab bar is shown even with one document.
 - Row 2, the main toolbar (`Toolbar`): the menu buttons (`Button` + `Menu`, IA §6, W-32)
   first; file actions; Undo / Redo (annotate.md's web toolbar rule); the mode switcher as
   `Tabs` (labels with icons, 40 px high, `primary.main` indicator); the Read-only Select /
-  Hand `ToggleButtonGroup`; then sidebar and inspector toggles, zoom, back / forward, rotate
+  Hand `ToggleButtonGroup`; the "Highlight fields" `ToggleButton` (off by default for a newly
+  opened file, J-FM-04); then sidebar and inspector toggles, zoom, back / forward, rotate
   view left / right, full screen, presentation (shortcuts.md names the toolbar as their web
   path) and Find. Below 1200 px window width everything after back / forward moves into a
   `[⋯ More]` menu (W-29). Inspector toggle is present in every mode.
@@ -663,6 +663,7 @@ use monospace. `[Close]`.
 │ │ Viewing      │ [x] Restore open documents at launch                 │ │
 │ │ Annotations  │ Author name [Guest____________]                      │ │
 │ │ Printing     │                                                      │ │
+│ │ Forms        │                                                      │ │
 │ │ Keyboard     │                                                      │ │
 │ └──────────────┴─────────────────────────────────────────────────────┘ │
 │                                                              [Close]  │
@@ -671,7 +672,8 @@ use monospace. `[Close]`.
 
 Sections: General (appearance, restore at launch, author name), Viewing (default zoom and
 layout), Annotations (alignment guides when dragging), Printing (choose print content each
-time), Keyboard (single-key shortcuts on/off). Changes apply at once; no OK button. A
+time), Forms (highlight fields in newly opened files, J-FM-04), Keyboard (single-key
+shortcuts on/off). Changes apply at once; no OK button. A
 vertical `Tabs` list on the left (180 px).
 
 ### W-28 Full screen and presentation (IA §9; J-RD-19)
@@ -745,14 +747,16 @@ close button's name becomes "Close «name», edited"); `document.title` becomes
 │ Compress…                            │
 │ ──────────────────────────────────── │
 │ Print…                       Ctrl+P  │
-│ Document properties…                 │
+│ Document properties                  │
 └──────────────────────────────────────┘
 ```
 
 - Menu buttons open MUI `Menu`s with dense `MenuItem`s: label (`body2`), key as secondary text
   (`caption`, `text.secondary`, right-aligned) only where shortcuts.md defines a web key
   ("Ctrl" means the platform's primary modifier, shortcuts.md rule 2), `▸` for submenus,
-  `Divider` between groups. The groups and items are IA §6's table, in its order.
+  `Divider` between groups. The groups and items are IA §6's table, in its order; File's
+  "New ▸" submenu holds New blank document, New from images and New from copied pages
+  (J-PG-01, J-OS-04, J-PG-13).
 - An item the engine reports unavailable stays focusable (`aria-disabled`), dimmed, with the
   reason as a second line (`caption`). Items needing more input end in "…".
 
@@ -795,8 +799,10 @@ list with per-row errors, the compress result report, split modes) are drawn in 
 
 The browser's save picker can't hold our options, so a small dialog comes first: the "remove
 earlier versions" check box, off by default (J-OS-02), with the signed-file warning line shown
-only when it applies (wording from J-OS-02's error branch), then the file-handle adapter's
-save picker.
+only when it applies. `Choose location…` is the default. On a signed file, checking the box
+first opens a W-23-style confirmation that the signatures will no longer verify, with Cancel
+as the default (J-OS-02 error branch, IA §8); Cancel unchecks the box. Then the file-handle
+adapter's save picker.
 
 ### W-35 Keyboard shortcuts list (IA §6 Help; shortcuts.md)
 
@@ -821,10 +827,11 @@ field gets focus when it opens; Esc or clicking outside closes it and keeps the 
 
 ### W-37 Magnifier (IA §9; J-RD-25)
 
-A 200 px circular loupe (2 px control-boundary ring, elevation 8) centred on the pointer,
+A 200 px circular loupe (2 px control-boundary ring, elevation 8) whose centre is 24 px
+up and right of the pointer (flipped to stay inside the window near its edges), so the
+pointer's hot spot is never covered,
 showing the engine's rendering of the area under it at 4× the current zoom ("+" / "-" change
-the factor), with the factor in a `caption` chip at the ring's bottom. It never covers the
-pointer's hot spot (offset 24 px up-right near the edges).
+the factor), with the factor in a `caption` chip at the ring's bottom.
 
 ## 3. Reviewer checklist (AUTOMATION §5.4)
 
