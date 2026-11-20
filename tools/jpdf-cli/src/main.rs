@@ -1,0 +1,250 @@
+//! jpdf-cli — the headless interface the judge grades (ops/judge/CONTRACT.md §1).
+//! Spec: specs/cli/jpdf-cli.md.
+//!
+//! Exit codes: 0 success, 2 clean typed error, 3 not implemented. Nothing else, ever.
+#![forbid(unsafe_code)]
+
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use jpdf_engine::{Document, EngineError, Limits};
+
+const EXIT_ERROR: u8 = 2;
+const EXIT_NOT_IMPLEMENTED: u8 = 3;
+
+/// A command of CONTRACT §1: its required and optional `--flags` (each takes one value).
+struct Command {
+    name: &'static str,
+    required: &'static [&'static str],
+    optional: &'static [&'static str],
+}
+
+const COMMANDS: &[Command] = &[
+    Command {
+        name: "info",
+        required: &[],
+        optional: &["password"],
+    },
+    Command {
+        name: "render",
+        required: &["page", "dpi", "out"],
+        optional: &["password"],
+    },
+    Command {
+        name: "text",
+        required: &["page"],
+        optional: &["password"],
+    },
+    Command {
+        name: "annotate",
+        required: &["out", "page", "kind", "rect", "color", "save"],
+        optional: &[],
+    },
+    Command {
+        name: "rewrite",
+        required: &["out", "mode"],
+        optional: &[],
+    },
+    Command {
+        name: "encrypt",
+        required: &["out", "user-password", "owner-password"],
+        optional: &[],
+    },
+    Command {
+        name: "fill",
+        required: &["out", "field", "value"],
+        optional: &[],
+    },
+    Command {
+        name: "redact",
+        required: &["out", "page", "rect"],
+        optional: &[],
+    },
+    Command {
+        name: "sign",
+        required: &["out", "p12", "p12-password", "field"],
+        optional: &[],
+    },
+    Command {
+        name: "verify-signatures",
+        required: &[],
+        optional: &[],
+    },
+];
+
+const USAGE: &str = "usage: jpdf-cli <info|render|text|annotate|rewrite|encrypt|fill|redact|sign|verify-signatures> FILE [--flag VALUE]... (see ops/judge/CONTRACT.md)";
+
+/// A failed run: exit code plus one line for stderr.
+#[derive(Debug)]
+struct Failure {
+    code: u8,
+    message: String,
+}
+
+impl Failure {
+    fn usage(message: impl Into<String>) -> Self {
+        Self {
+            code: EXIT_ERROR,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<EngineError> for Failure {
+    fn from(e: EngineError) -> Self {
+        let code = match e {
+            EngineError::Unsupported(_) => EXIT_NOT_IMPLEMENTED,
+            EngineError::Malformed { .. } | EngineError::LimitExceeded(_) => EXIT_ERROR,
+        };
+        Self {
+            code,
+            message: e.to_string(),
+        }
+    }
+}
+
+/// Parsed command line.
+#[derive(Debug)]
+struct Invocation {
+    command: &'static str,
+    file: PathBuf,
+}
+
+fn main() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(f) => {
+            // Ignore stderr write errors: there is nowhere left to report them.
+            let _ = writeln!(io::stderr(), "jpdf-cli: {}", f.message);
+            ExitCode::from(f.code)
+        }
+    }
+}
+
+fn run(args: &[OsString]) -> Result<(), Failure> {
+    let inv = parse_args(args)?;
+    match inv.command {
+        "info" => info(&inv),
+        other => Err(Failure {
+            code: EXIT_NOT_IMPLEMENTED,
+            message: format!("not implemented: {other}"),
+        }),
+    }
+}
+
+fn parse_args(args: &[OsString]) -> Result<Invocation, Failure> {
+    let (first, rest) = args.split_first().ok_or_else(|| Failure::usage(USAGE))?;
+    let name = first.to_str().unwrap_or_default();
+    let cmd = COMMANDS
+        .iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Failure::usage(format!("unknown command {first:?}; {USAGE}")))?;
+
+    let mut file: Option<PathBuf> = None;
+    let mut seen: Vec<&'static str> = Vec::new();
+    let mut iter = rest.iter();
+    while let Some(arg) = iter.next() {
+        let text = arg.to_str().unwrap_or_default();
+        if let Some(flag) = text.strip_prefix("--") {
+            let known = cmd
+                .required
+                .iter()
+                .chain(cmd.optional)
+                .find(|f| **f == flag)
+                .ok_or_else(|| Failure::usage(format!("{}: unknown flag --{flag}", cmd.name)))?;
+            if seen.contains(known) {
+                return Err(Failure::usage(format!("--{known} given twice")));
+            }
+            let value = iter
+                .next()
+                .ok_or_else(|| Failure::usage(format!("--{known} needs a value")))?;
+            validate_flag(known, value)?;
+            seen.push(known);
+        } else if file.is_some() {
+            return Err(Failure::usage(format!("unexpected argument {arg:?}")));
+        } else {
+            file = Some(PathBuf::from(arg));
+        }
+    }
+    let file = file.ok_or_else(|| Failure::usage(format!("{}: missing FILE", cmd.name)))?;
+    if let Some(missing) = cmd.required.iter().find(|r| !seen.contains(r)) {
+        return Err(Failure::usage(format!("{}: missing --{missing}", cmd.name)));
+    }
+    Ok(Invocation {
+        command: cmd.name,
+        file,
+    })
+}
+
+/// Syntactic checks for flag values (CONTRACT §1). Paths, passwords and names are free text.
+fn validate_flag(flag: &str, value: &OsStr) -> Result<(), Failure> {
+    let bad = |why: &str| Failure::usage(format!("--{flag}: {why}"));
+    let text = || value.to_str().ok_or_else(|| bad("not valid UTF-8"));
+    match flag {
+        "page" => match text()?.parse::<u32>() {
+            Ok(n) if n >= 1 => Ok(()),
+            _ => Err(bad("expected a page number >= 1")),
+        },
+        "dpi" => match text()?.parse::<u32>() {
+            Ok(n) if (1..=2400).contains(&n) => Ok(()),
+            _ => Err(bad("expected an integer in 1..=2400")),
+        },
+        "rect" => {
+            let parts: Result<Vec<f64>, _> = text()?.split(',').map(str::parse::<f64>).collect();
+            match parts {
+                Ok(p) if p.len() == 4 && p.iter().all(|v| v.is_finite()) => Ok(()),
+                _ => Err(bad("expected x0,y0,x1,y1")),
+            }
+        }
+        "color" => {
+            let parts: Result<Vec<u8>, _> = text()?.split(',').map(str::parse::<u8>).collect();
+            match parts {
+                Ok(p) if p.len() == 3 => Ok(()),
+                _ => Err(bad("expected R,G,B with each in 0..=255")),
+            }
+        }
+        "kind" => expect_word(text()?, "highlight", bad),
+        "save" => expect_word(text()?, "incremental", bad),
+        "mode" => expect_word(text()?, "full", bad),
+        _ => Ok(()),
+    }
+}
+
+fn expect_word(
+    got: &str,
+    want: &'static str,
+    bad: impl Fn(&str) -> Failure,
+) -> Result<(), Failure> {
+    if got == want {
+        Ok(())
+    } else {
+        Err(bad(&format!("only `{want}` is supported")))
+    }
+}
+
+/// `info FILE [--password PW]` → `{"pages": N}`. The password is unused until encryption lands.
+fn info(inv: &Invocation) -> Result<(), Failure> {
+    let limits = Limits::default();
+    let bytes = read_limited(&inv.file, limits.max_file_size)?;
+    let doc = Document::open(&bytes, &limits)?;
+    writeln!(io::stdout().lock(), "{{\"pages\": {}}}", doc.page_count())
+        .map_err(|e| Failure::usage(format!("cannot write output: {e}")))
+}
+
+/// Reads at most `max` bytes; larger files (including endless devices) are rejected without
+/// reading them fully.
+fn read_limited(path: &PathBuf, max: usize) -> Result<Vec<u8>, Failure> {
+    let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));
+    let file = File::open(path).map_err(cannot)?;
+    let cap = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(cap).read_to_end(&mut bytes).map_err(cannot)?;
+    if bytes.len() > max {
+        return Err(Failure::usage("limit exceeded: file size"));
+    }
+    Ok(bytes)
+}

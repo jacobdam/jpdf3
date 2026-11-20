@@ -1,2 +1,88 @@
 //! jpdf-engine — see PLAN.md §2.3.
+//!
+//! The facade every front end (CLI, bindings) goes through. The engine never touches the file
+//! system: callers hand in bytes.
 #![forbid(unsafe_code)]
+
+use std::fmt;
+
+use jpdf_cos::CosError;
+use jpdf_syntax::{SyntaxError, XrefDocument};
+
+pub use jpdf_syntax::Limits;
+
+/// Typed engine errors. Every failure on hostile input ends up here; nothing panics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineError {
+    /// Invalid or corrupt input. `offset` is a byte position when known.
+    Malformed {
+        what: &'static str,
+        offset: Option<usize>,
+    },
+    /// A `Limits` bound was hit.
+    LimitExceeded(&'static str),
+    /// Valid input that needs a feature this build lacks.
+    Unsupported(&'static str),
+}
+
+impl fmt::Display for EngineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed {
+                what,
+                offset: Some(o),
+            } => write!(f, "malformed PDF: {what} at byte {o}"),
+            Self::Malformed { what, offset: None } => write!(f, "malformed PDF: {what}"),
+            Self::LimitExceeded(which) => write!(f, "limit exceeded: {which}"),
+            Self::Unsupported(what) => write!(f, "not implemented: {what}"),
+        }
+    }
+}
+
+impl std::error::Error for EngineError {}
+
+impl From<SyntaxError> for EngineError {
+    fn from(e: SyntaxError) -> Self {
+        match e {
+            SyntaxError::Malformed { what, offset } => Self::Malformed {
+                what,
+                offset: Some(offset),
+            },
+            SyntaxError::LimitExceeded(w) => Self::LimitExceeded(w),
+            SyntaxError::Unsupported(w) => Self::Unsupported(w),
+        }
+    }
+}
+
+impl From<CosError> for EngineError {
+    fn from(e: CosError) -> Self {
+        match e {
+            CosError::Syntax(s) => s.into(),
+            CosError::Malformed(what) => Self::Malformed { what, offset: None },
+            CosError::LimitExceeded(w) => Self::LimitExceeded(w),
+            CosError::Unsupported(w) => Self::Unsupported(w),
+        }
+    }
+}
+
+/// An opened document.
+#[derive(Debug)]
+pub struct Document {
+    page_count: usize,
+}
+
+impl Document {
+    /// Opens a document from its bytes.
+    pub fn open(bytes: &[u8], limits: &Limits) -> Result<Self, EngineError> {
+        if bytes.len() > limits.max_file_size {
+            return Err(EngineError::LimitExceeded("file size"));
+        }
+        let xref = XrefDocument::parse(bytes, limits)?;
+        let page_count = jpdf_cos::flat_page_count(&xref, limits)?;
+        Ok(Self { page_count })
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+}
