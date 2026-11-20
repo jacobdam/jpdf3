@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
+use crate::Limits;
 use crate::error::{SyntaxError, malformed};
 use crate::lexer::{LexBudget, Parser, Token};
-use crate::limits::Limits;
 use crate::object::{Dict, ObjRef, Object};
 
 /// How far from the end of the file `startxref` is searched for. ISO 32000-2 §7.5.5 puts it

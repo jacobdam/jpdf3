@@ -6,11 +6,10 @@
 
 mod error;
 mod lexer;
-mod limits;
 mod object;
 mod xref;
 
 pub use error::SyntaxError;
-pub use limits::Limits;
+pub use jpdf_traits::Limits;
 pub use object::{Dict, ObjRef, Object};
 pub use xref::XrefDocument;

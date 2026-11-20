@@ -4,31 +4,26 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #51 (#13, the macOS skeleton and `cargo xtask ci macos`; spec
-  specs/ui-macos/app-skeleton.md, ADR 0003). Reviewed, with auto-merge on.
-  - `project-macos` passed on the branch via `workflow_dispatch` (run 44820544986: Xcode 16.4,
-    3/3 XCUITests, the sandbox and hardened runtime check passed). The last push only
-    hardened xtask's `capture` and edited the spec; it was checked locally, not on the macOS
-    runner.
-  - After it merges, check that `project-macos` on main is green.
+- PR #56 (#14, part 1 of 4): `Limits` moved into `jpdf-traits`, plus `DecodeLimits`,
+  `BackendError`, the Flate, JPEG, JPEG 2000, JBIG2, CCITT, hash and cipher traits, and
+  the `jpdf_traits::conformance` suites.
+  - Spec: specs/core/backend-traits.md. ADR: 0004.
+  - Reviewed (approved after one fix round plus a delta review). Auto-merge is on.
+  - #14 stays open until parts 2–4 (#53, #54, #55) land. Close it after #55.
 
 ## Last session
-- Built `apps/macos`:
-  - a hand-written Xcode project with synchronized folders;
-  - the W-02 start window (`Open…` inert, File > Open… disabled);
-  - a sandbox-only XPC helper with `ping`.
-- Added `cargo xtask ci macos`:
-  - runs XCUITest and reads its results with xcresulttool through a strict JSON reader;
-  - maps test names `test_<id>[__<detail>]` to IDs;
-  - checks the Release codesign seal, hardened runtime and exact entitlements.
-- Local XCUITest is blocked until the owner enables Automation Mode (#52); CI runs it.
+- Split #14 into #14, #53, #54 and #55. Implemented part 1.
+- Opened discovery #57: JPX components with mixed bit depths currently return
+  `Unsupported`. Decide before the first JPX adapter (#16).
 
 ## Next step
-- `ready` issues: #14 (jpdf-traits), #17, #18, #20, #22. #15 (metrics dashboard) can put its
-  pages under `site/metrics/`.
-- #21 (fire drill) waits on #19; #13 is done once #51 merges.
-- A later issue wires `bindings/jpdf-uniffi` into the helper (the app doesn't call it yet).
-- #45 (wireframes) is low priority.
+- `ready` M0 issues: #17, #18, #20, #22. Then #53, #54, #55, all unblocked once #56 merges;
+  give them the `ready` label then.
+- #16 (backend admission) can start once #56 merges. Every adapter must pass its
+  `jpdf_traits::conformance` suite. JPEG, JPX, JBIG2 and CCITT adapters must supply our
+  own fixtures: a landscape and a portrait image, and for JPX also a fixture below 8 bits.
+- #15 (metrics dashboard) can put its pages under `site/metrics/`.
+- #21 (fire drill) waits on #19. #45 (wireframes) is low priority.
 
 ## Blockers / owner-todo
 - #50: license ruling for test/build-only tools.

@@ -71,6 +71,9 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-syntax"
 version = "0.0.0"
+dependencies = [
+ "jpdf-traits",
+]
 
 [[package]]
 name = "jpdf-text"
