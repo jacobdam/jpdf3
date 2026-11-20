@@ -54,8 +54,8 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
   installation. The user adds certificates to it, always through a confirmation naming each
   certificate's SHA-256 fingerprint (J-SG-04). It is stored in app storage (macOS: the app
   container; web: the origin's IndexedDB) and passed to the engine as untrusted bytes. System
-  root stores and public trust lists are not used (a later decision, tracked as a discovery
-  issue). Certificates of the user's own digital IDs are not trusted automatically.
+  root stores and public trust lists are not used (a later decision,
+  #48). Certificates of the user's own digital IDs are not trusted automatically.
 - **Statuses.** For each signature the engine returns four facts and a summary, shown in the
   Signatures panel (IA §4) and the signature details:
   - Integrity: `Intact` (the byte range checks hold, the message digest matches the signed
@@ -165,7 +165,7 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
     must allow cross-origin requests over HTTPS)". The test build serves the app and the
     harness endpoints from loopback, which browsers treat as secure. The web content
     security policy for these requests and the macOS App Transport Security exception for
-    plain `http:` are decided before M9 (discovery issue).
+    plain `http:` are decided before M9 (#47).
 
 ## J-SG-01: Verify a valid signature in the Signatures panel
 - milestone: M9
