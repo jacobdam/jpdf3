@@ -29,7 +29,9 @@ Shared rules for every journey in this file:
 - Engine gate: steps that act "while" a load, search or render is running (Esc, jump, close)
   first pause the engine job through a test-only gate in the engine API (the job blocks
   after N pages or N bytes until the test releases it), act, then release. This keeps those
-  steps independent of machine speed. The gate is compiled only into test builds.
+  steps independent of machine speed. The gate is compiled only into test builds, and a binding check asserts
+that release bindings do not export it. WS/DS (save) document actions are covered by the
+editing journeys, since reader journeys never save.
 - Link policy: the engine classifies every link target (allowed scheme or not), normalizes
   it (punycode hosts, escaped control and bidi characters, stripped mailto attachment
   parameters) and returns the display string and the openable URL. The native layer only
@@ -105,7 +107,8 @@ holds it.
 Steps: open a fixture with a broken xref table (offsets shifted) → it opens after repair
 with the same page count MuPDF and Poppler report → open a fixture whose catalog and page
 tree come first, truncated after its third page's content (no xref, no trailer) → it opens
-by repair with exactly 3 pages (the pages whose content survives) → open a fixture
+by repair with exactly 3 pages (the pages whose content survives; page objects 4 and later lie past the truncation
+point) → open a fixture
 whose page 1 content nests deeper than `Limits` allows → a typed "file too complex" error
 at open or at first render of page 1, never a crash or hang → open a random-bytes file renamed `.pdf` →
 a "not a PDF" error → after each error the app stays responsive and opens a valid fixture.
@@ -303,7 +306,8 @@ for the usual bypass spellings: `JaVaScript:`, a leading space or control charac
 (`\u0001javascript:`), and a tab or newline inside the scheme (`java\tscript:`). A relative
 URI is resolved against the catalog's `/URI /Base` first, then checked the same way.
 A `mailto:a@example.com?attach=/etc/passwd&attachment=/etc/passwd&subject=hi` link: the
-confirmation shows the full address and query, and the URL handed to the system (intercepted
+confirmation shows the URL that will actually open plus a note that attachment parameters
+were removed, and the URL handed to the system (intercepted
 by the test) keeps `subject` but has no `attach` or `attachment` parameter in any case
 spelling.
 
@@ -417,12 +421,12 @@ Steps: open a linearized 2,000-page, 300 MB fixture → page 1 renders from the
 first-page section before any byte past that section is read (engine read log) → a progress
 indicator shows the loading state (the load is held at the engine gate after page 1) →
 jump to page 1,900 while the load is still held → it renders
-without waiting for the whole file to be indexed → scroll quickly through 200 pages → no
+without waiting for the whole file to be indexed → release the gate → scroll quickly through 200 pages → no
 input event waits on the engine (rendering is asynchronous; the 60 fps target is measured
 by the bench), and peak engine memory stays under its `Limits` bound and does not grow with
 file size (compared with a 30 MB variant of the same fixture) →
 hold a fresh load at the engine gate and close the file → the engine job reports
-"cancelled" and engine memory returns to its pre-open level (engine memory stats).
+"cancelled" and engine memory returns to within 5% of its pre-open level (engine memory stats).
 
 ## J-RD-27: Respect the document's initial view safely
 - milestone: M4
@@ -447,8 +451,9 @@ Steps: open a fixture with a document /OpenAction JavaScript, a /Names /JavaScri
 page /AA open action, document /AA actions (WC, WS, DS, WP, DP), a link /AA mouse-enter
 action, a widget /AA action, and Rendition, Sound, Movie and RichMedia actions; every script
 tries something visible (show an alert, go to page 9, open `https://example.com/x`, print)
-→ open, scroll through every page, hover and click every link and widget → no alert
-appears, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
+→ open, scroll through every page, hover and click every link and widget, print (J-RD-21
+mechanism) and close the document → no alert appears, no audio or video plays and no media
+player or media element is created, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
 7) → a one-time notice says the document contains scripts that were not run → fixtures whose
 /OpenAction is a Launch action, a URI action, and whose page /AA is a SubmitForm action and an
 ImportData action → nothing launches, no link confirmation appears unprompted, no network
