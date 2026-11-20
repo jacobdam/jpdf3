@@ -41,6 +41,11 @@ instead of adding near-duplicates.
   a state only after the step that saves it; "remove what we added" needs a private marker
   ([journal](journal/2026-11-20.md), PR #30, PR #32, [PR #39](journal/2026-11-20.md)).
 
+- Writing a spec that restates journeys (UI spec, feature spec) → quote the journeys' exact UI
+  strings (empty states, option names, page-field format, notice wording) instead of
+  paraphrasing, and check new web keys against `specs/ui/shortcuts.md` rule 3 (the
+  browser-reserved list) ([journal](journal/2026-11-20.md), PR #40).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects
