@@ -30,8 +30,7 @@ Shared rules for every journey in this file:
   first pause the engine job through a test-only gate in the engine API (the job blocks
   after N pages or N bytes until the test releases it), act, then release. This keeps those
   steps independent of machine speed. The gate is compiled only into test builds, and a binding check asserts
-that release bindings do not export it. WS/DS (save) document actions are covered by the
-editing journeys, since reader journeys never save.
+that release bindings do not export it.
 - Link policy: the engine classifies every link target (allowed scheme or not), normalizes
   it (punycode hosts, escaped control and bidi characters, stripped mailto attachment
   parameters) and returns the display string and the openable URL. The native layer only
@@ -453,8 +452,9 @@ action, a widget /AA action, and Rendition, Sound, Movie and RichMedia actions; 
 tries something visible (show an alert, go to page 9, open `https://example.com/x`, print)
 → open, scroll through every page, hover and click every link and widget, print (J-RD-21
 mechanism) and close the document → no alert appears, no audio or video plays and no media
-player or media element is created, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
-7) → a one-time notice says the document contains scripts that were not run → fixtures whose
+player or media element is created, the page never changes on its own, no URL is opened, exactly one print job starts (the user's own; the document's
+WP/DP actions and script print requests start none) (CONSTITUTION
+7; document WS/DS save actions are covered by the editing journeys, #8) → a one-time notice says the document contains scripts that were not run → fixtures whose
 /OpenAction is a Launch action, a URI action, and whose page /AA is a SubmitForm action and an
 ImportData action → nothing launches, no link confirmation appears unprompted, no network
 request is made, nothing is read from disk, and the same kind of notice is shown.

@@ -20,6 +20,7 @@ Phase: bootstrap (pilot)
 ## Next step
 - The lowest `ready` M0 issue: #7 (journeys 2/4: annotate). Reuse the J-RD shared rules
   and the LESSONS entry on writing journeys. Run `cargo xtask check-specs` and add each ID to `specs/TRACE.md`.
+- #8 must cover document WS/DS (save) actions being inert; J-RD-28 hands them off.
 - #21 still waits on #12, #13 and #19.
 - A cheap open-rate win for later: nested page trees (44 of the 45 local failures).
 
