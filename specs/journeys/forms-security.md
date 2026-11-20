@@ -3,7 +3,8 @@
 Areas `FM` (interactive forms) and `SC` (document security: passwords, permissions, certificate
 encryption, true redaction, removing hidden information). PLAN §4 (Forms; Security &
 signatures), feature groups F-FM-1, F-SC-1 and the redaction and metadata-scrub half of F-ED-4
-in [specs/TRACE.md](../TRACE.md). Signatures and platform conventions are written in #42.
+in [specs/TRACE.md](../TRACE.md). Signatures and platform conventions are in
+[signatures-platform.md](signatures-platform.md).
 Inventory and coverage: [RESEARCH.md](RESEARCH.md). Format: ops/judge/CONTRACT.md §4.
 Milestones (PLAN §8): forms are M7; passwords and permissions are M6 (writer); certificate
 encryption is M9 (it needs the CMS code of the signatures milestone); redaction and removing
@@ -66,9 +67,10 @@ verify, history is honest, permissions.
   5. Residue: page thumbnails (`/Thumb`) of redacted pages are removed; fonts used by removed
      text are re-subset so that glyphs and `/ToUnicode` entries no remaining text uses are gone;
      images re-encoded by the engine drop JPEG metadata segments (EXIF, XMP, embedded
-     thumbnails) and `/Alternates`; crash-recovery copies of the document (#42) that hold
-     pre-redaction content are deleted when the redacted file is saved (tested once #42 defines
-     crash recovery; not part of the M8 gate before that). The font check compares the glyph
+     thumbnails) and `/Alternates`; crash-recovery data of the document (J-PC-03) that holds
+     pre-redaction content is deleted when the redacted file is saved (the test waits for a
+     recovery checkpoint after marking, saves, and then searches app storage for every
+     sentinel as in check 1: not found). The font check compares the glyph
      sets of each font program before and after (fonts extracted with `mutool extract`, glyphs
      listed with fontTools) against the glyphs of the remaining text. Known residual risk,
      stated in the redaction help text: the width of the gap left by removed text is kept so
@@ -101,7 +103,7 @@ verify, history is honest, permissions.
   salts and file key).
 - **Signed files.** Changes that invalidate existing signatures (any full rewrite of a signed
   file) warn that the signatures will no longer verify and default to Cancel, as in J-OS-02.
-  Certification permissions (DocMDP) are covered with the signature journeys (#42).
+  Certification permissions (DocMDP) are covered by J-SG-03 and J-SG-08.
 
 ## J-FM-01: Fill text fields
 - milestone: M7
@@ -309,7 +311,7 @@ sharing a name form one group in which only one can be on) → set their export 
 `g` and `b`, and turn on Allow custom text → choose List box and place it with items `one` to
 `four` and Multiple selection on → choose Button, label it `Clear`, set its action to Reset form
 → choose Signature field and place it on page 2 → switch to Read mode → fill every field except
-`customer.id` (read-only) and `Signature1` (signing is #42) → save and verify (incremental) →
+`customer.id` (read-only) and `Signature1` (signing it is J-SG-07) → save and verify (incremental) →
 the catalog has an `/AcroForm` with `/Fields` holding exactly `customer` (with kids `name`,
 `id` and `notes`), `Check1`, `plan`, `Dropdown1`, `List1`, `Button1` and `Signature1`, `/DR`
 with Helvetica, and no `/NeedAppearances` → each field has the type, flags and entries it was
@@ -379,7 +381,7 @@ field values found by `pdftotext`) → undo in the open session restores every f
 Error branch: a widget whose `/AP /N` is a self-referencing Form XObject or exceeds the stream
 limits is removed without being drawn, with a warning; a fixture with a signed signature field
 keeps it unflattened and the confirmation warns that flattening changes the signed document
-(signature verification itself is #42).
+(signature verification itself is J-SG-01…J-SG-03).
 
 ## J-FM-11: Fill forms in restricted documents
 - milestone: M7

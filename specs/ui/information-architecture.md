@@ -106,7 +106,7 @@ every newly opened document.
 | **Edit** | Change page content | edit text · add text · add image · link · watermark · header and footer · Bates numbers · background · crop | (the row also starts with the select tool) text format, image arrange/flip/rotate/replace, link target, or the settings of the open watermark/header/Bates/background job | J-ED-01…J-ED-10 |
 | **Pages** | Organize pages and the outline | the document view becomes the page organizer grid · insert (blank, from file, from images) · delete · extract · rotate left/right · duplicate · move left/right · split · page labels | the selected pages: count, size, rotation, label | J-PG-01…J-PG-16 |
 | **Forms** | Create and edit form fields | field types (text, check box, radio, list, combo, push button, signature field) · align · tab order · flatten | field properties: name, tooltip, required, read-only, format and calculation (built-in set only), appearance | J-FM-04, J-FM-08…J-FM-11 |
-| **Secure** | Passwords, permissions, redaction, signatures | encrypt · change permissions · remove security · mark for redaction · apply redactions · scrub metadata · sign · certify · signatures panel | the selected redaction mark or signature field; certificate details of a selected signature | J-SC-01…J-SC-10; signing: #42 |
+| **Secure** | Passwords, permissions, redaction, signatures | encrypt · change permissions · remove security · mark for redaction · apply redactions · scrub metadata · sign · certify · digital IDs · signatures panel | the selected redaction mark or signature field; certificate details of a selected signature | J-SC-01…J-SC-10, J-SG-01…J-SG-11 |
 
 Notes:
 - **Form filling** works with the Read tools and with the select tool of Annotate and Edit:
@@ -139,7 +139,7 @@ maximum of one third of the window.
 | Attachments | Name, size, description, page (for attachment annotations); no Open action, double-click does nothing, nothing is written to disk or launched (CONSTITUTION 7) | "No attachments" | J-RD-13 |
 | Layers | Optional content groups with visibility toggles; locked groups shown as locked | "No layers" | J-RD-14 |
 | Search results | Each hit with page number and context; click to go | before a search: a hint to type a query; after: "No results" | J-RD-15, J-RD-31 |
-| Signatures | Each signature with its validation summary | "No signatures" | #42 |
+| Signatures | Each signature in signing order with its summary (Valid, Invalid, Unverified), signer and time; a one-line document summary at the top; click to go to the widget; details with integrity, signer, changes since signing, time, certificate chain, View signed version, Check revocation online, Add validation data, Add document timestamp | "No signatures" | J-SG-01, J-SG-03, J-SG-04, J-SG-09 |
 
 Panels that the document has no data for stay in the tab strip (never hidden) so their position
 is stable for keyboard and VoiceOver users.
@@ -167,14 +167,14 @@ toolbar, context-menu or keyboard path where the journeys name one ([shortcuts.m
 
 | Menu | Commands | Journeys |
 |---|---|---|
-| File | New (blank, from images, from copied pages), Merge Files, Open, Open Recent, Close, Save, Save As, Export (pages as images), Compress, Print, Document Properties | J-RD-01, J-RD-03, J-RD-21, J-RD-22, J-PG-01, J-PG-09, J-PG-13, J-OS-01…J-OS-05 |
+| File | New (blank, from images, from copied pages), Merge Files, Open, Open Recent, Close, Save, Save As, Revert to Saved, Export (pages as images), Compress, Print, Document Properties | J-RD-01, J-RD-03, J-RD-21, J-RD-22, J-PG-01, J-PG-09, J-PG-13, J-OS-01…J-OS-05, J-PC-01, J-PC-07 |
 | Edit | Undo, Redo, Cut, Copy, Paste, Paste After (outline), Delete, Select All, Find, Find Next/Previous, Preferences (macOS: in the App menu) | J-ANN-17, J-ANN-20, J-RD-15, J-RD-16 |
 | View | Page layout, zoom and fit, rotate view, sidebar and panels, inspector, sidebar and inspector width presets, page tint, magnifier, full screen, presentation | J-RD-07…J-RD-10, J-RD-19, J-RD-20, J-RD-25 |
 | Format (macOS) | Bold, Italic, Underline while editing text (web: the inspector) | J-ANN-05, J-ED-01, J-ED-02 |
 | Go | Next/previous/first/last page, go to page, back, forward | J-RD-06, J-RD-17 |
 | Tools | Switch mode; the current mode's tools | §3 |
-| Window (macOS) / tab bar (web) | Next/previous tab, merge windows, the open documents | J-RD-23 |
-| Help | Help, keyboard shortcuts list, about | — |
+| Window (macOS) / tab bar (web) | Next/previous tab, Move Tab to New Window, Merge All Windows, the open documents | J-RD-23, J-PC-05 |
+| Help | Help, keyboard shortcuts list, about | J-PC-06 |
 
 ### Context menus
 
@@ -228,15 +228,20 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 | Password | File name, password field (secure entry), wrong-password message in place without closing, Cancel; the password is never stored, logged or added to recent files; paste is allowed (WCAG 2.2 SC 3.3.8). The app does its part against password managers (web: no `<form>`, no username field, `autocomplete="off"`; macOS: AutoFill off for the field) but promises nothing about browser behavior; J-RD-04's storage check is the test | Open | J-RD-04, J-RD-30 |
 | Owner password unlock | Reached from the "unlock with password" action next to a disabled command; explains which permissions are restricted; password field; the unlock lasts for this session only | Unlock | J-RD-29, J-ANN-23 |
 | External link | The engine-normalized URL that will actually open (punycode host, escaped control and bidi characters); for `mailto:` with attachment parameters, a note that they were removed; Open / Cancel. Disallowed schemes never get this dialog, only the notice. Hovering a link shows the same engine display string (or the target page for internal links) as a tooltip | Cancel | J-RD-17, J-RD-18 |
-| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | no journey yet; #42 writes it (platform conventions) |
-| File changed on disk | Reload or keep my version | Keep | no journey yet; #42 writes it (platform conventions) |
+| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | J-PC-01 |
+| File changed on disk | Reload or keep my version | Keep | J-PC-02 |
 | Confirm delete | Deleting pages, several annotations from the list, or a bookmark with children; states what is deleted and, for pages, that earlier revisions remain in the file after an incremental save (pages-edit.md "History is honest"). Deleting objects selected on the page (Delete key) has no confirmation; undo restores them (J-ANN-17) | Cancel | J-PG-04, J-ANN-19, J-PG-14 |
 | Other confirmations | Only those the journeys define, with their wording rules: flatten (J-ANN-21, J-ANN-26), deleting a reply that has replies (J-ANN-18), Remove for watermark / header and footer / Bates / background (J-ED-06…J-ED-09), page changes on a signed file (J-PG-15), Save As removing earlier versions of a signed file (J-OS-02), compressing a signed file (J-OS-03), output that will not be encrypted (J-PG-09, J-PG-15), replacing existing files with multi-file output (J-PG-10, J-PG-11) | Cancel | as listed |
+| Sign / Certify | Digital ID, reason, location, contact (seed-value choices when the field has them), appearance options with an engine-rendered preview, Timestamp (disabled with the reason when no server is set), the note that unsaved changes are saved with the signature; Certify adds the allowed-changes choice; then the save panel | Sign / Certify | J-SG-06, J-SG-07, J-SG-08, J-SG-09 |
+| Digital IDs | The user's IDs (name, issuer, expiry, key type, storage); Import (PKCS#12 and password), Create (self-signed), Export certificate, Remove (confirmation, Cancel default); the web honesty note about browser key storage | Close | J-SG-05 |
+| Certificate details | The chain with each certificate's fields as engine display strings; Trust (confirmation naming the fingerprint, Cancel default) | Close | J-SG-04 |
+| Restore unsaved changes | At launch after a crash: each document with its last checkpoint time; Restore, Discard; damaged records offer Discard only | Restore | J-PC-03 |
+| Revert to Saved | Confirms discarding the edits and reloading from disk | Cancel | J-PC-07 |
 | Save failed | The engine's or platform's typed error; the original file is untouched | OK | J-OS-06 |
 | Print | Content (document only / document and annotations), a separate toggle to print comment contents on extra pages, pages, scale, pages per sheet, auto-rotate; then the platform print panel | Print | J-RD-21, J-ANN-25 |
 | Document properties | File information, description, security summary (read-only values from the engine) | Close | J-RD-22 |
 | Creators | Custom stamp, signature (draw / type / image), watermark, header and footer, Bates, background, page labels, split, merge, compress, export | the action | J-ANN-14, J-ANN-15, J-ED-06…J-ED-09, J-PG-09…J-PG-12, J-OS-03, J-OS-05 |
-| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, alignment guides when dragging, choose print content each time, single-key shortcuts on/off (all of them: tool keys, G, M, ? and the magnifier's + / -) | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17 |
+| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, alignment guides when dragging, choose print content each time, single-key shortcuts on/off (all of them: tool keys, G, M, ? and the magnifier's + / -), Signatures ("Timestamp new signatures", off by default, and the timestamp server URL; trusted certificates) | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17, J-PC-04, J-SG-04, J-SG-09 |
 
 ## 9. Reading modes
 

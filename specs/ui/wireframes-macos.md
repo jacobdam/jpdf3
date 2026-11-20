@@ -432,7 +432,7 @@ monospaced `Text` that wraps and is never truncated, the host on its own line
 (`.keyboardShortcut(.defaultAction)` on Cancel). A `mailto:` with attachment parameters adds
 a line that they were removed.
 
-### W-21 Unsaved changes (IA §8; journey pending in #42)
+### W-21 Unsaved changes (IA §8; J-PC-01)
 
 ```
 ┌ alert (sheet) ─────────────────────────────────────────┐
@@ -450,7 +450,7 @@ buttons; an absence check asserts the window has no sheet, so it can't pass beca
 wording. On quit
 with several edited documents the system's review-changes flow applies.
 
-### W-22 File changed on disk (IA §8; journey pending in #42)
+### W-22 File changed on disk (IA §8; J-PC-02)
 
 An alert sheet: "“«report.pdf»” was changed by another app." / "Reload it, or keep your
 version and save it later." / `[Reload] [Keep My Version]`, Keep My Version the default and
