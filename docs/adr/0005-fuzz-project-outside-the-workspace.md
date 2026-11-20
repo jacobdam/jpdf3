@@ -31,8 +31,10 @@ CONSTITUTION 18 keeps PDFs out of the repo except minimized repros in `tests/reg
 4. Because the judge's nightly step runs `cargo fuzz run` without our seeds, two targets wrap
    fuzz bytes in a template with a correct xref table (`jpdf_testgen::from_fuzz_chunks`), so
    they reach object parsing and the page tree from an empty corpus (≈ 900 edges in 20 s).
-5. CI installs a pinned cargo-fuzz (0.13.2, `--locked`) for the PR run. The nightly toolchain
-   itself is not pinned, matching the judge's step.
+5. Our runs (PR gate and `cargo xtask fuzz`) use a dated nightly (`nightly-2026-11-20`) and
+   cargo-fuzz 0.13.2 (`--locked`), and build before running, so a broken nightly release or a
+   compile error is reported as a build failure, not a crash. Audits bump the date. The
+   judge's nightly step uses plain `nightly`; if that breaks, it is an infra failure there.
 
 ## Consequences
 - Two lockfiles to refresh in audits (`Cargo.lock`, `fuzz/Cargo.lock`).

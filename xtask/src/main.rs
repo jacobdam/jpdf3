@@ -68,11 +68,17 @@ fn main() -> ExitCode {
             }
         },
         (Some("nightly"), _) => ExitCode::SUCCESS,
-        // specs/tooling/fuzz.md. Needs nightly + cargo-fuzz; not part of `ci linux`.
+        // specs/tooling/fuzz.md. Needs the pinned nightly + cargo-fuzz; `ci linux` runs the
+        // short variant through `fuzz::ci`.
         (Some("fuzz"), _) => {
-            let result = fuzz::parse(args.get(1..).unwrap_or_default())
-                .and_then(|opts| fuzz::run(Path::new("."), &opts));
-            match result {
+            let opts = match fuzz::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: fuzz: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match fuzz::run(Path::new("."), &opts) {
                 Ok(()) => {
                     eprintln!("xtask: fuzz: no crash");
                     ExitCode::SUCCESS

@@ -2,8 +2,8 @@
 
 use jpdf_engine::{Document, EngineError, Limits};
 use jpdf_testgen::{
-    CHUNK_SEPARATOR, MAX_FUZZ_OBJECTS, classic_pdf, engine_objects_seeds, engine_open_seeds,
-    from_fuzz_chunks, minimal_pdf, to_fuzz_chunks,
+    CHUNK_SEPARATOR, ESCAPED_FF, MAX_FUZZ_OBJECTS, classic_pdf, engine_objects_seeds,
+    engine_open_seeds, from_fuzz_chunks, minimal_pdf, to_fuzz_chunks,
 };
 
 fn open(bytes: &[u8]) -> Result<usize, EngineError> {
@@ -137,4 +137,49 @@ fn template_never_panics_and_caps_objects() {
         "xref must list exactly {MAX_FUZZ_OBJECTS} objects"
     );
     assert_offsets_match(&file);
+}
+
+#[test]
+fn escaped_ff_reaches_bodies() {
+    // A UTF-16BE string (BOM FE FF) inside an object body survives the round trip.
+    let objects: [&[u8]; 2] = [b"<< /Type /Catalog /Pages 2 0 R >>", b"(\xFE\xFF\x00a)"];
+    let data = to_fuzz_chunks(b"", &objects);
+    assert!(data.windows(2).any(|w| w == [CHUNK_SEPARATOR, ESCAPED_FF]));
+    assert_eq!(from_fuzz_chunks(&data), classic_pdf(&objects, b""));
+    // A trailing separator starts an empty last object; FF FF is two separators.
+    assert_eq!(
+        from_fuzz_chunks(b"\xFFa\xFF\xFF"),
+        classic_pdf(&[b"a", b"", b""], b"")
+    );
+}
+
+/// Deterministic pseudo-random inputs (xorshift64), dense in 0xFF and PDF tokens: the
+/// template never panics, always writes correct offsets, and opening the result returns.
+#[test]
+fn template_holds_on_pseudo_random_inputs() {
+    const ALPHABET: &[u8] = b"\xFF\x00<>[]()/ 0123456789RobjendstreamTypePagesKidsCount\n%";
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for round in 0..2000 {
+        let len = usize::try_from(next() % 4096).unwrap();
+        let input: Vec<u8> = (0..len)
+            .map(|_| {
+                let r = next();
+                if r % 4 == 0 {
+                    ((r >> 8) & 0xFF).to_le_bytes()[0]
+                } else {
+                    ALPHABET[usize::try_from((r >> 8) % ALPHABET.len() as u64).unwrap()]
+                }
+            })
+            .collect();
+        let file = from_fuzz_chunks(&input);
+        assert_eq!(offset_problem(&file), None, "round {round}");
+        let _ = open(&file);
+        let _ = open(&input);
+    }
 }

@@ -104,6 +104,14 @@ fn usage_errors_exit_2() {
         Some(2)
     );
     assert_eq!(run(&["frobnicate"]).unwrap().status.code(), Some(2));
+    // `fuzz` usage errors are 2, not the 1 of a crash (specs/tooling/fuzz.md).
+    for bad in [
+        &["fuzz", "--bogus"][..],
+        &["fuzz", "--seconds", "0"],
+        &["fuzz", "--target"],
+    ] {
+        assert_eq!(run(bad).unwrap().status.code(), Some(2), "{bad:?}");
+    }
 }
 
 #[test]

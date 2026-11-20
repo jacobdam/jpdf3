@@ -12,8 +12,11 @@ use std::io::Write;
 pub const HEADER: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
 
 /// Separates the chunks of an `engine_objects` fuzz input (see [`from_fuzz_chunks`]). 0xFF is
-/// not a PDF delimiter or token start, so a seed's bodies never contain it by accident.
+/// not a PDF delimiter or token start; the pair `FF 00` stands for a literal 0xFF byte, so
+/// bodies can still contain every byte value (UTF-16BE BOMs, binary data).
 pub const CHUNK_SEPARATOR: u8 = 0xFF;
+/// Follows [`CHUNK_SEPARATOR`] to mean a literal 0xFF byte instead of a separator.
+pub const ESCAPED_FF: u8 = 0x00;
 
 /// Most objects [`from_fuzz_chunks`] writes; later chunks are ignored.
 pub const MAX_FUZZ_OBJECTS: usize = 64;
@@ -109,25 +112,54 @@ pub fn minimal_pdf(pages: usize) -> Vec<u8> {
     classic_pdf(&borrow(&objs), b"")
 }
 
-/// The `engine_objects` fuzz template. `data` is split on [`CHUNK_SEPARATOR`]: the first chunk
-/// is extra trailer entries, each further chunk an object body numbered from 1 (at most
-/// [`MAX_FUZZ_OBJECTS`]). The result always has a correct xref table, so the fuzzer spends its
-/// time inside objects instead of rediscovering file structure.
+/// The `engine_objects` fuzz template. `data` is split on [`CHUNK_SEPARATOR`] (`FF 00` is a
+/// literal 0xFF): the first chunk is extra trailer entries, each further chunk an object body
+/// numbered from 1 (at most [`MAX_FUZZ_OBJECTS`]; later chunks are ignored). The result always
+/// has a correct xref table, so the fuzzer spends its time inside objects instead of
+/// rediscovering file structure. Output size is linear in the input size.
 pub fn from_fuzz_chunks(data: &[u8]) -> Vec<u8> {
-    let mut chunks = data.split(|b| *b == CHUNK_SEPARATOR);
-    let trailer_extra = chunks.next().unwrap_or_default();
-    let objects: Vec<&[u8]> = chunks.take(MAX_FUZZ_OBJECTS).collect();
+    let mut chunks: Vec<Vec<u8>> = vec![Vec::new()];
+    let mut bytes = data.iter().copied().peekable();
+    while let Some(b) = bytes.next() {
+        if b != CHUNK_SEPARATOR {
+            if let Some(chunk) = chunks.last_mut() {
+                chunk.push(b);
+            }
+        } else if bytes.next_if_eq(&ESCAPED_FF).is_some() {
+            if let Some(chunk) = chunks.last_mut() {
+                chunk.push(CHUNK_SEPARATOR);
+            }
+        } else if chunks.len() > MAX_FUZZ_OBJECTS {
+            break;
+        } else {
+            chunks.push(Vec::new());
+        }
+    }
+    let Some((trailer_extra, objects)) = chunks.split_first() else {
+        return classic_pdf(&[], b"");
+    };
+    let objects: Vec<&[u8]> = objects.iter().map(Vec::as_slice).collect();
     classic_pdf(&objects, trailer_extra)
 }
 
 /// Inverse of [`from_fuzz_chunks`], for writing seeds.
 pub fn to_fuzz_chunks(trailer_extra: &[u8], objects: &[&[u8]]) -> Vec<u8> {
-    let mut out = trailer_extra.to_vec();
+    let mut out = Vec::new();
+    escape_into(&mut out, trailer_extra);
     for body in objects {
         out.push(CHUNK_SEPARATOR);
-        out.extend_from_slice(body);
+        escape_into(&mut out, body);
     }
     out
+}
+
+fn escape_into(out: &mut Vec<u8>, bytes: &[u8]) {
+    for &b in bytes {
+        out.push(b);
+        if b == CHUNK_SEPARATOR {
+            out.push(ESCAPED_FF);
+        }
+    }
 }
 
 /// Seed inputs for the raw-bytes target `engine_open`: valid files and near-misses.

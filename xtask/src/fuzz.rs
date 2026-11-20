@@ -1,7 +1,8 @@
 //! `cargo xtask fuzz [--short] [--seconds N] [--target NAME]`. Spec: specs/tooling/fuzz.md.
 //!
-//! Writes the jpdf-testgen seeds into `fuzz/corpus/<target>/`, then runs every target from
-//! `cargo +nightly fuzz list` (or just `--target`) with the judge's memory limit.
+//! Writes the jpdf-testgen seeds into `fuzz/corpus/<target>/`, builds the targets, then runs
+//! every target from `cargo fuzz list` (or just `--target`) with the judge's memory limit.
+//! Uses the dated nightly [`NIGHTLY`], so a broken nightly release cannot turn PRs red.
 
 use std::path::Path;
 use std::process::Command;
@@ -53,7 +54,13 @@ pub fn seeds_for(target: &str) -> Vec<(&'static str, Vec<u8>)> {
     match target {
         "engine_open" => jpdf_testgen::engine_open_seeds(),
         // Both template targets read the chunk format.
-        "engine_objects" | "syntax_resolve" => jpdf_testgen::engine_objects_seeds(),
+        "engine_objects" => jpdf_testgen::engine_objects_seeds(),
+        // Reads its input both raw and through the template: give it both seed sets.
+        "syntax_resolve" => {
+            let mut seeds = jpdf_testgen::engine_open_seeds();
+            seeds.extend(jpdf_testgen::engine_objects_seeds());
+            seeds
+        }
         _ => Vec::new(),
     }
 }
@@ -75,6 +82,14 @@ pub fn write_seeds(fuzz_dir: &Path, target: &str) -> Result<usize, String> {
     Ok(seeds.len())
 }
 
+/// The nightly toolchain for our fuzz runs (the judge's own nightly step is not pinned).
+/// Bump it in an audit, like `rust-toolchain.toml`.
+pub const NIGHTLY: &str = "nightly-2026-11-20";
+
+fn plus_nightly() -> String {
+    format!("+{NIGHTLY}")
+}
+
 /// cargo-fuzz version CI installs (`--locked`), so a new release cannot change PR results.
 const CARGO_FUZZ_VERSION: &str = "0.13.2";
 
@@ -85,6 +100,17 @@ pub fn ci(root: &Path) -> Result<(), String> {
     require_project(root)?;
     if std::env::var_os("CI").is_some() && !tools_present(root) {
         install_tools()?;
+    }
+    // fuzz/ is outside the workspace, so `cargo fmt --all` does not see it.
+    let fmt = Command::new("cargo")
+        .args(["fmt", "--manifest-path", "fuzz/Cargo.toml", "--check"])
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run cargo fmt: {e}"))?;
+    if !fmt.success() {
+        return Err(
+            "fuzz/ is not formatted (run `cargo fmt --manifest-path fuzz/Cargo.toml`)".into(),
+        );
     }
     run(
         root,
@@ -97,7 +123,8 @@ pub fn ci(root: &Path) -> Result<(), String> {
 
 fn tools_present(root: &Path) -> bool {
     Command::new("cargo")
-        .args(["+nightly", "fuzz", "--version"])
+        .arg(plus_nightly())
+        .args(["fuzz", "--version"])
         .current_dir(root)
         .output()
         .is_ok_and(|o| o.status.success())
@@ -109,7 +136,7 @@ fn install_tools() -> Result<(), String> {
             "rustup",
             "toolchain",
             "install",
-            "nightly",
+            NIGHTLY,
             "--profile",
             "minimal",
         ],
@@ -151,14 +178,16 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
     require_project(root)?;
     let fuzz_dir = root.join("fuzz");
     let list = Command::new("cargo")
-        .args(["+nightly", "fuzz", "list"])
+        .arg(plus_nightly())
+        .args(["fuzz", "list"])
         .current_dir(root)
         .output()
         .map_err(|e| format!("cannot run cargo: {e}"))?;
     if !list.status.success() {
         return Err(format!(
-            "`cargo +nightly fuzz list` failed (install: `rustup toolchain install nightly` and \
-             `cargo install cargo-fuzz --locked`): {}",
+            "`cargo +{NIGHTLY} fuzz list` failed (install: `rustup toolchain install {NIGHTLY} \
+             --profile minimal` and `cargo install cargo-fuzz --locked --version \
+             {CARGO_FUZZ_VERSION}`): {}",
             String::from_utf8_lossy(&list.stderr).trim()
         ));
     }
@@ -171,12 +200,25 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
         Some(t) => return Err(format!("unknown fuzz target {t:?}; targets: {all:?}")),
         None => all,
     };
+    // Build first, so a toolchain or compile failure is not reported as a crash.
+    let build = Command::new("cargo")
+        .arg(plus_nightly())
+        .args(["fuzz", "build", "--debug-assertions"])
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run cargo fuzz: {e}"))?;
+    if !build.success() {
+        return Err(format!(
+            "fuzz targets do not build with {NIGHTLY} (a build failure, not a crash)"
+        ));
+    }
     let mut failed = Vec::new();
     for t in &targets {
         let n = write_seeds(&fuzz_dir, t)?;
         eprintln!("xtask: fuzz: {t}: {n} seed(s), {} s", opts.seconds);
         let status = Command::new("cargo")
-            .args(["+nightly", "fuzz", "run", t, "--"])
+            .arg(plus_nightly())
+            .args(["fuzz", "run", "--debug-assertions", t, "--"])
             .arg(format!("-max_total_time={}", opts.seconds))
             .arg(format!("-rss_limit_mb={RSS_LIMIT_MB}"))
             .arg(format!("-timeout={INPUT_TIMEOUT_SECONDS}"))
@@ -192,7 +234,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
     } else {
         Err(format!(
             "crash, hang or out-of-memory in {failed:?}; artifacts are in fuzz/artifacts/ \
-             (minimize with `cargo +nightly fuzz tmin`, then add the repro to tests/regress/)"
+             (minimize with `cargo +{NIGHTLY} fuzz tmin`, then add the repro to tests/regress/)"
         ))
     }
 }
