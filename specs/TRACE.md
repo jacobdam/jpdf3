@@ -18,8 +18,8 @@ that builds each feature (PLAN §8).
 
 | Req | Requirement | Journeys | Specs | Other tests |
 |---|---|---|---|---|
-| R1 | Security first: forbid unsafe, limits, no JS, fuzzing | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge policy; judge crash grading; `jpdf-cli` limit tests |
-| R2 | Performance (never at the cost of R1) | | | judge bench (later, #18) |
+| R1 | Security first: forbid unsafe, limits, no JS, fuzzing | J-RD-04, J-RD-05, J-RD-13, J-RD-18 | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge policy; judge crash grading; `jpdf-cli` limit tests |
+| R2 | Performance (never at the cost of R1) | J-RD-01, J-RD-26 | | judge bench (later, #18) |
 | R3 | Platforms: macOS and web first | | | `cargo xtask ci linux`, `cargo xtask ci macos` |
 | R4 | Untrusted native layer | | | |
 | R5 | Spec coverage: ISO 32000-2 + real-world 1.x + repair | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge open rate |
@@ -28,7 +28,7 @@ that builds each feature (PLAN §8).
 | R8 | UI: PDFgear ideas, native look | | | |
 | R9 | Dependencies behind our own traits | | | judge dependency policy |
 | R10 | Licensing: MIT, permissive deps, no committed corpora | | | judge license policy |
-| R11 | Web: static only, files never leave the device | | | |
+| R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03 | | |
 | R12 | Digital signatures: verify, PAdES, timestamps, LTV | | | |
 | R13 | No human in the loop: specs, tests, ratchets decide | | [specs/tooling/check-specs.md](tooling/check-specs.md) | `cargo xtask check-specs` |
 
@@ -36,11 +36,11 @@ that builds each feature (PLAN §8).
 
 | Req | Feature group | Journeys | Specs | Other tests |
 |---|---|---|---|---|
-| F-RD-1 | Reader: open (incl. password), fast first page, progressive loading | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge `info` |
-| F-RD-2 | Reader: views (single, continuous, two-page, cover), fit, zoom, rotate view | | | |
-| F-RD-3 | Reader: sidebar (thumbnails, outline, annotations, attachments, layers) | | | |
-| F-RD-4 | Reader: search, text select + copy, links | | | judge `text` |
-| F-RD-5 | Reader: read/presentation mode, page tint, print, properties | | | |
+| F-RD-1 | Reader: open (incl. password), fast first page, progressive loading | J-RD-01, J-RD-02, J-RD-03, J-RD-04, J-RD-05, J-RD-23, J-RD-24, J-RD-26 | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge `info` |
+| F-RD-2 | Reader: views (single, continuous, two-page, cover), fit, zoom, rotate view | J-RD-06, J-RD-07, J-RD-08, J-RD-09, J-RD-25 | | |
+| F-RD-3 | Reader: sidebar (thumbnails, outline, annotations, attachments, layers) | J-RD-10, J-RD-11, J-RD-12, J-RD-13, J-RD-14 | | |
+| F-RD-4 | Reader: search, text select + copy, links | J-RD-15, J-RD-16, J-RD-17, J-RD-18 | | judge `text` |
+| F-RD-5 | Reader: read/presentation mode, page tint, print, properties | J-RD-19, J-RD-20, J-RD-21, J-RD-22 | | |
 | F-AN-1 | Annotate: text markup (highlight, underline, strikeout, squiggly) | | | judge `annotate` |
 | F-AN-2 | Annotate: sticky note, text box, callout | | | |
 | F-AN-3 | Annotate: shapes, ink, eraser | | | |
