@@ -196,7 +196,6 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
         let mut wrong_inner = [0u8; 16];
         wrong_inner[13..].copy_from_slice(&[3, 2, 3]);
         for probe in [[0x00u8; 16], [0x11; 16], wrong_inner] {
-            let fill = probe;
             let sealed = aes(Direction::Encrypt, &key, &iv, &probe, Padding::None);
             let Some(Ok(sealed)) = sealed else {
                 report.check("crypto.aes_bad_padding", false, || {
@@ -210,7 +209,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
                 matches!(result, Some(Err(BackendError::Malformed(_)))),
                 || {
                     format!(
-                        "final block {fill:02x?}: expected Malformed, got {}",
+                        "final block {probe:02x?}: expected Malformed, got {}",
                         describe(&result)
                     )
                 },

@@ -465,7 +465,8 @@ mod tests {
     /// large bomb, without a real compressor. Variants break one rule each.
     #[derive(Default)]
     struct Mini {
-        /// Ignores the cap (stops only at a 32 MiB safety net so the test stays fast).
+        /// Ignores the cap (stops only at a 32 MiB safety net, returning what it has, so the
+        /// test stays fast).
         ignore_limit: bool,
         panic_on_empty: bool,
         complete_on_truncation: bool,
@@ -536,6 +537,19 @@ mod tests {
             }
         }
 
+        /// At the cap: an error, or (ignoring the cap) the output so far, as a decoder that
+        /// silently stops would return it.
+        fn limit(&self, out: Vec<u8>) -> Result<Decoded<Vec<u8>>, BackendError> {
+            if self.ignore_limit {
+                Ok(Decoded {
+                    value: out,
+                    status: DecodeStatus::Truncated,
+                })
+            } else {
+                Err(BackendError::LimitExceeded("output"))
+            }
+        }
+
         fn truncated(&self, out: Vec<u8>) -> Result<Decoded<Vec<u8>>, BackendError> {
             if self.complete_on_truncation {
                 Ok(Decoded {
@@ -596,7 +610,7 @@ mod tests {
                         let len = usize::from(len);
                         let avail = body.len().saturating_sub(start + 4).min(len);
                         if self.over(out.len() + avail, limits) {
-                            return Err(BackendError::LimitExceeded("output"));
+                            return self.limit(out);
                         }
                         out.extend_from_slice(&body[start + 4..start + 4 + avail]);
                         if avail < len {
@@ -611,7 +625,7 @@ mod tests {
                         match sym {
                             0..=255 => {
                                 if self.over(out.len() + 1, limits) {
-                                    return Err(BackendError::LimitExceeded("output"));
+                                    return self.limit(out);
                                 }
                                 out.push(u8::try_from(sym).unwrap());
                             }
@@ -637,7 +651,7 @@ mod tests {
                                     return Err(BackendError::Malformed("distance"));
                                 }
                                 if self.over(out.len() + len, limits) {
-                                    return Err(BackendError::LimitExceeded("output"));
+                                    return self.limit(out);
                                 }
                                 for _ in 0..len {
                                     out.push(out[out.len() - dist]);
@@ -774,7 +788,7 @@ mod tests {
         });
         assert_eq!(
             report.failed_checks(),
-            vec!["flate.output_limit", "flate.zip_bomb"],
+            vec!["flate.large_bomb", "flate.output_limit", "flate.zip_bomb"],
             "{report}"
         );
     }

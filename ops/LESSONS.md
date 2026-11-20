@@ -92,6 +92,11 @@ instead of adding near-duplicates.
   addresses, check web limits (CORS, mixed content, CSP, `fetch` redirect modes) and macOS ATS
   before promising a request, and draw the fixture PKI's expiry timeline before writing
   clock steps ([journal](journal/2026-11-20.md), PR #46).
+- Writing a conformance suite or any checker tested only by toys → for each check ask "what
+  broken implementation still passes?": known answers must reach multi-block and padding
+  boundaries (not just `""`/`"abc"`), lenient-read rules need a positive salvage check, every
+  limit needs a per-axis/per-path boundary, and the spec must say what the suite cannot see
+  (allocations) ([journal](journal/2026-11-21.md), PR #56).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 

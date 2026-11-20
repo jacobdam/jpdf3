@@ -96,6 +96,13 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
 pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture]) -> Report {
     let mut report = Report::new("jpeg2000");
     let decode = |input: &[u8], limits: &DecodeLimits| decoder.decode(input, limits);
+    // JPEG 2000 samples are returned unscaled; a fixture below 8 bits catches an adapter
+    // that rescales them (which breaks `/Indexed` overrides).
+    report.check(
+        "image.jpx_low_depth_fixture",
+        fixtures.iter().any(|f| f.expected.source_bits < 8),
+        || "fixtures must include an image with source_bits below 8".into(),
+    );
     for f in fixtures {
         run_fixture(
             &mut report,
@@ -194,6 +201,8 @@ trait Raster: std::fmt::Debug {
     fn components(&self) -> Option<u16>;
     fn byte_len(&self) -> usize;
     fn expected_len(&self) -> Option<usize>;
+    /// Every sample is below `2^source_bits` (always true for bitmaps).
+    fn samples_in_range(&self) -> bool;
     /// Same header and every sample within `tolerance`.
     fn matches(&self, expected: &Self, tolerance: u16) -> bool;
 }
@@ -213,6 +222,19 @@ impl Raster for DecodedImage {
     }
     fn expected_len(&self) -> Option<usize> {
         DecodedImage::expected_len(self)
+    }
+    fn samples_in_range(&self) -> bool {
+        let Some(limit) = 1u32.checked_shl(u32::from(self.source_bits)) else {
+            return false;
+        };
+        if self.bits_per_component == 16 {
+            let (samples, _) = self.samples.as_chunks::<2>();
+            samples
+                .iter()
+                .all(|s| u32::from(u16::from_be_bytes(*s)) < limit)
+        } else {
+            self.samples.iter().all(|&s| u32::from(s) < limit)
+        }
     }
     fn matches(&self, expected: &Self, tolerance: u16) -> bool {
         let header = self.width == expected.width
@@ -259,6 +281,9 @@ impl Raster for Bitmap {
     fn expected_len(&self) -> Option<usize> {
         Bitmap::expected_len(self)
     }
+    fn samples_in_range(&self) -> bool {
+        true
+    }
     fn matches(&self, expected: &Self, _tolerance: u16) -> bool {
         // Padding bits are specified as 0, so whole-byte equality is exact.
         self == expected
@@ -300,10 +325,13 @@ fn run_fixture<R: Raster>(
     let call = |input: &[u8], limits: &DecodeLimits| guarded(|| decode(input, limits));
     let Some(len) = expected
         .expected_len()
-        .filter(|&l| l == expected.byte_len())
+        .filter(|&l| l == expected.byte_len() && expected.samples_in_range())
     else {
         report.check("image.fixture_valid", false, || {
-            format!("{name}: the expected output's length does not match its header")
+            format!(
+                "{name}: the expected output's length does not match its header, or a sample \
+                 is not below 2^source_bits"
+            )
         });
         return;
     };
@@ -432,6 +460,7 @@ fn ok_result_valid<R: Raster>(result: &Outcome<R>, limits: &DecodeLimits) -> boo
             let r = &d.value;
             let pixels = u64::from(r.width()).saturating_mul(u64::from(r.height()));
             r.expected_len() == Some(r.byte_len())
+                && r.samples_in_range()
                 && r.byte_len() <= limits.max_output_bytes
                 && pixels <= limits.max_image_pixels
                 && r.width() <= limits.max_image_dimension
@@ -466,6 +495,8 @@ mod tests {
     struct Toy {
         ignore_limits: bool,
         width_only_dimension_check: bool,
+        /// Rescales sub-8-bit samples to 0–255 (the bug `source_bits` exists to prevent).
+        scale_low_depth: bool,
         panic_on_mutation: bool,
         lie_about_length: bool,
     }
@@ -484,7 +515,13 @@ mod tests {
             }
             let width = u32::from(u16::from_be_bytes([header[0], header[1]]));
             let height = u32::from(u16::from_be_bytes([header[2], header[3]]));
-            let components = u16::from(header[4]);
+            // Low nibble: components; high nibble: source bits (0 means 8).
+            let components = u16::from(header[4] & 0x0f);
+            let source_bits = match header[4] >> 4 {
+                0 => 8,
+                b @ 1..=8 => b,
+                _ => return Err(BackendError::Malformed("depth")),
+            };
             if width == 0 || height == 0 || components == 0 {
                 return Err(BackendError::Malformed("header"));
             }
@@ -509,6 +546,15 @@ mod tests {
             }
             let body = &input[5..];
             let mut samples = body[..body.len().min(len)].to_vec();
+            if !packed && samples.iter().any(|&v| u32::from(v) >= 1 << source_bits) {
+                return Err(BackendError::Malformed("sample"));
+            }
+            if self.scale_low_depth && source_bits < 8 {
+                let max = (1u32 << source_bits) - 1;
+                for v in &mut samples {
+                    *v = u8::try_from(u32::from(*v) * 255 / max).unwrap();
+                }
+            }
             let status = if samples.len() < len {
                 if samples.is_empty() {
                     return Err(BackendError::Truncated);
@@ -526,7 +572,7 @@ mod tests {
                     height,
                     components,
                     bits_per_component: 8,
-                    source_bits: 8,
+                    source_bits: if packed { 8 } else { source_bits },
                     adobe_app14: None,
                     color: if components == 1 {
                         ImageColor::Gray
@@ -664,6 +710,66 @@ mod tests {
             .collect()
     }
 
+    /// The JPEG fixtures plus a 4-bit 3×2 image.
+    fn jpx_fixtures() -> Vec<Jpeg2000Fixture> {
+        let mut fixtures: Vec<Jpeg2000Fixture> = jpeg_fixtures()
+            .into_iter()
+            .map(|f| Jpeg2000Fixture {
+                name: f.name,
+                input: f.input,
+                expected: f.expected,
+                tolerance: 0,
+            })
+            .collect();
+        let (mut input, mut expected) = toy_image(3, 2);
+        input[4] = 0x43;
+        for (i, v) in input[5..].iter_mut().enumerate() {
+            *v = u8::try_from(i % 16).unwrap();
+        }
+        expected.samples = input[5..].to_vec();
+        expected.source_bits = 4;
+        fixtures.push(Jpeg2000Fixture {
+            name: "toy 4-bit".into(),
+            input,
+            expected,
+            tolerance: 0,
+        });
+        fixtures
+    }
+
+    #[test]
+    fn jpx_needs_a_low_depth_fixture_and_unscaled_samples() {
+        let mut fixtures = jpx_fixtures();
+        fixtures.pop();
+        let report = run_jpeg2000(&Toy::default(), &fixtures);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.jpx_low_depth_fixture"],
+            "{report}"
+        );
+        let report = run_jpeg2000(
+            &Toy {
+                scale_low_depth: true,
+                ..Toy::default()
+            },
+            &jpx_fixtures(),
+        );
+        assert!(report.failed("image.fixture_decodes"), "{report}");
+        assert!(report.failed("image.truncated"), "{report}");
+    }
+
+    #[test]
+    fn out_of_range_expected_samples_are_a_bad_fixture() {
+        let mut fixtures = jpx_fixtures();
+        fixtures.last_mut().unwrap().expected.samples[0] = 16;
+        let report = run_jpeg2000(&Toy::default(), &fixtures);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_valid"],
+            "{report}"
+        );
+    }
+
     fn jpeg(toy: &Toy) -> Report {
         run_jpeg(toy, &jpeg_fixtures())
     }
@@ -674,16 +780,7 @@ mod tests {
         let report = jpeg(&toy);
         assert!(report.passed(), "{report}");
 
-        let fixtures: Vec<Jpeg2000Fixture> = jpeg_fixtures()
-            .into_iter()
-            .map(|f| Jpeg2000Fixture {
-                name: f.name,
-                input: f.input,
-                expected: f.expected,
-                tolerance: 0,
-            })
-            .collect();
-        let report = run_jpeg2000(&toy, &fixtures);
+        let report = run_jpeg2000(&toy, &jpx_fixtures());
         assert!(report.passed(), "{report}");
 
         let bitmaps = [toy_bitmap(12, 2), toy_bitmap(3, 9)];
@@ -808,15 +905,27 @@ mod tests {
     #[test]
     fn header_metadata_must_match() {
         for change in [
-            |e: &mut DecodedImage| e.source_bits = 4,
+            // The 4-bit fixture's samples are all below 16, so 5 bits is still a valid
+            // fixture, just not what the decoder reports.
+            |e: &mut DecodedImage| e.source_bits = 5,
             |e: &mut DecodedImage| e.adobe_app14 = Some(2),
             |e: &mut DecodedImage| e.color = ImageColor::Rgb,
             |e: &mut DecodedImage| e.has_alpha = true,
         ] {
-            let mut fixtures = jpeg_fixtures();
-            change(&mut fixtures[0].expected);
-            let report = run_jpeg(&Toy::default(), &fixtures);
-            assert!(report.failed("image.fixture_decodes"), "{report}");
+            let mut fixtures = jpx_fixtures();
+            change(&mut fixtures.last_mut().unwrap().expected);
+            let report = run_jpeg2000(&Toy::default(), &fixtures);
+            assert_eq!(
+                report.failed_checks(),
+                vec![
+                    "image.component_limit",
+                    "image.dimension_limit",
+                    "image.fixture_decodes",
+                    "image.output_limit",
+                    "image.pixel_limit"
+                ],
+                "{report}"
+            );
         }
     }
 

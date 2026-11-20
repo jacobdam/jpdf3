@@ -71,8 +71,12 @@ Its output cap is the smaller of the per-stream limit and what the document has 
   - The input is a JP2 file or a raw codestream (§7.4.9).
   - Samples are unscaled (a 4-bit component holds 0–15), so an `/Indexed` override in the
     image dictionary still works; `source_bits` gives the codestream depth.
-  - Components with different depths fail with `Unsupported`; subsampled components are
-    upsampled by pixel replication; signed components get `2^(source_bits - 1)` added.
+  - Subsampled components are upsampled by pixel replication; signed components get
+    `2^(source_bits - 1)` added.
+  - Components with different depths fail with `Unsupported`. This is a **known divergence**
+    from consensus engines (CONSTITUTION 17), tracked by #57; it needs a per-component depth.
+  - The suite requires a fixture with `source_bits` below 8 and checks that every sample is
+    below `2^source_bits`, so an adapter that rescales samples fails.
   - An opacity channel comes back as the last component with `has_alpha` set (`SMaskInData`,
     §8.9.5).
 - `Jbig2Decoder::decode(input, globals, &DecodeLimits) -> Decoded<Bitmap>`. The input is the
@@ -189,8 +193,8 @@ may record a repair note.
 - **What the suites can and can't see.** They check the returned variant, not allocations.
   "Check before allocating" is enforced indirectly: the 1 GiB bomb makes a decode-then-check
   adapter allocate over 1 GiB (an out-of-memory failure or a very slow test). The fuzz
-  targets (#17) and the resource-limit harness under a 2 GiB `RLIMIT_AS` (#25) measure it
-  directly.
+  targets (#17) and the resource-limit harness (#25) measure it directly. That harness uses
+  a 2 GiB `RLIMIT_AS` and must run on Linux: macOS does not enforce `RLIMIT_AS`.
 
 ## Security
 - Backends see hostile bytes. The suites feed them empty, truncated and mutated input and
@@ -223,14 +227,16 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
   `Bitmap::expected_len`, Adler-32 and the vectors.
 - Each suite is tested against a correct toy implementation that must pass, and against
   broken ones whose failing checks must be exactly the expected set:
-  - `flate`: a stored + fixed-Huffman codec; variants that ignore the cap, panic on empty
+  - `flate`: a stored + fixed-Huffman codec; variants that ignore the cap (caught by the
+    output-limit check and both bombs), panic on empty
     input, call truncated input complete, or drop partial output. The full `run` must fail
     it only on the dynamic-Huffman vector. The bomb generator is checked to decode to zeros
     (and was checked against CPython's zlib when written).
   - `image`: a toy raster codec for all four decoders; variants that ignore limits, check
-    only the width, panic on mutated input, or return output shorter than its header. Also
+    only the width, rescale 4-bit samples, panic on mutated input, or return output shorter than its header. Also
     a wrong pixel inside and outside the tolerance, each header field mismatch, a bad
-    fixture, a single orientation, and 16-bit tolerance.
+    fixture (including a sample at or above `2^source_bits`), a single orientation, a JPX
+    fixture set without a sub-8-bit image, and 16-bit tolerance.
   - `crypto`: table-backed and FNV hashers; real RC4 plus a fake CBC block cipher, with
     variants that ignore the IV, accept bad padding, check only the last padding byte, or
     apply the decryption cap to the plaintext.
