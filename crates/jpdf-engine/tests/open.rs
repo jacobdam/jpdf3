@@ -392,9 +392,9 @@ fn random_and_mutated_input_never_panics() {
     }
 }
 
-/// The lexing budget charges each parsed object's byte span once, so a large legitimate file
-/// (no overlapping objects) stays far below `4 × size`, including big integer arrays where
-/// reference look-ahead re-lexes tokens.
+/// A large legitimate file (no overlapping objects) stays inside the default `4 × size`
+/// budget. Reference look-ahead re-reads up to two tokens after each integer, so integer-heavy
+/// arrays cost up to about 3× their size: they must fit in 3× with no slack.
 #[test]
 fn large_valid_files_fit_the_lexing_budget() {
     assert_eq!(open(&minimal_pdf(100_000)), Ok(100_000));
@@ -408,7 +408,7 @@ fn large_valid_files_fit_the_lexing_budget() {
     ];
     let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, "");
     let tight = Limits {
-        lex_budget_factor: 1,
+        lex_budget_factor: 3,
         lex_budget_slack: 0,
         ..Limits::default()
     };

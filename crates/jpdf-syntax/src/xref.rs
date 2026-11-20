@@ -1,10 +1,9 @@
 //! Classic cross-reference tables and trailers. ISO 32000-2 §7.5.4–§7.5.6.
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::error::{SyntaxError, malformed};
-use crate::lexer::{Parser, Token};
+use crate::lexer::{LexBudget, Parser, Token};
 use crate::limits::Limits;
 use crate::object::{Dict, ObjRef, Object};
 
@@ -17,34 +16,6 @@ const STARTXREF_WINDOW: usize = 64 * 1024;
 enum Entry {
     Free,
     InUse { generation: u16, offset: usize },
-}
-
-/// Bytes lexed so far for one document, against `Limits::lex_budget`. Objects and xref
-/// sections may overlap in hostile files (an object hidden inside another's string, a trailer
-/// whose `/Prev` points into its own string); without a global budget, resolving many of them
-/// rescans the same bytes and work grows quadratically.
-#[derive(Debug)]
-struct LexBudget {
-    used: Cell<usize>,
-    max: usize,
-}
-
-impl LexBudget {
-    fn new(data_len: usize, limits: &Limits) -> Self {
-        Self {
-            used: Cell::new(0),
-            max: limits.lex_budget(data_len),
-        }
-    }
-
-    fn charge(&self, start: usize, end: usize) -> Result<(), SyntaxError> {
-        let used = self.used.get().saturating_add(end.saturating_sub(start));
-        self.used.set(used);
-        if used > self.max {
-            return Err(SyntaxError::LimitExceeded("bytes lexed per document"));
-        }
-        Ok(())
-    }
 }
 
 /// A file whose cross-reference information has been read.
@@ -64,7 +35,7 @@ impl<'a> XrefDocument<'a> {
             return Err(SyntaxError::LimitExceeded("file size"));
         }
         let budget = LexBudget::new(data.len(), limits);
-        let mut offset = find_startxref(data, limits)?;
+        let mut offset = find_startxref(data, limits, &budget)?;
         let mut entries: BTreeMap<u32, Entry> = BTreeMap::new();
         let mut trailer: Option<Dict> = None;
         let mut visited = HashSet::new();
@@ -129,7 +100,7 @@ impl<'a> XrefDocument<'a> {
         if generation != r.generation {
             return Ok(Object::Null);
         }
-        let mut p = Parser::new(self.data, offset, &self.limits);
+        let mut p = Parser::new(self.data, offset, &self.limits, &self.budget);
         let header = (
             p.lexer.next_token()?,
             p.lexer.next_token()?,
@@ -141,14 +112,12 @@ impl<'a> XrefDocument<'a> {
             _ => return Err(malformed("object header does not match xref", offset)),
         }
         // `endobj` (or `stream`) is not required: the value is all we need.
-        let value = p.parse_object()?;
-        self.budget.charge(offset, p.lexer.pos())?;
-        Ok(value)
+        p.parse_object()
     }
 }
 
 /// ISO 32000-2 §7.5.5: the last `startxref` keyword and the byte offset after it.
-fn find_startxref(data: &[u8], limits: &Limits) -> Result<usize, SyntaxError> {
+fn find_startxref(data: &[u8], limits: &Limits, budget: &LexBudget) -> Result<usize, SyntaxError> {
     const KEY: &[u8] = b"startxref";
     let from = data.len().saturating_sub(STARTXREF_WINDOW);
     let tail = data.get(from..).unwrap_or_default();
@@ -157,7 +126,7 @@ fn find_startxref(data: &[u8], limits: &Limits) -> Result<usize, SyntaxError> {
         .rposition(|w| w == KEY)
         .and_then(|i| i.checked_add(from))
         .ok_or_else(|| malformed("startxref not found", data.len()))?;
-    let mut p = Parser::new(data, at.saturating_add(KEY.len()), limits);
+    let mut p = Parser::new(data, at.saturating_add(KEY.len()), limits, budget);
     let offset = match p.lexer.next_token()? {
         Some(Token::Integer(o)) => usize::try_from(o).ok(),
         _ => None,
@@ -179,7 +148,7 @@ fn parse_section(
     entries: &mut BTreeMap<u32, Entry>,
     total_entries: &mut usize,
 ) -> Result<Dict, SyntaxError> {
-    let mut p = Parser::new(data, offset, limits);
+    let mut p = Parser::new(data, offset, limits, budget);
     match p.lexer.next_token()? {
         Some(Token::Keyword(b"xref")) => {}
         Some(Token::Integer(_)) => {
@@ -238,9 +207,7 @@ fn parse_section(
         }
     }
     let at = p.lexer.pos();
-    let trailer = p.parse_object()?;
-    budget.charge(offset, p.lexer.pos())?;
-    match trailer {
+    match p.parse_object()? {
         Object::Dict(d) => Ok(d),
         _ => Err(malformed("trailer is not a dictionary", at)),
     }
@@ -253,10 +220,11 @@ mod tests {
     #[test]
     fn startxref_must_point_inside_the_file() {
         let l = Limits::default();
-        assert!(find_startxref(b"startxref\n999\n%%EOF", &l).is_err());
-        assert!(find_startxref(b"startxref\n-1\n%%EOF", &l).is_err());
-        assert!(find_startxref(b"nothing here", &l).is_err());
-        assert_eq!(find_startxref(b"xref startxref 0 %%EOF", &l), Ok(0));
+        let b = LexBudget::new(0, &l);
+        assert!(find_startxref(b"startxref\n999\n%%EOF", &l, &b).is_err());
+        assert!(find_startxref(b"startxref\n-1\n%%EOF", &l, &b).is_err());
+        assert!(find_startxref(b"nothing here", &l, &b).is_err());
+        assert_eq!(find_startxref(b"xref startxref 0 %%EOF", &l, &b), Ok(0));
     }
 
     #[test]

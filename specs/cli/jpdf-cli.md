@@ -40,7 +40,7 @@ hands the bytes to `jpdf_engine::Document::open(bytes, &Limits)`. On success it 
 - an unencrypted document;
 - a catalog `/Pages` node whose `/Kids` are all distinct `/Type /Page` leaves (§7.7.3). A
   `/Count` that disagrees with the kids is read leniently (CONSTITUTION 17): the number of
-  kids found wins.
+  kids found wins; a missing or non-integer `/Count` is ignored the same way.
 
 `--password` is accepted and ignored for unencrypted files.
 
@@ -71,18 +71,26 @@ from the judge).
 - `max_nesting_depth` 256 for arrays/dictionaries (stack-overflow guard);
 - `max_objects_per_parse` 4 000 000 objects produced while parsing one indirect object
   (memory bound for huge arrays/dictionaries);
+- `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
+  bound; the reference look-ahead never decodes strings).
 - `max_xref_entries` 10 000 000 across all sections;
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
 - `max_pages` 1 000 000 kids;
 - lexing budget: at most `4 × file size + 1 MiB` bytes lexed per document
-  (`lex_budget_factor`, `lex_budget_slack`). Hostile files can overlap objects or xref
+  (`lex_budget_factor`, `lex_budget_slack`), charged per byte inside the lexer (including
+  reference look-ahead that is re-read), so it fails mid-scan. Legitimate files need ≤ 3×
+  (integer arrays re-read look-ahead tokens; a test shows they fit in 3× with no slack).
+  Measured lexing speed ≈ 400 MB/s, so the worst case for a 512 MiB file is ≈ 5 s, under the
+  20 s `info` limit. Hostile files can overlap objects or xref
   sections (an object hidden inside another's string, a `/Prev` pointing into the trailer's own
   string); without a global budget, resolving them rescans the same bytes and time grows
   quadratically.
 
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
-16 bytes each in a `BTreeMap` (no rehash doubling). Measured worst case so far: a 500 MiB file
-with 10 M xref entries peaks at ~0.95 GB RSS, under the judge's 2 GiB address-space limit.
+16 bytes each in a `BTreeMap` (no rehash doubling); decoded strings are capped per object.
+Measured peak RSS (macOS) so far: a 500 MiB file with 10 M xref entries ~0.95 GB; a 477 MiB
+file of nested strings 0.54 GB. RSS is not address space: a test under a real `RLIMIT_AS`
+on Linux is tracked as a follow-up.
 
 All input-derived arithmetic is checked; numbers that overflow `i64` are malformed input.
 Work is linear in file size: the lexing budget bounds total lexing to 4× the file.

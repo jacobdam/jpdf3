@@ -1,5 +1,7 @@
 //! Tokenizer and object parser. ISO 32000-2 §7.2 (lexical conventions), §7.3 (objects).
 
+use std::cell::Cell;
+
 use crate::error::{SyntaxError, malformed};
 use crate::limits::Limits;
 use crate::object::{Dict, ObjRef, Object};
@@ -44,22 +46,79 @@ pub(crate) enum Token<'a> {
     Keyword(&'a [u8]),
 }
 
-pub(crate) struct Lexer<'a> {
-    data: &'a [u8],
-    pos: usize,
+/// Bytes lexed so far for one document, against `Limits::lex_budget`. Every byte the lexer
+/// steps over is charged, including look-ahead that is later re-read, so lexing fails while
+/// scanning rather than after. Objects and xref sections may overlap in hostile files (an
+/// object hidden inside another's string, a trailer whose `/Prev` points into its own string);
+/// without one budget per document, resolving them rescans the same bytes quadratically.
+#[derive(Debug)]
+pub(crate) struct LexBudget {
+    used: Cell<usize>,
+    max: usize,
 }
 
-impl<'a> Lexer<'a> {
-    pub(crate) fn new(data: &'a [u8], pos: usize) -> Self {
-        Self { data, pos }
+impl LexBudget {
+    pub(crate) fn new(data_len: usize, limits: &Limits) -> Self {
+        Self {
+            used: Cell::new(0),
+            max: limits.lex_budget(data_len),
+        }
+    }
+
+    fn charge_one(&self) {
+        self.used.set(self.used.get().saturating_add(1));
+    }
+
+    fn check(&self) -> Result<(), SyntaxError> {
+        if self.used.get() > self.max {
+            return Err(SyntaxError::LimitExceeded("bytes lexed per document"));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) struct Lexer<'a, 'b> {
+    data: &'a [u8],
+    pos: usize,
+    budget: &'b LexBudget,
+    /// Decoded string and name bytes still allowed in the current parse (memory bound).
+    string_room: usize,
+}
+
+impl<'a, 'b> Lexer<'a, 'b> {
+    pub(crate) fn new(
+        data: &'a [u8],
+        pos: usize,
+        budget: &'b LexBudget,
+        string_room: usize,
+    ) -> Self {
+        Self {
+            data,
+            pos,
+            budget,
+            string_room,
+        }
+    }
+
+    fn check(&self) -> Result<(), SyntaxError> {
+        self.budget.check()
+    }
+
+    /// Fails once a string or name being decoded exceeds the remaining room for this parse.
+    fn check_string(&self, out: &[u8]) -> Result<(), SyntaxError> {
+        if out.len() > self.string_room {
+            return Err(SyntaxError::LimitExceeded("string bytes in one object"));
+        }
+        self.check()
+    }
+
+    fn take_string(&mut self, out: Vec<u8>) -> Vec<u8> {
+        self.string_room = self.string_room.saturating_sub(out.len());
+        out
     }
 
     pub(crate) fn pos(&self) -> usize {
         self.pos
-    }
-
-    pub(crate) fn set_pos(&mut self, pos: usize) {
-        self.pos = pos;
     }
 
     fn peek(&self) -> Option<u8> {
@@ -70,11 +129,13 @@ impl<'a> Lexer<'a> {
     /// `<= data.len()`, which can never overflow.
     fn bump(&mut self) {
         self.pos = self.pos.saturating_add(1);
+        self.budget.charge_one();
     }
 
     /// ISO 32000-2 §7.2.4: comments run from `%` to the end of the line.
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> Result<(), SyntaxError> {
         while let Some(b) = self.peek() {
+            self.check()?;
             if is_whitespace(b) {
                 self.bump();
             } else if b == b'%' {
@@ -83,16 +144,49 @@ impl<'a> Lexer<'a> {
                         break;
                     }
                     self.bump();
+                    self.check()?;
                 }
             } else {
                 break;
             }
         }
+        Ok(())
+    }
+
+    /// Steps over a run of regular characters and returns it.
+    fn regular_run(&mut self) -> Result<&'a [u8], SyntaxError> {
+        let start = self.pos;
+        while self.peek().is_some_and(is_regular) {
+            self.bump();
+            self.check()?;
+        }
+        Ok(self.data.get(start..self.pos).unwrap_or_default())
+    }
+
+    /// After an integer: if `gen R` follows (ISO 32000-2 §7.3.10), consumes it and returns the
+    /// generation token value. Allocation-free: never decodes strings during look-ahead.
+    pub(crate) fn reference_tail(&mut self) -> Result<Option<i64>, SyntaxError> {
+        let save = self.pos;
+        self.skip_whitespace_and_comments()?;
+        let at = self.pos;
+        let generation = match classify_regular(self.regular_run()?, at) {
+            Ok(Token::Integer(g)) => Some(g),
+            _ => None,
+        };
+        if let Some(g) = generation {
+            self.skip_whitespace_and_comments()?;
+            if self.regular_run()? == b"R" {
+                return Ok(Some(g));
+            }
+        }
+        self.pos = save;
+        Ok(None)
     }
 
     /// Returns the next token, or `None` at end of input.
     pub(crate) fn next_token(&mut self) -> Result<Option<Token<'a>>, SyntaxError> {
-        self.skip_whitespace_and_comments();
+        self.skip_whitespace_and_comments()?;
+        self.check()?;
         let start = self.pos;
         let Some(b) = self.peek() else {
             return Ok(None);
@@ -112,7 +206,8 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     Token::DictStart
                 } else {
-                    Token::String(self.hex_string()?)
+                    let s = self.hex_string()?;
+                    Token::String(self.take_string(s))
                 }
             }
             b'>' => {
@@ -126,18 +221,17 @@ impl<'a> Lexer<'a> {
             }
             b'(' => {
                 self.bump();
-                Token::String(self.literal_string(start)?)
+                let s = self.literal_string(start)?;
+                Token::String(self.take_string(s))
             }
             b'/' => {
                 self.bump();
-                Token::Name(self.name())
+                let n = self.name()?;
+                Token::Name(self.take_string(n))
             }
             b')' | b'{' | b'}' => return Err(malformed("unexpected delimiter", start)),
             _ => {
-                while self.peek().is_some_and(is_regular) {
-                    self.bump();
-                }
-                let word = self.data.get(start..self.pos).unwrap_or_default();
+                let word = self.regular_run()?;
                 classify_regular(word, start)?
             }
         };
@@ -145,9 +239,10 @@ impl<'a> Lexer<'a> {
     }
 
     /// ISO 32000-2 §7.3.5: `#xx` escapes in names.
-    fn name(&mut self) -> Vec<u8> {
+    fn name(&mut self) -> Result<Vec<u8>, SyntaxError> {
         let mut out = Vec::new();
         while let Some(b) = self.peek().filter(|b| is_regular(*b)) {
+            self.check_string(&out)?;
             self.bump();
             if b == b'#' {
                 let hi = self.peek().and_then(hex_value);
@@ -165,7 +260,7 @@ impl<'a> Lexer<'a> {
             }
             out.push(b);
         }
-        out
+        Ok(out)
     }
 
     /// ISO 32000-2 §7.3.4.3: hexadecimal strings. The opening `<` is consumed.
@@ -177,6 +272,7 @@ impl<'a> Lexer<'a> {
             let Some(b) = self.peek() else {
                 return Err(malformed("unterminated hexadecimal string", start));
             };
+            self.check_string(&out)?;
             self.bump();
             if b == b'>' {
                 break;
@@ -207,6 +303,7 @@ impl<'a> Lexer<'a> {
             let Some(b) = self.peek() else {
                 return Err(malformed("unterminated literal string", start));
             };
+            self.check_string(&out)?;
             self.bump();
             match b {
                 b'(' => {
@@ -314,16 +411,21 @@ fn classify_regular(word: &[u8], offset: usize) -> Result<Token<'_>, SyntaxError
 }
 
 /// Builds objects from tokens with bounded depth and a bounded number of produced objects.
-pub(crate) struct Parser<'a, 'l> {
-    pub(crate) lexer: Lexer<'a>,
-    limits: &'l Limits,
+pub(crate) struct Parser<'a, 'b> {
+    pub(crate) lexer: Lexer<'a, 'b>,
+    limits: &'b Limits,
     produced: usize,
 }
 
-impl<'a, 'l> Parser<'a, 'l> {
-    pub(crate) fn new(data: &'a [u8], pos: usize, limits: &'l Limits) -> Self {
+impl<'a, 'b> Parser<'a, 'b> {
+    pub(crate) fn new(
+        data: &'a [u8],
+        pos: usize,
+        limits: &'b Limits,
+        budget: &'b LexBudget,
+    ) -> Self {
         Self {
-            lexer: Lexer::new(data, pos),
+            lexer: Lexer::new(data, pos, budget, limits.max_string_bytes_per_parse),
             limits,
             produced: 0,
         }
@@ -417,17 +519,13 @@ impl<'a, 'l> Parser<'a, 'l> {
 
     /// ISO 32000-2 §7.3.10: `num gen R`.
     fn maybe_reference(&mut self, num: i64, at: usize) -> Result<Object, SyntaxError> {
-        let save = self.lexer.pos();
-        if let Ok(Some(Token::Integer(generation))) = self.lexer.next_token()
-            && let Ok(Some(Token::Keyword(b"R"))) = self.lexer.next_token()
-        {
-            return match (u32::try_from(num), u16::try_from(generation)) {
-                (Ok(num), Ok(generation)) => Ok(Object::Ref(ObjRef { num, generation })),
-                _ => Err(malformed("invalid object reference", at)),
-            };
+        let Some(generation) = self.lexer.reference_tail()? else {
+            return Ok(Object::Integer(num));
+        };
+        match (u32::try_from(num), u16::try_from(generation)) {
+            (Ok(num), Ok(generation)) => Ok(Object::Ref(ObjRef { num, generation })),
+            _ => Err(malformed("invalid object reference", at)),
         }
-        self.lexer.set_pos(save);
-        Ok(Object::Integer(num))
     }
 }
 
@@ -437,7 +535,8 @@ mod tests {
 
     fn parse(src: &[u8]) -> Result<Object, SyntaxError> {
         let limits = Limits::default();
-        Parser::new(src, 0, &limits).parse_object()
+        let budget = LexBudget::new(src.len(), &limits);
+        Parser::new(src, 0, &limits, &budget).parse_object()
     }
 
     #[test]
@@ -519,7 +618,71 @@ mod tests {
             max_objects_per_parse: 3,
             ..Limits::default()
         };
-        let r = Parser::new(b"[1 2 3]", 0, &limits).parse_object();
+        let budget = LexBudget::new(7, &limits);
+        let r = Parser::new(b"[1 2 3]", 0, &limits, &budget).parse_object();
         assert_eq!(r, Err(SyntaxError::LimitExceeded("objects in one parse")));
+    }
+
+    #[test]
+    fn string_bytes_per_parse_are_bounded() {
+        let limits = Limits {
+            max_string_bytes_per_parse: 8,
+            ..Limits::default()
+        };
+        let src = b"[(abcd) <61626364> (e)]";
+        let budget = LexBudget::new(src.len(), &limits);
+        let r = Parser::new(src, 0, &limits, &budget).parse_object();
+        assert_eq!(
+            r,
+            Err(SyntaxError::LimitExceeded("string bytes in one object"))
+        );
+        let budget = LexBudget::new(src.len(), &limits);
+        let r = Parser::new(b"[(abcd) <61626364>]", 0, &limits, &budget).parse_object();
+        assert!(r.is_ok());
+        let budget = LexBudget::new(src.len(), &limits);
+        let r = Parser::new(b"[/abcdef (abc)]", 0, &limits, &budget).parse_object();
+        assert_eq!(
+            r,
+            Err(SyntaxError::LimitExceeded("string bytes in one object"))
+        );
+    }
+
+    #[test]
+    fn lexing_fails_mid_scan_once_the_budget_is_spent() {
+        let limits = Limits {
+            lex_budget_factor: 0,
+            lex_budget_slack: 10,
+            ..Limits::default()
+        };
+        let mut src = b"(".to_vec();
+        src.extend(vec![b'x'; 1000]);
+        src.push(b')');
+        let budget = LexBudget::new(src.len(), &limits);
+        let r = Parser::new(&src, 0, &limits, &budget).parse_object();
+        assert_eq!(
+            r,
+            Err(SyntaxError::LimitExceeded("bytes lexed per document"))
+        );
+        // Charged per byte: the scan stopped right after the budget, not at the end.
+        assert!(budget.used.get() <= 12);
+    }
+
+    #[test]
+    fn reference_look_ahead_does_not_decode_strings() {
+        let limits = Limits {
+            max_string_bytes_per_parse: 4,
+            ..Limits::default()
+        };
+        // `1 (abcd)`: the look-ahead after `1` must not count the string twice.
+        let src = b"[1 (abcd)]";
+        let budget = LexBudget::new(src.len(), &limits);
+        let r = Parser::new(src, 0, &limits, &budget).parse_object();
+        assert_eq!(
+            r,
+            Ok(Object::Array(vec![
+                Object::Integer(1),
+                Object::String(b"abcd".to_vec())
+            ]))
+        );
     }
 }
