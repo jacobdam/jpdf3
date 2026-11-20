@@ -4,6 +4,8 @@ Format: **situation → what to do** (link to the journal entry or PR). Refine e
 instead of adding near-duplicates.
 
 ## Tooling & environment
+- Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
+  directory, never `/tmp` (owner instruction, #28).
 - Claude Code project settings and hooks apply **live** to running sessions → never write
   `.claude/settings.json` before its hook script exists and passes `--selftest` (bootstrap, 2026-11-20).
 - macOS `/usr/bin/openssl` is LibreSSL and its default PKCS#12 output isn't readable by every
