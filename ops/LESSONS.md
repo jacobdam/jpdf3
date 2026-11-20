@@ -24,6 +24,11 @@ instead of adding near-duplicates.
 - A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
   fails unless every upstream job succeeded (bootstrap).
 
+- Writing a local check that mirrors a judge script → match its Python regex semantics
+  exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
+  files and directories), and diff both side by side on probe trees before review
+  ([journal](journal/2026-11-20.md), PR #27).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects
