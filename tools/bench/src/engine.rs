@@ -219,7 +219,9 @@ pub fn probe(
     let mut child = cmd.spawn().ok()?;
     let (tx, rx) = mpsc::channel();
     if let Some(pipe) = child.stderr.take() {
-        thread::spawn(move || {
+        // A thread that can't be created means nothing is captured (the pipe is dropped,
+        // the child gets EPIPE), never a panic.
+        let _ = thread::Builder::new().spawn(move || {
             let mut buf = Vec::new();
             let _ = pipe.take(stderr_cap).read_to_end(&mut buf);
             // The read end is dropped here; the receiver may be gone already.
