@@ -138,11 +138,14 @@ def check_bash(cmd, cwd):
         raise Block("credential commands are not allowed")
     if re.search(r"(api|uploads)\.github\.com", low):
         raise Block("call GitHub only through `gh` (no direct API URLs)")
-    if re.search(r"\bcmux\b", low):
+    post_text = check_gh_posts(cmd)
+    # The cmux socket has no password (owner's choice), so this block is the only barrier between
+    # an agent and the owner's other terminal tabs. The word may appear only as quoted, inert
+    # title/body text of a gh post; anywhere else (incl. bash -c, $(...), grep) it is blocked.
+    if re.search(r"\bcmux\b", strip_inert_text(cmd, post_text).lower()):
         raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
     if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
         raise Block("scripting keystrokes into other apps is not allowed")
-    check_gh_posts(cmd)
     if re.search(r"\bsecurity\s+(find-|dump-keychain|export)", c):
         raise Block("keychain access is not allowed")
     if re.search(r"\bgit\s+config\b.*\bcredential", c):
@@ -235,6 +238,7 @@ GH_POST_VERBS = {
     "pr": {"create", "comment", "edit", "close", "reopen", "review"},
 }
 GH_BODY_FLAGS = {"-b", "--body", "-c", "--comment"}
+GH_TEXT_FLAGS = {"-t", "--title"}
 GH_NO_FLAGS = {"--body-file", "-F", "--fill", "-f", "--fill-first", "--fill-verbose", "--editor", "-e",
                "--web", "-w", "--template", "-T", "--recover"}
 
@@ -242,7 +246,8 @@ GH_NO_FLAGS = {"--body-file", "-F", "--fill", "-f", "--fill-first", "--fill-verb
 def check_gh_posts(cmd):
     """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's."""
     if not re.search(r"\bgh\s+(issue|pr)\s+(%s)\b" % "|".join(sorted(GH_POST_VERBS["pr"] | GH_POST_VERBS["issue"])), cmd):
-        return
+        return []
+    texts = []
     try:
         toks = shlex.split(cmd)
     except ValueError:
@@ -268,12 +273,36 @@ def check_gh_posts(cmd):
                 elif j + 1 < len(toks):
                     bodies.append(toks[j + 1])
                     j += 1
+            elif flag in GH_TEXT_FLAGS:
+                if "=" in a and a.startswith("--"):
+                    texts.append(a.split("=", 1)[1])
+                elif j + 1 < len(toks):
+                    texts.append(toks[j + 1])
+                    j += 1
             j += 1
         if verb in ("create", "comment") and not bodies:
             raise Block("gh %s %s needs --body \"%s ...\" (CONSTITUTION 1: agent text is tagged)" % (group, verb, TAG))
         for b in bodies:
             if not b.lstrip().startswith(TAG):
                 raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
+        texts.extend(bodies)
+    return texts
+
+
+def strip_inert_text(cmd, texts):
+    """Remove one quoted occurrence of each gh title/body that the shell passes through unexpanded:
+    '...' (any content), or "..." with no $, `, \\ or ". Anything else stays and is checked."""
+    for t in texts:
+        if not t:
+            continue
+        forms = ["'%s'" % t] if "'" not in t else []
+        if not re.search(r'[$`\\"]', t):
+            forms.append('"%s"' % t)
+        for q in forms:
+            if q in cmd:
+                cmd = cmd.replace(q, "''", 1)
+                break
+    return cmd
 
 
 def changed_files(cwd):
@@ -410,6 +439,16 @@ def selftest():
         ("Bash", {"command": "gh api repos/jacobdam/jpdf3/git/blobs -f content=x"}, True),
         ("Bash", {"command": "curl -H x https://api.github.com/repos/jacobdam/jpdf3/issues"}, True),
         ("Bash", {"command": "cmux send --surface surface:2 'rm -rf ~'"}, True),
+        ("Bash", {"command": "bash -c 'cmux send x'"}, True),
+        ("Bash", {"command": "grep -rn cmux ."}, True),
+        ("Bash", {"command": "gh issue comment 5 --body '%s is the cmux socket password set?'" % TAG}, False),
+        ("Bash", {"command": "gh issue comment 5 --body \"%s is the cmux socket password set?\"" % TAG}, False),
+        ("Bash", {"command": "gh issue edit 5 -t 'cmux socket password'"}, False),
+        ("Bash", {"command": "gh issue comment 5 --body \"%s $(cmux send x)\"" % TAG}, True),
+        ("Bash", {"command": "gh issue comment 5 --body \"%s `cmux send x`\"" % TAG}, True),
+        ("Bash", {"command": "gh issue comment 5 --body '%s cmux'; cmux send x" % TAG}, True),
+        ("Bash", {"command": "cmux send x; gh issue edit 5 -t 'cmux send x'"}, True),
+        ("Bash", {"command": "bash -c 'cmux send x'; gh issue edit 5 -t 'cmux send x'"}, True),
         ("Bash", {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}, True),
         ("Bash", {"command": "gh issue comment 5 --body 'done'"}, True),
         ("Bash", {"command": "gh issue comment 5 --body '%s done'" % TAG}, False),

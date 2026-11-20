@@ -397,8 +397,9 @@ crate areas) come once M1 is stable.
 2. Repo Settings → Pages → Source: **GitHub Actions**.
 3. System Settings → Privacy & Security: give the terminal app **Screen Recording** and
    **Accessibility** (macOS UI tests, PDFgear comparison).
-4. cmux Settings: set a **socket password** (any process can otherwise type into any cmux tab;
-   the guard also blocks agents from calling `cmux`).
+4. cmux Settings: optionally set a **socket password** (any process can otherwise type into any
+   cmux tab). The owner chose not to (2026-11-20), so the guard's `cmux` block is the only barrier;
+   it allows the word only as quoted text in a tagged GitHub post.
 5. Laptop: clone the repo and set `gpg.format=ssh`, `user.signingkey=<key>.pub`,
    `commit.gpgsign=true` (for protected changes, 6.1).
 6. Start: `cd ~/work/jpdf3 && ops/driver/driver.sh --pilot`.
@@ -441,6 +442,9 @@ hosting/domain, App Store listing). Phase 2 starts only when the owner opens a `
   owner's (the tag tells them apart), and the owner's local credentials (`~/.ssh`, keychain)
   are protected only by the guard, not by OS user separation. A separate macOS user for the
   agent closes the second gap if ever needed.
+- **cmux socket without a password.** Any local process could type into the owner's cmux tabs
+  (e.g. a shell outside the guard). Only the guard's `cmux` block stands in the way; a socket
+  password or a separate macOS user would close it.
 - **Weakened tests are hard to detect mechanically.** Mitigated by reviewer rules, mutation
   testing and corpus ratchets.
 - **The journey list bounds the product.** It is agent-written and unreviewed. It is
