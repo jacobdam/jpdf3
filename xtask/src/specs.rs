@@ -97,6 +97,13 @@ pub fn check(root: &Path) -> Vec<Problem> {
             }
             continue;
         }
+        if parts.len() > 2 && parts.first() == Some(&"journeys") {
+            out.push(problem(
+                &display,
+                "journey files must be directly in specs/journeys/ (the judge ignores subdirectories)",
+            ));
+            continue;
+        }
         // Same selection as the judge's policy check (ops/judge/policy.py check_specs).
         let skipped = parts.len() < 2
             || matches!(parts.first(), Some(&"journeys") | Some(&"ui"))
@@ -125,6 +132,13 @@ pub fn check(root: &Path) -> Vec<Problem> {
                     path,
                     format!("{id}: superseded_by unknown journey {s}"),
                 ));
+            } else if supersede_cycle(id, &journeys) {
+                out.push(problem(
+                    path,
+                    format!(
+                        "{id}: superseded_by chain is a cycle (it must end in a journey with tests)"
+                    ),
+                ));
             }
         }
     }
@@ -145,6 +159,21 @@ pub fn check(root: &Path) -> Vec<Problem> {
     out
 }
 
+/// True if following `superseded_by` from `start` never reaches a journey without one.
+fn supersede_cycle(start: &str, journeys: &BTreeMap<String, (String, Journey)>) -> bool {
+    let mut cur = start;
+    for _ in 0..=journeys.len() {
+        match journeys
+            .get(cur)
+            .and_then(|(_, j)| j.superseded_by.as_deref())
+        {
+            Some(next) if journeys.contains_key(next) => cur = next,
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Collects `*.md` paths relative to `specs/`, never following symlinks.
 fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path) {
     let specs = root.join("specs");
@@ -159,10 +188,33 @@ fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path
         }
     };
     for entry in entries {
-        let Ok(entry) = entry else { continue };
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                out.push(problem(
+                    &rel_display(root, dir),
+                    format!("cannot list: {e}"),
+                ));
+                continue;
+            }
+        };
         let path: PathBuf = entry.path();
-        let Ok(ft) = entry.file_type() else { continue };
-        if ft.is_dir() {
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                out.push(problem(
+                    &rel_display(root, &path),
+                    format!("cannot stat: {e}"),
+                ));
+                continue;
+            }
+        };
+        if ft.is_symlink() {
+            out.push(problem(
+                &rel_display(root, &path),
+                "symlink not followed; specs must be regular files",
+            ));
+        } else if ft.is_dir() {
             walk(&path, files, out, root);
         } else if ft.is_file()
             && path.extension().is_some_and(|e| e == "md")
@@ -196,27 +248,35 @@ fn read_text(path: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "not valid UTF-8".to_owned())
 }
 
-/// Removes `<!-- ... -->` spans (an unclosed comment runs to the end).
-fn strip_html_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(rest.get(..start).unwrap_or_default());
-        let after = rest.get(start + 4..).unwrap_or_default();
-        match after.find("-->") {
-            Some(end) => {
-                // Keep line structure so line-based parsing still works.
-                let inner = after.get(..end).unwrap_or_default();
-                out.extend(inner.chars().filter(|&c| c == '\n'));
-                rest = after.get(end + 3..).unwrap_or_default();
+/// Splits a line outside code fences into visible text, tracking `<!-- -->` comments across
+/// lines. Comment markers inside inline code spans are text, not comments.
+fn visible_text(line: &str, in_comment: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    let mut in_code = false;
+    while !rest.is_empty() {
+        if *in_comment {
+            match rest.find("-->") {
+                Some(i) => {
+                    *in_comment = false;
+                    rest = rest.get(i + 3..).unwrap_or_default();
+                }
+                None => return out,
             }
-            None => {
-                out.extend(after.chars().filter(|&c| c == '\n'));
-                rest = "";
-            }
+            continue;
         }
+        let mut chars = rest.char_indices();
+        let Some((_, c)) = chars.next() else { break };
+        if c == '`' {
+            in_code = !in_code;
+        } else if !in_code && rest.starts_with("<!--") {
+            *in_comment = true;
+            rest = rest.get(4..).unwrap_or_default();
+            continue;
+        }
+        out.push(c);
+        rest = rest.get(c.len_utf8()..).unwrap_or_default();
     }
-    out.push_str(rest);
     out
 }
 
@@ -232,24 +292,33 @@ pub struct Section {
     pub has_content: bool,
 }
 
-/// Level-2 sections outside code fences. A level-1 or level-2 heading ends a section;
-/// deeper headings count as content.
+/// Level-2 sections (`##` + whitespace + name, at column 0, as the judge requires) outside
+/// code fences and HTML comments. A level-1 or level-2 heading ends a section; deeper
+/// headings count as content.
 pub fn sections(text: &str) -> Vec<Section> {
-    let text = strip_html_comments(text);
     let mut out: Vec<Section> = Vec::new();
     let mut in_fence = false;
+    let mut in_comment = false;
     let mut open = false;
     for line in text.lines() {
-        if is_fence(line) {
+        if !in_comment && is_fence(line) {
             in_fence = !in_fence;
             if open && let Some(s) = out.last_mut() {
                 s.has_content = true;
             }
             continue;
         }
-        if !in_fence {
+        if in_fence {
+            if open && let Some(s) = out.last_mut() {
+                s.has_content = true;
+            }
+            continue;
+        }
+        let starts_in_comment = in_comment;
+        let visible = visible_text(line, &mut in_comment);
+        if !starts_in_comment {
             if let Some(rest) = line.strip_prefix("##")
-                && !rest.starts_with('#')
+                && rest.starts_with(char::is_whitespace)
             {
                 let name: String = rest
                     .trim_start()
@@ -269,7 +338,7 @@ pub fn sections(text: &str) -> Vec<Section> {
             }
         }
         if open
-            && !line.trim().is_empty()
+            && !visible.trim().is_empty()
             && let Some(s) = out.last_mut()
         {
             s.has_content = true;
@@ -343,6 +412,14 @@ fn is_journey_heading(line: &str) -> Option<&str> {
     (trimmed.len() < rest.len()).then_some(trimmed)
 }
 
+/// Headings the judge would silently skip: `### J-…`, ` ## J-…`, `##J-…`, `# J-…`.
+fn is_almost_journey_heading(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('#')
+        && t.trim_start_matches('#').trim_start().starts_with("J-")
+        && is_journey_heading(line).is_none_or(|h| !h.starts_with("J-"))
+}
+
 /// Parses journeys the way the judge does and reports format problems.
 pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
     let mut out: Vec<Journey> = Vec::new();
@@ -371,6 +448,17 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
                 continue;
             }
         }
+        // The judge's `^##\s+` crosses newlines: a bare `##` line takes the next lines' text
+        // as its heading.
+        if line.strip_prefix("##").is_some_and(|r| r.trim().is_empty()) {
+            problems.push(format!(
+                "line {lineno}: bare `##` line (the judge reads the following text as a heading)"
+            ));
+        } else if !in_fence && is_almost_journey_heading(line) {
+            problems.push(format!(
+                "line {lineno}: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)"
+            ));
+        }
         if let Some((_, lines)) = bodies.last_mut() {
             lines.push(line.to_owned());
         }
@@ -394,6 +482,11 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
                     "{id}: field `{key}` given more than once (the judge reads only the first)"
                 ));
                 continue;
+            }
+            if value.trim().is_empty() {
+                problems.push(format!(
+                    "{id}: field `{key}` has no value (the judge would read the next line as its value)"
+                ));
             }
             fields.insert(key, value.trim().to_owned());
         }
@@ -419,7 +512,8 @@ fn check_journey_fields(
 ) -> Journey {
     let milestone = fields.get("milestone").cloned();
     match milestone.as_deref() {
-        None | Some("") => problems.push(format!("{id}: missing `- milestone: M<N>`")),
+        None => problems.push(format!("{id}: missing `- milestone: M<N>`")),
+        Some("") => {} // reported as "has no value"
         Some(m) => {
             let ok = m
                 .strip_prefix('M')
@@ -432,7 +526,8 @@ fn check_journey_fields(
 
     let mut platforms = Vec::new();
     match fields.get("platform").map(String::as_str) {
-        None | Some("") => problems.push(format!("{id}: missing `- platform: web, macos`")),
+        None => problems.push(format!("{id}: missing `- platform: web, macos`")),
+        Some("") => {} // reported as "has no value"
         Some(v) => {
             let (items, has_empty) = list(v);
             if has_empty {
@@ -462,7 +557,8 @@ fn check_journey_fields(
 
     let mut tests = Vec::new();
     match fields.get("test").map(String::as_str) {
-        None | Some("") => {
+        Some("") => {} // reported as "has no value"
+        None => {
             if superseded_by.is_none() {
                 problems.push(format!("{id}: missing `- test: e2e.<platform>.<id>`"));
             }
@@ -535,7 +631,16 @@ fn mentioned_journeys(text: &str) -> BTreeSet<String> {
     out
 }
 
-/// `specs/...md` paths mentioned anywhere in `text`.
+/// Cleans a path token: drops Markdown emphasis around it, a `#anchor` and trailing
+/// punctuation. Returns `None` for globs (`*` inside) and non-`.md` tokens.
+fn clean_md_path(token: &str) -> Option<&str> {
+    let t = token.trim_matches(['*', '_']);
+    let t = t.split('#').next().unwrap_or_default();
+    let t = t.trim_end_matches(['.', ':']).trim_matches(['*', '_']);
+    (t.ends_with(".md") && !t.contains('*')).then_some(t)
+}
+
+/// `specs/...md` paths mentioned anywhere in `text`, not as part of a longer path.
 fn mentioned_spec_paths(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut rest = text;
@@ -545,16 +650,31 @@ fn mentioned_spec_paths(text: &str) -> BTreeSet<String> {
             .find(|c: char| c.is_whitespace() || "()[]|`'\"<>,;".contains(c))
             .unwrap_or(tail.len());
         let token = tail.get(..len).unwrap_or_default();
-        let token = token.trim_end_matches(['.', ':']);
         let preceded_ok = rest
             .get(..i)
             .and_then(|b| b.chars().next_back())
-            .is_none_or(|p| !(p.is_alphanumeric() || p == '_' || p == '-'));
-        // Glob patterns such as `specs/journeys/*.md` are not file mentions.
-        if preceded_ok && token.ends_with(".md") && !token.contains('*') {
-            out.insert(token.to_owned());
+            .is_none_or(|p| !(p.is_alphanumeric() || "_-./".contains(p)));
+        if preceded_ok && let Some(t) = clean_md_path(token) {
+            out.insert(t.to_owned());
         }
         rest = tail.get(len.max(1)..).unwrap_or_default();
+    }
+    out
+}
+
+/// Relative Markdown link targets `](target.md)` in `text`, resolved against `specs/`.
+fn link_targets(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        let tail = rest.get(i + 2..).unwrap_or_default();
+        let len = tail.find([')', ' ']).unwrap_or(tail.len());
+        let target = tail.get(..len).unwrap_or_default();
+        let external = target.contains("://") || target.starts_with('/') || target.starts_with('#');
+        if !external && let Some(t) = clean_md_path(target) {
+            out.insert(format!("specs/{t}"));
+        }
+        rest = tail;
     }
     out
 }
@@ -587,6 +707,11 @@ pub fn check_trace(
     for p in &paths {
         if !exists(p) {
             out.push(format!("mentions missing file {p}"));
+        }
+    }
+    for p in link_targets(text) {
+        if !paths.contains(&p) && !exists(&p) {
+            out.push(format!("links to missing file {p}"));
         }
     }
     out
@@ -710,93 +835,109 @@ mod tests {
 
     #[test]
     fn journey_field_rules() {
-        let cases: &[(&str, &str, &str)] = &[
+        let cases: &[(&str, &str, &[&str])] = &[
             (
                 "- milestone: M5\n",
                 "",
-                "J-ANN-01: missing `- milestone: M<N>`",
+                &["J-ANN-01: missing `- milestone: M<N>`"],
             ),
             (
                 "- milestone: M5",
                 "- milestone: m5",
-                "J-ANN-01: milestone `m5` is not M<N>",
+                &["J-ANN-01: milestone `m5` is not M<N>"],
             ),
             (
                 "- milestone: M5",
                 "- milestone: M",
-                "J-ANN-01: milestone `M` is not M<N>",
+                &["J-ANN-01: milestone `M` is not M<N>"],
             ),
             (
                 "- platform: web, macos\n",
                 "",
-                "J-ANN-01: missing `- platform: web, macos`",
+                &[
+                    "J-ANN-01: missing `- platform: web, macos`",
+                    "J-ANN-01: test `e2e.web.ann_highlight` is for platform `web`, which is not in `platform:`",
+                    "J-ANN-01: test `e2e.macos.ann_highlight` is for platform `macos`, which is not in `platform:`",
+                ],
             ),
             (
                 "web, macos",
                 "web, ios",
-                "J-ANN-01: unknown platform `ios` (web, macos)",
+                &[
+                    "J-ANN-01: unknown platform `ios` (web, macos)",
+                    "J-ANN-01: test `e2e.macos.ann_highlight` is for platform `macos`, which is not in `platform:`",
+                ],
             ),
             (
                 "web, macos",
                 "web, , macos",
-                "J-ANN-01: empty item in platform list",
+                &["J-ANN-01: empty item in platform list"],
             ),
             (
                 "web, macos",
                 "web, web, macos",
-                "J-ANN-01: platform `web` listed twice",
+                &["J-ANN-01: platform `web` listed twice"],
             ),
             (
                 "- test: e2e.web.ann_highlight, e2e.macos.ann_highlight\n",
                 "",
-                "J-ANN-01: missing `- test: e2e.<platform>.<id>`",
+                &["J-ANN-01: missing `- test: e2e.<platform>.<id>`"],
             ),
             (
                 "e2e.macos.ann_highlight",
                 "e2e.macos.Ann",
-                "J-ANN-01: test `e2e.macos.Ann` is not `e2e.<web|macos>.<id>` (id: a-z, 0-9, _)",
+                &["J-ANN-01: test `e2e.macos.Ann` is not `e2e.<web|macos>.<id>` (id: a-z, 0-9, _)"],
             ),
             (
                 "e2e.macos.ann_highlight",
                 "e2e.macos.a.b",
-                "J-ANN-01: test `e2e.macos.a.b` is not `e2e.<web|macos>.<id>` (id: a-z, 0-9, _)",
+                &["J-ANN-01: test `e2e.macos.a.b` is not `e2e.<web|macos>.<id>` (id: a-z, 0-9, _)"],
             ),
             (
                 "e2e.macos.ann_highlight",
                 "e2e.web.ann_highlight",
-                "J-ANN-01: test `e2e.web.ann_highlight` listed twice",
+                &[
+                    "J-ANN-01: test `e2e.web.ann_highlight` listed twice",
+                    "J-ANN-01: platform `macos` has no test",
+                ],
             ),
             (
                 "- platform: web, macos",
                 "- platform: web",
-                "J-ANN-01: test `e2e.macos.ann_highlight` is for platform `macos`, which is not in `platform:`",
+                &[
+                    "J-ANN-01: test `e2e.macos.ann_highlight` is for platform `macos`, which is not in `platform:`",
+                ],
             ),
             (
                 ", e2e.macos.ann_highlight",
                 "",
-                "J-ANN-01: platform `macos` has no test",
+                &["J-ANN-01: platform `macos` has no test"],
             ),
             (
                 "Steps:",
                 "- test: e2e.web.x\nSteps:",
-                "J-ANN-01: field `test` given more than once (the judge reads only the first)",
+                &["J-ANN-01: field `test` given more than once (the judge reads only the first)"],
             ),
             (
                 "## J-ANN-01: highlight",
                 "## J-ANN-01:",
-                "line 1: expected `## J-ANN-01: <title>`",
+                &["line 1: expected `## J-ANN-01: <title>`"],
             ),
             (
                 "## J-ANN-01: highlight",
                 "## J-ANN-01 highlight",
-                "line 1: expected `## J-ANN-01: <title>`",
+                &["line 1: expected `## J-ANN-01: <title>`"],
             ),
         ];
         for (from, to, want) in cases {
             let text = GOOD.replacen(from, to, 1);
-            assert_ne!(text, GOOD, "case {want} did not change the input");
+            assert_ne!(text, GOOD, "case {want:?} did not change the input");
             let got = problems_for(&text);
-            assert!(got.iter().any(|p| p == want), "want {want:?} in {got:?}");
+            assert_eq!(
+                got, *want,
+                "input:
+{text}"
+            );
         }
     }
 
@@ -862,18 +1003,88 @@ mod tests {
     #[test]
     fn mention_scanners_respect_word_boundaries() {
         assert!(mentioned_journeys("XJ-A-1 and -J-A-2").is_empty());
+        // `../specs/b.md` is part of a longer path, `specs/j/*.md` is a glob: neither counts.
         assert_eq!(
-            mentioned_spec_paths("myspecs/a.md ../specs/b.md specs/j/*.md"),
-            {
-                let mut s = BTreeSet::new();
-                s.insert("specs/b.md".to_owned());
-                s
-            }
+            mentioned_spec_paths("myspecs/a.md ../specs/b.md specs/j/*.md (specs/e.md)"),
+            BTreeSet::from(["specs/e.md".to_owned()])
         );
     }
 
     #[test]
-    fn comments_keep_line_numbers() {
-        assert_eq!(strip_html_comments("a<!--\n\n-->b\n<!-- x"), "a\n\nb\n");
+    fn comment_markers_in_inline_code_are_text() {
+        let mut c = false;
+        assert_eq!(
+            visible_text("Strip `<!--` comments", &mut c),
+            "Strip `<!--` comments"
+        );
+        assert!(!c);
+        assert_eq!(visible_text("a<!-- x --> b <!-- y", &mut c), "a b ");
+        assert!(c);
+        assert_eq!(visible_text("still --> z", &mut c), " z");
+        assert!(!c);
+        assert_eq!(visible_text("é<!--é-->é", &mut c), "éé");
+        let text = full_spec().replace("## Undo\ntext\n", "## Undo\nStrip `<!--` from input.\n");
+        assert_eq!(check_feature_spec(&text, &req()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn heading_needs_whitespace_after_hashes_like_the_judge() {
+        let text = full_spec().replace("## Undo", "##Undo");
+        assert_eq!(
+            check_feature_spec(&text, &req()),
+            vec!["missing checklist section `## Undo` (see specs/_TEMPLATE.md)".to_owned()]
+        );
+    }
+
+    #[test]
+    fn headings_the_judge_would_skip_are_reported() {
+        for (line, want) in [
+            (
+                "### J-A-1: x",
+                "line 1: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)",
+            ),
+            (
+                " ## J-A-1: x",
+                "line 1: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)",
+            ),
+            (
+                "##J-A-1: x",
+                "line 1: malformed journey heading (expected `## J-<AREA>-<NN>: <title>`)",
+            ),
+            (
+                "##\nJ-A-1: x",
+                "line 1: bare `##` line (the judge reads the following text as a heading)",
+            ),
+        ] {
+            assert_eq!(problems_for(line), vec![want.to_owned()], "input {line:?}");
+        }
+    }
+
+    #[test]
+    fn empty_field_value_is_reported() {
+        let text =
+            "## J-A-1: old\n- milestone: M1\n- platform: web\n- test:\n- superseded_by: J-A-2\n";
+        assert_eq!(
+            problems_for(text),
+            vec!["J-A-1: field `test` has no value (the judge would read the next line as its value)".to_owned()]
+        );
+    }
+
+    #[test]
+    fn trace_paths_ignore_longer_paths_emphasis_and_anchors() {
+        let got = mentioned_spec_paths("x/specs/a.md ops.specs/b.md **specs/c.md** specs/d.md#top");
+        let want: BTreeSet<String> = ["specs/c.md", "specs/d.md"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn broken_link_target_is_reported() {
+        let specs = vec!["specs/x/y.md".to_owned()];
+        let text = "[specs/x/y.md](x/typo.md) [web](https://example.org/a.md) [s](#top)";
+        let p = check_trace(text, &BTreeSet::new(), &specs, |p| p == "specs/x/y.md");
+        assert_eq!(p, vec!["links to missing file specs/x/typo.md".to_owned()]);
     }
 }

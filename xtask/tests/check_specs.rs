@@ -83,3 +83,52 @@ fn usage_errors_exit_2() {
     );
     assert_eq!(run(&["frobnicate"]).unwrap().status.code(), Some(2));
 }
+
+#[test]
+fn filesystem_and_supersede_edge_cases() {
+    let root = std::env::temp_dir().join(format!("xtask-edge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let specs = root.join("specs");
+    std::fs::create_dir_all(specs.join("journeys/nested")).unwrap();
+    std::fs::create_dir_all(specs.join("area")).unwrap();
+    let good = std::fs::read(format!("{}/specs/area/feat.md", fixture("good"))).unwrap();
+    std::fs::write(specs.join("_TEMPLATE.md"), &good).unwrap();
+    std::fs::write(specs.join("area/bin.md"), b"## Persistence\n\xff\n").unwrap();
+    std::fs::write(specs.join("area/big.md"), vec![b'x'; (1 << 20) + 1]).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(specs.join("_TEMPLATE.md"), specs.join("area/link.md")).unwrap();
+    std::fs::write(specs.join("journeys/nested/n.md"), "").unwrap();
+    std::fs::write(
+        specs.join("journeys/s.md"),
+        "## J-S-1: self\n- milestone: M1\n- platform: web\n- superseded_by: J-S-1\n\n\
+         ## J-S-2: a\n- milestone: M1\n- platform: web\n- superseded_by: J-S-3\n\n\
+         ## J-S-3: b\n- milestone: M1\n- platform: web\n- superseded_by: J-S-2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        specs.join("TRACE.md"),
+        "J-S-1 J-S-2 J-S-3 specs/area/bin.md specs/area/big.md\n",
+    )
+    .unwrap();
+    let o = run(&["check-specs", "--root", &root.to_string_lossy()]).unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    let mut want = vec![
+        "specs/area/big.md: file is 1048577 bytes, above the 1048576-byte limit",
+        "specs/area/bin.md: not valid UTF-8",
+        "specs/journeys/nested/n.md: journey files must be directly in specs/journeys/ (the judge ignores subdirectories)",
+        "specs/journeys/s.md: J-S-1: superseded_by names itself",
+        "specs/journeys/s.md: J-S-2: superseded_by chain is a cycle (it must end in a journey with tests)",
+        "specs/journeys/s.md: J-S-3: superseded_by chain is a cycle (it must end in a journey with tests)",
+    ];
+    if cfg!(unix) {
+        want.insert(
+            2,
+            "specs/area/link.md: symlink not followed; specs must be regular files",
+        );
+    }
+    let n = format!("check-specs: {} problem(s)", want.len());
+    want.push(&n);
+    assert_eq!(err.lines().collect::<Vec<_>>(), want);
+}
