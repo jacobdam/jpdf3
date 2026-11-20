@@ -137,11 +137,6 @@ fn unsupported_structures_are_reported_as_unsupported() {
 
 #[test]
 fn inconsistent_page_trees_are_malformed() {
-    let wrong_count = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 2 >>".to_string(),
-        "<< /Type /Page /Parent 2 0 R >>".to_string(),
-    ];
     let duplicate_kid = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [3 0 R 3 0 R] /Count 2 >>".to_string(),
@@ -155,18 +150,116 @@ fn inconsistent_page_trees_are_malformed() {
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [7 0 R] /Count 1 >>".to_string(),
     ];
-    for objs in [
-        &wrong_count[..],
-        &duplicate_kid[..],
-        &self_kid[..],
-        &missing_kid[..],
-    ] {
+    for objs in [&duplicate_kid[..], &self_kid[..], &missing_kid[..]] {
         let (pdf, _) = build(b"%PDF-1.7\n", 1, objs, "");
         assert!(
             matches!(open(&pdf), Err(EngineError::Malformed { .. })),
             "{objs:?}"
         );
     }
+}
+
+#[test]
+fn wrong_count_is_read_leniently() {
+    // ISO 32000-2 §7.7.3.2 says /Count must match; real files get it wrong (CONSTITUTION 17).
+    let wrong_count = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 2 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R >>".to_string(),
+    ];
+    let (pdf, _) = build(b"%PDF-1.7\n", 1, &wrong_count, "");
+    assert_eq!(open(&pdf), Ok(1));
+}
+
+#[test]
+fn deep_nesting_and_huge_numbers_in_objects() {
+    let deep = format!(
+        "<< /Type /Catalog /Pages 2 0 R /X {}{} >>",
+        "[".repeat(300),
+        "]".repeat(300)
+    );
+    let objs = [deep, "<< /Type /Pages /Kids [] /Count 0 >>".to_string()];
+    let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+    assert_eq!(open(&pdf), Err(EngineError::LimitExceeded("nesting depth")));
+
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [] /Count 99999999999999999999 >>".to_string(),
+    ];
+    let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+    assert!(matches!(open(&pdf), Err(EngineError::Malformed { .. })));
+}
+
+/// Each page object hides the next one inside a literal string, so resolving every kid would
+/// rescan the rest of the file (quadratic). The per-document lexing budget must stop it.
+#[test]
+fn overlapping_objects_hit_the_lexing_budget() {
+    let pages = 2000;
+    let header = b"%PDF-1.7\n".to_vec();
+    let catalog = "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n";
+    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+    let tree = format!(
+        "2 0 obj << /Type /Pages /Kids [{}] /Count {pages} >> endobj\n",
+        kids.join(" ")
+    );
+    let mut file = header;
+    let mut offsets = vec![file.len()];
+    file.extend(catalog.as_bytes());
+    offsets.push(file.len());
+    file.extend(tree.as_bytes());
+    for i in 0..pages {
+        offsets.push(file.len());
+        file.extend(format!("{} 0 obj << /Type /Page /S (", i + 3).as_bytes());
+    }
+    for _ in 0..pages {
+        file.extend(b") >> endobj ");
+    }
+    let xref_at = file.len();
+    file.extend(format!("\nxref\n0 {}\n0000000000 65535 f\r\n", offsets.len() + 1).as_bytes());
+    for o in &offsets {
+        file.extend(format!("{o:010} 00000 n\r\n").as_bytes());
+    }
+    file.extend(
+        format!(
+            "trailer << /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            offsets.len() + 1,
+            xref_at + 1
+        )
+        .as_bytes(),
+    );
+    assert_eq!(
+        open(&file),
+        Err(EngineError::LimitExceeded("bytes lexed per document"))
+    );
+}
+
+/// Each trailer's /Prev points to a section hidden inside its own string, so every section
+/// rescans the rest of the file. The lexing budget must stop it before 1024 sections.
+#[test]
+fn overlapping_prev_sections_hit_the_lexing_budget() {
+    let sections = 1000;
+    let mut file = b"%PDF-1.7\n".to_vec();
+    let start = file.len();
+    let mut offsets = Vec::new();
+    let mut at = start;
+    let opening = |next: usize| format!("xref\n0 0\ntrailer << /Root 1 0 R /Prev {next:010} /S (");
+    for _ in 0..sections {
+        offsets.push(at);
+        at += opening(0).len();
+    }
+    for (i, _) in offsets.iter().enumerate() {
+        let next = offsets.get(i + 1).copied().unwrap_or(start);
+        file.extend(opening(next).as_bytes());
+    }
+    file.extend(vec![b'x'; 200_000]);
+    for _ in 0..sections {
+        file.extend(b") >> ");
+    }
+    file.extend(format!("\nstartxref\n{start}\n%%EOF\n").as_bytes());
+    assert_eq!(
+        open(&file),
+        Err(EngineError::LimitExceeded("bytes lexed per document"))
+    );
 }
 
 #[test]

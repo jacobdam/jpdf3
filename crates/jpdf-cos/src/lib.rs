@@ -92,12 +92,7 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
             _ => return Err(CosError::Malformed("page tree kid has no valid /Type")),
         }
     }
-    let count = pages
-        .get(b"Count")
-        .and_then(Object::as_integer)
-        .ok_or(CosError::Malformed("page tree /Count is not an integer"))?;
-    if usize::try_from(count).ok() != Some(kids.len()) {
-        return Err(CosError::Malformed("page tree /Count does not match /Kids"));
-    }
+    // ISO 32000-2 §7.7.3.2 requires /Count to equal the number of leaves. Real files get it
+    // wrong; read leniently (CONSTITUTION 17) and trust the kids we actually found.
     Ok(kids.len())
 }

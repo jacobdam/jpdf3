@@ -148,8 +148,12 @@ fn parse_args(args: &[OsString]) -> Result<Invocation, Failure> {
     let mut seen: Vec<&'static str> = Vec::new();
     let mut iter = rest.iter();
     while let Some(arg) = iter.next() {
+        let looks_like_flag = arg.as_encoded_bytes().starts_with(b"--");
+        if looks_like_flag && arg.to_str().is_none() {
+            return Err(Failure::usage(format!("flag {arg:?} is not valid UTF-8")));
+        }
         let text = arg.to_str().unwrap_or_default();
-        if let Some(flag) = text.strip_prefix("--") {
+        if let Some(flag) = text.strip_prefix("--").filter(|_| looks_like_flag) {
             let known = cmd
                 .required
                 .iter()
@@ -241,7 +245,18 @@ fn read_limited(path: &PathBuf, max: usize) -> Result<Vec<u8>, Failure> {
     let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));
     let file = File::open(path).map_err(cannot)?;
     let cap = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    // Reserve the exact size up front: `read_to_end` doubling would otherwise reserve up to
+    // twice the file size, which matters under the judge's 2 GiB address-space limit.
+    let expected = file
+        .metadata()
+        .ok()
+        .and_then(|m| usize::try_from(m.len()).ok())
+        .filter(|len| *len <= max)
+        .unwrap_or(0);
     let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(expected.saturating_add(1))
+        .map_err(|_| Failure::usage("cannot allocate memory for the file"))?;
     file.take(cap).read_to_end(&mut bytes).map_err(cannot)?;
     if bytes.len() > max {
         return Err(Failure::usage("limit exceeded: file size"));

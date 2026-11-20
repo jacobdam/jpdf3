@@ -15,6 +15,20 @@ pub struct Limits {
     pub max_xref_sections: usize,
     /// Pages in one document.
     pub max_pages: usize,
+    /// Bytes the lexer may scan per document, as a multiple of the file size (plus
+    /// `lex_budget_slack`). Legitimate files lex each byte about once.
+    pub lex_budget_factor: usize,
+    /// Fixed allowance added to the lexing budget (covers tiny files).
+    pub lex_budget_slack: usize,
+}
+
+impl Limits {
+    /// Total bytes the lexer may scan for a file of `data_len` bytes.
+    pub fn lex_budget(&self, data_len: usize) -> usize {
+        data_len
+            .saturating_mul(self.lex_budget_factor)
+            .saturating_add(self.lex_budget_slack)
+    }
 }
 
 impl Default for Limits {
@@ -26,6 +40,8 @@ impl Default for Limits {
             max_xref_entries: 10_000_000,
             max_xref_sections: 1024,
             max_pages: 1_000_000,
+            lex_budget_factor: 4,
+            lex_budget_slack: 1024 * 1024,
         }
     }
 }

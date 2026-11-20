@@ -26,7 +26,7 @@ flag of CONTRACT §1:
 Argument validation (all failures exit **2** with one line on stderr, nothing on stdout):
 - unknown command, unknown flag, flag without value, repeated flag, missing required flag,
   missing or extra positional argument;
-- `--page`: integer ≥ 1; `--dpi`: integer 1..=2400; `--rect`: four finite numbers `x0,y0,x1,y1`;
+- `--page`: integer in 1..=4294967295; `--dpi`: integer 1..=2400; `--rect`: four finite numbers `x0,y0,x1,y1`;
   `--color`: three integers 0..=255; `--kind` must be `highlight`; `--save` must be
   `incremental`; `--mode` must be `full`.
 
@@ -35,10 +35,12 @@ After validation every command except `info` exits **3** (not implemented) witho
 `info`: the CLI reads FILE (size checked against `Limits::max_file_size` before reading) and
 hands the bytes to `jpdf_engine::Document::open(bytes, &Limits)`. On success it prints
 `{"pages": N}` and a newline and exits 0. The engine currently understands only:
-- a classic cross-reference table found through `startxref` (§7.5.5), with `/Prev` chains (§7.5.6);
+- a classic cross-reference table found through the last `startxref` in the final 64 KiB
+  (§7.5.5; trailing junk is tolerated), with `/Prev` chains (§7.5.6);
 - an unencrypted document;
-- a catalog `/Pages` node whose `/Kids` are all `/Type /Page` leaves and whose `/Count`
-  equals the number of kids (§7.7.3).
+- a catalog `/Pages` node whose `/Kids` are all distinct `/Type /Page` leaves (§7.7.3). A
+  `/Count` that disagrees with the kids is read leniently (CONSTITUTION 17): the number of
+  kids found wins.
 
 `--password` is accepted and ignored for unencrypted files.
 
@@ -55,7 +57,7 @@ Not applicable (read-only).
 |---|---|---|
 | bad arguments | 2 | `jpdf-cli: <reason>` |
 | FILE missing/unreadable | 2 | `jpdf-cli: cannot read FILE: <io error>` |
-| malformed file (no `startxref`, bad xref, object not found, wrong `/Count`, …) | 2 | `jpdf-cli: malformed PDF: <what> at byte <offset>` |
+| malformed file (no `startxref`, bad xref, object header mismatch, bad page tree, …) | 2 | `jpdf-cli: malformed PDF: <what>[ at byte <offset>]` (offset when the lexer knows it) |
 | a limit exceeded | 2 | `jpdf-cli: limit exceeded: <which>` |
 | unsupported structure (xref stream, hybrid `/XRefStm`, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
 | any non-`info` command | 3 | `jpdf-cli: not implemented: <command>` |
@@ -71,10 +73,19 @@ from the judge).
   (memory bound for huge arrays/dictionaries);
 - `max_xref_entries` 10 000 000 across all sections;
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
-- `max_pages` 1 000 000 kids.
+- `max_pages` 1 000 000 kids;
+- lexing budget: at most `4 × file size + 1 MiB` bytes lexed per document
+  (`lex_budget_factor`, `lex_budget_slack`). Hostile files can overlap objects or xref
+  sections (an object hidden inside another's string, a `/Prev` pointing into the trailer's own
+  string); without a global budget, resolving them rescans the same bytes and time grows
+  quadratically.
+
+Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
+16 bytes each in a `BTreeMap` (no rehash doubling). Measured worst case so far: a 500 MiB file
+with 10 M xref entries peaks at ~0.95 GB RSS, under the judge's 2 GiB address-space limit.
 
 All input-derived arithmetic is checked; numbers that overflow `i64` are malformed input.
-Work is linear in file size: every byte is lexed at most a bounded number of times.
+Work is linear in file size: the lexing budget bounds total lexing to 4× the file.
 
 ## Security
 Input is hostile. No `unwrap`/`expect`/panicking index on input-derived data; recursion depth is
@@ -95,8 +106,9 @@ resolves only the catalog, the page-tree root and its kids.
 - `tools/jpdf-cli/tests/cli.rs`: every contract command with valid flags exits 3; argument errors
   exit 2 with empty stdout; `info` on generated minimal PDFs prints the right count; empty,
   garbage and truncated files exit 2 or 3.
-- `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3 pages, `/Prev` updates, `/Prev`
-  loops, deep nesting, overflow numbers, unsupported structures.
+- `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3/50 pages, `/Prev` updates, `/Prev`
+  loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
+  page limits, overlapping objects and overlapping `/Prev` sections (lexing budget).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.
