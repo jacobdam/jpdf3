@@ -26,15 +26,27 @@ Status: implemented
    - `--mutool`: default `mutool` from `PATH` if `mutool -v` runs; `none` disables it.
    - `--pdfium`: default `pdfium_test` from `PATH` if it starts (run once with no arguments;
      any exit counts as present); `none` disables it.
+   - Engine probes (`mutool -v`, bare `pdfium_test`) run under a 5 s limit with the same
+     process-group kill as item 7. stdout goes to the null device and stderr to
+     `probe-<engine>.txt` in the work dir; at most 4 KiB is read back. `version` is kept only
+     if its first line starts with `mutool version`; otherwise it is `null`.
    - An explicit `--mutool`/`--pdfium` path that cannot be started is a usage error; the
      default lookup that finds nothing just leaves the engine out.
    - `--work DIR`: scratch directory for the generated sample and the engines' output files;
      default `<out>.work/` next to the report. The bench overwrites its own file names there
-     and never deletes anything.
+     and never deletes anything. A work dir equal to or inside the corpus dir is a usage
+     error (exit 2), checked before anything is written, so the bench can never overwrite
+     or bench its own files.
+   - `--cli`, `--work` and `--corpus` are made absolute before they go into any argv, so
+     a path starting with `-` can't be read as a flag.
    - Unknown flags, missing values, out-of-range numbers or a missing `--cli`/`--out` → usage on
      stderr, exit 2. A bench that ran writes the report and exits 0, whatever the engines did.
      A `--cli` that is not a file and I/O failures (cannot write the report, cannot read the
-     corpus dir) → exit 1, and no report is written.
+     corpus dir) → exit 1, and no report is written. The report is written to `<out>.tmp`
+     and then renamed, so a failure part-way never leaves a truncated report.
+   - Corpus entries are followed through symlinks. An entry whose metadata can't be read
+     (dangling symlink, removed during listing) is skipped. A non-UTF-8 file name is
+     reported lossily (U+FFFD), so two such names can look the same in the report.
 3. **Generated sample** (default; offline, deterministic): `jpdf_testgen::minimal_pdf` with 1,
    10, 100 and 1000 empty pages, named `gen-pages-0001.pdf` … `gen-pages-1000.pdf`. It
    exercises the harness and the open path while the engine can't render; the real
@@ -58,8 +70,11 @@ Status: implemented
    its time is `null`. **A failed or unimplemented operation is never reported as a time**,
    and never as zero. For reference engines the same mapping is applied, but only `ok`
    counts; any other status just removes that file from the ratio.
-7. **Time limits** per run, from CONTRACT §1: info 20 s, render 30 s, text 60 s. The child
-   is killed at the limit.
+7. **Time limits** per run, from CONTRACT §1: info 20 s, render 30 s, text 60 s. Each child
+   runs in its own process group (`process_group(0)`). At the limit, the whole group gets
+   SIGKILL (`kill -s KILL -- -PGID`) and the child is reaped, so a wrapper script's children
+   can't outlive it and skew later runs. Children that leave the group on purpose are out
+   of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
    per-file times of `ok` measurements (nearest-rank p95; `null` when no file is `ok`).
    **Ratio** per operation and reference engine: the geometric mean over files where both
@@ -86,9 +101,15 @@ Status: implemented
     in `/proc/cpuinfo` (Linux); `memory_bytes` from `sysctl -n hw.memsize` or `MemTotal` in
     `/proc/meminfo`. Unknown values are `"unknown"` / `0`, which still hash. No host name,
     user name or serial number is recorded. Trends compare reports with the same `id` only.
+    `logical_cpus` is `available_parallelism()`, which follows cgroup quotas and CPU
+    affinity. So a CPU-limited container gets its own `id`, which is what we want: its times
+    are not comparable to the bare host's.
+    `revision` is `git rev-parse HEAD` in the current directory. `cargo xtask bench` runs
+    it from the repository root.
 11. **`cargo xtask bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W]`** builds
-    `jpdf-cli` and `jpdf-bench` with `cargo build --release --locked` (the judge's build) and
-    runs the bench with `--cli target/release/jpdf-cli --out DIR/bench.json` (default
+    `jpdf-cli` and `jpdf-bench` with `$CARGO build --release --locked` (the judge's build) and
+    runs the bench with `--cli <target>/release/jpdf-cli --out DIR/bench.json` (`<target>` =
+    `$CARGO_TARGET_DIR` or `target`; default
     `DIR` = `target/xtask-out`). It forwards the other flags. Exit: the bench's exit code.
     `cargo xtask nightly` (#19) will call it and keep the trend; the 5% regression check of
     PLAN §5 compares two reports with the same machine id and lands with #19.
@@ -109,6 +130,12 @@ reads only file names and sizes from the corpus; engines read the PDFs, under th
 Arithmetic on times uses `u128`/`f64` from `Duration`, saturating where it converts.
 
 ## Security
+**Sealed corpus (CONSTITUTION 13).** The bench can't tell which directory holds the sealed
+files without reading the sealed manifest, and reading it would itself break the rule. The
+guard therefore sits where files are fetched: `tools/corpus` (#22) only downloads the
+smoke/regress/wide tiers, and the sealed tier never exists on agent machines. Only the
+judge fetches it, in CI. `--corpus` is only ever given those tier directories.
+
 Corpus PDFs are hostile, but the bench never parses them: it only passes paths to external
 programs, with arguments as an argv list (no shell). Report strings are JSON-escaped (file
 names can hold any character). The bench runs only `--cli`, `mutool`, `pdfium_test`, `git`
@@ -129,7 +156,14 @@ child every 0.2 ms.
 `tools/bench/tests/bench.rs` and unit tests in the crate:
 - argument parsing: defaults, every range boundary, unknown flag → exit 2;
 - exit classification for 0, 2, 3, 1, signals and timeouts (shell-script fake engines in a
-  test temp dir under `target/`);
+  test temp dir under `target/`). A timed-out wrapper script without `exec` must not leave
+  its background child alive (process-group kill);
+- ratio direction and unit: fake jpdf (~200 ms) against fake mutool (~50 ms) must give a
+  ratio > 1.5 and per-file `ms` ≥ 150 (a µs value would be ~200 000). A probe whose output
+  isn't a mutool version line records `version: null`;
+- a fake `pdfium_test` must receive `<work>/pdfium-input.pdf` and is absent from `info`;
+- a work dir equal to or inside the corpus → exit 2 with nothing created there; a dangling
+  `*.pdf` symlink is skipped;
 - a not-implemented engine yields `null` times and is excluded from ratios (never zero);
 - statistics: median of even/odd counts, nearest-rank p95 at 1, 19, 20 and 21 values,
   geometric mean, ratio with sub-microsecond clamps;

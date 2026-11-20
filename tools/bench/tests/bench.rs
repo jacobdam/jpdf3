@@ -368,3 +368,188 @@ fn corpus_selection_and_odd_names() {
         "true"
     );
 }
+
+#[test]
+fn timeout_kills_the_whole_process_group() {
+    let d = temp_dir!();
+    let pidfile = d.join("grandchild.pid");
+    // A wrapper without `exec`: its child must not outlive the timeout.
+    let s = script!(
+        &d,
+        "wrapper",
+        &format!("sleep 30 &\necho $! > '{}'\nwait", pidfile.display())
+    );
+    // 3 s: the first exec of a freshly written script can be slow on macOS (policy checks).
+    let (status, _) = run_once(&s, &[], Duration::from_secs(3));
+    assert_eq!(status, Status::Timeout);
+    let pid = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .to_string();
+    let alive = || {
+        Command::new("kill")
+            .args(["-0", &pid])
+            .status()
+            .unwrap()
+            .success()
+    };
+    let mut gone = false;
+    for _ in 0..100 {
+        if !alive() {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(gone, "grandchild {pid} survived the timeout");
+}
+
+#[test]
+fn ratio_direction_and_millisecond_unit() {
+    let d = temp_dir!();
+    // jpdf takes ~200 ms per info, mutool ~50 ms: the ratio must be well above 1, and times
+    // must be in ms (a µs value would be ~200 000). The upper bounds allow for a slow first
+    // exec of a new script under parallel test load.
+    let cli = script!(
+        &d,
+        "cli",
+        r#"case "$1" in info) sleep 0.2; exit 0 ;; *) exit 3 ;; esac"#
+    );
+    let mutool = script!(
+        &d,
+        "mutool",
+        r#"[ "$1" = "-v" ] && exit 0; sleep 0.05; exit 0"#
+    );
+    let out = d.join("r.json");
+    let o = bench!(&[
+        &os("--cli"),
+        &os(&cli),
+        &os("--out"),
+        &os(&out),
+        &os("--mutool"),
+        &os(&mutool),
+        &os("--pdfium"),
+        &os("none"),
+        &os("--runs"),
+        &os("1"),
+        &os("--warmup"),
+        &os("1"),
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = std::fs::read_to_string(&out).unwrap();
+    let ratio: f64 = py!(&text, "r['operations']['info']['ratio']['mutool']['value']")
+        .parse()
+        .unwrap();
+    assert!(ratio > 1.5 && ratio < 10.0, "ratio {ratio}");
+    assert_eq!(
+        py!(
+            &text,
+            "all(150 <= f['results']['info']['jpdf']['ms'] <= 5000 for f in r['files'])"
+        ),
+        "true",
+        "{text}"
+    );
+    let median: f64 = py!(
+        &text,
+        "r['operations']['info']['engines']['jpdf']['median_ms']"
+    )
+    .parse()
+    .unwrap();
+    assert!((150.0..=5000.0).contains(&median), "median {median}");
+    // A probe that prints something other than mutool's version line records no version.
+    assert_eq!(py!(&text, "r['engines']['mutool']['version']"), "null");
+}
+
+#[test]
+fn pdfium_gets_a_copy_in_the_work_dir_and_has_no_info() {
+    let d = temp_dir!();
+    let cli = script!(&d, "cli", STUB_CLI);
+    // Fake pdfium_test: bare probe exits 0; otherwise the last argument must be the copy.
+    let pdfium = script!(
+        &d,
+        "pdfium_test",
+        r#"[ $# -eq 0 ] && exit 0
+for a in "$@"; do last="$a"; done
+case "$last" in */pdfium-input.pdf) [ -s "$last" ] && exit 0 ;; esac
+exit 1"#
+    );
+    let out = d.join("r.json");
+    let o = bench!(&[
+        &os("--cli"),
+        &os(&cli),
+        &os("--out"),
+        &os(&out),
+        &os("--mutool"),
+        &os("none"),
+        &os("--pdfium"),
+        &os(&pdfium),
+        &os("--runs"),
+        &os("1"),
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        py!(&text, "r['engines']['pdfium']"),
+        r#"{"present": true, "version": null}"#
+    );
+    assert_eq!(
+        py!(&text, "'pdfium' in r['operations']['info']['engines']"),
+        "false"
+    );
+    assert_eq!(
+        py!(
+            &text,
+            "any('pdfium' in f['results']['info'] for f in r['files'])"
+        ),
+        "false"
+    );
+    for op in ["render72", "render150", "text"] {
+        assert_eq!(
+            py!(
+                &text,
+                &format!("r['operations']['{op}']['engines']['pdfium']['ok']")
+            ),
+            "4",
+            "{op}"
+        );
+    }
+}
+
+#[test]
+fn work_dir_inside_corpus_is_refused_and_bad_entries_are_skipped() {
+    let d = temp_dir!();
+    let cli = script!(&d, "cli", STUB_CLI);
+    let corpus = d.join("corpus");
+    std::fs::create_dir(&corpus).unwrap();
+    std::fs::write(corpus.join("a.pdf"), b"%PDF-1.7\n").unwrap();
+    std::os::unix::fs::symlink(d.join("nowhere.pdf"), corpus.join("dangling.pdf")).unwrap();
+    let out = d.join("r.json");
+    let base = |work: &Path| {
+        bench!(&[
+            &os("--cli"),
+            &os(&cli),
+            &os("--out"),
+            &os(&out),
+            &os("--mutool"),
+            &os("none"),
+            &os("--pdfium"),
+            &os("none"),
+            &os("--runs"),
+            &os("1"),
+            &os("--corpus"),
+            &os(&corpus),
+            &os("--work"),
+            &os(work),
+        ])
+    };
+    assert_eq!(base(&corpus).status.code(), Some(2));
+    assert_eq!(base(&corpus.join("sub/w")).status.code(), Some(2));
+    assert!(!corpus.join("sub").exists());
+    let o = base(&d.join("work"));
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        py!(&text, "[f['name'] for f in r['files']]"),
+        r#"["a.pdf"]"#
+    );
+}

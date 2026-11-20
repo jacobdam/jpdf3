@@ -36,7 +36,9 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 
 /// Builds and runs the bench. `Ok(code)` is jpdf-bench's exit code.
 pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
-    let status = Command::new("cargo")
+    // The cargo that runs xtask, and its target dir (CARGO_TARGET_DIR may move it).
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = Command::new(cargo)
         .current_dir(root)
         .args([
             "build",
@@ -52,7 +54,10 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     if !status.success() {
         return Err(format!("release build failed ({status})"));
     }
-    let release = root.join("target/release");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    let release = root.join(target).join("release");
     let report = opts.out.join("bench.json");
     let status = Command::new(release.join("jpdf-bench"))
         .current_dir(root)

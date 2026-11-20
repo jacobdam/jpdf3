@@ -178,34 +178,76 @@ fn classify_exit(st: ExitStatus) -> Status {
 /// Runs `bin args` once with stdio on the null device; returns the status and wall time
 /// from spawn to exit. The child is killed at `limit`.
 pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Duration) {
+    run_with_stderr(bin, args, limit, Stdio::null())
+}
+
+/// [`run_once`] with stderr sent to `stderr`. The child runs in its own process group, and a
+/// timeout kills the whole group, so a wrapper script's children can't outlive it and skew
+/// later runs.
+pub fn run_with_stderr(
+    bin: &Path,
+    args: &[OsString],
+    limit: Duration,
+    stderr: Stdio,
+) -> (Status, Duration) {
     let start = Instant::now();
-    let mut child = match Command::new(bin)
-        .args(args)
+    probe(bin, args, limit, stderr).unwrap_or((Status::Crash, start.elapsed()))
+}
+
+/// [`run_with_stderr`], but `None` when the program could not be started at all (so callers
+/// can tell "absent" from "exited with an error").
+pub fn probe(
+    bin: &Path,
+    args: &[OsString],
+    limit: Duration,
+    stderr: Stdio,
+) -> Option<(Status, Duration)> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(stderr);
+    #[cfg(unix)]
     {
-        Ok(c) => c,
-        Err(_) => return (Status::Crash, start.elapsed()),
-    };
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let start = Instant::now();
+    let mut child = cmd.spawn().ok()?;
     loop {
         match child.try_wait() {
-            Ok(Some(st)) => return (classify_exit(st), start.elapsed()),
+            Ok(Some(st)) => return Some((classify_exit(st), start.elapsed())),
             Ok(None) if start.elapsed() >= limit => {
-                // Errors here mean the child already exited; it is reaped either way.
-                let _ = child.kill();
-                let _ = child.wait();
-                return (Status::Timeout, start.elapsed());
+                let took = start.elapsed();
+                kill_tree(&mut child);
+                return Some((Status::Timeout, took));
             }
             Ok(None) => thread::sleep(POLL),
             Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return (Status::Crash, start.elapsed());
+                kill_tree(&mut child);
+                return Some((Status::Crash, start.elapsed()));
             }
         }
     }
+}
+
+/// Kills the child's process group (unix) and the child itself, then reaps the child.
+/// Errors mean the processes are already gone.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // The group id is the child's pid (`process_group(0)`); `kill -KILL -PGID` signals
+        // every process in it. std has no safe group-kill API.
+        let _ = Command::new("kill")
+            .args(["-s", "KILL", "--"])
+            .arg(format!("-{}", child.id()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// One measurement: its status and, only when every run was `ok`, the median time in µs.

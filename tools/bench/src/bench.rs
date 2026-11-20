@@ -1,8 +1,10 @@
 //! Runs the bench and renders the report (spec items 2, 3, 8, 9).
 
 use std::ffi::OsString;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use crate::args::{Choice, Options};
 use crate::engine::{self, Engine, Kind, Measurement, Op, Status};
@@ -59,29 +61,45 @@ pub struct Report {
 
 /// Runs the whole bench.
 pub fn run(opts: &Options) -> Result<Report, BenchError> {
-    if !opts.cli.is_file() {
+    // Absolute paths: a relative path starting with `-` would otherwise read as an engine flag.
+    let abs = |p: &Path| {
+        std::path::absolute(p)
+            .map_err(|e| BenchError::Io(format!("cannot resolve {}: {e}", p.display())))
+    };
+    let cli = abs(&opts.cli)?;
+    let work = abs(&match &opts.work {
+        Some(w) => w.clone(),
+        None => default_work(&opts.out),
+    })?;
+    let corpus = opts.corpus.as_deref().map(abs).transpose()?;
+    if !cli.is_file() {
         return Err(BenchError::Io(format!(
             "--cli {} is not a file",
             opts.cli.display()
         )));
     }
-    let work = match &opts.work {
-        Some(w) => w.clone(),
-        None => default_work(&opts.out),
-    };
+    if let Some(dir) = &corpus
+        && let (Ok(c), Ok(w)) = (dir.canonicalize(), canonical_or_self(&work))
+        && w.starts_with(&c)
+    {
+        return Err(BenchError::Usage(
+            "the work dir must not be inside the corpus dir".to_string(),
+        ));
+    }
     std::fs::create_dir_all(&work)
         .map_err(|e| BenchError::Io(format!("cannot create {}: {e}", work.display())))?;
-    let inputs = match &opts.corpus {
+    let mut engines = vec![Engine {
+        kind: Kind::Jpdf,
+        bin: cli,
+        version: None,
+    }];
+    // Before the sample is written: a bad explicit engine path stops the run early.
+    engines.extend(detect(Kind::Mutool, &opts.mutool, &work)?);
+    engines.extend(detect(Kind::Pdfium, &opts.pdfium, &work)?);
+    let inputs = match &corpus {
         Some(dir) => corpus_inputs(dir, opts.sample)?,
         None => generated_inputs(&work)?,
     };
-    let mut engines = vec![Engine {
-        kind: Kind::Jpdf,
-        bin: opts.cli.clone(),
-        version: None,
-    }];
-    engines.extend(detect(Kind::Mutool, &opts.mutool)?);
-    engines.extend(detect(Kind::Pdfium, &opts.pdfium)?);
 
     let mut files = Vec::with_capacity(inputs.len());
     for input in &inputs {
@@ -90,12 +108,24 @@ pub fn run(opts: &Options) -> Result<Report, BenchError> {
     Ok(Report {
         machine: Machine::detect(),
         revision: git_revision(),
-        corpus: opts.corpus.is_some(),
+        corpus: corpus.is_some(),
         runs: opts.runs,
         warmup: opts.warmup,
         engines,
         files,
     })
+}
+
+/// Canonical form of `p`, or of its nearest existing ancestor joined with the rest (the work
+/// dir may not exist yet).
+fn canonical_or_self(p: &Path) -> std::io::Result<PathBuf> {
+    match p.canonicalize() {
+        Ok(c) => Ok(c),
+        Err(e) => match (p.parent(), p.file_name()) {
+            (Some(parent), Some(name)) => Ok(canonical_or_self(parent)?.join(name)),
+            _ => Err(e),
+        },
+    }
 }
 
 /// `<out>.work` next to the report.
@@ -114,7 +144,7 @@ fn bench_file(
 ) -> Result<FileResult, BenchError> {
     // pdfium_test writes its output next to its input, so it gets a copy inside `work`.
     let pdfium_copy = work.join("pdfium-input.pdf");
-    if engines.iter().any(|e| e.kind == Kind::Pdfium) {
+    if engines.iter().any(|e| e.kind == Kind::Pdfium) && input.path != pdfium_copy {
         std::fs::copy(&input.path, &pdfium_copy).map_err(|e| {
             BenchError::Io(format!("cannot copy {} into the work dir: {e}", input.name))
         })?;
@@ -152,7 +182,10 @@ pub fn corpus_inputs(dir: &Path, sample: usize) -> Result<Vec<Input>, BenchError
         if path.extension().is_none_or(|x| x != "pdf") {
             continue;
         }
-        let meta = std::fs::metadata(&path).map_err(io)?;
+        // Symlinks are followed; an entry that vanished or dangles is skipped, not fatal.
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if !meta.is_file() {
             continue;
         }
@@ -189,9 +222,17 @@ pub fn generated_inputs(work: &Path) -> Result<Vec<Input>, BenchError> {
         .collect()
 }
 
-/// Finds a reference engine. `Auto` that doesn't start → absent; an explicit path that
-/// doesn't start → usage error.
-fn detect(kind: Kind, choice: &Choice) -> Result<Option<Engine>, BenchError> {
+/// How long a reference engine's start-up probe may take.
+const PROBE_LIMIT: Duration = Duration::from_secs(5);
+/// Most bytes of probe output read back (for the version line).
+const PROBE_OUTPUT_CAP: u64 = 4096;
+
+/// Finds a reference engine with one probe run (`mutool -v`, bare `pdfium_test`) under
+/// [`PROBE_LIMIT`] and the usual group kill. Its stdout goes to the null device and its stderr
+/// to a file in `work`, of which at most [`PROBE_OUTPUT_CAP`] bytes are read back, so neither
+/// a hang nor endless output can stall the bench. `Auto` that can't be started → absent; an
+/// explicit path that can't be started → usage error. Any exit or a timeout means present.
+fn detect(kind: Kind, choice: &Choice, work: &Path) -> Result<Option<Engine>, BenchError> {
     let (bin, explicit) = match choice {
         Choice::Off => return Ok(None),
         Choice::Auto => (
@@ -204,21 +245,43 @@ fn detect(kind: Kind, choice: &Choice) -> Result<Option<Engine>, BenchError> {
         ),
         Choice::Path(p) => (p.clone(), true),
     };
-    let probe: &[&str] = if kind == Kind::Mutool { &["-v"] } else { &[] };
-    match Command::new(&bin).args(probe).stdin(Stdio::null()).output() {
-        Ok(out) => {
-            let version = (kind == Kind::Mutool)
-                .then(|| first_line(&out.stderr).or_else(|| first_line(&out.stdout)))
-                .flatten();
-            Ok(Some(Engine { kind, bin, version }))
-        }
-        Err(e) if explicit => Err(BenchError::Usage(format!(
-            "--{} {}: cannot run: {e}",
-            kind.id(),
-            bin.display()
-        ))),
-        Err(_) => Ok(None),
-    }
+    let args: Vec<OsString> = if kind == Kind::Mutool {
+        vec![OsString::from("-v")]
+    } else {
+        Vec::new()
+    };
+    let log = work.join(format!("probe-{}.txt", kind.id()));
+    let file = std::fs::File::create(&log)
+        .map_err(|e| BenchError::Io(format!("cannot write {}: {e}", log.display())))?;
+    let Some((status, _)) = engine::probe(&bin, &args, PROBE_LIMIT, Stdio::from(file)) else {
+        return if explicit {
+            Err(BenchError::Usage(format!(
+                "--{} {}: cannot run",
+                kind.id(),
+                bin.display()
+            )))
+        } else {
+            Ok(None)
+        };
+    };
+    // Only a line that really is mutool's version is kept, so a wrong program can't put its
+    // usage text (often with absolute paths) into the report.
+    let version = (kind == Kind::Mutool && status != Status::Timeout)
+        .then(|| read_capped(&log))
+        .flatten()
+        .and_then(|b| first_line(&b))
+        .filter(|l| l.starts_with("mutool version"));
+    Ok(Some(Engine { kind, bin, version }))
+}
+
+fn read_capped(path: &Path) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(PROBE_OUTPUT_CAP)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(bytes)
 }
 
 fn first_line(bytes: &[u8]) -> Option<String> {
@@ -422,5 +485,10 @@ pub fn write(out: &Path, report: &Report) -> Result<(), BenchError> {
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(io)?;
     }
-    std::fs::write(out, to_json(report)).map_err(io)
+    // Write then rename, so a failure part-way never leaves a truncated report.
+    let mut tmp = out.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, to_json(report)).map_err(io)?;
+    std::fs::rename(&tmp, out).map_err(io)
 }
