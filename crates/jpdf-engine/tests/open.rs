@@ -391,3 +391,26 @@ fn random_and_mutated_input_never_panics() {
         let _ = open(&buf);
     }
 }
+
+/// The lexing budget charges each parsed object's byte span once, so a large legitimate file
+/// (no overlapping objects) stays far below `4 × size`, including big integer arrays where
+/// reference look-ahead re-lexes tokens.
+#[test]
+fn large_valid_files_fit_the_lexing_budget() {
+    assert_eq!(open(&minimal_pdf(100_000)), Ok(100_000));
+    let numbers: Vec<String> = (0..200_000).map(|i| i.to_string()).collect();
+    let objs = [
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /Big [{}] >>",
+            numbers.join(" ")
+        ),
+        "<< /Type /Pages /Kids [] /Count 0 >>".to_string(),
+    ];
+    let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+    let tight = Limits {
+        lex_budget_factor: 1,
+        lex_budget_slack: 0,
+        ..Limits::default()
+    };
+    assert_eq!(Document::open(&pdf, &tight).map(|d| d.page_count()), Ok(0));
+}
