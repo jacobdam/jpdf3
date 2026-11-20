@@ -7,6 +7,10 @@ name = "jpdf-annot"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-arlington"
+version = "0.0.0"
+
+[[package]]
 name = "jpdf-backends"
 version = "0.0.0"
 
@@ -105,5 +109,6 @@ version = "0.0.0"
 name = "xtask"
 version = "0.0.0"
 dependencies = [
+ "jpdf-arlington",
  "jpdf-testgen",
 ]

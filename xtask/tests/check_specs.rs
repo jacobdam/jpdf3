@@ -81,12 +81,14 @@ fn ci_linux_runs_the_check_after_writing_e2e() {
         err.contains("xtask: web: ./apps/web/package.json not found"),
         "{err}"
     );
-    // The short fuzz run comes last; the fixture has no fuzz/ project, so it fails fast
-    // (before installing any tool) and the exit code stays 1.
+    // The short fuzz run and then the Arlington check come last; the fixture has neither
+    // fuzz/ nor tools/arlington, so both fail fast (before installing or fetching anything)
+    // and the exit code stays 1.
     assert!(
         err.ends_with(
             "check-specs: 14 problem(s)\n\
-             xtask: fuzz: ./fuzz/Cargo.toml not found (run from the repository root)\n"
+             xtask: fuzz: ./fuzz/Cargo.toml not found (run from the repository root)\n\
+             xtask: arlington: ./tools/arlington/Cargo.toml not found (run from the repository root)\n"
         ),
         "{err}"
     );
@@ -109,6 +111,7 @@ fn usage_errors_exit_2() {
         &["fuzz", "--bogus"][..],
         &["fuzz", "--seconds", "0"],
         &["fuzz", "--target"],
+        &["arlington", "--bogus"],
     ] {
         assert_eq!(run(bad).unwrap().status.code(), Some(2), "{bad:?}");
     }

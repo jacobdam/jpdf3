@@ -1,0 +1,6 @@
+Key	Type	SinceVersion	DeprecatedIn	Required	IndirectReference	Inheritable	DefaultValue	PossibleValues	SpecialCase	Link	Note
+Type	name	1.0		TRUE	FALSE	FALSE		[Root]			invented fixture
+Kids	array	1.0		TRUE	TRUE	FALSE				[ArrayOfLeaf]	
+Mode	integer;fn:SinceVersion(1.5,name)	1.2	2.0	fn:IsRequired(fn:IsPresent(Kids))	[FALSE];[fn:MustBeDirect()]	TRUE	0	[0,1];[Fast]			
+Ext	fn:IsPDFVersion(1.7,fn:Extension(XY_1,dictionary));stream	fn:Eval(fn:Extension(XY_1,1.7) || 2.0)		FALSE	fn:MustBeIndirect(fn:BeforeVersion(2.0))	FALSE				[Leaf];[fn:SinceVersion(2.0,Leaf)]	
+*	string-text	fn:Extension(XY_1)		FALSE	FALSE	FALSE					

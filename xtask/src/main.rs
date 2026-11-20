@@ -1,6 +1,7 @@
 //! Project task runner (NOT protected; the agent extends it). Contract: ops/judge/CONTRACT.md §2.
 #![forbid(unsafe_code)]
 
+mod arlington;
 mod bench;
 mod fuzz;
 mod json;
@@ -11,7 +12,7 @@ mod web;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | check-specs [--root DIR] \
+const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none]";
 
@@ -53,7 +54,9 @@ fn main() -> ExitCode {
                     ExitCode::from(1)
                 }
             };
-            [web, specs, fuzz]
+            // specs/tooling/arlington.md: the pinned model still parses, checks and compiles.
+            let arl = arlington_cmd(Path::new("."));
+            [web, specs, fuzz, arl]
                 .into_iter()
                 .find(|c| *c != ExitCode::SUCCESS)
                 .unwrap_or(ExitCode::SUCCESS)
@@ -108,6 +111,11 @@ fn main() -> ExitCode {
                 }
             }
         }
+        (Some("arlington"), None) => arlington_cmd(Path::new(".")),
+        (Some("arlington"), Some(_)) => {
+            eprintln!("{USAGE}");
+            ExitCode::from(2)
+        }
         (Some("check-specs"), _) => {
             let known = match args.len() {
                 1 => true,
@@ -123,6 +131,20 @@ fn main() -> ExitCode {
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// specs/tooling/arlington.md
+fn arlington_cmd(root: &Path) -> ExitCode {
+    match arlington::run(root) {
+        Ok(summary) => {
+            eprintln!("xtask: arlington: {summary}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("xtask: arlington: {e}");
+            ExitCode::from(1)
         }
     }
 }
