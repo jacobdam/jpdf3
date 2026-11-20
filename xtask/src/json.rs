@@ -121,6 +121,7 @@ impl Parser<'_> {
     fn object(&mut self, depth: usize) -> Result<Value, String> {
         self.expect(b'{')?;
         let mut members: Vec<(String, Value)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         self.ws();
         if self.peek() == Some(b'}') {
             self.pos = self.pos.saturating_add(1);
@@ -132,7 +133,7 @@ impl Parser<'_> {
                 return Err(self.err("expected a string key"));
             }
             let key = self.string()?;
-            if members.iter().any(|(k, _)| *k == key) {
+            if !seen.insert(key.clone()) {
                 return Err(self.err(&format!("duplicate key {key:?}")));
             }
             self.ws();

@@ -7,10 +7,12 @@ struct StartView: View {
             Text("jpdf")
                 .font(.title2)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("start.heading")
             DropTarget()
                 .padding(.top, 20)
             Text("Files you open appear here.")
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("start.recent.empty")
                 .padding(.top, 20)
             Spacer(minLength: 0)
         }
@@ -26,7 +28,9 @@ private struct DropTarget: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("Drop a PDF here to open it")
+                .accessibilityIdentifier("start.drop.label")
             InertButton(title: "Open…", reason: openUnavailableReason)
+                .accessibilityIdentifier("start.open")
         }
         .frame(maxWidth: 400, minHeight: 160)
         .background {

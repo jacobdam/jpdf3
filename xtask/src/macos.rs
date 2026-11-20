@@ -112,6 +112,15 @@ pub fn collect_results(doc: &Value) -> (BTreeMap<String, Status>, Vec<String>) {
     (results, errors)
 }
 
+/// Turns every `pass` into `fail` (used when the run itself is damaged).
+pub fn downgrade_passes(results: &mut BTreeMap<String, Status>) {
+    for s in results.values_mut() {
+        if *s == Status::Pass {
+            *s = Status::Fail;
+        }
+    }
+}
+
 /// Checks a signed bundle's entitlements (`plutil -convert json` of `codesign -d
 /// --entitlements`): exactly `expected`, each `true`.
 pub fn check_entitlements(doc: &Value, expected: &[&str]) -> Result<(), String> {
@@ -163,24 +172,51 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
         .spawn()
         .map_err(|e| format!("cannot run {program}: {e}"))?;
     if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        // Inputs are small entitlement plists; the pipe is closed when `pipe` drops.
         pipe.write_all(input)
             .map_err(|e| format!("{program}: write stdin: {e}"))?;
     }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("{program}: {e}"))?;
-    if out.stdout.len() > MAX_TOOL_OUTPUT || out.stderr.len() > MAX_TOOL_OUTPUT {
+    // Read at most MAX_TOOL_OUTPUT + 1 bytes from each pipe (stderr on a thread so neither
+    // pipe can fill up and block the tool), so a runaway tool never fills memory.
+    let limit = u64::try_from(MAX_TOOL_OUTPUT)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let read_capped = move |pipe: Option<Box<dyn std::io::Read + Send>>| -> Vec<u8> {
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        if let Some(p) = pipe {
+            // A read error leaves what was read; the exit status still decides success.
+            let _ = p.take(limit).read_to_end(&mut buf);
+        }
+        buf
+    };
+    let err_pipe = child
+        .stderr
+        .take()
+        .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    let err_thread = std::thread::spawn(move || read_capped(err_pipe));
+    let stdout = read_capped(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+    );
+    let stderr = err_thread.join().unwrap_or_default();
+    if stdout.len() > MAX_TOOL_OUTPUT || stderr.len() > MAX_TOOL_OUTPUT {
+        let _ = child.kill();
+        let _ = child.wait();
         return Err(format!(
             "{program}: output larger than {MAX_TOOL_OUTPUT} bytes"
         ));
     }
+    let status = child.wait().map_err(|e| format!("{program}: {e}"))?;
     let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| format!("{program}: not UTF-8"));
-    let (stdout, stderr) = (text(out.stdout)?, text(out.stderr)?);
-    if !out.status.success() {
+    let (stdout, stderr) = (text(stdout)?, text(stderr)?);
+    if !status.success() {
         return Err(format!(
             "{program} {} failed ({}): {}",
             args.join(" "),
-            out.status,
+            status,
             stderr.trim()
         ));
     }
@@ -216,7 +252,12 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     }
 
     let tests = run_tests(&repo, &derived, &bundle);
-    let (results, mut errors) = read_results(&bundle);
+    let (mut results, mut errors) = read_results(&bundle);
+    if !errors.is_empty() {
+        // An unmapped case (e.g. Xcode's "System Failures") means tests may not have run;
+        // no ID is reported as passing from such a run.
+        downgrade_passes(&mut results);
+    }
     fs::write(&e2e_json, render_e2e(&results))
         .map_err(|e| format!("write {}: {e}", e2e_json.display()))?;
     eprintln!(
@@ -244,6 +285,16 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     errors.into_iter().next().map_or(Ok(()), Err)
 }
 
+/// This Mac, by architecture, so `-destination` matches exactly one entry (not also the
+/// Rosetta "My Mac").
+fn destination() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "platform=macOS,arch=x86_64"
+    } else {
+        "platform=macOS,arch=arm64"
+    }
+}
+
 fn xcodebuild_args<'a>(derived: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
     let mut args = vec![
         "-project",
@@ -251,7 +302,7 @@ fn xcodebuild_args<'a>(derived: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
         "-scheme",
         SCHEME,
         "-destination",
-        "platform=macOS",
+        destination(),
         "-derivedDataPath",
         derived,
     ];
@@ -322,11 +373,13 @@ fn check_release(repo: &Path, derived: &Path) -> Result<(), String> {
             return Err(format!("{}: not built", bundle.display()));
         }
         let b = path_str(bundle)?;
+        // The seal must hold (nothing changed after signing; nested code verified too).
+        capture("codesign", &["--verify", "--deep", "--strict", b], None)?;
         let (_, dv) = capture("codesign", &["-dv", "--verbose=2", b], None)?;
         if !has_hardened_runtime(&dv) {
             return Err(format!("{name}: hardened runtime is off"));
         }
-        let (xml, _) = capture("codesign", &["-d", "--entitlements", ":-", b], None)?;
+        let (xml, _) = capture("codesign", &["-d", "--entitlements", "-", "--xml", b], None)?;
         let (js, _) = capture(
             "plutil",
             &["-convert", "json", "-o", "-", "--", "-"],
@@ -425,6 +478,16 @@ mod tests {
         let (r, errors) = collect_results(&json::parse(r#"{"devices": []}"#).unwrap());
         assert!(r.is_empty());
         assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn downgrades_passes() {
+        let mut r = BTreeMap::new();
+        r.insert("e2e.macos.a".to_owned(), Status::Pass);
+        r.insert("e2e.macos.b".to_owned(), Status::Skip);
+        downgrade_passes(&mut r);
+        assert_eq!(r.get("e2e.macos.a"), Some(&Status::Fail));
+        assert_eq!(r.get("e2e.macos.b"), Some(&Status::Skip));
     }
 
     #[test]

@@ -11,7 +11,9 @@ Status: implemented
 ## Behavior
 `apps/macos/JPDF.xcodeproj` (ADR 0003) has three targets:
 - **JPDF** → `jpdf.app`, a SwiftUI app (Swift 6 language mode, macOS 14+), bundle ID
-  `io.github.jacobdam.jpdf`.
+  `io.github.jacobdam.jpdf`. It uses a `Window` scene, not yet `DocumentGroup`: a document
+  group brings a working Open… and New, which would contradict "unavailable" until the
+  reader exists. The document scene comes with the reader (M4).
 - **JPDFHelper** → `JPDFHelper.xpc`, an XPC service embedded in
   `jpdf.app/Contents/XPCServices/`. It will host jpdf-engine through the UniFFI bindings
   (PLAN §2; a later issue). Today it answers one call, `ping`, with a fixed string; the app
@@ -27,6 +29,8 @@ Status: implemented
      open it" and the `Open…` button (`.borderedProminent`, the default button, so Return
      activates it);
    - 20 below, "Files you open appear here." in `.secondary` (W-02: no recent files).
+   The elements carry accessibility identifiers `start.heading`, `start.drop.label`,
+   `start.open` and `start.recent.empty` (the title bar also shows the text "jpdf").
    The W-01 Create buttons, the Recent list and drop highlighting come with the features
    that fill them. The drop target has no drop handler, so the system refuses drops.
 2. **`Open…` is unavailable** until the reader exists (M4). Per wireframes-macos.md §0
@@ -50,17 +54,19 @@ Status: implemented
 5. **`cargo xtask ci macos --out DIR`** (CONTRACT §2), run from the repository root:
    1. deletes `DIR/e2e.json` and `DIR/macos.xcresult` from any earlier run;
    2. checks that `apps/macos/JPDF.xcodeproj` and `xcodebuild` exist;
-   3. `xcodebuild … -scheme JPDF -destination platform=macOS -resultBundlePath
+   3. `xcodebuild … -scheme JPDF -destination platform=macOS,arch=<host> -resultBundlePath
       DIR/macos.xcresult test` (Debug), with derived data in `target/xtask-macos/` (not in
       `DIR`, which CI uploads);
    4. reads the bundle with `xcrun xcresulttool get test-results tests` and maps every
       "Test Case" node to a test ID: a method `test_<id>()` or `test_<id>__<detail>()`
       reports `e2e.macos.<id>`; an ID takes the worst result of its tests (fail > skip >
       pass; "Expected Failure" is fail). A test case that names no ID (a misnamed test, or
-      the "System Failures" case Xcode adds when the runner can't start) is an error;
+      the "System Failures" case Xcode adds when the runner can't start) is an error, and
+      then every `pass` is written as `fail` (such a run may not have run every test);
    5. always writes `DIR/e2e.json` (empty results if no tests ran);
-   6. builds Release and checks, with `codesign -dv` and `codesign -d --entitlements`
-      (converted by `plutil -convert json`), that `jpdf.app` and its embedded
+   6. builds Release and checks, with `codesign --verify --deep --strict`, `codesign -dv`
+      and `codesign -d --entitlements - --xml` (converted by `plutil -convert json`), that
+      the signatures are intact and that `jpdf.app` and its embedded
       `JPDFHelper.xpc` have the hardened runtime flag and exactly the entitlements of
       Behavior 4, each `true`; this runs even if the tests failed;
    7. exits 0 only if every step passed, at least one ID was reported and every ID is
@@ -83,7 +89,8 @@ Not applicable (no document, no editing).
   signature check still runs.
 
 ## Limits
-No user input is processed by the app. xtask reads at most 16 MiB from each tool and
+No user input is processed by the app. xtask reads at most 16 MiB (+1 byte to detect
+overflow) from each output stream of each tool, then stops the tool, and
 accepts JSON nested at most 128 deep; IDs must match `e2e.macos.[a-z0-9_]+`, so
 `e2e.json` needs no escaping.
 
@@ -102,9 +109,10 @@ accepts JSON nested at most 128 deep; IDs must match `e2e.macos.[a-z0-9_]+`, so
 The heading has the header trait; `Open…` stays in the keyboard order with its reason as
 accessibility hint and "unavailable" as value (rule 5); system fonts, semantic colors and
 system controls only, so Increase Contrast, Dark Mode and text size work as the system
-provides. The popover is the system's (Reduce Motion applies). An automated XCUITest
-accessibility audit (`performAccessibilityAudit`, macOS 14+) comes with the reader (M4);
-this skeleton checks the attributes directly.
+provides. The popover is the system's (Reduce Motion applies). Tested: `Open…` is enabled
+and its accessibility value is "unavailable". Not tested: the hint and help tag (XCUITest
+has no API to read them), the 50 % dimming and activation by Space. An automated XCUITest
+accessibility audit (`performAccessibilityAudit`, macOS 14+) comes with the reader (M4).
 
 ## Platforms
 macOS only. The web counterpart is specs/ui-web/app-skeleton.md; both use the wording
@@ -120,14 +128,14 @@ about 2–4 minutes on a Mac mini (two builds plus the UI tests).
 XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
 `e2e.macos.app_start_empty`:
 - `test_app_start_empty__elements`: one window titled "jpdf", 720 wide; the heading, drop
-  text, `Open…` and the recent line exist in that top-to-bottom order; `Open…` is enabled
+  text, `Open…` and the recent line each exist exactly once (by identifier) with the exact
+  label, in that top-to-bottom order; `Open…` is enabled
   (inert, not disabled) with value "unavailable";
 - `test_app_start_empty__open_is_inert`: clicking `Open…` shows the reason in a popover and
-  opens no sheet or dialog; Escape closes it; Return (default button) shows it again and
-  still opens nothing;
-- `test_app_start_empty__open_command`: File > `Open…` exists and is disabled; File > New
-  Window does not exist.
+  opens no sheet or dialog; Escape closes it and only the one window exists; Return
+  (default button) shows it again and still opens nothing (same checks);
+- `test_app_start_empty__open_command`: File > `Open…` exists and is disabled.
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
-per ID, unmapped and unknown results are errors, entitlement check incl. extra
+per ID, unmapped and unknown results are errors, passes downgraded, entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing);
 `xtask/src/json.rs` (values, escapes and surrogates, 27 malformed inputs, depth bound).

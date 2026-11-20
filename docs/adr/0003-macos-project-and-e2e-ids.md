@@ -34,7 +34,8 @@ are third-party tools outside dependency admission. The CI runner (`macos-15`) h
    reports `e2e.macos.<id>`. Several tests may report the same ID; the worst result wins
    (fail > skip > pass), as in ADR 0002 item 1. Swift method names can't carry dots, and
    XCTest has no tags, so the name is the only stable place. Every test case must map to an
-   ID; anything else (including Xcode's "System Failures" case) fails the run.
+   ID; anything else (including Xcode's "System Failures" case) fails the run and turns
+   every reported `pass` into `fail`.
 5. **Results come from the result bundle** through `xcrun xcresulttool get test-results
    tests` (Xcode 16+), not from console output. xtask parses that JSON with its own small
    strict reader (`xtask/src/json.rs`), because xtask has no dependencies (ADR 0002 Context).
