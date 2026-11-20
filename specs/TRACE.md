@@ -54,8 +54,8 @@ that builds each feature (PLAN §8).
 | F-PG-2 | Pages: merge, split, page labels, bookmark editing | J-PG-09, J-PG-10, J-PG-11, J-PG-12, J-PG-14 | | |
 | F-FM-1 | Forms: fill, safe calculations, create/edit fields, flatten | J-FM-01, J-FM-02, J-FM-03, J-FM-04, J-FM-05, J-FM-06, J-FM-07, J-FM-08, J-FM-09, J-FM-10, J-FM-11, J-FM-12 | | judge `fill` |
 | F-SC-1 | Security: encrypt AES-256 R6, decrypt, permissions/passwords | J-SC-01, J-SC-02, J-SC-03, J-SC-04, J-SC-05 | | judge `encrypt` |
-| F-SC-2 | Signatures: verify (integrity, chain, trust, timestamp, MDP, changes) | J-SG-01, J-SG-02, J-SG-03, J-SG-04, J-SG-11 | | judge `verify-signatures` |
-| F-SC-3 | Signatures: sign PAdES B-B…B-LTA, certification, visible appearance | J-SG-05, J-SG-06, J-SG-07, J-SG-08, J-SG-11 | | judge `sign` |
+| F-SC-2 | Signatures: verify (integrity, chain, trust, timestamp, MDP, changes) | J-SG-01, J-SG-02, J-SG-03, J-SG-04, J-SG-09, J-SG-11 | | judge `verify-signatures` |
+| F-SC-3 | Signatures: sign PAdES B-B…B-LTA, certification, visible appearance | J-SG-05, J-SG-06, J-SG-07, J-SG-08, J-SG-09, J-SG-11 | | judge `sign` |
 | F-SC-4 | Timestamps and OCSP/CRL (opt-in, parsed as untrusted) | J-SG-09, J-SG-10 | | |
 | F-OS-1 | Save: incremental, full rewrite, compress | J-OS-01, J-OS-02, J-OS-03, J-OS-06, J-PC-01, J-PC-03, J-PC-07 | | judge `rewrite` |
 | F-OS-2 | Convert: image → PDF, PDF → images | J-OS-04, J-OS-05 | | judge `render` |
