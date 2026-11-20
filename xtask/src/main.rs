@@ -1,10 +1,11 @@
 //! Project task runner (NOT protected; the agent extends it). Contract: ops/judge/CONTRACT.md §2.
 #![forbid(unsafe_code)]
 
+mod json;
+mod macos;
 mod specs;
 mod web;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -40,7 +41,17 @@ fn main() -> ExitCode {
             let specs = check_specs(Path::new("."));
             if web == ExitCode::SUCCESS { specs } else { web }
         }
-        (Some("ci"), Some("macos")) => write_e2e(&out),
+        (Some("ci"), Some("macos")) => match macos::ci(Path::new("."), &out) {
+            // specs/ui-macos/app-skeleton.md. check-specs runs in `ci linux`.
+            Ok(()) => {
+                eprintln!("xtask: macos: ok");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("xtask: macos: {e}");
+                ExitCode::from(1)
+            }
+        },
         (Some("nightly"), _) => ExitCode::SUCCESS,
         (Some("check-specs"), _) => {
             let known = match args.len() {
@@ -73,15 +84,4 @@ fn check_specs(root: &Path) -> ExitCode {
     }
     eprintln!("check-specs: {} problem(s)", problems.len());
     ExitCode::from(1)
-}
-
-/// Bootstrap stub for `ci macos` (#13): no macOS E2E suite exists yet, so report an empty result set.
-fn write_e2e(out: &PathBuf) -> ExitCode {
-    if fs::create_dir_all(out).is_err()
-        || fs::write(out.join("e2e.json"), "{\"results\": {}}\n").is_err()
-    {
-        eprintln!("xtask: cannot write {}", out.display());
-        return ExitCode::from(1);
-    }
-    ExitCode::SUCCESS
 }

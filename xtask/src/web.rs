@@ -20,7 +20,7 @@ pub enum Status {
 }
 
 impl Status {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Status::Pass => "pass",
             Status::Fail => "fail",
@@ -117,7 +117,7 @@ fn tool_version(tool: &str) -> Option<String> {
 }
 
 /// Runs one step in `dir`, echoing it; Err names the failed step.
-fn step(
+pub fn step(
     dir: &Path,
     name: &str,
     program: &str,

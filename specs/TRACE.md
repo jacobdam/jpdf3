@@ -20,7 +20,7 @@ that builds each feature (PLAN §8).
 |---|---|---|---|---|
 | R1 | Security first: forbid unsafe, limits, no JS, fuzzing | J-RD-04, J-RD-05, J-RD-13, J-RD-18, J-RD-27, J-RD-28, J-RD-29, J-ANN-09, J-ANN-11, J-ANN-14, J-ANN-18, J-ANN-22, J-ANN-23, J-ANN-24, J-PG-02, J-PG-11, J-PG-15, J-ED-04, J-ED-05, J-OS-01, J-OS-06, J-FM-05, J-FM-06, J-FM-07, J-FM-12, J-SC-01, J-SC-05, J-SC-07, J-SC-08, J-SC-09, J-SG-02, J-SG-05, J-SG-10, J-PC-03 | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge policy; judge crash grading; `jpdf-cli` limit tests |
 | R2 | Performance (never at the cost of R1) | J-RD-01, J-RD-26 | | judge bench (later, #18) |
-| R3 | Platforms: macOS and web first | | [specs/ui-web/app-skeleton.md](ui-web/app-skeleton.md) | `cargo xtask ci linux` (`e2e.web.app_start_empty`), `cargo xtask ci macos` |
+| R3 | Platforms: macOS and web first | | [specs/ui-web/app-skeleton.md](ui-web/app-skeleton.md), [specs/ui-macos/app-skeleton.md](ui-macos/app-skeleton.md) | `cargo xtask ci linux` (`e2e.web.app_start_empty`), `cargo xtask ci macos` (`e2e.macos.app_start_empty`, sandbox + hardened runtime check) |
 | R4 | Untrusted native layer | J-RD-05, J-RD-23, J-ANN-16, J-ANN-23, J-ANN-24, J-PG-03, J-ED-03, J-ED-04, J-FM-01, J-FM-08, J-FM-11, J-SC-07, J-SG-04, J-SG-05, J-SG-06, J-PC-02 | | |
 | R5 | Spec coverage: ISO 32000-2 + real-world 1.x + repair | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge open rate |
 | R6 | Test corpus with rendering compared to other engines | J-ANN-01, J-ANN-07, J-ANN-21, J-ANN-26, J-PG-03, J-OS-02, J-OS-03, J-OS-04, J-OS-05 | | judge render ratchet |

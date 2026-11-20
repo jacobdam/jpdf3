@@ -4,26 +4,33 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #49 (#12, web app skeleton + Playwright harness in `cargo xtask ci linux`,
-  specs/ui-web/app-skeleton.md, ADR 0002): CI went red after the last push of the previous
-  session. Fixed (CI attempt 1 of 3), re-reviewed, auto-merge on, waiting for judge-verdict.
-  After merge, Pages should show the W-02 start screen.
+- PR #51 (#13, the macOS skeleton and `cargo xtask ci macos`; spec
+  specs/ui-macos/app-skeleton.md, ADR 0003). Reviewed, with auto-merge on.
+  - `project-macos` passed on the branch via `workflow_dispatch` (run 44820544986: Xcode 16.4,
+    3/3 XCUITests, the sandbox and hardened runtime check passed). The last push only
+    hardened xtask's `capture` and edited the spec; it was checked locally, not on the macOS
+    runner.
+  - After it merges, check that `project-macos` on main is green.
 
 ## Last session
-- Fixed PR #49's red check. A Playwright color assertion depended on timing: the disabled
-  `Open file` button darkened on hover, a real UX bug. The button is now flat and keeps its
-  look and its two-tone focus ring on hover, and tests wait for transitions to finish.
-- Before that: built `apps/web` (Vite 7, React 19, MUI 9, strict CSP, Trusted Types) and the
-  harness. License gap (CONSTITUTION 10 has no build-only exemption) is disclosed in ADR 0002,
-  ops/proposals/test-only-licenses.md and owner-todo #50.
+- Built `apps/macos`:
+  - a hand-written Xcode project with synchronized folders;
+  - the W-02 start window (`Open…` inert, File > Open… disabled);
+  - a sandbox-only XPC helper with `ping`.
+- Added `cargo xtask ci macos`:
+  - runs XCUITest and reads its results with xcresulttool through a strict JSON reader;
+  - maps test names `test_<id>[__<detail>]` to IDs;
+  - checks the Release codesign seal, hardened runtime and exact entitlements.
+- Local XCUITest is blocked until the owner enables Automation Mode (#52); CI runs it.
 
 ## Next step
-- #13 (macOS skeleton + XCUITest, the W-05 layout). Then #14, #17, #18, #20, #22 (`ready`).
-  #15 (metrics dashboard) can now put its pages under `site/metrics/`.
-- When the owner rules on #50: add axe-core to the harness (accessibility.md §5) or keep the
-  hand-written checks.
-- #21 still waits on #13 and #19. #45 (wireframes) is low priority.
+- `ready` issues: #14 (jpdf-traits), #17, #18, #20, #22. #15 (metrics dashboard) can put its
+  pages under `site/metrics/`.
+- #21 (fire drill) waits on #19; #13 is done once #51 merges.
+- A later issue wires `bindings/jpdf-uniffi` into the helper (the app doesn't call it yet).
+- #45 (wireframes) is low priority.
 
 ## Blockers / owner-todo
 - #50: license ruling for test/build-only tools.
-- #21: the owner's rule fire-drill steps.
+- #52: `sudo automationmodetool enable-automationmode-without-authentication` on the Mac mini.
+- #21: the owner's fire-drill steps.

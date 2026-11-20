@@ -1,0 +1,446 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		1A0000000000000000000301 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1A0000000000000000000202;
+			remoteInfo = JPDFHelper;
+		};
+		1A0000000000000000000302 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1A0000000000000000000201;
+			remoteInfo = JPDF;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXBuildFile section */
+		1A0000000000000000000401 /* JPDFHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000102 /* JPDFHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		1A0000000000000000000501 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				1A0000000000000000000401 /* JPDFHelper.xpc in Embed XPC Services */,
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1A0000000000000000000101 /* jpdf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = jpdf.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000000000000000000102 /* JPDFHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = JPDFHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000000000000000000103 /* JPDFUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JPDFUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000000000000000000104 /* JPDF.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JPDF.entitlements; sourceTree = "<group>"; };
+		1A0000000000000000000105 /* JPDFHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JPDFHelper.entitlements; sourceTree = "<group>"; };
+		1A0000000000000000000106 /* JPDFHelper-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "JPDFHelper-Info.plist"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		1A0000000000000000000701 /* JPDF */ = {isa = PBXFileSystemSynchronizedRootGroup; path = JPDF; sourceTree = "<group>"; };
+		1A0000000000000000000702 /* JPDFHelper */ = {isa = PBXFileSystemSynchronizedRootGroup; path = JPDFHelper; sourceTree = "<group>"; };
+		1A0000000000000000000703 /* JPDFUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = JPDFUITests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A0000000000000000000801 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000000000000000000802 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000000000000000000803 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000000701 /* JPDF */,
+				1A0000000000000000000702 /* JPDFHelper */,
+				1A0000000000000000000703 /* JPDFUITests */,
+				1A0000000000000000000004 /* Config */,
+				1A0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000000101 /* jpdf.app */,
+				1A0000000000000000000102 /* JPDFHelper.xpc */,
+				1A0000000000000000000103 /* JPDFUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1A0000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000000104 /* JPDF.entitlements */,
+				1A0000000000000000000105 /* JPDFHelper.entitlements */,
+				1A0000000000000000000106 /* JPDFHelper-Info.plist */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A0000000000000000000201 /* JPDF */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000A02 /* Build configuration list for PBXNativeTarget "JPDF" */;
+			buildPhases = (
+				1A0000000000000000000901 /* Sources */,
+				1A0000000000000000000801 /* Frameworks */,
+				1A0000000000000000000911 /* Resources */,
+				1A0000000000000000000501 /* Embed XPC Services */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1A0000000000000000000601 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1A0000000000000000000701 /* JPDF */,
+			);
+			name = JPDF;
+			productName = JPDF;
+			productReference = 1A0000000000000000000101 /* jpdf.app */;
+			productType = "com.apple.product-type.application";
+		};
+		1A0000000000000000000202 /* JPDFHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000A03 /* Build configuration list for PBXNativeTarget "JPDFHelper" */;
+			buildPhases = (
+				1A0000000000000000000902 /* Sources */,
+				1A0000000000000000000802 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1A0000000000000000000702 /* JPDFHelper */,
+			);
+			name = JPDFHelper;
+			productName = JPDFHelper;
+			productReference = 1A0000000000000000000102 /* JPDFHelper.xpc */;
+			productType = "com.apple.product-type.xpc-service";
+		};
+		1A0000000000000000000203 /* JPDFUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000A04 /* Build configuration list for PBXNativeTarget "JPDFUITests" */;
+			buildPhases = (
+				1A0000000000000000000903 /* Sources */,
+				1A0000000000000000000803 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1A0000000000000000000602 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1A0000000000000000000703 /* JPDFUITests */,
+			);
+			name = JPDFUITests;
+			productName = JPDFUITests;
+			productReference = 1A0000000000000000000103 /* JPDFUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					1A0000000000000000000203 = {
+						TestTargetID = 1A0000000000000000000201;
+					};
+				};
+			};
+			buildConfigurationList = 1A0000000000000000000A01 /* Build configuration list for PBXProject "JPDF" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A0000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1A0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A0000000000000000000201 /* JPDF */,
+				1A0000000000000000000202 /* JPDFHelper */,
+				1A0000000000000000000203 /* JPDFUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A0000000000000000000911 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A0000000000000000000901 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000000000000000000902 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000000000000000000903 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1A0000000000000000000601 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1A0000000000000000000202 /* JPDFHelper */;
+			targetProxy = 1A0000000000000000000301 /* PBXContainerItemProxy */;
+		};
+		1A0000000000000000000602 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1A0000000000000000000201 /* JPDF */;
+			targetProxy = 1A0000000000000000000302 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1A0000000000000000000B01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1A0000000000000000000B02 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				/* Shipped entitlements are exactly the committed files: no get-task-allow. */
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		1A0000000000000000000B11 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/JPDF.entitlements;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = jpdf;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT License";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf;
+				PRODUCT_NAME = jpdf;
+			};
+			name = Debug;
+		};
+		1A0000000000000000000B12 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/JPDF.entitlements;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = jpdf;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT License";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf;
+				PRODUCT_NAME = jpdf;
+			};
+			name = Release;
+		};
+		1A0000000000000000000B21 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/JPDFHelper.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/JPDFHelper-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf.helper;
+				PRODUCT_NAME = JPDFHelper;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		1A0000000000000000000B22 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/JPDFHelper.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/JPDFHelper-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf.helper;
+				PRODUCT_NAME = JPDFHelper;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		1A0000000000000000000B31 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				/* The test runner loads the ad-hoc signed test bundle; library validation would refuse it. */
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf.uitests;
+				PRODUCT_NAME = JPDFUITests;
+				TEST_TARGET_NAME = JPDF;
+			};
+			name = Debug;
+		};
+		1A0000000000000000000B32 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				/* The test runner loads the ad-hoc signed test bundle; library validation would refuse it. */
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.jacobdam.jpdf.uitests;
+				PRODUCT_NAME = JPDFUITests;
+				TEST_TARGET_NAME = JPDF;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A0000000000000000000A01 /* Build configuration list for PBXProject "JPDF" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000B01 /* Debug */,
+				1A0000000000000000000B02 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000A02 /* Build configuration list for PBXNativeTarget "JPDF" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000B11 /* Debug */,
+				1A0000000000000000000B12 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000A03 /* Build configuration list for PBXNativeTarget "JPDFHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000B21 /* Debug */,
+				1A0000000000000000000B22 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000A04 /* Build configuration list for PBXNativeTarget "JPDFUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000B31 /* Debug */,
+				1A0000000000000000000B32 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A0000000000000000000001 /* Project object */;
+}

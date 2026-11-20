@@ -73,6 +73,14 @@ instead of adding near-duplicates.
   `&:hover` override ties with the theme's focus-visible rule and wins, so set only the
   property you mean ([journal](journal/2026-11-20.md), PR #49).
 
+- macOS XCUITest → Automation Mode must work without a password: locally that needs the
+  owner's sudo (#52), GitHub runners have it; `project-macos` skips PRs, so verify UI tests
+  with `gh workflow run ci.yml --ref <branch>` before merging. Query SwiftUI elements by
+  `accessibilityIdentifier` + `.element` (the title bar is a static text too; `firstMatch`
+  failed with count 1), read static text from `value` when `label` is empty; check
+  entitlements on Release only (Debug test builds inject read access to `/`)
+  ([journal](journal/2026-11-20.md), PR #51).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects
