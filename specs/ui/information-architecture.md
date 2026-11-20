@@ -168,7 +168,7 @@ toolbar, context-menu or keyboard path where the journeys name one ([shortcuts.m
 | Menu | Commands | Journeys |
 |---|---|---|
 | File | New (blank, from images, from copied pages), Merge Files, Open, Open Recent, Close, Save, Save As, Export (pages as images), Compress, Print, Document Properties | J-RD-01, J-RD-03, J-RD-21, J-RD-22, J-PG-01, J-PG-09, J-PG-13, J-OS-01…J-OS-05 |
-| Edit | Undo, Redo, Cut, Copy, Paste, Delete, Select All, Find, Find Next/Previous, Preferences (macOS: in the App menu) | J-ANN-17, J-ANN-20, J-RD-15, J-RD-16 |
+| Edit | Undo, Redo, Cut, Copy, Paste, Paste After (outline), Delete, Select All, Find, Find Next/Previous, Preferences (macOS: in the App menu) | J-ANN-17, J-ANN-20, J-RD-15, J-RD-16 |
 | View | Page layout, zoom and fit, rotate view, sidebar and panels, inspector, sidebar and inspector width presets, page tint, magnifier, full screen, presentation | J-RD-07…J-RD-10, J-RD-19, J-RD-20, J-RD-25 |
 | Format (macOS) | Bold, Italic, Underline while editing text (web: the inspector) | J-ANN-05, J-ED-01, J-ED-02 |
 | Go | Next/previous/first/last page, go to page, back, forward | J-RD-06, J-RD-17 |
@@ -191,7 +191,7 @@ a context menu outside VoiceOver.
 | Annotation | Open comment, reply, set status, properties (shows inspector), cut, copy, delete | J-ANN-04, J-ANN-17, J-ANN-18 |
 | Link (Edit mode) | Edit target, delete | J-ED-05 |
 | Thumbnail(s) | Insert before/after, delete, extract, rotate, duplicate, copy pages, paste pages | J-PG-01…J-PG-08, J-PG-13 |
-| Outline entry | Go to, add, add child, rename, cut, paste (as the drag-free way to move an entry), delete | J-RD-11, J-PG-14 |
+| Outline entry | Go to, add, add child, rename, cut, paste (as last child), paste after (as next sibling), delete | J-RD-11, J-PG-14 |
 | Annotation list entry | Go to, reply, set status, delete | J-ANN-19 |
 | Document tab | Close, close others, show in Finder (macOS only) | J-RD-23 |
 
@@ -204,7 +204,7 @@ a context menu outside VoiceOver.
 | Job running | Status bar | Long operations (save, compress, merge, export, search) show progress, can be cancelled where the engine allows, and never block other tabs | J-RD-15, J-OS-03, J-OS-06 |
 | Open failed | Window | A file that can't be opened (from the dialog, a drop, recent files) creates no tab: an error notice names the file and the engine's typed error in plain words, using the journeys' terms ("not a PDF", "file too complex"); no stack traces or internal details; nothing else changes | J-RD-02, J-RD-05 |
 | Document failed after opening | Document tab | An error in an open document (for example "file too complex" at the first render of page 1, or a failed engine session) shows an error view in that tab only, with Close; other tabs keep working | J-RD-05, J-RD-23 |
-| Password needed | Document tab | Password dialog (§8); no page content or thumbnail is visible behind it | J-RD-04, J-RD-30 |
+| Password needed | Document tab | Password dialog (§8); no page content or thumbnail is visible behind it; Cancel closes the tab, so nothing opens | J-RD-04, J-RD-30 |
 | Unsupported link / action | Document view, outline | A URI with a disallowed scheme, or a GoToR link, shows an "unsupported link" notice (J-RD-18); a Launch, GoToE or JavaScript action shows an "unsupported action" notice (J-RD-11, J-RD-13); nothing else happens | J-RD-11, J-RD-13, J-RD-18 |
 | Scripts present | Document tab | A one-time notice that the document contains scripts that were not run | J-RD-28 |
 | Link target missing | Document view | A link whose destination doesn't resolve shows a notice and the view doesn't move | J-RD-17 |

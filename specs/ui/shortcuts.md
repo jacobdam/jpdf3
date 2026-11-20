@@ -42,8 +42,10 @@ fills in the rest. A change here that contradicts a journey is a bug in this fil
 6. **Context-sensitive keys.** In the modes where the selected object can be edited
    (Annotate, Edit, Forms), arrow keys move the selected annotation, image, link or field and
    Delete deletes the selection. In Read mode they never change the document: arrows scroll /
-   change pages and Delete does nothing on the page. A form field focused for filling gets its
-   native keys (arrows in radio groups and lists, typing in text fields). In panels, Delete
+   change pages and Delete does nothing on the page. A focused form field always gets its
+   native keys (Space toggles a check box or radio button, Return activates a push button,
+   arrows move in radio groups and lists, typing fills text fields), except in Forms mode,
+   where fields are objects being designed. In panels, Delete
    acts on the focused thumbnails or outline entries. "Delete" in these tables means the
    ⌫ key (labelled delete on Mac keyboards, Backspace elsewhere) or Forward Delete (fn+⌫ on
    Macs, Delete elsewhere).
@@ -53,30 +55,36 @@ fills in the rest. A change here that contradicts a journey is a bug in this fil
    a new shortcut must be checked against the whole table and rule 3.
 8. **Shortcuts are commands.** A shortcut calls the same command as its menu item or button;
    it never adds behavior of its own (CONSTITUTION 6: the command is an engine call).
-9. **Esc** does the first that applies, innermost first: close a dialog (cancel) → leave a
-   text editing box or text box (the typed text is kept) → close an open note popup (its text
-   is kept) → cancel the drawing in progress → turn off the magnifier → with the find bar
-   focused: cancel a running search (J-RD-31), else close the find bar → stop a load before its
+9. **Esc** does the first that applies, innermost first: close a dialog (cancel) → close an
+   open note popup, including when its text field has focus (its text is kept; J-ANN-04) →
+   leave a text box or edited page text (the typed text is kept) → cancel the drawing in
+   progress → turn off the magnifier → if the find bar has focus and a search is running,
+   cancel the search (J-RD-31); otherwise, if the find bar is open, close it (J-RD-15) → stop a load before its
    first page appears (information-architecture.md §7) → leave presentation → leave full screen
    → return from a drawing tool to the select tool → clear the selection. **Web full screen
    exception:** in Fullscreen-API mode (full screen and presentation) the browser always takes
    Esc first and exits; the app reacts to `fullscreenchange` (tests assert that event, not a
-   keydown), and the inner steps are reached with each overlay's visible Cancel / Close.
+   keydown), and the inner steps are reached with each overlay's visible Cancel / Close. A
+   drawing in progress, the magnifier and the selection stay as they are when the browser
+   exits full screen; the next Esc in the window handles them.
 10. **Return** (web Enter) in the document view does the first that applies: finish the
-   polygon or polyline being drawn (J-ANN-09) → activate the focused annotation, link or field
-   (J-ANN-04, J-RD-17) → with a drawing tool chosen and nothing focused, place a default-size
+   polygon or polyline being drawn (J-ANN-09) → activate the focused annotation or link
+   (J-ANN-04, J-RD-17), or give a focused form field its native Return (rule 6) → with a drawing tool chosen and nothing focused, place a default-size
    object at the centre of the visible part of the current page (accessibility.md §1). Placing
-   applies to note, text box, callout, the shapes, stamps and signatures; markup tools apply to
-   a text selection instead, and ink and the eraser have no place action.
-11. **Text formatting while editing.** macOS has a Format menu (Bold Cmd+B, Italic Cmd+I,
-   Underline Cmd+U), enabled only while a text box or text editing box has focus. While it is
-   enabled, the app removes Document Properties' Cmd+I key equivalent (the menu item stays),
-   so Cmd+I has one owner at a time; an XCUITest checks both states.
+   applies to note, text box, callout, rectangle, ellipse, line, arrow, stamps and signatures,
+   and to polygon, polyline and cloud only while no point has been clicked yet (it places a
+   default shape); markup tools apply to a text selection instead, and ink and the eraser have
+   no place action.
+11. **Text formatting while editing.** macOS has a Format menu (Bold, Italic, Underline),
+   enabled only while a text box or edited page text has focus. Its Cmd+B / Cmd+I / Cmd+U key
+   equivalents exist only then; at the same time the app removes Document Properties' Cmd+I
+   (the menu item stays). The two items swap Cmd+I, so only one ever shows it; an XCUITest
+   checks both states. Web has no formatting keys (Ctrl+B/I/U collide with rule 3 or browser
+   defaults); formatting is in the inspector.
 12. **Shift+arrows and Space in the document view.** With an object selected in an editable
    mode, Shift+arrows nudge it by 10 pt; otherwise they select text. With an object focused
    (Tab) in an editable mode, Space adds it to or removes it from the selection; otherwise
-   Space scrolls. Web has no formatting keys (Ctrl+B/I/U collide with rule 3 or browser defaults);
-   formatting is in the inspector.
+   Space scrolls. Form fields are never covered by this rule outside Forms mode (rule 6).
 
 ## File and window
 
@@ -132,8 +140,8 @@ fills in the rest. A change here that contradicts a journey is a bug in this fil
 |---|---|---|---|
 | Next / previous page | Right / Left arrow, Page Down / Page Up | same | J-RD-06 |
 | Scroll | Up / Down arrow, Space / Shift+Space | same | J-RD-06 |
-| Select text by keyboard (text-select or select tool, no object selected): start at the beginning of the current page's text in the engine's reading order, or extend the current selection, by character / by line | Shift+Right/Left / Shift+Down/Up | same | J-RD-16, J-ANN-01 |
-| Extend a text selection with the pointer | Shift-click | Shift-click | J-RD-16 |
+| Select text by keyboard (text-select or select tool, no object selected): extend the current text selection by character / by line; with no selection, start at the beginning of the current page's text in the engine's reading order. The current find match (J-RD-15) becomes the text selection when the find bar closes, so any phrase can be reached with Find, then extended | Shift+Right/Left / Shift+Down/Up | same | J-RD-15, J-RD-16, J-ANN-01 |
+| Set the selection start / extend a text selection with the pointer | click with the text-select tool / Shift-click | same | J-RD-16 |
 | First / last page | Home / End (also Cmd+Up / Cmd+Down) | Home / End | J-RD-06 |
 | Go to page (focus the page field) | Cmd+Option+G | G (rule 5) | J-RD-06 |
 | Back / forward | Cmd+[ / Cmd+] | toolbar Back / Forward | J-RD-06, J-RD-17 |
@@ -172,8 +180,8 @@ this version.
 | Command | macOS | Web | Journeys |
 |---|---|---|---|
 | Select several / a range | Cmd-click / Shift-click | Ctrl-click / Shift-click | J-PG-04 |
-| Move focus in the grid / list | arrows | arrows | J-PG-06 |
-| Toggle the focused page's selection / extend the range | Space / Shift+arrows | Space / Shift+arrows | J-PG-04, J-PG-13 |
+| Move focus and select only the focused page | arrows | arrows | J-PG-06 |
+| Extend the range / toggle the focused page's selection | Shift+arrows / Space | Shift+arrows / Space | J-PG-04, J-PG-13 |
 | Move the selected pages right / left | Cmd+Option+→ / Cmd+Option+← | Ctrl+Shift+→ / Ctrl+Shift+← | J-PG-06 |
 | Delete the selected pages | Delete | Delete | J-PG-04 |
 | Copy pages | Cmd+C | Ctrl+C | J-PG-13 |
@@ -185,5 +193,5 @@ this version.
 | Expand / collapse an entry | Right / Left arrow | same | J-RD-11 |
 | Go to the entry's target | Return | Enter | J-RD-11 |
 | Rename | Cmd+Return, the Rename menu item, double-click or context menu | F2, double-click or context menu | J-PG-14 |
-| Move an entry (no drag) | Cmd+X on the entry, then Cmd+V on the new parent (pasted as its last child) | Ctrl+X, then Ctrl+V | J-PG-14 |
+| Move an entry (no drag) | Cmd+X on the entry, then on the target either Cmd+V (paste as its last child) or Paste After in the Edit and context menus (paste as its next sibling, which also reaches the top level) | Ctrl+X, then Ctrl+V or Paste After | J-PG-14 |
 | Delete the entry | Delete | Delete | J-PG-14 |

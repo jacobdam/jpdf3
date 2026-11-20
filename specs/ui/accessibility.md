@@ -14,8 +14,8 @@ Every feature spec fills its `## Accessibility` section against this file.
   the document view focused, a drawing tool chosen and nothing focused, Return places the
   object with a default size at the centre of the visible part of the current page
   (shortcuts.md rule 10); arrows then move it and the inspector's position, size and vertex
-  fields change it. Text is selected with Shift+arrows (shortcuts.md, Navigate), then a markup
-  tool applies to the selection. Pages and list items are selected with arrows, Space and
+  fields change it. Text is reached with Find (the current match becomes the selection) and
+  extended with Shift+arrows (shortcuts.md, Navigate); a markup tool then applies to it. Pages and list items are selected with arrows, Space and
   Shift+arrows. Freehand ink and the freehand eraser are path-dependent and exempt
   (WCAG 2.2 SC 2.1.1 exception); ink is still erased by selecting it and pressing Delete. The
   journeys that need a keyboard path name it (J-ANN-04, J-PG-06).
@@ -85,11 +85,13 @@ Every feature spec fills its `## Accessibility` section against this file.
   count):
   - reorder pages with the Move left/right buttons (J-PG-06);
   - move and resize annotations, images and fields with the inspector's position and size
-    fields; polygon vertices and callout leader points with the inspector's point fields
-    (J-ANN-06, J-ANN-09, J-ANN-17);
-  - draw shapes, notes, text boxes and stamps by a single click, which places them at a
-    default size (J-ANN-07);
-  - extend a text selection with Shift-click (J-RD-16);
+    fields; polygon vertices, line and arrow end points and callout leader points with the
+    inspector's point fields; stamp rotation with its rotation field (J-ANN-06, J-ANN-08,
+    J-ANN-09, J-ANN-13, J-ANN-17);
+  - draw rectangles, ellipses, lines, arrows, notes, text boxes, callouts, stamps and
+    signatures by a single click, which places them at a default size (J-ANN-07); polygon,
+    polyline and cloud use their vertex clicks (J-ANN-09, J-ANN-10);
+  - select text with a click (sets the start) and Shift-click (extends) (J-RD-16);
   - resize the sidebar and inspector with the View menu's width presets;
   - move outline entries with cut and paste (J-PG-14).
   Freehand ink is path-dependent and exempt (SC 2.5.7 "essential").
