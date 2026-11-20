@@ -8,7 +8,7 @@ words; no PDFgear text, icons or layouts are copied (CONSTITUTION 20).
 Status: **J-…** = covered by that journey · **#N** = covered by a later journeys issue ·
 **Phase 2** = PLAN §4 Phase 2 · **out** = not planned (reason given).
 
-Each journeys issue (#6–#9) adds its own section here.
+Each journeys issue (#6–#9, #42) adds its own section here.
 
 ## Reader and navigation (#6)
 
@@ -20,8 +20,8 @@ Each journeys issue (#6–#9) adds its own section here.
 | Open | Password prompt for encrypted files; wrong-password message | J-RD-04, J-RD-30 |
 | Open | Error when a file can't be opened | J-RD-05 |
 | Open | Reopen the files from the last session at launch (preference) | J-RD-24 |
-| Open | Offer to restore an unsaved file after a crash | #9 (platform conventions) |
-| Open | Alert when the open file changed on disk | #9 (platform conventions) |
+| Open | Offer to restore an unsaved file after a crash | #42 (platform conventions) |
+| Open | Alert when the open file changed on disk | #42 (platform conventions) |
 | Open | Open from a folder; notify when new PDFs arrive; menu-bar helper; start at login | out (OS integration beyond a reader; revisit in an audit) |
 | Documents | Several documents in tabs; next/previous tab | J-RD-23 |
 | Navigation | Page number field, go to page | J-RD-06 |
@@ -50,7 +50,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Reading | Warm and dark reading tints for pages | J-RD-20 |
 | Reading | App appearance light/dark/auto | J-RD-20 |
 | Print | Print document only or with annotations | J-RD-21 |
-| Print | Preference to choose the content before every print | #9 (platform conventions: preferences) |
+| Print | Preference to choose the content before every print | #42 (platform conventions: preferences) |
 | Print | Scale, scale to fit, pages per sheet, auto-rotate | J-RD-21 |
 | Print | Print note contents on extra pages | J-ANN-25 |
 | Print | Permission-restricted printing and copying, unlocked with the owner password | J-RD-29 |
@@ -87,7 +87,7 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Stamps | Built-in stamps; stamp with date, or date and time | J-ANN-13 (our set: the ISO 32000-2 standard stamp names) |
 | Stamps | Custom text stamp with color; custom image stamp with background removal | J-ANN-14 |
 | Signatures | Create a signature by drawing (trackpad), typing (keyboard) or from an image, with background removal; a small saved-signature limit | J-ANN-15 |
-| Signatures | Digital signatures, certify, signature panel, deferred signatures | #9 (signatures) |
+| Signatures | Digital signatures, certify, signature panel, deferred signatures | #42 (signatures) |
 | Signatures | Online signature requests (e-sign service) | out (needs a backend; PLAN R11) |
 | Properties | Stroke width presets, font size presets, color, opacity | J-ANN-16 |
 | Editing | Copy, cut, paste, remove annotation | J-ANN-17 |
@@ -102,7 +102,7 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Robustness | Other tools' annotations kept as they are | J-ANN-24 (PLAN §4 safety; not a PDFgear item) |
 | Print | Print with annotations; print comment contents | J-RD-21, J-ANN-25 |
 | Links | Insert a link on an area or on text | J-ED-04 |
-| Forms | Highlight form fields | #9 (forms) |
+| Forms | Highlight form fields | J-FM-04 |
 
 ## Pages, edit, optimize and convert (#8)
 
@@ -143,7 +143,7 @@ string tables in the same bundle, plus PLAN §4 (Pages, Edit, Optimize & save).
 | Edit | Bates numbering | J-ED-08 (PLAN §4; not seen in PDFgear) |
 | Edit | Page background | J-ED-09 (PLAN §4; not seen in PDFgear) |
 | Edit | Crop pages, with numeric width and height and "apply to all pages" | J-ED-10 |
-| Save | Save (incremental), Save As | J-OS-01, J-OS-02 (Save As platform conventions: #9) |
+| Save | Save (incremental), Save As | J-OS-01, J-OS-02 (Save As platform conventions: #42) |
 | Optimize | Compress with low, medium and high levels and a size report | J-OS-03 (our levels: Lossless, Balanced, Smallest) |
 | Optimize | Compress several files in a list | Phase 2 (F-P2-4, batch) |
 | Optimize | Online compression or conversion | out (files never leave the device, PLAN R11) |
@@ -152,3 +152,34 @@ string tables in the same bundle, plus PLAN §4 (Pages, Edit, Optimize & save).
 | Convert | Word, Excel, PowerPoint, RTF, text to PDF | Phase 2 (F-P2-2) |
 | Convert | Merge, split and convert several files in a list | Phase 2 (F-P2-4, batch) |
 | Robustness | A failed save leaves the original file intact | J-OS-06 (platform convention; not a PDFgear item) |
+
+## Forms and security (#9)
+
+Sources: the form ribbon, form field properties panel, security ribbon, password dialog,
+security summary and the redaction confirmation in the same string tables, plus PLAN §4
+(Forms; Security & signatures) and the F-ED-4 redaction and metadata-scrub items.
+
+| Area | PDFgear feature (our words) | Status |
+|---|---|---|
+| Forms | Fill text, check box, radio, dropdown and list fields | J-FM-01, J-FM-02, J-FM-03 |
+| Forms | Highlight form fields; preference to highlight them in newly opened files | J-FM-04 |
+| Forms | Number, date and other formats; built-in calculations (no scripts run) | J-FM-05, J-FM-06 (PLAN §4) |
+| Forms | Reset buttons; submit and script buttons stay inert | J-FM-07 (PLAN §4 safety; not a PDFgear item) |
+| Forms | Create text field, check box, radio button, dropdown, list box, button and digital signature field | J-FM-08 |
+| Forms | Field properties: name, tooltip, required, read only, visibility (visible, hidden, visible but not printed, hidden but printed), font and size, alignment, border and fill color, default value, maximum length, comb, multiline, items with export values | J-FM-08 |
+| Forms | Radio buttons share one name to form a group (hint in the properties panel) | J-FM-08 |
+| Forms | Move, resize, align, rename, copy, delete fields; tab order | J-FM-09 (align, distribute and tab order: PLAN §4; not seen in PDFgear) |
+| Forms | Flatten form fields | J-FM-10 (PLAN §4) |
+| Forms | Fill forms when permissions allow filling only | J-FM-11 |
+| Forms | XFA forms | J-FM-12 (shown as page content only; XFA is a PLAN §1 non-goal) |
+| Security | Set an open password (password and confirm, mismatch message) | J-SC-01 |
+| Security | Permissions: printing, changing, copying, commenting, form filling, page assembly; security summary in properties | J-SC-02, J-RD-22 |
+| Security | Change password | J-SC-03 |
+| Security | Remove password | J-SC-04 |
+| Security | Unlock printing, annotating or changing with the owner password | J-RD-29, J-ANN-23, J-FM-11, J-SC-02 |
+| Security | Encrypt with certificates | J-SC-05 |
+| Redaction | Mark text and areas, then redact with a permanent-removal confirmation | J-SC-06, J-SC-07, J-SC-08 |
+| Redaction | Search and mark every match | J-SC-06 (PLAN §4; not seen in PDFgear) |
+| Redaction | Remove hidden information (metadata, scripts, attachments, earlier versions) | J-SC-09 (PLAN §4 F-ED-4; not a PDFgear item) |
+| Redaction | Redact and remove hidden information in protected files | J-SC-10 (PLAN §4 safety) |
+| Signatures | Digital IDs (import, create self-signed), certificate manager, trust a certificate, deferred signatures | #42 (signatures) |
