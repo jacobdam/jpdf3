@@ -89,6 +89,13 @@ pub fn load_pinned(cache_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
                 COMMIT,
             ],
         )?;
+    }
+    // Keep the commit reachable (also for caches made before the ref existed).
+    if git_text(&repo, &["rev-parse", "--verify", "--quiet", PIN_REF])
+        .ok()
+        .as_deref()
+        != Some(COMMIT)
+    {
         git(&repo, &["update-ref", PIN_REF, COMMIT])?;
     }
     load_verified(&repo, COMMIT, TSV_TREE)

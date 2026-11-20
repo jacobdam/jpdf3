@@ -326,7 +326,8 @@ fn pinned_loading_checks_blob_sizes_before_reading() {
     let commit = git(&dir, &["rev-parse", "HEAD"]);
     let tree = git(&dir, &["rev-parse", "HEAD:tsv/latest"]);
     match fetch::load_verified(&dir.join(".git"), &commit, &tree) {
-        Err(Error::Limit(m)) => assert!(m.starts_with("Big.tsv is 1048577 bytes"), "{m}"),
+        // "(max …)" comes only from the `--batch-check` pass, before any blob is read.
+        Err(Error::Limit(m)) => assert_eq!(m, "Big.tsv is 1048577 bytes (max 1048576)"),
         other => panic!("{other:?}"),
     }
 }

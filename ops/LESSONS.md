@@ -106,6 +106,11 @@ instead of adding near-duplicates.
   boundaries (not just `""`/`"abc"`), lenient-read rules need a positive salvage check, every
   limit needs a per-axis/per-path boundary, and the spec must say what the suite cannot see
   (allocations) ([journal](journal/2026-11-21.md), PR #56).
+- Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
+  read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
+  inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
+  `fsck --full` before reading, and `cat-file --batch-check` sizes before `--batch`
+  ([journal](journal/2026-11-21.md), PR #62).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 
