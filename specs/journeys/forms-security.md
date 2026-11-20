@@ -67,8 +67,8 @@ verify, history is honest, permissions.
   5. Residue: page thumbnails (`/Thumb`) of redacted pages are removed; fonts used by removed
      text are re-subset so that glyphs and `/ToUnicode` entries no remaining text uses are gone;
      images re-encoded by the engine drop JPEG metadata segments (EXIF, XMP, embedded
-     thumbnails) and `/Alternates`; crash-recovery data of the document (J-PC-03) that holds
-     pre-redaction content is deleted when the redacted file is saved (the test waits for a
+     thumbnails) and `/Alternates`; crash-recovery data (J-PC-03) and session snapshots
+     (signatures-platform.md PC rules) that hold pre-redaction content are deleted when the redacted file is saved (the test waits for a
      recovery checkpoint after marking, saves, and then searches app storage for every
      sentinel as in check 1: not found). The font check compares the glyph
      sets of each font program before and after (fonts extracted with `mutool extract`, glyphs

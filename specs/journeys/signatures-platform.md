@@ -75,14 +75,17 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
       the list then says "Validation data added".
     - `Allowed changes`: every change is in the allowed set: filling form fields (`/V`,
       `/AS`, and a regenerated `/AP` of a widget whose `/Rect`, `/F` and `/MK` are
-      unchanged), signing existing signature fields and, unless a certification forbids it
-      (J-SG-03), adding, changing or deleting annotations other than widgets.
+      unchanged), signing existing signature fields, adding a new signature field with its
+      widget (appended to `/AcroForm /Fields` and to the page's `/Annots`) and, unless a
+      certification forbids it (J-SG-03), adding, changing or deleting annotations other
+      than widgets (with the matching changes to the page's `/Annots` array).
     - `Changes not allowed`: any change a DocMDP certification (ISO 32000-2 §12.8.2.2) or a
       FieldMDP lock (§12.8.2.4) forbids.
     - `Signed content changed`: for a signature with no certification or lock covering the
       change, any change outside the allowed set: page content streams or resources, the
-      page tree, optional content (`/OCProperties`) state, the catalog's other entries, the
-      `/AcroForm /Fields` array, new fields other than signature fields, or a widget's
+      page tree (other than the `/Annots` changes above), optional content (`/OCProperties`)
+      state, the catalog's other entries, replacing or removing existing `/AcroForm /Fields`
+      entries, new fields other than signature fields, or an existing widget's
       `/Rect`, `/F` or `/MK`. These changes are legal for an approval signature, but they
       change what was signed (shadow and incremental-saving attacks).
   - Time: "Signing time (claimed by the signer): …" from `/M`, and, when a timestamp token
@@ -117,8 +120,12 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
   for the CA's responder (valid RSA-2048, valid ECDSA P-256, expired, revoked, one with
   neither digitalSignature nor contentCommitment, one signed with SHA-1, one RSA-1024); a TSA
   certificate `jpdf Test TSA` (issued by `jpdf Test CA`, timeStamping extended key usage, an
-  OCSP URL); and an OCSP responder certificate. Certomancer serves the TSA, OCSP and CRL
-  endpoints on `127.0.0.1`. Each signer also exists as a PKCS#12 file (OpenSSL with `-keypbe
+  OCSP URL); a second, long-lived TSA certificate `jpdf Test Archive TSA` (issued directly by
+  `jpdf Test Root`, valid 30 years, with a CRL URL for the root's CRL; the root is valid 40
+  years); and an OCSP responder certificate. Certomancer serves both TSAs (two URLs), the
+  OCSP and the CRL endpoints on `127.0.0.1`, and answers CORS preflights (including for
+  `application/timestamp-query` POSTs) because the web test app runs on another loopback
+  port. Each signer also exists as a PKCS#12 file (OpenSSL with `-keypbe
   AES-256-CBC -certpbe AES-256-CBC -macalg sha256`, chain included). Signed fixtures are made
   with pyHanko's Python API (an external program) from that PKI, embedding the whole chain up
   to and including the root in the CMS certificates; incremental updates on signed fixtures
@@ -127,8 +134,9 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
 - **External validators.** Signatures are checked with pyHanko's Python API in the harness
   (`validate_pdf_signature` with a validation context trusting `jpdf Test Root`, revocation
   checking off for B-B and B-T; `validate_pdf_ltv_signature` with
-  `RevocationInfoValidationType.PADES_LT` or `PADES_LTA`, with the Certomancer endpoints
-  running, for B-LT and B-LTA) and Poppler's `pdfsig -nssdir <test NSS db>` (its "Signature
+  `RevocationInfoValidationType.PADES_LT` or `PADES_LTA` and fetching disabled
+  (`allow_fetching=False`, endpoints stopped), so the embedded data alone must be enough, for
+  B-LT and B-LTA) and Poppler's `pdfsig -nssdir <test NSS db>` (its "Signature
   Validation", "Certificate Validation", "Signature Type" and "Total document signed"
   lines). The CMS is decoded with asn1crypto. "Signature check" in a journey means: pyHanko
   reports the signature `intact`, `valid` and `trusted` with `bottom_line` true (and the LTV
@@ -143,7 +151,8 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
   appended to the document, and pending edits go into the same update.
 - **Network is off by default** (PLAN §4). Requests happen only after an explicit user action:
   signing with "Timestamp new signatures" on (Preferences > Signatures, with a timestamp
-  server URL the user typed), or pressing "Check revocation online", "Add validation data" or
+  server URL the user typed; an optional separate archive timestamp server is used for
+  document timestamps, defaulting to the same URL), or pressing "Check revocation online", "Add validation data" or
   "Add document timestamp" in a signature's details. Opening a document never makes a request
   (certificate URLs come from the file and would reveal that it was opened).
   - URLs: the TSA URL may be `https:` or `http:`; certificate-derived OCSP and CRL URLs may be
@@ -163,7 +172,8 @@ permissions) and the forms-security rules in [forms-security.md](forms-security.
     allow CORS, so web reaches only CORS-enabled `https:` endpoints; the UI says so next to
     the server URL, and a blocked request is reported as "blocked by the browser (the server
     must allow cross-origin requests over HTTPS)". The test build serves the app and the
-    harness endpoints from loopback, which browsers treat as secure. The web content
+    harness endpoints from loopback, which browsers treat as secure; the harness endpoints
+    are cross-origin to the app and send CORS headers. The web content
     security policy for these requests and the macOS App Transport Security exception for
     plain `http:` are decided before M9 (#47).
 
@@ -226,8 +236,9 @@ with the named signer; 11 is built by the harness; 13–15 are S1 plus an update
 11. Hostile CMS → each `Cannot check`, `Invalid`: ASN.1 nested deeper than `Limits`; a length
     field larger than the file; more certificates than `Limits` allow; indefinite-length
     encodings. A CMS whose only path to the root is a loop (A issued by B, B by A) → integrity
-    `Intact`, `Not trusted`, `Unverified`. A CMS with an unknown signature algorithm OID →
-    integrity `Cannot check`, signer `Unsupported algorithm`, `Unverified`.
+    `Intact`, `Not trusted`, `Unverified`. A CMS with an unknown signature algorithm OID (the
+    message digest itself matches) → integrity `Intact`, signer `Unsupported algorithm`,
+    `Unverified`.
 12. A `%%EOF` line placed inside page 1's content stream (stream length adjusted) and the byte
     range edited to end just after it → `Cannot check`, `Invalid`.
 13. Hide and replace: the update redefines page 1's content stream object with new text →
@@ -237,11 +248,12 @@ with the named signer; 11 is built by the harness; 13–15 are S1 plus an update
     `Signed content changed` ("Layer visibility changed"), `Unverified`.
 15. The update replaces `/AcroForm /Fields` with a new array holding a new text field over the
     signed text → `Signed content changed` ("Form fields replaced"), `Unverified`.
-Check: a document holding two signatures, made by pyHanko signing fixture 9's file again with
-the RSA-2048 signer and then editing the first revision's content as in fixture 1, shows "1
-invalid signature" in the panel header; `jpdf-cli verify-signatures` (CONTRACT) gives the same
-results as the panel for every fixture; pyHanko reports `intact` false for fixtures 1 and 6,
-and `valid` false for fixtures 1, 6, 7 and 8.
+Check: a document holding fixture 7's SHA-1 signature followed by a second signature by the
+RSA-2048 signer (pyHanko signs fixture 7's file again in an incremental update) shows "1
+invalid signature" in the panel header (the second is `Valid` with no later changes; the
+first is `Invalid` with `Allowed changes`); `jpdf-cli verify-signatures` (CONTRACT) gives
+the same results as the panel for every fixture; pyHanko reports `intact` false for fixture
+1, and `valid` false for fixtures 1, 6, 7 and 8.
 
 ## J-SG-03: Changes after signing, certification levels and field locks
 - milestone: M9
@@ -300,7 +312,8 @@ changes → Trust and confirm → the signature becomes `Valid` → restart the 
 → still `Valid` → Preferences > Signatures > Trusted certificates lists `jpdf Test Root` →
 Import → pick a `.pem` file holding two certificates → one confirmation lists both with their
 fingerprints → confirm → both are listed (3 in total) → import a DER `.cer` → its confirmation
-→ 4 in total → remove `jpdf Test Root` → confirmation, Cancel default → confirm → S1 returns
+→ 4 in total (the `.pem` and `.cer` hold three certificates from a second Certomancer PKI,
+unrelated to `jpdf Test Root`) → remove `jpdf Test Root` → confirmation, Cancel default → confirm → S1 returns
 to `Unverified`.
 Error branch: importing a file that is not a certificate, a PEM with garbage between blocks,
 and a file one byte over the `Limits` input size → each a typed error, nothing added; a
@@ -321,8 +334,8 @@ browser") → the key hand-off rule was followed: macOS `SecKeyCopyExternalRepre
 the stored key fails; web `crypto.subtle.exportKey` on it rejects → Create → name `Ada Test`,
 organization `jpdf`, email `ada@example.test`, country `GB`, key type ECDSA P-256 (the
 default; RSA 3072 is the other choice), validity 3 years → Create → the platform generates the
-key (macOS `SecKeyCreateRandomKey` in the Secure Enclave when the Mac has one, otherwise the
-Keychain with `kSecAttrIsExtractable` false; web `generateKey` with `extractable: false`) →
+key (macOS `SecKeyCreateRandomKey` in the Keychain with `kSecAttrIsExtractable` false;
+the Secure Enclave is not used, so behavior is the same on CI machines, which have none; web `generateKey` with `extractable: false`) →
 the engine builds the certificate (X.509 v3, subject equal to issuer, key usage
 digitalSignature and contentCommitment, basic constraints not a CA, serial from the engine's
 random trait), has the platform sign it and verifies the result (PLAN §6.4) → the list shows
@@ -450,11 +463,12 @@ choose Add validation data → the details list the URLs that will be contacted 
 exactly 3 requests: OCSP for the signer, OCSP for `jpdf Test TSA`, and the CRL for `jpdf Test
 CA` → save (incremental) → the catalog has `/DSS` with `/Certs`, `/OCSPs` and `/CRLs` holding
 those responses and every certificate of both chains (ISO 32000-2 §12.8.4.3) → the signature
-check holds at B-LT → Add document timestamp → 1 more TSA request → a new update holds a
+check holds at B-LT → Preferences > Signatures: set the archive timestamp server URL to the `jpdf Test Archive
+TSA` endpoint → Add document timestamp → 1 request to that server, and 1 CRL request for
+`jpdf Test Archive TSA`'s CRL (added to the DSS with the update) → a new update holds a
 `/Type /DocTimeStamp` signature with `/SubFilter /ETSI.RFC3161` → the signature check holds at
-B-LTA → set the test clock past the expiry of the signer, `jpdf Test CA` and the first
-timestamp's TSA certificate, but before the document timestamp's TSA certificate expires
-(Certomancer config: that certificate is valid 30 years), with no online check → the
+B-LTA → set the test clock past the expiry of the signer, `jpdf Test CA` and `jpdf Test TSA`,
+but before `jpdf Test Archive TSA` and `jpdf Test Root` expire, with no online check → the
 signature is still `Valid`, validated at the document timestamp's time by past signature
 validation from the DSS, and no request is made.
 Verify others' output: open a B-LTA fixture made by pyHanko → `Valid` with no request; a copy
@@ -481,7 +495,7 @@ server and the problem, nothing is written to the file, and the app keeps workin
    response that sends one byte per second (stopped by the 15 s timeout; the harness checks
    that less than 20 s passed);
 3. DER nested deeper than `Limits`; a truncated body; an HTML page;
-4. macOS: a redirect to another host (not followed) and one to the same host (followed once);
+4. macOS: a redirect to another host (not followed) and one to the same host (followed once, after the resolved address passes the SSRF rule again);
    web: any redirect fails the request (`redirect: 'error'`);
 5. an OCSP response for a different certificate; one signed by an untrusted responder; one
    whose `thisUpdate` is in the future → each leaves "Revocation was not checked" with the
@@ -529,8 +543,13 @@ typed permission errors → enter the owner password (J-RD-29) → both are enab
 - **A session reads one version.** At open the session takes a private snapshot of the file
   (macOS: an APFS clone in the app's temporary directory, falling back to a copy; web: a copy
   into OPFS, because a `File` from the handle throws `NotReadableError` once the file
-  changes) and reads only from it, so a document never mixes bytes from two versions of the
-  file. The snapshot is deleted when the document closes.
+  changes; the app renders from the `File` while the copy runs in the background, so the
+  first page is not delayed, and a `NotReadableError` before the copy finishes is handled as
+  a file change, J-PC-02) and reads only from it, so a document never mixes bytes from two
+  versions of the file. After each save the snapshot is replaced by the saved bytes; it is
+  deleted when the document closes; snapshots left by a crash are deleted at the next launch
+  (recovery never needs them: J-PC-03 restores only against an unchanged source file). The
+  forms-security.md redaction residue search covers snapshots.
 
 ## J-PC-01: Unsaved changes when closing and quitting
 - milestone: M6
@@ -594,7 +613,8 @@ renderer with the DevTools protocol `Page.crash`) → launch again → the "Rest
 changes?" dialog lists A with the time of its last checkpoint, with Restore (default) and
 Discard → Restore → A opens with page 2 rotated and 4 pages, marked edited, and the notice
 "Unsaved changes were recovered" → Save → save and verify; A on disk has the edits → A's
-recovery data is deleted → kill and relaunch → no restore dialog.
+recovery data is deleted → kill and relaunch → no restore dialog, and the session snapshot left by the kill (PC rules)
+is gone from app storage.
 Second run: edit A, kill, relaunch → Discard → A's bytes are unchanged and its recovery data
 is deleted → edit A, close it with Don't Save (J-PC-01) → its recovery data is deleted at
 once.
@@ -665,8 +685,8 @@ Steps: Help > Keyboard Shortcuts (web: also `?` with the document view focused) 
 (macOS) / dialog (web) lists the commands in the groups of [shortcuts.md](../ui/shortcuts.md)
 with this platform's keys → the list is built from the app's command registry; a contract
 test checks that the registry's commands, keys and groups equal the shortcuts.md rows whose
-journeys belong to milestones up to the current one (all rows from M10) → type `rot` in the
-filter field → exactly one row remains, "Rotate view right / left" → clear the filter → turn
+journeys belong to milestones up to the current one (from M10 on: every row) → type
+`rotate view` in the filter field → exactly one row remains, "Rotate view right / left" → clear the filter → turn
 off single-key shortcuts in Preferences → reopen the list → single-key rows are marked off
 with the reason, and `?` no longer opens the list → Esc closes it (shortcuts.md rule 9).
 Check: the list passes the accessibility audits (axe-core; the XCUITest audit), and each row's

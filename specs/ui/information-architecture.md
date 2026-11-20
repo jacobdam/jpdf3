@@ -241,7 +241,7 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 | Print | Content (document only / document and annotations), a separate toggle to print comment contents on extra pages, pages, scale, pages per sheet, auto-rotate; then the platform print panel | Print | J-RD-21, J-ANN-25 |
 | Document properties | File information, description, security summary (read-only values from the engine) | Close | J-RD-22 |
 | Creators | Custom stamp, signature (draw / type / image), watermark, header and footer, Bates, background, page labels, split, merge, compress, export | the action | J-ANN-14, J-ANN-15, J-ED-06…J-ED-09, J-PG-09…J-PG-12, J-OS-03, J-OS-05 |
-| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, alignment guides when dragging, choose print content each time, single-key shortcuts on/off (all of them: tool keys, G, M, ? and the magnifier's + / -), Signatures ("Timestamp new signatures", off by default, and the timestamp server URL; trusted certificates) | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17, J-PC-04, J-SG-04, J-SG-09 |
+| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, alignment guides when dragging, choose print content each time, single-key shortcuts on/off (all of them: tool keys, G, M, ? and the magnifier's + / -), Signatures ("Timestamp new signatures", off by default, the timestamp server URL and the optional archive timestamp server URL; trusted certificates) | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17, J-PC-04, J-SG-04, J-SG-09 |
 
 ## 9. Reading modes
 
