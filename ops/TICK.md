@@ -110,8 +110,9 @@ gh api repos/jacobdam/jpdf3/statuses/$(gh pr view N --json headRefOid -q .headRe
 (`state=failure` if unresolved findings remain.)
 
 ## 5. Merge and record
-- **Merge:** `gh pr merge N --auto --squash`, unless the owner commented `/hold` (wait for
-  `/release`). CI (`judge-verdict`) is the real gate. Read its summary on failure:
+- **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
+  into a draft (a workflow does it). Never mark a held PR ready or re-enable its auto-merge until
+  the owner comments `/release`; after `/release`, re-enable auto-merge. CI (`judge-verdict`) is the real gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
 - **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
   ```
