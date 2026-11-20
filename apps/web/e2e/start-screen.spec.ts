@@ -41,6 +41,19 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   await expect(page.getByRole("heading", { level: 2, name: "Recent files" })).toBeVisible();
   await expect(page.getByText("Files you open appear here.", { exact: true })).toBeVisible();
   await expect(page.getByRole("main")).toBeVisible();
+  // W-02 order: heading, drop target text, Open file, Recent files, its empty text.
+  const order = await page.getByRole("main").evaluate((main) => {
+    const want = [
+      "jpdf",
+      "Drop a PDF here to open it",
+      "Open file",
+      "Recent files",
+      "Files you open appear here.",
+    ];
+    const text = main.textContent ?? "";
+    return want.map((w) => text.indexOf(w));
+  });
+  expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? -1)))).toBe(true);
 
   // Disabled, but focusable, with its reason as the accessible description.
   const open = page.getByRole("button", { name: "Open file" });
@@ -48,6 +61,19 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   await page.keyboard.press("Tab");
   await expect(open).toBeFocused();
   await expect(open).toHaveAccessibleDescription("Opening files is not available yet");
+  // The two-tone focus ring (wireframes-web.md §1.3).
+  await expect(open).toHaveCSS("outline", "2px solid rgb(11, 11, 11)");
+  await expect(open).toHaveCSS("box-shadow", "rgb(255, 255, 255) 0px 0px 0px 4px");
+  // Activating it does nothing: no navigation, no file chooser, no dialog.
+  let chooser = false;
+  page.on("filechooser", () => {
+    chooser = true;
+  });
+  await page.keyboard.press("Enter");
+  await open.click({ force: true });
+  await expect(page).toHaveURL("http://127.0.0.1:4173/");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(chooser).toBe(false);
 
   // Emotion's styles applied under the CSP: the theme's primary color (light appearance).
   await expect(open).toHaveCSS("background-color", "rgb(21, 101, 192)");
@@ -79,6 +105,7 @@ test("dark appearance uses the dark palette", { tag: "@e2e.web.app_start_empty" 
 test("the CSP meta tag comes first and scripts are external", {
   tag: "@e2e.web.app_start_empty",
 }, async ({ page }) => {
+  const problems = await watch(page);
   await page.goto("./");
   const head = await page.evaluate(() => {
     const first = document.head.firstElementChild;
@@ -95,6 +122,20 @@ test("the CSP meta tag comes first and scripts are external", {
     metaCount: 1,
     inlineScripts: 0,
   });
+  expect(problems).toEqual([]);
+});
+
+test("reduced motion removes transitions", { tag: "@e2e.web.app_start_empty" }, async ({
+  page,
+}) => {
+  const problems = await watch(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("./");
+  const open = page.getByRole("button", { name: "Open file" });
+  await expect(open).toBeVisible();
+  const durations = await open.evaluate((el) => getComputedStyle(el).transitionDuration);
+  expect(durations.split(",").every((d) => d.trim() === "0s")).toBe(true);
+  expect(problems).toEqual([]);
 });
 
 test("the CSP blocks inline script and inline style", {
@@ -137,6 +178,7 @@ test("the CSP blocks inline script and inline style", {
 test("a file dropped on the window is not opened by the browser", {
   tag: "@e2e.web.app_start_empty",
 }, async ({ page }) => {
+  const problems = await watch(page);
   await page.goto("./");
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();
   const prevented = await page.evaluate(() => {
@@ -150,4 +192,5 @@ test("a file dropped on the window is not opened by the browser", {
   });
   expect(prevented).toEqual([true, true]);
   await expect(page).toHaveURL("http://127.0.0.1:4173/");
+  expect(problems).toEqual([]);
 });

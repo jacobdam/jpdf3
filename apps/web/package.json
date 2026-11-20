@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome ci .",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "lint": "biome ci --error-on-warnings .",
     "build": "vite build",
     "preview": "vite preview",
     "e2e": "playwright test",

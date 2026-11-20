@@ -4,7 +4,31 @@ import { createTheme } from "@mui/material/styles";
 const fontFamily =
   'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
+// Focus ring (wireframes-web.md §1.3, accessibility.md §1): 2 px #0b0b0b inside a 2 px #ffffff
+// outline, in both appearances, so it shows on any background.
+const focusRing = {
+  outline: "2px solid #0b0b0b",
+  outlineOffset: 0,
+  boxShadow: "0 0 0 4px #ffffff",
+} as const;
+
+// Motion (wireframes-web.md §1.4): no transitions or ripples under prefers-reduced-motion.
+// Read once at startup; a change takes effect on the next load.
+const reduceMotion =
+  typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 export const theme = createTheme({
+  ...(reduceMotion ? { transitions: { create: () => "none" } } : {}),
+  components: {
+    MuiCssBaseline: { styleOverrides: { ":focus-visible": focusRing } },
+    MuiButtonBase: {
+      defaultProps: { disableRipple: reduceMotion },
+      styleOverrides: { root: { "&.Mui-focusVisible, &:focus-visible": focusRing } },
+    },
+    MuiButton: {
+      styleOverrides: { root: { "&.Mui-focusVisible, &:focus-visible": focusRing } },
+    },
+  },
   colorSchemes: {
     light: {
       palette: {

@@ -145,20 +145,26 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     let out = fs::canonicalize(out).map_err(|e| format!("resolve {}: {e}", out.display()))?;
     let e2e_json = out.join("e2e.json");
     let tsv = out.join("web-e2e.tsv");
-    // Never report results of an earlier run.
+    let site = out.join("site");
+    // Never leave output of an earlier run: results, reporter file and site all go first.
+    let mut stale_err = None;
     for stale in [&e2e_json, &tsv] {
-        if stale.exists() {
-            fs::remove_file(stale).map_err(|e| format!("remove {}: {e}", stale.display()))?;
+        if let Err(e) = fs::remove_file(stale)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            stale_err = Some(format!("remove {}: {e}", stale.display()));
         }
     }
+    if let Err(e) = fs::remove_dir_all(&site)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        stale_err = Some(format!("remove {}: {e}", site.display()));
+    }
+    if let Some(e) = stale_err {
+        return Err(e);
+    }
     let run = run_web(repo, &out, &tsv);
-    let results = match fs::metadata(&tsv) {
-        Err(_) => Ok(BTreeMap::new()),
-        Ok(m) if m.len() > MAX_RESULTS_BYTES => Err(format!("{}: too large", tsv.display())),
-        Ok(_) => fs::read_to_string(&tsv)
-            .map_err(|e| format!("read {}: {e}", tsv.display()))
-            .and_then(|t| parse_results(&t).map_err(|e| format!("{}: {e}", tsv.display()))),
-    };
+    let results = read_results(&tsv);
     let (results, parse_err) = match results {
         Ok(r) => (r, None),
         Err(e) => (BTreeMap::new(), Some(e)),
@@ -181,6 +187,29 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
         return Err(format!("{id}: {}", s.as_str()));
     }
     Ok(())
+}
+
+/// Reads at most `MAX_RESULTS_BYTES` (+1 to detect overflow) in one pass; a missing file
+/// means no tests reported anything.
+fn read_results(tsv: &Path) -> Result<BTreeMap<String, Status>, String> {
+    use std::io::Read as _;
+    let file = match fs::File::open(tsv) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(format!("open {}: {e}", tsv.display())),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_RESULTS_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read {}: {e}", tsv.display()))?;
+    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_RESULTS_BYTES) {
+        return Err(format!(
+            "{}: larger than {MAX_RESULTS_BYTES} bytes",
+            tsv.display()
+        ));
+    }
+    let text = String::from_utf8(bytes).map_err(|_| format!("{}: not UTF-8", tsv.display()))?;
+    parse_results(&text).map_err(|e| format!("{}: {e}", tsv.display()))
 }
 
 fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
@@ -209,15 +238,12 @@ fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
     step(&web, "lint", "npm", &["run", "lint"], no_env)?;
     step(&web, "build", "npm", &["run", "build"], no_env)?;
 
-    let site = out.join("site");
-    if site.exists() {
-        fs::remove_dir_all(&site).map_err(|e| format!("remove {}: {e}", site.display()))?;
-    }
-    copy_tree(&web.join("dist"), &site)?;
+    copy_tree(&web.join("dist"), &out.join("site"))?;
 
     // Browsers are not downloaded by `npm ci` (scripts are off). On CI (Linux) also install
     // the system libraries Chromium needs.
-    let mut install = vec!["exec", "--", "playwright", "install", "chromium"];
+    // `npm exec --no` never downloads a package that isn't installed from the lockfile.
+    let mut install = vec!["exec", "--no", "--", "playwright", "install", "chromium"];
     if cfg!(target_os = "linux") && std::env::var_os("CI").is_some() {
         install.push("--with-deps");
     }
@@ -226,7 +252,7 @@ fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
         &web,
         "e2e",
         "npm",
-        &["exec", "--", "playwright", "test"],
+        &["exec", "--no", "--", "playwright", "test"],
         &[("JPDF_E2E_RESULTS", tsv)],
     )
 }
@@ -290,6 +316,27 @@ mod tests {
             render_e2e(&m),
             "{\"results\": {\n  \"e2e.web.a\": \"pass\",\n  \"e2e.web.b\": \"fail\"\n}}\n"
         );
+    }
+
+    #[test]
+    fn reads_results_files() {
+        let base = std::env::temp_dir().join(format!("xtask-web-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        assert!(fs::create_dir_all(&base).is_ok());
+        let f = base.join("r.tsv");
+        assert_eq!(
+            read_results(&f),
+            Ok(BTreeMap::new()),
+            "missing file = no results"
+        );
+        assert!(fs::write(&f, "e2e.web.a\tpass\n").is_ok());
+        assert_eq!(read_results(&f).map(|r| r.len()), Ok(1));
+        assert!(fs::write(&f, [0xff_u8, b'\t']).is_ok());
+        assert!(read_results(&f).is_err(), "non-UTF-8");
+        let big = "e2e.web.a\tpass\n".repeat(80_000); // > 1 MiB
+        assert!(fs::write(&f, big).is_ok());
+        assert!(read_results(&f).is_err(), "too large");
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

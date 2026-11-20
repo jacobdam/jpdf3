@@ -35,7 +35,14 @@ CONSTITUTION 10 has to be enforced by us.
    plugins (`caniuse-lite`, CC-BY-4.0). We use Vite 7 with esbuild's JSX transform (no React
    plugin, so no fast refresh in development) and Biome for linting. `axe-core` (MPL-2.0)
    is excluded too, though accessibility.md §5 asks for it; ops/proposals/test-only-licenses.md
-   asks the owner to decide.
+   asks the owner to decide (#50).
+   **Known gap:** the check reads package metadata (lockfile and installed `package.json`),
+   not third-party code that a package bundles inside its own files. Review of #49 found such
+   code in required tools: `playwright` bundles `caniuse-lite` (CC-BY-4.0) and `minimatch`
+   (BlueOak-1.0.0); `vite` bundles `string-hash` (CC0-1.0); `rollup` bundles `tslib` (0BSD).
+   Playwright is required by CONTRACT §2 and no bundler is free of this, so we can't comply
+   strictly; none of these files reaches the shipped bundle. We say so openly and the
+   proposal asks the owner to rule on them.
 6. Tests run against `vite preview` of the production build, never the dev server (whose HMR
    scripts would need a weaker policy).
 
