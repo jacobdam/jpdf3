@@ -57,7 +57,8 @@ fills in the rest. A change here that contradicts a journey is a bug in this fil
    it never adds behavior of its own (CONSTITUTION 6: the command is an engine call).
 9. **Esc** does the first that applies, innermost first: close a dialog (cancel) → close an
    open note popup, including when its text field has focus (its text is kept; J-ANN-04) →
-   leave a text box or edited page text (the typed text is kept) → cancel the drawing in
+   leave a text box or edited page text (the typed text is kept) → leave a focused form field,
+   discarding typing not yet committed (J-FM-01) → cancel the drawing in
    progress → turn off the magnifier → if the find bar has focus and a search is running,
    cancel the search (J-RD-31); otherwise, if the find bar is open, close it (J-RD-15) → stop a load before its
    first page appears (information-architecture.md §7) → leave presentation → leave full screen
