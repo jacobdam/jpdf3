@@ -267,4 +267,5 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 
 Narrow windows (web < 900 px wide, macOS minimum window size): the inspector collapses
 first, then the sidebar becomes an overlay; the document view never drops below a usable width.
-Exact breakpoints and spacing are #11's.
+Exact breakpoints, sizes and tokens: [wireframes-web.md](wireframes-web.md) and
+[wireframes-macos.md](wireframes-macos.md) (§1 tokens, W-29 narrow windows).

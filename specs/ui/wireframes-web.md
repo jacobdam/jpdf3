@@ -301,8 +301,8 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 - Reordering by drag shows an insertion bar (3 px `primary.main`) between cells; Move
   left/right are the single-pointer alternative (accessibility.md §4). The live region
   announces "moved to position N" (J-PG-06).
-- The sidebar defaults to the Outline panel in this mode (Thumbnails duplicate the grid); the
-  user's choice wins.
+- The sidebar keeps the tab's current panel (IA §4); the drawing shows Outline, which is
+  the useful companion to the grid.
 - Delete opens Confirm delete (W-23).
 
 ### W-09 Forms mode (IA §3)
@@ -342,10 +342,10 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 ```
 
 - Marked areas are drawn with a 2 px `error.main` outline and a diagonal hatch (not color
-  alone) until applied; Apply redactions opens a confirmation that lists the number of marks
-  and pages and says the change can't be undone after saving.
-- The sidebar defaults to the Signatures panel in this mode; its empty state is "No
-  signatures".
+  alone) until applied; Apply redactions opens a confirmation (W-23 layout) whose wording
+  comes from the redaction journeys.
+- The drawing shows the Signatures panel (the sidebar keeps the tab's current panel, IA §4);
+  its empty state is "No signatures".
 
 ### W-11 Find bar and Search results (IA §1, §4; J-RD-15, J-RD-31)
 
