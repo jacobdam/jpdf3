@@ -39,7 +39,7 @@ instead of adding near-duplicates.
   promise must hold for incremental saves (old revisions stay in the file); permission checks
   cover every path that takes pages out of a file (copy, extract, merge/insert source); assert
   a state only after the step that saves it; "remove what we added" needs a private marker
-  ([journal](journal/2026-11-20.md), PR #30, PR #32, [PR #39](journal/2026-11-21.md)).
+  ([journal](journal/2026-11-20.md), PR #30, PR #32, [PR #39](journal/2026-11-20.md)).
 
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
