@@ -26,6 +26,11 @@ instead of adding near-duplicates.
 - A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
   fails unless every upstream job succeeded (bootstrap).
 
+- main red with `judge-verdict` green, only `pages` failed (deploy-pages "No artifacts named
+  github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra: `gh run
+  rerun --failed <id>`, no code change. If the upload step failed or was skipped, it's a real bug
+  ([journal](journal/2026-11-20.md)).
+
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
   files and directories), and diff both side by side on probe trees before review
@@ -65,8 +70,9 @@ instead of adding near-duplicates.
 - Finishing a PR → post the `ai-review` status (it is a required check) before enabling
   auto-merge and writing the journal; a session that ends early otherwise leaves the PR blocked
   ([journal](journal/2026-11-20.md), PR #30).
-- Re-review after a push: `gh pr diff` can return the previous diff for a while → give the
-  reviewer `git diff origin/main...HEAD` instead ([journal](journal/2026-11-20.md)).
+- Right after a push, `gh pr diff` and `gh pr view --json headRefOid` can return the previous
+  commit for a while → give the reviewer `git diff origin/main...HEAD`, and post `ai-review`
+  on `git rev-parse HEAD` after checking it matches `git ls-remote` ([journal](journal/2026-11-20.md)).
 - Branching from an unmerged PR branch → after it squash-merges, `git merge origin/main`
   gives add/add conflicts on the shared files; if main's tree equals the old PR head (`git
   diff <head> origin/main` empty), resolve with `git checkout --ours` ([journal](journal/2026-11-20.md), PR #32).
