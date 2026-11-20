@@ -13,8 +13,12 @@ Every feature spec fills its `## Accessibility` section against this file.
   command in every mode, panel actions, dialogs and the page organizer. Drawing tools: with
   the document view focused, a drawing tool chosen and nothing focused, Return places the
   object with a default size at the centre of the visible part of the current page
-  (shortcuts.md rule 10); arrows then move it and the inspector's width and height fields
-  resize it. The journeys that need a keyboard path name it (J-ANN-04, J-PG-06).
+  (shortcuts.md rule 10); arrows then move it and the inspector's position, size and vertex
+  fields change it. Text is selected with Shift+arrows (shortcuts.md, Navigate), then a markup
+  tool applies to the selection. Pages and list items are selected with arrows, Space and
+  Shift+arrows. Freehand ink and the freehand eraser are path-dependent and exempt
+  (WCAG 2.2 SC 2.1.1 exception); ink is still erased by selecting it and pressing Delete. The
+  journeys that need a keyboard path name it (J-ANN-04, J-PG-06).
 - **Focus order** follows the visual layout: tabs → main toolbar → mode tool row → sidebar →
   find bar → document view → inspector → status bar. macOS supports Full Keyboard Access; web
   provides a "skip to document" link as the first focusable element and landmark regions
@@ -25,11 +29,13 @@ Every feature spec fills its `## Accessibility` section against this file.
   page's annotation order); after the last one, Tab leaves the document view for the next
   region. To reach another page's objects, change page (Page Down, the page field) and Tab
   again (J-ANN-04). This keeps Tab from walking a 2,000-page file.
-- **Focus is always visible** (web: a focus ring with at least 3:1 contrast against both the
-  page and the chrome; macOS: the system focus ring) and never hidden behind the toolbar or a
-  panel (WCAG 2.2 SC 2.4.11).
+- **Focus is always visible** (WCAG 2.2 SC 2.4.7, 1.4.11): web uses a two-tone focus ring (a
+  dark and a light outline), which keeps 3:1 against any page content and the chrome; macOS
+  uses the system focus ring. Focus is never hidden behind the toolbar or a panel (SC 2.4.11).
 - **Dialogs trap focus** and return it to the control that opened them; Esc cancels.
-- **No keyboard trap** in the document view: Esc and Tab always lead out.
+- **No keyboard trap** in the document view: Tab and Shift+Tab always lead out. In a
+  multi-line text editing box, Tab may insert text; Esc leaves the box (shortcuts.md rule 9)
+  and Tab then moves on.
 
 ## 2. Screen readers (VoiceOver on macOS; VoiceOver, NVDA, JAWS on web)
 
@@ -45,8 +51,8 @@ Every feature spec fills its `## Accessibility` section against this file.
 - **Images** in the document are announced with their `/Alt` text when the file has one; an
   untagged figure is announced as "image" without invented text.
 - **Controls** have labels in our own words, and toolbar icon buttons have accessible names
-  and tooltips. Toggle buttons announce their state (on/off); disabled commands announce the
-  engine's reason.
+  and tooltips. Toggle buttons announce their state (on/off); disabled commands stay
+  focusable and announce the engine's reason (information-architecture.md §0 rule 2).
 - **Live announcements** (macOS accessibility notifications; web `aria-live="polite"`) for:
   find results ("3 of 9"), page changes after a jump, page reorder results ("moved to position
   4", J-PG-06), job completion and failures (save, export), and errors. Not for every scroll.
@@ -75,9 +81,18 @@ Every feature spec fills its `## Accessibility` section against this file.
 
 ## 4. Pointer and input
 
-- Drags have a non-drag alternative (WCAG 2.2 SC 2.5.7): reorder pages with the move
-  commands (J-PG-06), move annotations with arrows and resize them in the inspector (J-ANN-17), outline moves
-  through the context menu's cut and paste in the outline panel (J-PG-14).
+- Every drag has a single-pointer alternative (WCAG 2.2 SC 2.5.7; arrow keys alone don't
+  count):
+  - reorder pages with the Move left/right buttons (J-PG-06);
+  - move and resize annotations, images and fields with the inspector's position and size
+    fields; polygon vertices and callout leader points with the inspector's point fields
+    (J-ANN-06, J-ANN-09, J-ANN-17);
+  - draw shapes, notes, text boxes and stamps by a single click, which places them at a
+    default size (J-ANN-07);
+  - extend a text selection with Shift-click (J-RD-16);
+  - resize the sidebar and inspector with the View menu's width presets;
+  - move outline entries with cut and paste (J-PG-14).
+  Freehand ink is path-dependent and exempt (SC 2.5.7 "essential").
 - Pinch zoom and trackpad gestures always have menu and key equivalents (J-RD-08).
 - Single-key shortcuts follow shortcuts.md rule 5 (SC 2.1.4).
 

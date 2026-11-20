@@ -19,19 +19,24 @@ and this file is fixed.
    command. The UI keeps only view state: which mode, panel, tab and zoom is shown.
 2. **Enabled state comes from the engine.** Whether a command is available (permissions,
    signed-document rules, read-only file, a running job) is an engine capability query. A
-   disabled control shows why (tooltip / accessibility hint) using the engine's typed
-   reason. The engine still rejects the command if the UI is wrong.
+   disabled control shows why using the engine's typed reason, and stays reachable by
+   keyboard so the reason can be read (web: `aria-disabled="true"` instead of `disabled`, the
+   reason linked with `aria-describedby`; macOS: the reason as the accessibility hint and
+   help tag). The engine still rejects the command if the UI is wrong.
 3. **Untrusted text is plain text.** File names, metadata, annotation text, outline titles,
    link targets and error details from the file are shown as plain text, never markup (web:
    no `dangerouslySetInnerHTML`; macOS: no attributed-string parsing of file text). Control
    and bidi characters (for example U+202E) are shown escaped, using the display string the
-   engine returns, so a hidden `.exe` ending stays visible (J-RD-13, J-RD-18, J-RD-22). Long
-   values are truncated with the full escaped value in the tooltip / accessibility value.
+   engine returns, so a hidden `.exe` ending stays visible (J-RD-13, J-RD-18, J-RD-22).
+   Security-relevant text is never truncated: the external-link dialog wraps and shows the
+   whole URL, and the host is always fully visible. Other long values are truncated in the
+   middle, so the start and the end (including a file extension) stay visible, with the full
+   escaped value in the tooltip / accessibility value.
 4. **One look per platform.** macOS uses system controls, SF Symbols, system colors and
    materials; web uses MUI components with the MUI theme. The structure below is the same;
    the controls follow each platform (see §10).
 5. **Every area has its empty, loading and error states** written down below; no area may
-   show a blank region without text.
+   show a blank region without text, except page placeholders while pages render (§7).
 
 ## 1. Window layout
 
@@ -61,7 +66,7 @@ keeps its own mode, page, zoom, layout, sidebar panel and inspector state (J-RD-
 | Document tabs | One tab per open document; edited marker; close button; error state per tab | J-RD-23, J-RD-24 |
 | Main toolbar | Open, Save, Print; mode switcher; sidebar and inspector toggles; zoom out/in; back/forward; full screen; find | J-RD-01, J-RD-06, J-RD-08, J-RD-19, J-RD-21, J-OS-01 |
 | Mode tool row | The tools of the current mode (§3) | J-ANN-01…J-ANN-15, J-ED-01…J-ED-10, J-PG-01…J-PG-16 |
-| Sidebar | Panels: thumbnails, outline, annotations, attachments, layers, search results (§4) | J-RD-10…J-RD-15, J-ANN-19, J-PG-14 |
+| Sidebar | Panels: thumbnails, outline, annotations, attachments, layers, search results, signatures (§4) | J-RD-10…J-RD-15, J-ANN-19, J-PG-14 |
 | Find bar | Query field, match count, previous/next, case and whole-word toggles, close | J-RD-15, J-RD-31 |
 | Document view | Rendered pages, selection, tool interaction, links | J-RD-06…J-RD-09, J-RD-16…J-RD-20, J-RD-25, J-RD-27, J-RD-28 |
 | Inspector | Properties of the current selection (§5) | J-ANN-16, J-ED-02, J-ED-03, J-PG-12 |
@@ -88,9 +93,11 @@ Shown when no document is open (first launch, last tab closed).
 ## 3. Tool modes
 
 The mode switcher is a segmented control (macOS) / tabs (web) in the main toolbar. Exactly one
-mode is active per tab. Switching mode never changes the document; an unfinished tool action
-(a polyline being drawn, an open text editing box) is committed or cancelled first, as the
-engine command for that tool defines. Read is the default for every newly opened document.
+mode is active per tab. Switching mode by itself never changes the document. An unfinished
+action is settled first, each as one undo step: a polyline or polygon in progress with at
+least 2 points (polygon: 3) is finished, otherwise discarded; text typed in an open text
+editing box or note popup is kept; a drag in progress is cancelled. Read is the default for
+every newly opened document.
 
 | Mode | Purpose | Tool row contents | Inspector shows | Journeys |
 |---|---|---|---|---|
@@ -102,10 +109,12 @@ engine command for that tool defines. Read is the default for every newly opened
 | **Secure** | Passwords, permissions, redaction, signatures | encrypt · change permissions · remove security · mark for redaction · apply redactions · scrub metadata · sign · certify · signatures panel | the selected redaction mark or signature field; certificate details of a selected signature | #9 |
 
 Notes:
-- **Form filling** happens in Read mode (and every other mode): clicking a field fills it.
-  Forms mode is for designing fields. Detailed in #9.
+- **Form filling** works with the Read tools and with the select tool of Annotate and Edit:
+  clicking a field fills it. A drawing tool draws over fields instead. Pages mode shows no
+  page view, so nothing is filled there. Forms mode is for designing fields. Detailed in #9.
 - **Bookmark editing** (add, add child, rename, delete, move) lives in the outline panel and
-  is available in every mode except presentation (J-PG-14).
+  is available in every tool mode; the outline is hidden in full screen and presentation
+  (J-PG-14).
 - **Optimize and export** (compress, export pages as images, Save As) are commands in the File
   menu, not a mode (J-OS-02, J-OS-03, J-OS-05).
 - The **select tool** of Annotate and Edit selects text or an object, whichever the engine's
@@ -143,12 +152,16 @@ default in Read mode and shown by default in the other modes; the user's toggle 
   width, opacity, font) or a short hint, never a blank panel.
 - One object: its properties (§3 table). Changes apply live and are one undo step per
   committed change (J-ANN-16, J-ANN-20).
-- Several objects of different kinds: only the shared properties; mixed values show as mixed.
-- Locked annotations show their properties read-only, with the reason (J-ANN-24).
+- Several objects: the engine returns the shared properties and which of them have mixed
+  values (CONSTITUTION 6); the inspector shows mixed values as mixed.
+- Annotation flags (J-ANN-24): Locked annotations can't be moved, resized or deleted, but their
+  comment can be edited; LockedContents annotations can be moved but their text can't be
+  edited; ReadOnly annotations can't be selected or changed at all. The inspector shows the
+  disabled properties with the reason.
 
 ## 6. Menus and commands
 
-macOS uses the menu bar (HIG: App, File, Edit, View, Go, Tools, Window, Help). Web shows the
+macOS uses the menu bar (HIG: App, File, Edit, Format, View, Go, Tools, Window, Help; Format holds Bold, Italic and Underline, enabled only while editing text). Web shows the
 same groups as MUI menu buttons at the start of the main toolbar. Every menu command also has a
 toolbar, context-menu or keyboard path where the journeys name one ([shortcuts.md](shortcuts.md)).
 
@@ -156,7 +169,8 @@ toolbar, context-menu or keyboard path where the journeys name one ([shortcuts.m
 |---|---|---|
 | File | New (blank, from images, from copied pages), Merge Files, Open, Open Recent, Close, Save, Save As, Export (pages as images), Compress, Print, Document Properties | J-RD-01, J-RD-03, J-RD-21, J-RD-22, J-PG-01, J-PG-09, J-PG-13, J-OS-01…J-OS-05 |
 | Edit | Undo, Redo, Cut, Copy, Paste, Delete, Select All, Find, Find Next/Previous, Preferences (macOS: in the App menu) | J-ANN-17, J-ANN-20, J-RD-15, J-RD-16 |
-| View | Page layout, zoom and fit, rotate view, sidebar and panels, inspector, page tint, magnifier, full screen, presentation | J-RD-07…J-RD-10, J-RD-19, J-RD-20, J-RD-25 |
+| View | Page layout, zoom and fit, rotate view, sidebar and panels, inspector, sidebar and inspector width presets, page tint, magnifier, full screen, presentation | J-RD-07…J-RD-10, J-RD-19, J-RD-20, J-RD-25 |
+| Format (macOS) | Bold, Italic, Underline while editing text (web: the inspector) | J-ANN-05, J-ED-01, J-ED-02 |
 | Go | Next/previous/first/last page, go to page, back, forward | J-RD-06, J-RD-17 |
 | Tools | Switch mode; the current mode's tools | §3 |
 | Window (macOS) / tab bar (web) | Next/previous tab, merge windows, the open documents | J-RD-23 |
@@ -165,7 +179,10 @@ toolbar, context-menu or keyboard path where the journeys name one ([shortcuts.m
 ### Context menus
 
 Right-click (macOS also Control-click; web also the context-menu key and Shift+F10) opens a
-menu built from the engine's hit-test result at that point:
+menu built from the engine's hit-test result at that point. Opened from the keyboard, the menu
+is built for the focused object or the current selection instead. Every context-menu item also
+exists in a menu bar / app menu command or has a key, because macOS has no standard key to open
+a context menu outside VoiceOver.
 
 | Target | Items | Journeys |
 |---|---|---|
@@ -183,10 +200,10 @@ menu built from the engine's hit-test result at that point:
 | State | Where | What the user sees | Journeys |
 |---|---|---|---|
 | Empty (no document) | Window | Start screen (§2) | J-RD-03 |
-| Loading | Document tab | The tab shows the file name at once; the first page appears before the rest; pages not yet rendered show a neutral placeholder of the right size (never a spinner over the whole window); the status bar shows progress and a cancel action; Esc cancels | J-RD-01, J-RD-26 |
+| Loading | Document tab | The tab shows the file name at once; the first page appears before the rest; pages not yet rendered show a neutral placeholder of the right size (never a spinner over the whole window); the status bar shows progress and a Cancel action. Cancel (or Esc before the first page appears) stops the load and closes the tab, as closing it would (J-RD-26) | J-RD-01, J-RD-26 |
 | Job running | Status bar | Long operations (save, compress, merge, export, search) show progress, can be cancelled where the engine allows, and never block other tabs | J-RD-15, J-OS-03, J-OS-06 |
-| Open failed | Document tab | An error view naming the file and the engine's typed error in plain words ("damaged beyond repair", "not a PDF", "too large for the safety limits"), with Close; no stack traces or internal details | J-RD-05 |
-| Engine session failed | Document tab | Same error view for that tab only; other tabs keep working | J-RD-23 |
+| Open failed | Window | A file that can't be opened (from the dialog, a drop, recent files) creates no tab: an error notice names the file and the engine's typed error in plain words, using the journeys' terms ("not a PDF", "file too complex"); no stack traces or internal details; nothing else changes | J-RD-02, J-RD-05 |
+| Document failed after opening | Document tab | An error in an open document (for example "file too complex" at the first render of page 1, or a failed engine session) shows an error view in that tab only, with Close; other tabs keep working | J-RD-05, J-RD-23 |
 | Password needed | Document tab | Password dialog (§8); no page content or thumbnail is visible behind it | J-RD-04, J-RD-30 |
 | Unsupported link / action | Document view, outline | A URI with a disallowed scheme, or a GoToR link, shows an "unsupported link" notice (J-RD-18); a Launch, GoToE or JavaScript action shows an "unsupported action" notice (J-RD-11, J-RD-13); nothing else happens | J-RD-11, J-RD-13, J-RD-18 |
 | Scripts present | Document tab | A one-time notice that the document contains scripts that were not run | J-RD-28 |
@@ -201,22 +218,24 @@ menu built from the engine's hit-test result at that point:
 ## 8. Dialogs
 
 Dialogs are modal to their document (macOS sheets on the window; web MUI `Dialog`), keep
-keyboard focus inside, and default the focused button to the safe choice.
+keyboard focus inside, default the focused button to the safe choice and always have a
+visible Cancel or Close button. Web: dialogs, menus and snackbars render inside the
+full-screen element while full screen is on (MUI `container`), so they stay visible.
 
 | Dialog | Content | Default button | Journeys |
 |---|---|---|---|
-| Password | File name, password field (secure entry), wrong-password message in place without closing, Cancel; the password is never stored, logged or added to recent files; web uses a field with `autocomplete="off"` outside any submitting form, macOS turns off password AutoFill for the field, so no password manager offers to save it | Open | J-RD-04, J-RD-30 |
+| Password | File name, password field (secure entry), wrong-password message in place without closing, Cancel; the password is never stored, logged or added to recent files; paste is allowed (WCAG 2.2 SC 3.3.8). The app does its part against password managers (web: no `<form>`, no username field, `autocomplete="off"`; macOS: AutoFill off for the field) but promises nothing about browser behavior; J-RD-04's storage check is the test | Open | J-RD-04, J-RD-30 |
 | Owner password unlock | Reached from the "unlock with password" action next to a disabled command; explains which permissions are restricted; password field; the unlock lasts for this session only | Unlock | J-RD-29, J-ANN-23 |
-| External link | The engine-normalized URL that will actually open (punycode host, escaped control and bidi characters); for `mailto:` with attachment parameters, a note that they were removed; Open in browser / Cancel. Disallowed schemes never get this dialog, only the notice. Hovering a link shows the same engine display string (or the target page for internal links) as a tooltip | Cancel | J-RD-17, J-RD-18 |
-| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | #9 |
-| File changed on disk | Reload or keep my version | Keep | #9 |
-| Confirm delete | Deleting pages, several annotations from the list, or a bookmark with children; states what is deleted and, for pages, that earlier revisions remain in the file after an incremental save (pages-edit.md "History is honest"). Deleting a single object on the page (Delete key) has no confirmation; undo restores it | Cancel | J-PG-04, J-ANN-17, J-ANN-19, J-PG-14 |
+| External link | The engine-normalized URL that will actually open (punycode host, escaped control and bidi characters); for `mailto:` with attachment parameters, a note that they were removed; Open / Cancel. Disallowed schemes never get this dialog, only the notice. Hovering a link shows the same engine display string (or the target page for internal links) as a tooltip | Cancel | J-RD-17, J-RD-18 |
+| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | no journey yet; #9 writes it (platform conventions) |
+| File changed on disk | Reload or keep my version | Keep | no journey yet; #9 writes it (platform conventions) |
+| Confirm delete | Deleting pages, several annotations from the list, or a bookmark with children; states what is deleted and, for pages, that earlier revisions remain in the file after an incremental save (pages-edit.md "History is honest"). Deleting objects selected on the page (Delete key) has no confirmation; undo restores them (J-ANN-17) | Cancel | J-PG-04, J-ANN-19, J-PG-14 |
 | Other confirmations | Only those the journeys define, with their wording rules: flatten (J-ANN-21, J-ANN-26), deleting a reply that has replies (J-ANN-18), Remove for watermark / header and footer / Bates / background (J-ED-06…J-ED-09), page changes on a signed file (J-PG-15), Save As removing earlier versions of a signed file (J-OS-02), compressing a signed file (J-OS-03), output that will not be encrypted (J-PG-09, J-PG-15), replacing existing files with multi-file output (J-PG-10, J-PG-11) | Cancel | as listed |
 | Save failed | The engine's or platform's typed error; the original file is untouched | OK | J-OS-06 |
-| Print | Content (document only / with annotations), a separate toggle to print comment contents on extra pages, pages, scale, pages per sheet, auto-rotate; then the platform print panel | Print | J-RD-21, J-ANN-25 |
+| Print | Content (document only / document and annotations), a separate toggle to print comment contents on extra pages, pages, scale, pages per sheet, auto-rotate; then the platform print panel | Print | J-RD-21, J-ANN-25 |
 | Document properties | File information, description, security summary (read-only values from the engine) | Close | J-RD-22 |
 | Creators | Custom stamp, signature (draw / type / image), watermark, header and footer, Bates, background, page labels, split, merge, compress, export | the action | J-ANN-14, J-ANN-15, J-ED-06…J-ED-09, J-PG-09…J-PG-12, J-OS-03, J-OS-05 |
-| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, snapping when dragging, choose print content each time, tool key shortcuts on/off | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17 |
+| Preferences | Appearance (Light / Dark / Follow system), default zoom and layout, "Restore open documents at launch", author name, alignment guides when dragging, choose print content each time, single-key shortcuts on/off (all of them: tool keys, G, M, ? and the magnifier's + / -) | — | J-RD-07, J-RD-08, J-RD-20, J-RD-24, J-ANN-17 |
 
 ## 9. Reading modes
 
