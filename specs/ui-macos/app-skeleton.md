@@ -54,8 +54,9 @@ Status: implemented
 5. **`cargo xtask ci macos --out DIR`** (CONTRACT §2), run from the repository root:
    1. deletes `DIR/e2e.json` and `DIR/macos.xcresult` from any earlier run;
    2. checks that `apps/macos/JPDF.xcodeproj` and `xcodebuild` exist;
-   3. `xcodebuild … -scheme JPDF -destination platform=macOS,arch=<host> -resultBundlePath
-      DIR/macos.xcresult test` (Debug), with derived data in `target/xtask-macos/` (not in
+   3. `xcodebuild … -scheme JPDF -destination platform=macOS,arch=<arch> -resultBundlePath
+      DIR/macos.xcresult test` (Debug; `<arch>` is the architecture xtask was built for, so exactly one
+      "My Mac" matches), with derived data in `target/xtask-macos/` (not in
       `DIR`, which CI uploads);
    4. reads the bundle with `xcrun xcresulttool get test-results tests` and maps every
       "Test Case" node to a test ID: a method `test_<id>()` or `test_<id>__<detail>()`
@@ -90,7 +91,8 @@ Not applicable (no document, no editing).
 
 ## Limits
 No user input is processed by the app. xtask reads at most 16 MiB (+1 byte to detect
-overflow) from each output stream of each tool, then stops the tool, and
+overflow) from each output stream of each tool, then closes it (and kills the tool on a
+stdout overflow before waiting for stderr), and
 accepts JSON nested at most 128 deep; IDs must match `e2e.macos.[a-z0-9_]+`, so
 `e2e.json` needs no escaping.
 
@@ -134,7 +136,9 @@ XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
 - `test_app_start_empty__open_is_inert`: clicking `Open…` shows the reason in a popover and
   opens no sheet or dialog; Escape closes it and only the one window exists; Return
   (default button) shows it again and still opens nothing (same checks);
-- `test_app_start_empty__open_command`: File > `Open…` exists and is disabled.
+- `test_app_start_empty__open_command`: File > `Open…` exists and is disabled. Not
+  tested: that no New item remains (a single `Window` scene never offers one, so such a
+  check couldn't fail) and the ⌘O shortcut.
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
 per ID, unmapped and unknown results are errors, passes downgraded, entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing);

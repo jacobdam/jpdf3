@@ -172,9 +172,13 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
         .spawn()
         .map_err(|e| format!("cannot run {program}: {e}"))?;
     if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        // Inputs are small entitlement plists; the pipe is closed when `pipe` drops.
-        pipe.write_all(input)
-            .map_err(|e| format!("{program}: write stdin: {e}"))?;
+        // The input (an entitlements plist, at most MAX_TOOL_OUTPUT) is read whole by plutil
+        // before it writes; the pipe is closed when `pipe` drops.
+        if let Err(e) = pipe.write_all(input) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{program}: write stdin: {e}"));
+        }
     }
     // Read at most MAX_TOOL_OUTPUT + 1 bytes from each pipe (stderr on a thread so neither
     // pipe can fill up and block the tool), so a runaway tool never fills memory.
@@ -201,6 +205,10 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
             .take()
             .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
     );
+    if stdout.len() > MAX_TOOL_OUTPUT {
+        // Stop the tool before waiting for stderr, so a tool that ignores SIGPIPE can't stall.
+        let _ = child.kill();
+    }
     let stderr = err_thread.join().unwrap_or_default();
     if stdout.len() > MAX_TOOL_OUTPUT || stderr.len() > MAX_TOOL_OUTPUT {
         let _ = child.kill();
@@ -285,7 +293,7 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     errors.into_iter().next().map_or(Ok(()), Err)
 }
 
-/// This Mac, by architecture, so `-destination` matches exactly one entry (not also the
+/// The architecture xtask was built for (the host's, with the usual toolchain), so `-destination` matches exactly one entry (not also the
 /// Rosetta "My Mac").
 fn destination() -> &'static str {
     if cfg!(target_arch = "x86_64") {
