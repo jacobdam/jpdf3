@@ -358,7 +358,7 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 ```
 │ [Encrypt][Change permissions][Remove security] | [Mark for redaction]                │
-│ [Apply redactions] [Scrub metadata] | [Sign][Certify] | [Signatures panel]           │
+│ [Find and mark] [Apply redactions] [Scrub metadata] | [Sign][Certify] | [Signatures] │
 ├──────────────┬───────────────────────────────────────────────────┬───────────────────┤
 │ Signatures   │     ┌──────────────────────────┐                  │ Redaction mark    │
 │ No signatures│     │ ████████ (marked)        │                  │ Page 2            │
@@ -367,9 +367,15 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 │              │     └──────────────────────────┘                  │                   │
 ```
 
-- Marked areas are drawn with a 2 px `error.main` outline and a diagonal hatch (not color
-  alone) until applied; Apply redactions opens a confirmation (W-23 layout) whose wording
-  comes from the redaction journeys.
+- Marks (J-SC-06) are drawn with an outline in the mark color plus a diagonal hatch (not
+  color alone) until applied; the status bar shows J-SC-06's "4 marks; content is not removed
+  until you apply redactions" while marks exist. Find and mark opens the find bar with a
+  "Mark all results" button.
+- Apply redactions opens a `Dialog` (`sm`) with J-SC-07's content: that the marked content is
+  removed permanently when the file is saved, that the file will be rewritten without earlier
+  versions, and the engine's list of other places that still contain the marked text (for
+  example "Bookmarks: 1"), each row with a "Remove these too" check box, off by default;
+  `[Cancel]` (default) and `[Apply]`.
 - The drawing shows the Signatures panel (the sidebar keeps the tab's current panel, IA §4);
   its empty state is "No signatures".
 

@@ -308,13 +308,16 @@ built-in set (no scripts; CONSTITUTION 7).
 
 ```
 │ [Encrypt…][Permissions…][Remove Security…] | [Mark for Redaction][Apply Redactions]      │
-│       [Scrub Metadata…] | [Sign…][Certify…] | [Signatures]     (one row; tail into [⋯])   │
+│       [Find and Mark] [Scrub Metadata…] | [Sign…][Certify…] | [Signatures]  (one row)    │
 ```
 
-Redaction marks: a 2 pt `systemRed` outline with a diagonal hatch until applied. Apply
-Redactions shows a confirmation alert (W-23) whose wording comes from the redaction journeys
-(pending in #9's PR). The Signatures
-panel's empty state is "No signatures".
+Redaction marks (J-SC-06): an outline in the mark color plus a diagonal hatch until applied;
+the status bar shows "4 marks; content is not removed until you apply redactions" while marks
+exist; Find and Mark opens the find bar with a "Mark all results" button. Apply Redactions
+opens a sheet with J-SC-07's content (removed permanently on save, rewritten without earlier
+versions, the engine's list of other places still holding the text, each with a "Remove these
+too" checkbox, off by default) and `[Cancel]` (default) / `[Apply]`. The Signatures panel's
+empty state is "No signatures".
 
 ### W-11 Find bar and Search results (IA §1, §4; J-RD-15, J-RD-31)
 
