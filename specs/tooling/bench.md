@@ -27,9 +27,11 @@ Status: implemented
    - `--pdfium`: default `pdfium_test` from `PATH` if it starts (run once with no arguments;
      any exit counts as present); `none` disables it.
    - Engine probes (`mutool -v`, bare `pdfium_test`) run under a 5 s limit with the same
-     process-group kill as item 7. stdout goes to the null device and stderr to
-     `probe-<engine>.txt` in the work dir; at most 4 KiB is read back. `version` is kept only
-     if its first line starts with `mutool version`; otherwise it is `null`.
+     process-group kill as item 7. stdout goes to the null device. mutool's stderr goes to a
+     pipe that is read up to 4 KiB and then closed, so a flooding program gets EPIPE and costs
+     no memory or disk; pdfium's stderr goes to the null device. `version` (first line, ≤ 200
+     chars) is kept only if it starts with `mutool version`; otherwise it is `null`. Probes
+     run before anything is written, so a bad explicit path exits 2 with no files created.
    - An explicit `--mutool`/`--pdfium` path that cannot be started is a usage error; the
      default lookup that finds nothing just leaves the engine out.
    - `--work DIR`: scratch directory for the generated sample and the engines' output files;
@@ -72,7 +74,8 @@ Status: implemented
    counts; any other status just removes that file from the ratio.
 7. **Time limits** per run, from CONTRACT §1: info 20 s, render 30 s, text 60 s. Each child
    runs in its own process group (`process_group(0)`). At the limit, the whole group gets
-   SIGKILL (`kill -s KILL -- -PGID`) and the child is reaped, so a wrapper script's children
+   SIGKILL (`kill -s KILL -- -PGID`, the `/bin/sh` builtin, so no `kill` binary is needed)
+   and the child is reaped, so a wrapper script's children
    can't outlive it and skew later runs. Children that leave the group on purpose are out
    of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
@@ -109,7 +112,8 @@ Status: implemented
 11. **`cargo xtask bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W]`** builds
     `jpdf-cli` and `jpdf-bench` with `$CARGO build --release --locked` (the judge's build) and
     runs the bench with `--cli <target>/release/jpdf-cli --out DIR/bench.json` (`<target>` =
-    `$CARGO_TARGET_DIR` or `target`; default
+    `$CARGO_TARGET_DIR` or `target`; `CARGO_BUILD_TARGET_DIR`/`CARGO_BUILD_TARGET` are not
+    supported, matching the judge's plain build; default
     `DIR` = `target/xtask-out`). It forwards the other flags. Exit: the bench's exit code.
     `cargo xtask nightly` (#19) will call it and keep the trend; the 5% regression check of
     PLAN §5 compares two reports with the same machine id and lands with #19.
@@ -139,7 +143,7 @@ judge fetches it, in CI. `--corpus` is only ever given those tier directories.
 Corpus PDFs are hostile, but the bench never parses them: it only passes paths to external
 programs, with arguments as an argv list (no shell). Report strings are JSON-escaped (file
 names can hold any character). The bench runs only `--cli`, `mutool`, `pdfium_test`, `git`
-(for `revision`) and `sysctl` on macOS.
+(for `revision`), `/bin/sh` (group kill) and `sysctl` on macOS.
 
 ## Accessibility
 Not applicable (CLI tool).
@@ -161,6 +165,9 @@ child every 0.2 ms.
 - ratio direction and unit: fake jpdf (~200 ms) against fake mutool (~50 ms) must give a
   ratio > 1.5 and per-file `ms` ≥ 150 (a µs value would be ~200 000). A probe whose output
   isn't a mutool version line records `version: null`;
+- probes: usage text with an absolute path gives `version: null` and no path in the report;
+  a stderr flood (`yes`) gives the capped version line; a hanging probe is killed at 5 s and
+  the engine still counts as present (both within 15 s);
 - a fake `pdfium_test` must receive `<work>/pdfium-input.pdf` and is absent from `info`;
 - a work dir equal to or inside the corpus → exit 2 with nothing created there; a dangling
   `*.pdf` symlink is skipped;

@@ -1,7 +1,6 @@
 //! Runs the bench and renders the report (spec items 2, 3, 8, 9).
 
 use std::ffi::OsString;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -86,6 +85,9 @@ pub fn run(opts: &Options) -> Result<Report, BenchError> {
             "the work dir must not be inside the corpus dir".to_string(),
         ));
     }
+    // Before anything is written: a bad explicit engine path is a usage error.
+    let mutool = detect(Kind::Mutool, &opts.mutool)?;
+    let pdfium = detect(Kind::Pdfium, &opts.pdfium)?;
     std::fs::create_dir_all(&work)
         .map_err(|e| BenchError::Io(format!("cannot create {}: {e}", work.display())))?;
     let mut engines = vec![Engine {
@@ -93,9 +95,9 @@ pub fn run(opts: &Options) -> Result<Report, BenchError> {
         bin: cli,
         version: None,
     }];
-    // Before the sample is written: a bad explicit engine path stops the run early.
-    engines.extend(detect(Kind::Mutool, &opts.mutool, &work)?);
-    engines.extend(detect(Kind::Pdfium, &opts.pdfium, &work)?);
+    engines.extend(mutool);
+    engines.extend(pdfium);
+
     let inputs = match &corpus {
         Some(dir) => corpus_inputs(dir, opts.sample)?,
         None => generated_inputs(&work)?,
@@ -228,11 +230,11 @@ const PROBE_LIMIT: Duration = Duration::from_secs(5);
 const PROBE_OUTPUT_CAP: u64 = 4096;
 
 /// Finds a reference engine with one probe run (`mutool -v`, bare `pdfium_test`) under
-/// [`PROBE_LIMIT`] and the usual group kill. Its stdout goes to the null device and its stderr
-/// to a file in `work`, of which at most [`PROBE_OUTPUT_CAP`] bytes are read back, so neither
-/// a hang nor endless output can stall the bench. `Auto` that can't be started → absent; an
+/// [`PROBE_LIMIT`] and the usual group kill. Its stdout goes to the null device; at most
+/// [`PROBE_OUTPUT_CAP`] bytes of mutool's stderr are read from a pipe, so neither a hang nor
+/// endless output can stall the bench or fill memory or disk. `Auto` that can't be started → absent; an
 /// explicit path that can't be started → usage error. Any exit or a timeout means present.
-fn detect(kind: Kind, choice: &Choice, work: &Path) -> Result<Option<Engine>, BenchError> {
+fn detect(kind: Kind, choice: &Choice) -> Result<Option<Engine>, BenchError> {
     let (bin, explicit) = match choice {
         Choice::Off => return Ok(None),
         Choice::Auto => (
@@ -250,10 +252,12 @@ fn detect(kind: Kind, choice: &Choice, work: &Path) -> Result<Option<Engine>, Be
     } else {
         Vec::new()
     };
-    let log = work.join(format!("probe-{}.txt", kind.id()));
-    let file = std::fs::File::create(&log)
-        .map_err(|e| BenchError::Io(format!("cannot write {}: {e}", log.display())))?;
-    let Some((status, _)) = engine::probe(&bin, &args, PROBE_LIMIT, Stdio::from(file)) else {
+    let cap = if kind == Kind::Mutool {
+        PROBE_OUTPUT_CAP
+    } else {
+        0
+    };
+    let Some((status, _, stderr)) = engine::probe(&bin, &args, PROBE_LIMIT, cap) else {
         return if explicit {
             Err(BenchError::Usage(format!(
                 "--{} {}: cannot run",
@@ -267,21 +271,10 @@ fn detect(kind: Kind, choice: &Choice, work: &Path) -> Result<Option<Engine>, Be
     // Only a line that really is mutool's version is kept, so a wrong program can't put its
     // usage text (often with absolute paths) into the report.
     let version = (kind == Kind::Mutool && status != Status::Timeout)
-        .then(|| read_capped(&log))
+        .then(|| first_line(&stderr))
         .flatten()
-        .and_then(|b| first_line(&b))
         .filter(|l| l.starts_with("mutool version"));
     Ok(Some(Engine { kind, bin, version }))
-}
-
-fn read_capped(path: &Path) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(PROBE_OUTPUT_CAP)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    Some(bytes)
 }
 
 fn first_line(bytes: &[u8]) -> Option<String> {
@@ -489,6 +482,9 @@ pub fn write(out: &Path, report: &Report) -> Result<(), BenchError> {
     let mut tmp = out.as_os_str().to_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, to_json(report)).map_err(io)?;
-    std::fs::rename(&tmp, out).map_err(io)
+    let result = std::fs::write(&tmp, to_json(report)).and_then(|()| std::fs::rename(&tmp, out));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result.map_err(io)
 }

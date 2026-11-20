@@ -553,3 +553,68 @@ fn work_dir_inside_corpus_is_refused_and_bad_entries_are_skipped() {
         r#"["a.pdf"]"#
     );
 }
+
+#[test]
+fn probes_are_bounded_and_versions_filtered() {
+    let d = temp_dir!();
+    let cli = script!(&d, "cli", STUB_CLI);
+    let run = |mutool: &Path| {
+        let out = d.join("r.json");
+        let started = std::time::Instant::now();
+        let o = bench!(&[
+            &os("--cli"),
+            &os(&cli),
+            &os("--out"),
+            &os(&out),
+            &os("--mutool"),
+            &os(mutool),
+            &os("--pdfium"),
+            &os("none"),
+            &os("--runs"),
+            &os("1"),
+            &os("--warmup"),
+            &os("0"),
+        ]);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        (std::fs::read_to_string(&out).unwrap(), started.elapsed())
+    };
+    // Usage text with an absolute path is not a version line and must not leak.
+    let usage = script!(
+        &d,
+        "usage-mutool",
+        &format!("echo 'usage: {}/mutool <command>' >&2; exit 1", d.display())
+    );
+    let (text, _) = run(&usage);
+    assert_eq!(
+        py!(&text, "r['engines']['mutool']"),
+        r#"{"present": true, "version": null}"#
+    );
+    assert!(
+        !text.contains(d.to_str().unwrap()),
+        "report leaks a local path"
+    );
+    // A probe that floods stderr: version is capped to one 200-char line; no file grows.
+    let flood = script!(
+        &d,
+        "flood-mutool",
+        r#"[ "$1" = "-v" ] && exec yes "mutool version 1.0" >&2; exit 0"#
+    );
+    let (text, took) = run(&flood);
+    assert_eq!(
+        py!(&text, "r['engines']['mutool']['version']"),
+        r#""mutool version 1.0""#
+    );
+    assert!(took < Duration::from_secs(15), "{took:?}");
+    // A probe that hangs is killed at the 5 s probe limit; the engine counts as present.
+    let hang = script!(
+        &d,
+        "hang-mutool",
+        r#"[ "$1" = "-v" ] && exec sleep 30; exit 0"#
+    );
+    let (text, took) = run(&hang);
+    assert_eq!(
+        py!(&text, "r['engines']['mutool']"),
+        r#"{"present": true, "version": null}"#
+    );
+    assert!(took < Duration::from_secs(15), "{took:?}");
+}
