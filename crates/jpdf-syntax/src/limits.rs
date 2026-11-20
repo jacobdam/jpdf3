@@ -9,6 +9,9 @@ pub struct Limits {
     /// Objects (scalars and containers) produced while parsing one top-level object;
     /// bounds memory for huge arrays/dictionaries.
     pub max_objects_per_parse: usize,
+    /// Objects produced across all parses of one document (time bound: cheap-to-write objects
+    /// such as `[]` are expensive to build).
+    pub max_objects_per_document: usize,
     /// Decoded string and name bytes produced while parsing one top-level object (memory bound).
     pub max_string_bytes_per_parse: usize,
     /// Total cross-reference entries across all sections.
@@ -39,6 +42,7 @@ impl Default for Limits {
             max_file_size: 512 * 1024 * 1024,
             max_nesting_depth: 256,
             max_objects_per_parse: 2_000_000,
+            max_objects_per_document: 20_000_000,
             max_string_bytes_per_parse: 64 * 1024 * 1024,
             max_xref_entries: 10_000_000,
             max_xref_sections: 1024,

@@ -52,9 +52,15 @@ pub(crate) enum Token<'a> {
 /// object hidden inside another's string, a trailer whose `/Prev` points into its own string);
 /// without one budget per document, resolving them rescans the same bytes quadratically.
 #[derive(Debug)]
+///
+/// It also counts objects produced across all parses of the document: non-overlapping objects
+/// can still be cheap to write and expensive to build (`[]` is 2 bytes), so time is bounded by
+/// objects as well as bytes.
 pub(crate) struct LexBudget {
     used: Cell<usize>,
     max: usize,
+    objects: Cell<usize>,
+    max_objects: usize,
 }
 
 impl LexBudget {
@@ -62,7 +68,18 @@ impl LexBudget {
         Self {
             used: Cell::new(0),
             max: limits.lex_budget(data_len),
+            objects: Cell::new(0),
+            max_objects: limits.max_objects_per_document,
         }
+    }
+
+    fn charge_object(&self) -> Result<(), SyntaxError> {
+        let n = self.objects.get().saturating_add(1);
+        self.objects.set(n);
+        if n > self.max_objects {
+            return Err(SyntaxError::LimitExceeded("objects per document"));
+        }
+        Ok(())
     }
 
     fn charge_one(&self) {
@@ -445,7 +462,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         if self.produced > self.limits.max_objects_per_parse {
             return Err(SyntaxError::LimitExceeded("objects in one parse"));
         }
-        Ok(())
+        self.lexer.budget.charge_object()
     }
 
     fn next_in_container(&mut self, what: &'static str) -> Result<(Token<'a>, usize), SyntaxError> {
@@ -621,6 +638,22 @@ mod tests {
         let budget = LexBudget::new(7, &limits);
         let r = Parser::new(b"[1 2 3]", 0, &limits, &budget).parse_object();
         assert_eq!(r, Err(SyntaxError::LimitExceeded("objects in one parse")));
+    }
+
+    #[test]
+    fn objects_per_document_are_bounded_across_parses() {
+        let limits = Limits {
+            max_objects_per_document: 5,
+            ..Limits::default()
+        };
+        let budget = LexBudget::new(16, &limits);
+        assert!(
+            Parser::new(b"[1 2]", 0, &limits, &budget)
+                .parse_object()
+                .is_ok()
+        );
+        let r = Parser::new(b"[1 2]", 0, &limits, &budget).parse_object();
+        assert_eq!(r, Err(SyntaxError::LimitExceeded("objects per document")));
     }
 
     #[test]

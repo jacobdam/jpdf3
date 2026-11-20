@@ -71,6 +71,8 @@ from the judge).
 - `max_nesting_depth` 256 for arrays/dictionaries (stack-overflow guard);
 - `max_objects_per_parse` 2 000 000 objects produced while parsing one indirect object
   (memory bound for huge arrays/dictionaries);
+- `max_objects_per_document` 20 000 000 objects across all parses (time bound: `[]` is 2 bytes
+  but costs an allocation; 1 M pages × ~20 objects fits);
 - `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
   bound; the reference look-ahead never decodes strings).
 - `max_xref_entries` 10 000 000 across all sections;
