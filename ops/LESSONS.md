@@ -10,6 +10,11 @@ instead of adding near-duplicates.
   tool → always pass `-keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256` (bootstrap).
 - pyHanko `SimpleSigner.load_pkcs12(file, passphrase=...)`: the 2nd positional argument is the
   CA chain, not the password (bootstrap).
+- macOS: no `timeout` binary (exit 127), system `python3` lacks `tomllib` → use
+  `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`, so put
+  files for containers there, not in `/tmp` ([journal](journal/2026-11-20.md)).
+- Judge-like memory checks: macOS RSS ≠ address space → run the Linux build in docker
+  (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
   (> 60 s) → reference tools must be called with timeouts (bootstrap).
 
@@ -19,6 +24,15 @@ instead of adding near-duplicates.
 - A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
   fails unless every upstream job succeeded (bootstrap).
 
+## Engine & security
+- Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
+  sections make references re-parse the same bytes (quadratic time); several capped objects
+  alive at once exceed 2 GiB → from the start, use a per-document lexing budget charged per
+  byte, a per-document object budget, overlap rejection by byte span, one parsed object alive
+  at a time, and compact xref entries ([journal](journal/2026-11-20.md), PR #24).
+- Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
+  comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
+
 ## Process
 - The guard blocks a Bash call whose text contains a GitHub CLI write it can't parse, even inside a
   heredoc or a chained command → write files with Write/Edit and run each CLI write as its own
@@ -26,6 +40,10 @@ instead of adding near-duplicates.
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).
+- Re-review after a push: `gh pr diff` can return the previous diff for a while → give the
+  reviewer `git diff origin/main...HEAD` instead ([journal](journal/2026-11-20.md)).
+- The guard blocks force pushes → once a branch is pushed, bring in main with `git merge
+  origin/main`, never rebase ([journal](journal/2026-11-20.md)).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).

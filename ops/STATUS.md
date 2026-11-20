@@ -4,21 +4,25 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- Nothing.
+- PR #24 (#4 jpdf-cli stub): reviewed (6 rounds, no blockers left), auto-merge on. If it is
+  not merged at session start, check its CI first (TICK rule c).
 
 ## Last session
-- M0 bootstrap step 2 done: M0 backlog written as issues #4–#22 (milestone M0).
-  `ready` (deps met): #4 cli stub, #5 spec check + TRACE, #6–#8 journeys, #10 UI IA,
-  #12 web + Playwright, #13 macOS + XCUITest, #14 jpdf-traits, #17 fuzz, #18 bench,
-  #20 Arlington, #22 corpus tiers.
-  Waiting on deps: #9 (←#6–#8), #11 (←#10), #15 (←#12), #16 (←#14), #19 (←#17,#18,#22),
-  #21 pilot fire drill (←#4,#12,#13,#19).
-- Removed the merged leftover worktree `t/2-bootstrap-labels`.
-- #2 (enable GitHub Pages) is resolved and closed; the `pages` job is green on main.
+- #4 jpdf-cli stub:
+  - All CONTRACT §1 commands are parsed; `info` counts pages for files with a classic xref and
+    a flat page tree.
+  - Limits are hardened against hostile files and verified under a 2 GiB RLIMIT_AS on Linux.
+  - 300 system PDFs: 255 open (all match `pdfinfo`), 45 exit 3 (44 nested page trees, 1 xref
+    stream), 0 crashes.
+  - Judge on an earlier commit: 0 crashes, open_rate 0.59.
+- Filed #25 (nightly harness for the attack files, M0) and #26 (lexer cost per name and
+  object budget, M1).
 
 ## Next step
-- Work `ready` M0 issues lowest number first: #4 jpdf-cli stub. When an issue merges, add
-  `ready` to issues whose dependencies are now all closed.
+- Once #24 merges: check that #4 closed (the PR body says "Closes #4"). Add `ready` to issues
+  whose dependencies are now all closed: #21 still waits on #12, #13 and #19.
+- Then the lowest `ready` M0 issue: #5 (spec checklist check in xtask + TRACE.md).
+- A cheap open-rate win for later: nested page trees (44/45 of the local failures).
 
 ## Blockers / owner-todo
 - Owner: import ops/rulesets/main.json; grant Screen Recording + Accessibility to Terminal
