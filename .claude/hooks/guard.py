@@ -158,7 +158,7 @@ def check_bash(cmd, cwd):
         raise Block("admin merges are not allowed")
     if re.search(r"\bgh\s+repo\s+(create|delete|fork|edit|rename|archive)\b", c):
         raise Block("repository management is not allowed")
-    for m in re.finditer(r"(?:-R|--repo)[=\s]+(\S+)", c):
+    for m in re.finditer(r"\bgh\s[^;&|]*?(?:\s-R|--repo)[=\s]+(\S+)", c):
         if m.group(1).strip("'\"") != REPO:
             raise Block("only %s may be targeted (CONSTITUTION 2)" % REPO)
     for m in re.finditer(r"\bgh\s+api\b([^;&|]*)", c):
@@ -378,6 +378,8 @@ def selftest():
         ("Bash", {"command": "gh pr merge 5 --auto --squash"}, False),
         ("Bash", {"command": "gh auth token"}, True),
         ("Bash", {"command": "gh issue create -R someone/else -t hi -b x"}, True),
+        ("Bash", {"command": "cp -R /tmp/a /tmp/b"}, False),
+        ("Bash", {"command": "ls -R /tmp && gh pr list -R other/repo"}, True),
         ("Bash", {"command": "gh issue create -R jacobdam/jpdf3 -t hi -b x"}, True),
         ("Bash", {"command": "gh issue create -R jacobdam/jpdf3 -t hi -b '%s x'" % TAG}, False),
         ("Bash", {"command": "gh api -X PUT repos/jacobdam/jpdf3/rulesets/1 -f x=y"}, True),

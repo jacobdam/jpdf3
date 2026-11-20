@@ -49,7 +49,8 @@ sync_main() {
   fi
   git fetch -q origin && git checkout -q main && git pull -q --ff-only origin main
   git worktree prune
-  find "$REPO_DIR/.claude/worktrees" -maxdepth 1 -mindepth 1 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null
+  mkdir -p "$REPO_DIR/.claude/worktrees"
+  find "$REPO_DIR/.claude/worktrees" -maxdepth 1 -mindepth 1 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null || true
 }
 
 slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)
@@ -62,7 +63,10 @@ run_session() {
   local ts out start rc sid
   ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; start=$(date +%s)
   log "session $ts starting"
-  JPDF_SESSION=1 claude -p "$(cat ops/TICK.md)" \
+  # Agent sessions get only the project MCP config (an isolated headless Chrome), never the
+  # owner's claude.ai connectors (mail, drive, calendar) or the owner's own browser.
+  JPDF_SESSION=1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude -p "$(cat ops/TICK.md)" \
+      --strict-mcp-config --mcp-config ops/driver/mcp.json \
       --permission-mode auto --output-format stream-json --verbose > "$out" 2>&1 &
   local pid=$!
   ( sleep "$SESSION_MAX"; kill -TERM "$pid" 2>/dev/null ) & local watchdog=$!
