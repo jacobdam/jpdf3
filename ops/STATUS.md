@@ -4,24 +4,26 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #46 (#42, journeys 5/5: signatures and platform conventions,
-  specs/journeys/signatures-platform.md, J-SG-01…11, J-PC-01…07): reviewed; auto-merge on,
-  waiting for judge-verdict.
+- PR #49 (#12, web app skeleton + Playwright harness in `cargo xtask ci linux`,
+  specs/ui-web/app-skeleton.md, ADR 0002): CI went red after the last push of the previous
+  session. Fixed (CI attempt 1 of 3), re-reviewed, auto-merge on, waiting for judge-verdict.
+  After merge, Pages should show the W-02 start screen.
 
 ## Last session
-- Wrote the last journeys batch. The journeys backlog (#6–#9, #42) is complete: every
-  RESEARCH.md row now names a journey, Phase 2 or out. Filled TRACE F-SC-2…F-SC-4 and R12, and
-  the IA rows (Signatures panel, the Secure row, new dialogs, menus, preferences). W-21/W-22 now
-  point to J-PC-01/J-PC-02.
-- Filed discovery issues #47 (web CSP and macOS ATS for TSA/OCSP/CRL requests, needed before
-  M9) and #48 (trust anchors beyond the user's own list). Added the new dialogs to #45's
-  wireframe scope.
-- Removed two stale worktrees from merged PRs (#43, #44).
+- Fixed PR #49's red check. A Playwright color assertion depended on timing: the disabled
+  `Open file` button darkened on hover, a real UX bug. The button is now flat and keeps its
+  look and its two-tone focus ring on hover, and tests wait for transitions to finish.
+- Before that: built `apps/web` (Vite 7, React 19, MUI 9, strict CSP, Trusted Types) and the
+  harness. License gap (CONSTITUTION 10 has no build-only exemption) is disclosed in ADR 0002,
+  ops/proposals/test-only-licenses.md and owner-todo #50.
 
 ## Next step
-- #12 (web skeleton + Playwright) / #13 (macOS skeleton + XCUITest), which implement the W-05
-  layout. Then #14, #17, #18, #20 and #22 (all `ready`). #45 (wireframes) is low priority.
-- #21 still waits on #12, #13 and #19.
+- #13 (macOS skeleton + XCUITest, the W-05 layout). Then #14, #17, #18, #20, #22 (`ready`).
+  #15 (metrics dashboard) can now put its pages under `site/metrics/`.
+- When the owner rules on #50: add axe-core to the harness (accessibility.md §5) or keep the
+  hand-written checks.
+- #21 still waits on #13 and #19. #45 (wireframes) is low priority.
 
 ## Blockers / owner-todo
-- Owner: the rule fire-drill steps in #21 (pilot fire drill) still need the owner.
+- #50: license ruling for test/build-only tools.
+- #21: the owner's rule fire-drill steps.

@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod specs;
+mod web;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,9 +25,20 @@ fn main() -> ExitCode {
         args.get(1).map(String::as_str),
     ) {
         (Some("ci"), Some("linux")) => {
-            let e2e = write_e2e(&out);
+            // Run every check even if an earlier one failed, so one run shows all problems.
+            // Like check-specs, the web build uses the current directory as the repo root.
+            let web = match web::ci(Path::new("."), &out) {
+                Ok(()) => {
+                    eprintln!("xtask: web: ok");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: web: {e}");
+                    ExitCode::from(1)
+                }
+            };
             let specs = check_specs(Path::new("."));
-            if e2e == ExitCode::SUCCESS { specs } else { e2e }
+            if web == ExitCode::SUCCESS { specs } else { web }
         }
         (Some("ci"), Some("macos")) => write_e2e(&out),
         (Some("nightly"), _) => ExitCode::SUCCESS,
@@ -63,7 +75,7 @@ fn check_specs(root: &Path) -> ExitCode {
     ExitCode::from(1)
 }
 
-/// Bootstrap stub: no E2E suites exist yet, so report an empty result set.
+/// Bootstrap stub for `ci macos` (#13): no macOS E2E suite exists yet, so report an empty result set.
 fn write_e2e(out: &PathBuf) -> ExitCode {
     if fs::create_dir_all(out).is_err()
         || fs::write(out.join("e2e.json"), "{\"results\": {}}\n").is_err()

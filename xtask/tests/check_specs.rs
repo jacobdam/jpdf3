@@ -68,7 +68,19 @@ fn ci_linux_runs_the_check_after_writing_e2e() {
     };
     assert_eq!(o.status.code(), Some(1));
     assert!(dir.join("e2e.json").is_file());
+    // The fixture has no apps/web: the web step fails, reports no results, and the spec
+    // check still runs.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("e2e.json"))
+            .ok()
+            .as_deref(),
+        Some("{\"results\": {}}\n")
+    );
     let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("xtask: web: ./apps/web/package.json not found"),
+        "{err}"
+    );
     assert!(err.ends_with("check-specs: 14 problem(s)\n"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
