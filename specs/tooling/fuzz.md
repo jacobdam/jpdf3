@@ -104,4 +104,4 @@ without seeds (≈ 1150 with seeds).
   `fuzz/Cargo.toml` has seeds, seed writing keeps fuzzer-found files.
 - `xtask/tests/check_specs.rs`: `fuzz` usage errors exit 2; `ci linux` in a tree without
   `fuzz/` ends with the fuzz error line and exits 1.
-- `cargo +nightly fuzz list` lists the three targets; `cargo xtask fuzz --short` runs them.
+- `cargo fuzz list` (as the judge runs it) lists the three targets; `cargo xtask fuzz --short` runs them.

@@ -107,18 +107,22 @@ pub fn ci(root: &Path) -> Result<(), String> {
         .current_dir(root)
         .status()
         .map_err(|e| format!("cannot run cargo fmt: {e}"))?;
-    if !fmt.success() {
-        return Err(
-            "fuzz/ is not formatted (run `cargo fmt --manifest-path fuzz/Cargo.toml`)".into(),
-        );
-    }
-    run(
+    // Run the fuzz pass even when formatting fails, so one run shows both problems.
+    let fuzzed = run(
         root,
         &Options {
             seconds: SHORT_SECONDS,
             target: None,
         },
-    )
+    );
+    let fmt_problem = (!fmt.success())
+        .then_some("fuzz/ is not formatted (run `cargo fmt --manifest-path fuzz/Cargo.toml`)");
+    match (fuzzed, fmt_problem) {
+        (Ok(()), None) => Ok(()),
+        (Ok(()), Some(f)) => Err(f.to_owned()),
+        (Err(e), None) => Err(e),
+        (Err(e), Some(f)) => Err(format!("{e}; {f}")),
+    }
 }
 
 fn tools_present(root: &Path) -> bool {

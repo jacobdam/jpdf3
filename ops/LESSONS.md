@@ -80,6 +80,10 @@ instead of adding near-duplicates.
   failed with count 1), read static text from `value` when `label` is empty; check
   entitlements on Release only (Debug test builds inject read access to `/`)
   ([journal](journal/2026-11-20.md), PR #51).
+- Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
+  edges from an empty corpus), so give each target a structure template like
+  `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
+  ([journal](journal/2026-11-21.md), PR #58).
 
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref

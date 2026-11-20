@@ -142,7 +142,9 @@ pub fn from_fuzz_chunks(data: &[u8]) -> Vec<u8> {
     classic_pdf(&objects, trailer_extra)
 }
 
-/// Inverse of [`from_fuzz_chunks`], for writing seeds.
+/// Inverse of [`from_fuzz_chunks`], for writing seeds. Exact except for a chunk that starts
+/// with 0x00: after the separator it reads as `FF 00` (a literal 0xFF in the previous chunk),
+/// so the template cannot produce a body starting with NUL. Seeds never need one.
 pub fn to_fuzz_chunks(trailer_extra: &[u8], objects: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();
     escape_into(&mut out, trailer_extra);
