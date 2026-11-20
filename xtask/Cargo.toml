@@ -11,3 +11,4 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+jpdf-testgen = { path = "../tools/jpdf-testgen" }

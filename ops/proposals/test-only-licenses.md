@@ -18,6 +18,9 @@ which no package-level check sees:
   `minimatch` (BlueOak-1.0.0) in `lib/transform/*.js.LICENSE`, `lib/utilsBundle.js.LICENSE`;
 - `vite`: `string-hash` (CC0-1.0) in `LICENSE.md`;
 - `rollup`: `tslib` (0BSD) in `LICENSE.md`.
+- `libfuzzer-sys` (Rust; every cargo-fuzz target links it, and ops/judge/CONTRACT.md §3
+  requires cargo-fuzz) is `(MIT OR Apache-2.0) AND NCSA`: it bundles LLVM's libFuzzer under
+  the University of Illinois/NCSA license. It lives only in `fuzz/Cargo.lock` (ADR 0005).
 All are permissive or public-domain-like; none reaches the shipped bundle. Strictly read, rule
 10 forbids them today, and there is no Playwright without them.
 
@@ -26,7 +29,7 @@ All are permissive or public-domain-like; none reaches the shipped bundle. Stric
  10. **Licenses:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0; OFL-1.1 for fonts only.
      The project is MIT.
 +    For test and build tools whose code never ends up in a shipped artifact (web bundle,
-+    macOS app, crates), MPL-2.0, BlueOak-1.0.0, CC-BY-4.0 (data only), CC0-1.0 and 0BSD are
++    macOS app, crates), MPL-2.0, BlueOak-1.0.0, CC-BY-4.0 (data only), CC0-1.0, 0BSD and NCSA are
 +    also allowed; `apps/web` checks its production dependency tree against the strict list
 +    and the full tree against the strict list plus these.
 ```
