@@ -271,7 +271,7 @@ of the three on page 2 → each is a Stamp annotation with `/IT /StampImage`, ce
 click at the engine's default signature width with its aspect ratio kept (the test computes the
 expected `/Rect`), and can be moved and resized → the document has no `/Sig` field or signature
 dictionary (a visual signature is not a digital signature; the UI says so and points to Sign,
-#9) → save and verify (three Stamp annotations; the image one has an image XObject with an
+#42) → save and verify (three Stamp annotations; the image one has an image XObject with an
 `/SMask`).
 
 ## J-ANN-16: Edit annotation properties
@@ -426,7 +426,7 @@ file keeps its encryption and permissions; the new annotation is encrypted with 
 key (the saved file needs the same passwords); the new trailer carries the same `/Encrypt` and
 the first `/ID` element unchanged (M5 minimal incremental save covers writing into an
 already-encrypted file; creating or changing encryption is M6).
-Signed and certified documents (DocMDP) are covered with the signature journeys (#9).
+Signed and certified documents (DocMDP) are covered with the signature journeys (#42).
 
 ## J-ANN-24: Keep annotations made by other tools intact
 - milestone: M5

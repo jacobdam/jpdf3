@@ -3,7 +3,7 @@
 Areas `PG` (pages), `ED` (edit content) and `OS` (optimize, save and convert). PLAN §4 (Pages,
 Edit, Optimize & save), feature groups F-PG-1, F-PG-2, F-ED-1 … F-ED-3, the crop half of F-ED-4,
 F-OS-1 and F-OS-2 in [specs/TRACE.md](../TRACE.md). True redaction and metadata scrub (the rest
-of F-ED-4) are written with the security journeys (#9).
+of F-ED-4) are in [forms-security.md](forms-security.md) (J-SC-06 … J-SC-10).
 Inventory and coverage: [RESEARCH.md](RESEARCH.md). Format: ops/judge/CONTRACT.md §4.
 Milestones (PLAN §8): page operations, merge/split, full rewrite and conversion are M6 (writer
 and pages); content editing and compress are M8.
@@ -75,7 +75,9 @@ tests, hostile text and hostile images.
   page images out of the file (copy pages, extract, split, export images, and using the file as
   the source of an insert or a merge) needs assembly allowed and bit 5 (copy). Entering the owner
   password (J-RD-29) lifts all of these. An encrypted file stays encrypted with the same handler
-  and passwords after an incremental save, a Save As and a compress; a new document made from it
+  and passwords after an incremental save, a Save As and a compress (a full rewrite of a file
+  with an RC4 or AES-128 handler follows the upgrade rule in
+  [forms-security.md](forms-security.md), "Encryption writing"); a new document made from it
   (extract, split, merge, new from pages) is not encrypted, and the dialog says so before it is
   written; pages inserted into another file take on that file's encryption state. External tools in the checks get the passwords.
 - **Artifacts.** Watermarks, headers and footers, page numbers, Bates numbers and backgrounds
@@ -225,7 +227,7 @@ stream and resources are shared with the original, not duplicated; its annotatio
 objects with new unique `/NM`, `/P` pointing at the copy and the popup's `/Parent` pointing at
 the copied note; the copied Link still goes to page 4 (P3); the field `name` now has two
 `/Kids` widgets, one per copy, sharing the field's `/V (x)`, and both appearances show `x`;
-ISO 32000-2 §12.7.4). Typing into such widgets is a forms journey (#9). On a tagged fixture
+ISO 32000-2 §12.7.4). Typing into such widgets is J-FM-01. On a tagged fixture
 → Duplicate → a warning says the copy is not tagged → save and verify (the copy and its
 annotations carry no `/StructParents` or `/StructParent`, so no parent-tree key is shared).
 
@@ -365,7 +367,7 @@ the confirmation says that changing pages will make the signature show as change
 signing → cancel → nothing changed → do it and confirm → save → the original signed revision is
 a byte prefix of the file, so the old signature's byte range is untouched (checked with pyHanko
 as an external validator: the signature is intact and reports changes after signing).
-Certification (DocMDP) restrictions are a signatures journey (#9).
+Certification (DocMDP) restrictions are a signatures journey (#42).
 
 ## J-PG-16: Links, bookmarks and undo across page operations
 - milestone: M6

@@ -105,13 +105,13 @@ every newly opened document.
 | **Annotate** | Comment and mark up | select · highlight · underline · strikeout · squiggly · note · text box · callout · shapes menu (rectangle, ellipse, line, arrow, polygon, polyline, cloud) · ink · eraser · stamps menu · signature menu · stroke width, color and opacity quick controls · a More menu with flatten annotations and export / import comments (XFDF, FDF) | annotation properties: color, opacity, stroke width and style, fill, font and size, author, subject, lock state, comment and replies | J-ANN-01…J-ANN-26 |
 | **Edit** | Change page content | edit text · add text · add image · link · watermark · header and footer · Bates numbers · background · crop | (the row also starts with the select tool) text format, image arrange/flip/rotate/replace, link target, or the settings of the open watermark/header/Bates/background job | J-ED-01…J-ED-10 |
 | **Pages** | Organize pages and the outline | the document view becomes the page organizer grid · insert (blank, from file, from images) · delete · extract · rotate left/right · duplicate · move left/right · split · page labels | the selected pages: count, size, rotation, label | J-PG-01…J-PG-16 |
-| **Forms** | Create and edit form fields | field types (text, check box, radio, list, combo, push button, signature field) · align · tab order · flatten | field properties: name, tooltip, required, read-only, format and calculation (built-in set only), appearance | #9 |
-| **Secure** | Passwords, permissions, redaction, signatures | encrypt · change permissions · remove security · mark for redaction · apply redactions · scrub metadata · sign · certify · signatures panel | the selected redaction mark or signature field; certificate details of a selected signature | #9 |
+| **Forms** | Create and edit form fields | field types (text, check box, radio, list, combo, push button, signature field) · align · tab order · flatten | field properties: name, tooltip, required, read-only, format and calculation (built-in set only), appearance | J-FM-04, J-FM-08…J-FM-11 |
+| **Secure** | Passwords, permissions, redaction, signatures | encrypt · change permissions · remove security · mark for redaction · apply redactions · scrub metadata · sign · certify · signatures panel | the selected redaction mark or signature field; certificate details of a selected signature | J-SC-01…J-SC-10; signing: #42 |
 
 Notes:
 - **Form filling** works with the Read tools and with the select tool of Annotate and Edit:
   clicking a field fills it. A drawing tool draws over fields instead. Pages mode shows no
-  page view, so nothing is filled there. Forms mode is for designing fields. Detailed in #9.
+  page view, so nothing is filled there. Forms mode is for designing fields. Filling is J-FM-01…J-FM-07; designing is J-FM-08…J-FM-10.
 - **Bookmark editing** (add, add child, rename, delete, move) lives in the outline panel and
   is available in every tool mode; the outline is hidden in full screen and presentation
   (J-PG-14).
@@ -139,7 +139,7 @@ maximum of one third of the window.
 | Attachments | Name, size, description, page (for attachment annotations); no Open action, double-click does nothing, nothing is written to disk or launched (CONSTITUTION 7) | "No attachments" | J-RD-13 |
 | Layers | Optional content groups with visibility toggles; locked groups shown as locked | "No layers" | J-RD-14 |
 | Search results | Each hit with page number and context; click to go | before a search: a hint to type a query; after: "No results" | J-RD-15, J-RD-31 |
-| Signatures | Each signature with its validation summary | "No signatures" | #9 |
+| Signatures | Each signature with its validation summary | "No signatures" | #42 |
 
 Panels that the document has no data for stay in the tab strip (never hidden) so their position
 is stable for keyboard and VoiceOver users.
@@ -228,8 +228,8 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 | Password | File name, password field (secure entry), wrong-password message in place without closing, Cancel; the password is never stored, logged or added to recent files; paste is allowed (WCAG 2.2 SC 3.3.8). The app does its part against password managers (web: no `<form>`, no username field, `autocomplete="off"`; macOS: AutoFill off for the field) but promises nothing about browser behavior; J-RD-04's storage check is the test | Open | J-RD-04, J-RD-30 |
 | Owner password unlock | Reached from the "unlock with password" action next to a disabled command; explains which permissions are restricted; password field; the unlock lasts for this session only | Unlock | J-RD-29, J-ANN-23 |
 | External link | The engine-normalized URL that will actually open (punycode host, escaped control and bidi characters); for `mailto:` with attachment parameters, a note that they were removed; Open / Cancel. Disallowed schemes never get this dialog, only the notice. Hovering a link shows the same engine display string (or the target page for internal links) as a tooltip | Cancel | J-RD-17, J-RD-18 |
-| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | no journey yet; #9 writes it (platform conventions) |
-| File changed on disk | Reload or keep my version | Keep | no journey yet; #9 writes it (platform conventions) |
+| Unsaved changes | On closing a tab or quitting with edits: Save, Don't Save, Cancel (macOS standard alert wording; web the same three buttons, plus the browser's own leave-page prompt) | Save | no journey yet; #42 writes it (platform conventions) |
+| File changed on disk | Reload or keep my version | Keep | no journey yet; #42 writes it (platform conventions) |
 | Confirm delete | Deleting pages, several annotations from the list, or a bookmark with children; states what is deleted and, for pages, that earlier revisions remain in the file after an incremental save (pages-edit.md "History is honest"). Deleting objects selected on the page (Delete key) has no confirmation; undo restores them (J-ANN-17) | Cancel | J-PG-04, J-ANN-19, J-PG-14 |
 | Other confirmations | Only those the journeys define, with their wording rules: flatten (J-ANN-21, J-ANN-26), deleting a reply that has replies (J-ANN-18), Remove for watermark / header and footer / Bates / background (J-ED-06…J-ED-09), page changes on a signed file (J-PG-15), Save As removing earlier versions of a signed file (J-OS-02), compressing a signed file (J-OS-03), output that will not be encrypted (J-PG-09, J-PG-15), replacing existing files with multi-file output (J-PG-10, J-PG-11) | Cancel | as listed |
 | Save failed | The engine's or platform's typed error; the original file is untouched | OK | J-OS-06 |
