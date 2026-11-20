@@ -230,10 +230,10 @@ permissive licenses (e.g. PDFium's Foxit fonts (BSD) or Liberation (OFL)).
   voice). The engine supplies the text in reading order, splits it into utterances and maps
   spoken ranges back to page positions; the platform speech APIs (macOS speech synthesis,
   Web Speech API) only speak it, and native code passes their range/progress callbacks back
-  to the engine, which validates them as untrusted input (CONSTITUTION 5). Web offers only
-  voices the browser reports as on-device (`localService`), so document text never leaves
-  the device (R11); with no such voice the feature is disabled, never a network voice.
-  Owner decision on #31.
+  to the engine, which validates them as untrusted input (CONSTITUTION 5). Document text
+  never leaves the device (R11): macOS uses only on-device system voices, and web offers only
+  voices the browser reports as on-device (`localService`); with no such voice the feature
+  is disabled, never a network voice. Owner decision on #31; details scoped at Phase 2 start.
 - **iOS** (reuses UniFFI + much of the SwiftUI), then **Android** (UniFFI Kotlin + Jetpack Compose)
 
 ---
