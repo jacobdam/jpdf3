@@ -5,7 +5,7 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #39 for #8 (journeys 3/4: pages, edit, optimize, convert): 32 journeys in
-  `specs/journeys/pages-edit.md`, RESEARCH #8 section, TRACE rows. Reviewed (3 rounds), `ai-review` posted, auto-merge on.
+  `specs/journeys/pages-edit.md`, RESEARCH #8 section, TRACE rows. Reviewed (2 rounds), `ai-review` posted, auto-merge on.
 
 ## Last session
 - #31 merged (PR #34, read aloud → Phase 2).
