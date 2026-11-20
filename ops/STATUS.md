@@ -19,7 +19,8 @@ Phase: bootstrap (pilot)
   documentation" under CC-BY-4.0, and the TSVs could be either. Owner question: #60.
 
 ## Next step
-- Check that the rerun of main run 44837141465 is green.
+- Check that main's `pages` deploy is green after #62 merges. Rerunning run 44837141465
+  failed with "Multiple artifacts named github-pages" (attempt 1's artifact still exists).
 - `ready` M0 issues: #22, #53, #54, #55, #61 (lowest number first). #14 closes after #55.
   #20 closes after #61.
 - #22 (corpus tiers) must also keep the sealed tier off agent machines. specs/tooling/bench.md
