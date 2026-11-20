@@ -82,7 +82,11 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
         );
     }
     let options = JpegOptions::default();
-    common(&mut report, fixtures.len(), &|input, limits| {
+    let dims: Vec<(u32, u32)> = fixtures
+        .iter()
+        .map(|f| (f.expected.width, f.expected.height))
+        .collect();
+    common(&mut report, &dims, &|input, limits| {
         decoder.decode(input, &options, limits)
     });
     report
@@ -102,7 +106,11 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
             &decode,
         );
     }
-    common(&mut report, fixtures.len(), &decode);
+    let dims: Vec<(u32, u32)> = fixtures
+        .iter()
+        .map(|f| (f.expected.width, f.expected.height))
+        .collect();
+    common(&mut report, &dims, &decode);
     report
 }
 
@@ -134,7 +142,11 @@ pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Repor
             }
         }
     }
-    common(&mut report, fixtures.len(), &|input, limits| {
+    let dims: Vec<(u32, u32)> = fixtures
+        .iter()
+        .map(|f| (f.expected.width, f.expected.height))
+        .collect();
+    common(&mut report, &dims, &|input, limits| {
         decoder.decode(input, None, limits)
     });
     report
@@ -165,7 +177,11 @@ pub fn run_ccitt(decoder: &dyn CcittDecoder, fixtures: &[CcittFixture]) -> Repor
         );
     }
     let params = CcittParams::default();
-    common(&mut report, fixtures.len(), &|input, limits| {
+    let dims: Vec<(u32, u32)> = fixtures
+        .iter()
+        .map(|f| (f.expected.width, f.expected.height))
+        .collect();
+    common(&mut report, &dims, &|input, limits| {
         decoder.decode(input, &params, limits)
     });
     report
@@ -203,6 +219,8 @@ impl Raster for DecodedImage {
             && self.height == expected.height
             && self.components == expected.components
             && self.bits_per_component == expected.bits_per_component
+            && self.source_bits == expected.source_bits
+            && self.adobe_app14 == expected.adobe_app14
             && self.color == expected.color
             && self.has_alpha == expected.has_alpha
             && self.samples.len() == expected.samples.len();
@@ -251,7 +269,16 @@ type DecodeFn<'a, R> = dyn Fn(&[u8], &DecodeLimits) -> Result<Decoded<R>, Backen
 type Outcome<R> = Option<Result<Decoded<R>, BackendError>>;
 
 /// Checks that need no fixture.
-fn common<R: Raster>(report: &mut Report, fixture_count: usize, decode: &DecodeFn<'_, R>) {
+/// `dims`: each fixture's (width, height).
+fn common<R: Raster>(report: &mut Report, dims: &[(u32, u32)], decode: &DecodeFn<'_, R>) {
+    // Landscape and portrait fixtures are both needed, or a decoder that checks only one axis
+    // against `max_image_dimension` would pass `image.dimension_limit`.
+    report.check(
+        "image.fixture_orientations",
+        dims.iter().any(|(w, h)| w > h) && dims.iter().any(|(w, h)| h > w),
+        || "fixtures must include a landscape (width > height) and a portrait (height > width) image".into(),
+    );
+    let fixture_count = dims.len();
     report.check("image.has_fixtures", fixture_count > 0, || {
         "no fixtures supplied; the adapter must provide at least one".into()
     });
@@ -438,6 +465,7 @@ mod tests {
     #[derive(Default)]
     struct Toy {
         ignore_limits: bool,
+        width_only_dimension_check: bool,
         panic_on_mutation: bool,
         lie_about_length: bool,
     }
@@ -461,7 +489,11 @@ mod tests {
                 return Err(BackendError::Malformed("header"));
             }
             if !self.ignore_limits
-                && (width.max(height) > limits.max_image_dimension
+                && (if self.width_only_dimension_check {
+                    width
+                } else {
+                    width.max(height)
+                } > limits.max_image_dimension
                     || u64::from(width) * u64::from(height) > limits.max_image_pixels
                     || components > limits.max_image_components)
             {
@@ -494,6 +526,8 @@ mod tests {
                     height,
                     components,
                     bits_per_component: 8,
+                    source_bits: 8,
+                    adobe_app14: None,
                     color: if components == 1 {
                         ImageColor::Gray
                     } else {
@@ -572,17 +606,22 @@ mod tests {
         }
     }
 
-    fn toy_image() -> (Vec<u8>, DecodedImage) {
-        let samples: Vec<u8> = (0..4 * 3 * 3)
-            .map(|i| u8::try_from(i * 7).unwrap())
+    fn toy_image(width: u16, height: u16) -> (Vec<u8>, DecodedImage) {
+        let len = usize::from(width) * usize::from(height) * 3;
+        let samples: Vec<u8> = (0..len)
+            .map(|i| u8::try_from(i * 7 % 256).unwrap())
             .collect();
-        let mut input = vec![0, 4, 0, 3, 3];
+        let [w0, w1] = width.to_be_bytes();
+        let [h0, h1] = height.to_be_bytes();
+        let mut input = vec![w0, w1, h0, h1, 3];
         input.extend_from_slice(&samples);
         let image = DecodedImage {
-            width: 4,
-            height: 3,
+            width: u32::from(width),
+            height: u32::from(height),
             components: 3,
             bits_per_component: 8,
+            source_bits: 8,
+            adobe_app14: None,
             color: ImageColor::Unknown,
             has_alpha: false,
             samples,
@@ -590,33 +629,43 @@ mod tests {
         (input, image)
     }
 
-    /// A 12×2 bitmap: stride 2, so 4 data bytes after the toy header.
-    fn toy_bitmap() -> (Vec<u8>, Bitmap) {
-        let data = vec![0b1010_1010, 0b1111_0000, 0b0101_0101, 0b0000_0000];
-        let mut input = vec![0, 12, 0, 2, 1];
+    /// A packed bitmap after the toy header (one "component").
+    fn toy_bitmap(width: u16, height: u16) -> (Vec<u8>, Bitmap) {
+        let len = usize::from(width.div_ceil(8)) * usize::from(height);
+        let data: Vec<u8> = (0..len)
+            .map(|i| u8::try_from(i * 37 % 256).unwrap())
+            .collect();
+        let [w0, w1] = width.to_be_bytes();
+        let [h0, h1] = height.to_be_bytes();
+        let mut input = vec![w0, w1, h0, h1, 1];
         input.extend_from_slice(&data);
-        (
-            input,
-            Bitmap {
-                width: 12,
-                height: 2,
-                data,
-            },
-        )
+        let bitmap = Bitmap {
+            width: u32::from(width),
+            height: u32::from(height),
+            data,
+        };
+        (input, bitmap)
+    }
+
+    /// Landscape 4×3 and portrait 2×5.
+    fn jpeg_fixtures() -> Vec<JpegFixture> {
+        [(4, 3), (2, 5)]
+            .into_iter()
+            .map(|(w, h)| {
+                let (input, expected) = toy_image(w, h);
+                JpegFixture {
+                    name: format!("toy {w}x{h}"),
+                    input,
+                    options: JpegOptions::default(),
+                    expected,
+                    tolerance: 0,
+                }
+            })
+            .collect()
     }
 
     fn jpeg(toy: &Toy) -> Report {
-        let (input, expected) = toy_image();
-        run_jpeg(
-            toy,
-            &[JpegFixture {
-                name: "toy".into(),
-                input,
-                options: JpegOptions::default(),
-                expected,
-                tolerance: 0,
-            }],
-        )
+        run_jpeg(toy, &jpeg_fixtures())
     }
 
     #[test]
@@ -625,43 +674,45 @@ mod tests {
         let report = jpeg(&toy);
         assert!(report.passed(), "{report}");
 
-        let (input, expected) = toy_image();
-        let report = run_jpeg2000(
-            &toy,
-            &[Jpeg2000Fixture {
-                name: "toy".into(),
-                input,
-                expected,
+        let fixtures: Vec<Jpeg2000Fixture> = jpeg_fixtures()
+            .into_iter()
+            .map(|f| Jpeg2000Fixture {
+                name: f.name,
+                input: f.input,
+                expected: f.expected,
                 tolerance: 0,
-            }],
-        );
+            })
+            .collect();
+        let report = run_jpeg2000(&toy, &fixtures);
         assert!(report.passed(), "{report}");
 
-        let (input, expected) = toy_bitmap();
-        let report = run_jbig2(
-            &toy,
-            &[Jbig2Fixture {
+        let bitmaps = [toy_bitmap(12, 2), toy_bitmap(3, 9)];
+        let fixtures: Vec<Jbig2Fixture> = bitmaps
+            .iter()
+            .map(|(input, expected)| Jbig2Fixture {
                 name: "toy".into(),
                 input: input.clone(),
                 globals: Some(vec![1, 2, 3, 4]),
                 expected: expected.clone(),
-            }],
-        );
+            })
+            .collect();
+        let report = run_jbig2(&toy, &fixtures);
         assert!(report.passed(), "{report}");
-        assert!(report.checks_run > 25, "{report}");
+        assert!(report.checks_run > 50, "{report}");
 
-        let report = run_ccitt(
-            &toy,
-            &[CcittFixture {
+        let fixtures: Vec<CcittFixture> = bitmaps
+            .iter()
+            .map(|(input, expected)| CcittFixture {
                 name: "toy".into(),
-                input,
+                input: input.clone(),
                 params: CcittParams {
-                    columns: 12,
+                    columns: expected.width,
                     ..CcittParams::default()
                 },
-                expected,
-            }],
-        );
+                expected: expected.clone(),
+            })
+            .collect();
+        let report = run_ccitt(&toy, &fixtures);
         assert!(report.passed(), "{report}");
     }
 
@@ -670,7 +721,32 @@ mod tests {
         let report = run_jpeg(&Toy::default(), &[]);
         assert_eq!(
             report.failed_checks(),
-            vec!["image.has_fixtures"],
+            vec!["image.fixture_orientations", "image.has_fixtures"],
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn one_orientation_is_not_enough() {
+        let mut fixtures = jpeg_fixtures();
+        fixtures.pop();
+        let report = run_jpeg(&Toy::default(), &fixtures);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_orientations"],
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn checking_only_the_width_is_caught() {
+        let report = jpeg(&Toy {
+            width_only_dimension_check: true,
+            ..Toy::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.dimension_limit"],
             "{report}"
         );
     }
@@ -715,19 +791,33 @@ mod tests {
 
     #[test]
     fn a_wrong_pixel_is_caught_and_tolerance_applies() {
-        let (input, mut expected) = toy_image();
-        expected.samples[5] = expected.samples[5].wrapping_add(2);
-        let fixture = |tolerance| JpegFixture {
-            name: "toy".into(),
-            input: input.clone(),
-            options: JpegOptions::default(),
-            expected: expected.clone(),
-            tolerance,
+        let fixtures = |tolerance| {
+            let mut fixtures = jpeg_fixtures();
+            fixtures[0].expected.samples[5] = fixtures[0].expected.samples[5].wrapping_add(2);
+            for f in &mut fixtures {
+                f.tolerance = tolerance;
+            }
+            fixtures
         };
-        let report = run_jpeg(&Toy::default(), &[fixture(1)]);
+        let report = run_jpeg(&Toy::default(), &fixtures(1));
         assert!(report.failed("image.fixture_decodes"), "{report}");
-        let report = run_jpeg(&Toy::default(), &[fixture(2)]);
+        let report = run_jpeg(&Toy::default(), &fixtures(2));
         assert!(report.passed(), "{report}");
+    }
+
+    #[test]
+    fn header_metadata_must_match() {
+        for change in [
+            |e: &mut DecodedImage| e.source_bits = 4,
+            |e: &mut DecodedImage| e.adobe_app14 = Some(2),
+            |e: &mut DecodedImage| e.color = ImageColor::Rgb,
+            |e: &mut DecodedImage| e.has_alpha = true,
+        ] {
+            let mut fixtures = jpeg_fixtures();
+            change(&mut fixtures[0].expected);
+            let report = run_jpeg(&Toy::default(), &fixtures);
+            assert!(report.failed("image.fixture_decodes"), "{report}");
+        }
     }
 
     #[test]
@@ -737,6 +827,8 @@ mod tests {
             height: 1,
             components: 1,
             bits_per_component: 16,
+            source_bits: 16,
+            adobe_app14: None,
             color: ImageColor::Gray,
             has_alpha: false,
             samples: vec![0x01, 0xff],
@@ -752,18 +844,9 @@ mod tests {
 
     #[test]
     fn a_bad_fixture_is_reported_not_trusted() {
-        let (input, mut expected) = toy_image();
-        expected.samples.pop();
-        let report = run_jpeg(
-            &Toy::default(),
-            &[JpegFixture {
-                name: "toy".into(),
-                input,
-                options: JpegOptions::default(),
-                expected,
-                tolerance: 0,
-            }],
-        );
+        let mut fixtures = jpeg_fixtures();
+        fixtures[0].expected.samples.pop();
+        let report = run_jpeg(&Toy::default(), &fixtures);
         assert_eq!(
             report.failed_checks(),
             vec!["image.fixture_valid"],

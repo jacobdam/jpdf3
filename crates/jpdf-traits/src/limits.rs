@@ -39,7 +39,7 @@ pub struct Limits {
     /// Width or height of one decoded image, in pixels.
     pub max_image_dimension: u32,
     /// Components (channels, including alpha) per decoded image pixel. ISO 32000-2 Annex C
-    /// limits DeviceN to 32 colorants.
+    /// limits DeviceN to 32 colorants; one more allows an alpha channel (`SMaskInData`).
     pub max_image_components: u16,
 }
 
@@ -82,7 +82,7 @@ impl Default for Limits {
             max_decoded_bytes_per_document: 4 * 1024 * 1024 * 1024,
             max_image_pixels: 100_000_000,
             max_image_dimension: 1 << 20,
-            max_image_components: 32,
+            max_image_components: 33,
         }
     }
 }

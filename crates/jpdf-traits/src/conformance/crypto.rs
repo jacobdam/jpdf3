@@ -8,19 +8,14 @@ use crate::{BackendError, Cipher, DecodeLimits, Direction, HashAlgorithm, Hasher
 /// Runs every check against a [`Hasher`].
 pub fn run_hasher(hasher: &dyn Hasher) -> Report {
     let mut report = Report::new("hasher");
-    for (algorithm, message, digest) in &HASH {
-        let result = guarded(|| hasher.digest(*algorithm, message));
+    for (algorithm, input, digest) in &HASH {
+        let message = input.bytes();
+        let result = guarded(|| hasher.digest(*algorithm, &message));
         let expected = hex(digest);
         report.check(
             "crypto.hash_kat",
             matches!((&result, &expected), (Some(Ok(got)), Some(want)) if got == want),
-            || {
-                format!(
-                    "{algorithm:?}({:?}): {}",
-                    String::from_utf8_lossy(message),
-                    describe(&result)
-                )
-            },
+            || format!("{algorithm:?}({input:?}): {}", describe(&result)),
         );
     }
 
@@ -140,27 +135,26 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
         guarded(|| cipher.aes_cbc(direction, key, iv, data, padding, &unlimited))
     };
 
-    let plain = hex(AES_PLAIN).unwrap_or_default();
+    let plain = hex(AES_PLAIN);
     for (key_hex, cipher_hex) in &AES_CBC {
-        let (key, expected) = (hex(key_hex).unwrap_or_default(), hex(cipher_hex));
+        let (Some(plain), Some(key), Some(expected)) = (&plain, hex(key_hex), hex(cipher_hex))
+        else {
+            report.check("crypto.builtin_vector", false, || {
+                "bad AES vector hex".into()
+            });
+            continue;
+        };
         let bits = key.len() * 8;
-        let result = aes(Direction::Encrypt, &key, &AES_IV, &plain, Padding::None);
+        let result = aes(Direction::Encrypt, &key, &AES_IV, plain, Padding::None);
         report.check(
             "crypto.aes_kat",
-            matches!((&result, &expected), (Some(Ok(got)), Some(want)) if got == want),
+            matches!(&result, Some(Ok(got)) if *got == expected),
             || format!("AES-{bits}-CBC encrypt: {}", describe(&result)),
         );
-        let ciphertext = expected.unwrap_or_default();
-        let result = aes(
-            Direction::Decrypt,
-            &key,
-            &AES_IV,
-            &ciphertext,
-            Padding::None,
-        );
+        let result = aes(Direction::Decrypt, &key, &AES_IV, &expected, Padding::None);
         report.check(
             "crypto.aes_kat",
-            matches!(&result, Some(Ok(got)) if *got == plain),
+            matches!(&result, Some(Ok(got)) if got == plain),
             || format!("AES-{bits}-CBC decrypt: {}", describe(&result)),
         );
     }
@@ -197,9 +191,13 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
             );
         }
 
-        // Invalid padding: a final block ending in 0x00 or in 0x11 (> 16).
-        for fill in [0x00u8, 0x11] {
-            let sealed = aes(Direction::Encrypt, &key, &iv, &[fill; 16], Padding::None);
+        // Invalid padding: a final block ending in 0x00, in 0x11 (> 16), or in a valid-looking
+        // last byte (3) whose earlier padding bytes are wrong (…, 3, 2, 3).
+        let mut wrong_inner = [0u8; 16];
+        wrong_inner[13..].copy_from_slice(&[3, 2, 3]);
+        for probe in [[0x00u8; 16], [0x11; 16], wrong_inner] {
+            let fill = probe;
+            let sealed = aes(Direction::Encrypt, &key, &iv, &probe, Padding::None);
             let Some(Ok(sealed)) = sealed else {
                 report.check("crypto.aes_bad_padding", false, || {
                     format!("encrypting the probe block: {}", describe(&sealed))
@@ -212,7 +210,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
                 matches!(result, Some(Err(BackendError::Malformed(_)))),
                 || {
                     format!(
-                        "padding byte {fill:#04x}: expected Malformed, got {}",
+                        "final block {fill:02x?}: expected Malformed, got {}",
                         describe(&result)
                     )
                 },
@@ -292,6 +290,41 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
     }
 
     let key = [9u8; 16];
+    // Decryption: the cap applies to the ciphertext length, which is known before
+    // allocating (48 bytes of ciphertext holding 32 bytes of plaintext).
+    if let Some(Ok(sealed)) = aes(Direction::Encrypt, &key, &AES_IV, &[5; 32], Padding::Pkcs7) {
+        for (cap, want_ok) in [(48, true), (47, false)] {
+            let limits = DecodeLimits {
+                max_output_bytes: cap,
+                ..unlimited
+            };
+            let result = guarded(|| {
+                cipher.aes_cbc(
+                    Direction::Decrypt,
+                    &key,
+                    &AES_IV,
+                    &sealed,
+                    Padding::Pkcs7,
+                    &limits,
+                )
+            });
+            let ok = if want_ok {
+                matches!(&result, Some(Ok(v)) if *v == [5; 32])
+            } else {
+                matches!(result, Some(Err(BackendError::LimitExceeded(_))))
+            };
+            report.check("crypto.output_limit", ok, || {
+                format!(
+                    "decrypting 48 bytes with a cap of {cap}: {}",
+                    describe(&result)
+                )
+            });
+        }
+    } else {
+        report.check("crypto.output_limit", false, || {
+            "encrypting the probe failed".into()
+        });
+    }
     output_limit(report, 48, |limits| {
         cipher.aes_cbc(
             Direction::Encrypt,
@@ -386,7 +419,7 @@ mod tests {
             if self.knows_answers {
                 if let Some((_, _, d)) = HASH
                     .iter()
-                    .find(|(a, m, _)| *a == self.algorithm && *m == self.data)
+                    .find(|(a, m, _)| *a == self.algorithm && m.bytes() == self.data)
                 {
                     return hex(d).unwrap();
                 }
@@ -442,6 +475,8 @@ mod tests {
     struct FakeCipher {
         ignore_iv: bool,
         lenient_padding: bool,
+        last_byte_only_padding: bool,
+        decrypt_cap_on_plaintext: bool,
     }
 
     fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
@@ -522,7 +557,7 @@ mod tests {
                     if !data.len().is_multiple_of(16) {
                         return Err(BackendError::Malformed("length"));
                     }
-                    if data.len() > limits.max_output_bytes {
+                    if !self.decrypt_cap_on_plaintext && data.len() > limits.max_output_bytes {
                         return Err(BackendError::LimitExceeded("output"));
                     }
                     let mut prev = iv.to_vec();
@@ -536,13 +571,17 @@ mod tests {
                     if padding == Padding::Pkcs7 {
                         let pad = usize::from(*out.last().ok_or(BackendError::Malformed("empty"))?);
                         let ok = (1..=16).contains(&pad)
-                            && out[out.len() - pad..]
-                                .iter()
-                                .all(|&b| usize::from(b) == pad);
+                            && (self.last_byte_only_padding
+                                || out[out.len() - pad..]
+                                    .iter()
+                                    .all(|&b| usize::from(b) == pad));
                         if !ok && !self.lenient_padding {
                             return Err(BackendError::Malformed("padding"));
                         }
                         out.truncate(out.len() - pad.min(out.len()));
+                    }
+                    if out.len() > limits.max_output_bytes {
+                        return Err(BackendError::LimitExceeded("output"));
                     }
                     Ok(out)
                 }
@@ -573,6 +612,26 @@ mod tests {
         assert_eq!(
             report.failed_checks(),
             vec!["crypto.aes_bad_padding", "crypto.aes_kat"],
+            "{report}"
+        );
+
+        let report = run_cipher(&FakeCipher {
+            last_byte_only_padding: true,
+            ..FakeCipher::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["crypto.aes_bad_padding", "crypto.aes_kat"],
+            "{report}"
+        );
+
+        let report = run_cipher(&FakeCipher {
+            decrypt_cap_on_plaintext: true,
+            ..FakeCipher::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["crypto.aes_kat", "crypto.output_limit"],
             "{report}"
         );
     }

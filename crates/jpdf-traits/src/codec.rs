@@ -50,8 +50,9 @@ pub trait Inflate {
     /// Decompresses `input`.
     ///
     /// - Output longer than `limits.max_output_bytes` fails with
-    ///   [`BackendError::LimitExceeded`] as soon as the backend would exceed it; the backend
-    ///   never allocates more than the limit.
+    ///   [`BackendError::LimitExceeded`] as soon as the backend would exceed it: the output
+    ///   buffer never grows beyond the limit, and working memory (window, tables) is bounded
+    ///   by a constant.
     /// - Input that ends early returns the bytes decoded so far with
     ///   [`DecodeStatus::Truncated`] (or [`BackendError::Truncated`] if nothing was decodable).
     ///   For [`FlateFormat::Zlib`], a missing Adler-32 trailer counts as truncated.

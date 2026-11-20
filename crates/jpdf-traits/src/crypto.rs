@@ -98,8 +98,10 @@ pub trait Cipher {
     ///   invalid, fails with [`BackendError::Malformed`].
     /// - Encrypting with [`Padding::None`] data whose length is not a multiple of 16 fails
     ///   with [`BackendError::InvalidArgument`].
-    /// - Output longer than `limits.max_output_bytes` fails with
-    ///   [`BackendError::LimitExceeded`].
+    /// - PKCS #7 decryption checks every padding byte, not only the last.
+    /// - Fails with [`BackendError::LimitExceeded`], before allocating, when the output
+    ///   (encryption: `data` plus padding) or the input (decryption: `data`, an upper bound of
+    ///   the plaintext) is longer than `limits.max_output_bytes`.
     fn aes_cbc(
         &self,
         direction: Direction,

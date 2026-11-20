@@ -14,6 +14,10 @@ const LEVELS: [CompressionLevel; 3] = [
     CompressionLevel::Best,
 ];
 const FORMATS: [FlateFormat; 2] = [FlateFormat::Zlib, FlateFormat::Raw];
+/// Vectors at least this long must salvage output when their last bytes are cut.
+const SALVAGE_MIN_PLAIN: usize = 64;
+/// The large bomb: 1 GiB of zeros as fixed-Huffman back-references, about 6.5 MiB encoded.
+const LARGE_BOMB_BYTES: usize = 1 << 30;
 /// Output cap for mutated inputs: generous for the vectors, small enough to stay fast.
 const MUTATION_CAP: usize = 1 << 20;
 
@@ -106,6 +110,49 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
                 });
             }
 
+            // Lenient reading (CONSTITUTION 17): the decoded prefix must be salvaged, not
+            // dropped. Without only the Adler-32 trailer, all of the plaintext comes back;
+            // with the last bytes of a long stream cut, a non-empty prefix does.
+            let data_end = match format {
+                FlateFormat::Zlib => input.len().saturating_sub(4),
+                FlateFormat::Raw => input.len(),
+            };
+            let mut salvage: Vec<(usize, bool)> = Vec::new();
+            if format == FlateFormat::Zlib {
+                salvage.extend((data_end.max(2)..input.len()).map(|cut| (cut, true)));
+            }
+            if v.plain.len() >= SALVAGE_MIN_PLAIN {
+                salvage.extend((data_end.saturating_sub(16)..data_end).map(|cut| (cut, false)));
+            }
+            for (cut, whole) in salvage {
+                let prefix = input.get(..cut).unwrap_or(&[]);
+                let result = call(prefix, format, &unlimited);
+                let ok = match &result {
+                    Some(Ok(d)) if d.status == DecodeStatus::Truncated => {
+                        if whole {
+                            d.value == v.plain
+                        } else {
+                            !d.value.is_empty() && v.plain.starts_with(&d.value)
+                        }
+                    }
+                    Some(Err(BackendError::Truncated)) => whole && v.plain.is_empty(),
+                    _ => false,
+                };
+                report.check("flate.truncated_salvage", ok, || {
+                    format!(
+                        "{} ({format:?}) cut at {cut}/{}: expected Ok(Truncated) with {}, got {}",
+                        v.name,
+                        input.len(),
+                        if whole {
+                            "the whole plaintext"
+                        } else {
+                            "a non-empty prefix"
+                        },
+                        describe_decoded(&result)
+                    )
+                });
+            }
+
             // Mutations never panic and never break the output cap.
             let limits = DecodeLimits {
                 max_output_bytes: MUTATION_CAP,
@@ -182,6 +229,82 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
 
     round_trips(report, inflate, deflate);
     zip_bomb(report, inflate, deflate);
+    large_bomb(report, inflate);
+}
+
+/// 1 GiB of zeros under a 64 KiB cap must stop with LimitExceeded. The suite cannot see
+/// allocations, but an adapter that decodes everything and checks afterwards needs over
+/// 1 GiB here, which shows up as an out-of-memory failure or a very slow test.
+fn large_bomb(report: &mut Report, inflate: &dyn Inflate) {
+    let bomb = fixed_huffman_zeros(LARGE_BOMB_BYTES);
+    let capped = DecodeLimits {
+        max_output_bytes: 64 << 10,
+        ..DecodeLimits::default()
+    };
+    let result = guarded(|| inflate.inflate(&bomb, FlateFormat::Raw, &capped));
+    report.check(
+        "flate.large_bomb",
+        matches!(result, Some(Err(BackendError::LimitExceeded(_)))),
+        || format!("expected LimitExceeded, got {}", describe_decoded(&result)),
+    );
+}
+
+/// A raw deflate stream (RFC 1951 §3.2.6, one final fixed-Huffman block) that decodes to at
+/// least `len` zero bytes: literal 0, then length-258/distance-1 copies, then end of block.
+pub(crate) fn fixed_huffman_zeros(len: usize) -> Vec<u8> {
+    let mut bits = BitWriter::default();
+    bits.lsb_first(1, 1); // BFINAL
+    bits.lsb_first(1, 2); // BTYPE = 01, fixed Huffman
+    bits.code(0x30, 8); // literal 0: codes 00110000..10111111 are literals 0..143
+    for _ in 0..len.saturating_sub(1).div_ceil(258) {
+        bits.code(0xc5, 8); // symbol 285 (length 258): 11000000 + (285 - 280)
+        bits.code(0, 5); // distance code 0 (distance 1), no extra bits
+    }
+    bits.code(0, 7); // end of block (256): 0000000
+    bits.finish()
+}
+
+/// Packs bits LSB-first into bytes, as RFC 1951 §3.1.1 requires.
+#[derive(Default)]
+struct BitWriter {
+    out: Vec<u8>,
+    acc: u32,
+    used: u32,
+}
+
+impl BitWriter {
+    /// Writes `count` bits of `value`, least significant first (header fields, extra bits).
+    fn lsb_first(&mut self, value: u32, count: u32) {
+        for i in 0..count {
+            self.bit(value >> i & 1);
+        }
+    }
+
+    /// Writes a Huffman code of `count` bits, most significant first.
+    fn code(&mut self, value: u32, count: u32) {
+        for i in (0..count).rev() {
+            self.bit(value >> i & 1);
+        }
+    }
+
+    fn bit(&mut self, bit: u32) {
+        self.acc |= bit << self.used;
+        self.used += 1;
+        if self.used == 8 {
+            self.out
+                .push(self.acc.to_le_bytes().first().copied().unwrap_or(0));
+            self.acc = 0;
+            self.used = 0;
+        }
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        if self.used > 0 {
+            self.out
+                .push(self.acc.to_le_bytes().first().copied().unwrap_or(0));
+        }
+        self.out
+    }
 }
 
 fn round_trips(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate) {
@@ -337,17 +460,102 @@ mod tests {
         assert_eq!(u64::from(adler32(&long)), naive.1 << 16 | naive.0);
     }
 
-    /// A Flate implementation that only handles stored blocks (BTYPE 00): enough to exercise
-    /// every suite check without a real compressor.
+    /// A Flate implementation that handles stored blocks (BTYPE 00) and fixed-Huffman blocks
+    /// (BTYPE 01) but not dynamic ones: enough to exercise every suite check, including the
+    /// large bomb, without a real compressor. Variants break one rule each.
     #[derive(Default)]
-    struct Stored {
+    struct Mini {
+        /// Ignores the cap (stops only at a 32 MiB safety net so the test stays fast).
         ignore_limit: bool,
         panic_on_empty: bool,
         complete_on_truncation: bool,
+        /// Drops partial output: any truncation is an error.
+        strict_truncation: bool,
         deflate_calls: Cell<usize>,
     }
 
-    impl Inflate for Stored {
+    const SAFETY_NET: usize = 32 << 20;
+    // RFC 1951 §3.2.5 length and distance tables.
+    const LEN_BASE: [usize; 29] = [
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
+        131, 163, 195, 227, 258,
+    ];
+    const LEN_EXTRA: [u32; 29] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+    ];
+    const DIST_BASE: [usize; 30] = [
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+    ];
+    const DIST_EXTRA: [u32; 30] = [
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
+        13, 13,
+    ];
+
+    struct Bits<'a> {
+        data: &'a [u8],
+        pos: usize,
+    }
+
+    impl Bits<'_> {
+        fn bit(&mut self) -> Option<u32> {
+            let byte = *self.data.get(self.pos / 8)?;
+            let bit = u32::from(byte >> (self.pos % 8) & 1);
+            self.pos += 1;
+            Some(bit)
+        }
+        /// `n` bits, least significant first.
+        fn lsb(&mut self, n: u32) -> Option<u32> {
+            (0..n).try_fold(0, |acc, i| Some(acc | self.bit()? << i))
+        }
+        /// A Huffman code of `n` bits, most significant first.
+        fn msb(&mut self, n: u32) -> Option<u32> {
+            (0..n).try_fold(0, |acc, _| Some(acc << 1 | self.bit()?))
+        }
+        /// A fixed literal/length symbol (RFC 1951 §3.2.6).
+        fn fixed_symbol(&mut self) -> Option<u32> {
+            let c7 = self.msb(7)?;
+            if c7 <= 0b001_0111 {
+                return Some(256 + c7);
+            }
+            let c8 = c7 << 1 | self.bit()?;
+            match c8 {
+                0x30..=0xbf => Some(c8 - 0x30),
+                0xc0..=0xc7 => Some(280 + c8 - 0xc0),
+                _ => Some(144 + (c8 << 1 | self.bit()?) - 0x190),
+            }
+        }
+    }
+
+    impl Mini {
+        fn over(&self, len: usize, limits: &DecodeLimits) -> bool {
+            len > if self.ignore_limit {
+                SAFETY_NET
+            } else {
+                limits.max_output_bytes
+            }
+        }
+
+        fn truncated(&self, out: Vec<u8>) -> Result<Decoded<Vec<u8>>, BackendError> {
+            if self.complete_on_truncation {
+                Ok(Decoded {
+                    value: out,
+                    status: DecodeStatus::Complete,
+                })
+            } else if self.strict_truncation {
+                Err(BackendError::Malformed("truncated"))
+            } else if out.is_empty() {
+                Err(BackendError::Truncated)
+            } else {
+                Ok(Decoded {
+                    value: out,
+                    status: DecodeStatus::Truncated,
+                })
+            }
+        }
+    }
+
+    impl Inflate for Mini {
         fn inflate(
             &self,
             input: &[u8],
@@ -370,53 +578,83 @@ mod tests {
                 FlateFormat::Raw => input,
             };
             let mut out = Vec::new();
-            let mut pos = 0;
-            let truncated = |out: Vec<u8>| {
-                if self.complete_on_truncation {
-                    Ok(Decoded {
-                        value: out,
-                        status: DecodeStatus::Complete,
-                    })
-                } else if out.is_empty() {
-                    Err(BackendError::Truncated)
-                } else {
-                    Ok(Decoded {
-                        value: out,
-                        status: DecodeStatus::Truncated,
-                    })
-                }
-            };
+            let mut r = Bits { data: body, pos: 0 };
             loop {
-                let Some(&head) = body.get(pos) else {
-                    return truncated(out);
+                let (Some(last), Some(btype)) = (r.lsb(1), r.lsb(2)) else {
+                    return self.truncated(out);
                 };
-                if head & 0b110 != 0 {
-                    return Err(BackendError::Unsupported("compressed block"));
+                match btype {
+                    0 => {
+                        let start = r.pos.div_ceil(8);
+                        let Some(lens) = body.get(start..start + 4) else {
+                            return self.truncated(out);
+                        };
+                        let len = u16::from_le_bytes([lens[0], lens[1]]);
+                        if len != !u16::from_le_bytes([lens[2], lens[3]]) {
+                            return Err(BackendError::Malformed("stored LEN/NLEN"));
+                        }
+                        let len = usize::from(len);
+                        let avail = body.len().saturating_sub(start + 4).min(len);
+                        if self.over(out.len() + avail, limits) {
+                            return Err(BackendError::LimitExceeded("output"));
+                        }
+                        out.extend_from_slice(&body[start + 4..start + 4 + avail]);
+                        if avail < len {
+                            return self.truncated(out);
+                        }
+                        r.pos = (start + 4 + len) * 8;
+                    }
+                    1 => loop {
+                        let Some(sym) = r.fixed_symbol() else {
+                            return self.truncated(out);
+                        };
+                        match sym {
+                            0..=255 => {
+                                if self.over(out.len() + 1, limits) {
+                                    return Err(BackendError::LimitExceeded("output"));
+                                }
+                                out.push(u8::try_from(sym).unwrap());
+                            }
+                            256 => break,
+                            257..=285 => {
+                                let i = usize::try_from(sym - 257).unwrap();
+                                let Some(extra) = r.lsb(LEN_EXTRA[i]) else {
+                                    return self.truncated(out);
+                                };
+                                let len = LEN_BASE[i] + usize::try_from(extra).unwrap();
+                                let Some(code) = r.msb(5) else {
+                                    return self.truncated(out);
+                                };
+                                let d = usize::try_from(code).unwrap();
+                                if d >= 30 {
+                                    return Err(BackendError::Malformed("distance code"));
+                                }
+                                let Some(extra) = r.lsb(DIST_EXTRA[d]) else {
+                                    return self.truncated(out);
+                                };
+                                let dist = DIST_BASE[d] + usize::try_from(extra).unwrap();
+                                if dist > out.len() {
+                                    return Err(BackendError::Malformed("distance"));
+                                }
+                                if self.over(out.len() + len, limits) {
+                                    return Err(BackendError::LimitExceeded("output"));
+                                }
+                                for _ in 0..len {
+                                    out.push(out[out.len() - dist]);
+                                }
+                            }
+                            _ => return Err(BackendError::Malformed("symbol")),
+                        }
+                    },
+                    _ => return Err(BackendError::Unsupported("dynamic Huffman")),
                 }
-                let Some(lens) = body.get(pos + 1..pos + 5) else {
-                    return truncated(out);
-                };
-                let len = usize::from(u16::from_le_bytes([lens[0], lens[1]]));
-                if u16::from_le_bytes([lens[0], lens[1]]) != !u16::from_le_bytes([lens[2], lens[3]])
-                {
-                    return Err(BackendError::Malformed("stored LEN/NLEN"));
-                }
-                let start = pos + 5;
-                let avail = body.len().saturating_sub(start).min(len);
-                if !self.ignore_limit && out.len() + avail > limits.max_output_bytes {
-                    return Err(BackendError::LimitExceeded("output"));
-                }
-                out.extend_from_slice(&body[start..start + avail]);
-                if avail < len {
-                    return truncated(out);
-                }
-                pos = start + len;
-                if head & 1 == 1 {
+                if last == 1 {
                     break;
                 }
             }
-            if format == FlateFormat::Zlib && body.get(pos..pos + 4).is_none() {
-                return truncated(out);
+            let end = r.pos.div_ceil(8);
+            if format == FlateFormat::Zlib && body.get(end..end + 4).is_none() {
+                return self.truncated(out);
             }
             Ok(Decoded {
                 value: out,
@@ -425,7 +663,7 @@ mod tests {
         }
     }
 
-    impl Deflate for Stored {
+    impl Deflate for Mini {
         fn deflate(
             &self,
             input: &[u8],
@@ -460,47 +698,79 @@ mod tests {
         }
     }
 
-    fn stored_vectors() -> Vec<Vector> {
+    /// Every built-in vector except the dynamic-Huffman one.
+    fn mini_vectors() -> Vec<Vector> {
         FLATE
             .iter()
-            .filter(|v| v.name == "stored block")
+            .filter(|v| v.name != "dynamic Huffman")
             .map(|v| Vector {
                 name: v.name,
-                plain: v.plain.unwrap().to_vec(),
+                plain: v.plain.map_or_else(dynamic_plaintext, <[u8]>::to_vec),
                 zlib: hex(v.zlib_hex).unwrap(),
             })
             .collect()
     }
 
-    fn run_stored(imp: &Stored) -> Report {
+    fn run_mini(imp: &Mini) -> Report {
         let mut report = Report::new(SUITE);
-        run_with(&mut report, imp, imp, &stored_vectors());
+        run_with(&mut report, imp, imp, &mini_vectors());
         report
     }
 
     #[test]
     fn a_correct_implementation_passes() {
-        let imp = Stored::default();
-        let report = run_stored(&imp);
+        let imp = Mini::default();
+        let report = run_mini(&imp);
         assert!(report.passed(), "{report}");
-        assert!(report.checks_run > 100, "{report}");
+        assert!(report.checks_run > 1000, "{report}");
         assert!(imp.deflate_calls.get() >= 30);
     }
 
     #[test]
-    fn the_full_suite_rejects_a_stored_only_decoder() {
-        // The built-in vectors include Huffman blocks, so `run` must not pass a decoder that
-        // only knows stored blocks.
-        let imp = Stored::default();
+    fn the_full_suite_rejects_a_decoder_without_dynamic_huffman() {
+        let imp = Mini::default();
         let report = run(&imp, &imp);
         assert!(report.failed("flate.decode_vector"), "{report}");
+        assert!(
+            report
+                .failures()
+                .iter()
+                .all(|f| f.detail.starts_with("dynamic Huffman")),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn the_large_bomb_decodes_to_zeros() {
+        let bomb = fixed_huffman_zeros(1000);
+        let imp = Mini::default();
+        let decoded = imp
+            .inflate(&bomb, FlateFormat::Raw, &DecodeLimits::default())
+            .unwrap();
+        assert_eq!(decoded.status, DecodeStatus::Complete);
+        assert_eq!(decoded.value.len(), 1 + 4 * 258);
+        assert!(decoded.value.iter().all(|&b| b == 0));
+        assert_eq!(fixed_huffman_zeros(LARGE_BOMB_BYTES).len(), 6_762_913);
+    }
+
+    #[test]
+    fn dropping_partial_output_is_caught() {
+        let report = run_mini(&Mini {
+            strict_truncation: true,
+            ..Mini::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["flate.truncated_salvage"],
+            "{report}"
+        );
     }
 
     #[test]
     fn ignoring_the_output_limit_is_caught() {
-        let report = run_stored(&Stored {
+        let report = run_mini(&Mini {
             ignore_limit: true,
-            ..Stored::default()
+            ..Mini::default()
         });
         assert_eq!(
             report.failed_checks(),
@@ -511,9 +781,9 @@ mod tests {
 
     #[test]
     fn a_panic_is_caught_and_reported() {
-        let report = run_stored(&Stored {
+        let report = run_mini(&Mini {
             panic_on_empty: true,
-            ..Stored::default()
+            ..Mini::default()
         });
         assert_eq!(
             report.failed_checks(),
@@ -524,13 +794,17 @@ mod tests {
 
     #[test]
     fn claiming_completeness_for_truncated_input_is_caught() {
-        let report = run_stored(&Stored {
+        let report = run_mini(&Mini {
             complete_on_truncation: true,
-            ..Stored::default()
+            ..Mini::default()
         });
         assert_eq!(
             report.failed_checks(),
-            vec!["flate.empty_input", "flate.truncated"],
+            vec![
+                "flate.empty_input",
+                "flate.truncated",
+                "flate.truncated_salvage"
+            ],
             "{report}"
         );
     }

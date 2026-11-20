@@ -15,7 +15,8 @@ pub enum ImageColor {
     /// Three components, RGB (YCbCr is converted to RGB by the decoder).
     Rgb,
     /// Four components, CMYK (YCCK is converted to CMYK by the decoder). Values are as stored:
-    /// no Adobe inversion is applied.
+    /// no Adobe inversion is applied; [`DecodedImage::adobe_app14`] tells the caller whether
+    /// the codestream is an Adobe one.
     Cmyk,
     /// An embedded ICC profile (JPEG 2000 `colr` box, JPEG APP2) describes the colour
     /// components.
@@ -26,9 +27,11 @@ pub enum ImageColor {
 
 /// A decoded continuous-tone image.
 ///
-/// Samples are stored row by row, top to bottom, components interleaved per pixel. With
-/// `bits_per_component` 8 each sample is one byte; with 16 each is two bytes, big-endian (the
-/// PDF sample layout, ISO 32000-2 §8.9.3). No other depth is allowed.
+/// Samples are stored row by row, top to bottom, components interleaved per pixel, every
+/// component at full resolution. Sample **values are not rescaled**: a 4-bit component holds
+/// 0–15, so an `/Indexed` override in the image dictionary still works. The container is one
+/// byte per sample when `source_bits` ≤ 8 (`bits_per_component` 8) and two bytes, big-endian,
+/// when it is 9–16 (`bits_per_component` 16), like PDF sample data (ISO 32000-2 §8.9.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedImage {
     /// Width in pixels (≥ 1).
@@ -37,27 +40,35 @@ pub struct DecodedImage {
     pub height: u32,
     /// Components per pixel, including alpha.
     pub components: u16,
-    /// 8 or 16.
+    /// Container size: 8 or 16.
     pub bits_per_component: u8,
+    /// Significant bits per sample in the codestream (1–16); values are `0..2^source_bits`.
+    /// 8 for baseline JPEG, 12 for 12-bit JPEG.
+    pub source_bits: u8,
     /// Colour model of the non-alpha components.
     pub color: ImageColor,
     /// Whether the last component is alpha (JPEG 2000 with an opacity channel; ISO 32000-2
     /// §8.9.5 `SMaskInData`).
     pub has_alpha: bool,
+    /// JPEG only: the transform flag of the Adobe APP14 marker (0 = none/CMYK, 1 = YCbCr,
+    /// 2 = YCCK) when the codestream has one, else `None`. `jpdf-filters` uses it for the
+    /// Adobe CMYK inversion. Always `None` for other codecs.
+    pub adobe_app14: Option<u8>,
     /// The samples; exactly [`DecodedImage::expected_len`] bytes.
     pub samples: Vec<u8>,
 }
 
 impl DecodedImage {
     /// The sample length the dimensions imply, or `None` if the header is invalid (zero
-    /// size, zero components, depth other than 8/16) or the length overflows `usize`.
+    /// size, zero components, a container other than the one `source_bits` requires) or the
+    /// length overflows `usize`.
     pub fn expected_len(&self) -> Option<usize> {
         if self.width == 0 || self.height == 0 || self.components == 0 {
             return None;
         }
-        let bytes_per_sample: usize = match self.bits_per_component {
-            8 => 1,
-            16 => 2,
+        let bytes_per_sample: usize = match (self.bits_per_component, self.source_bits) {
+            (8, 1..=8) => 1,
+            (16, 9..=16) => 2,
             _ => return None,
         };
         usize::try_from(self.width)
@@ -102,9 +113,16 @@ impl Bitmap {
 /// Table 13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct JpegOptions {
-    /// `/ColorTransform`: `Some(true)` converts YCbCr/YCCK, `Some(false)` returns components
-    /// as stored, `None` uses the codestream's own markers (Adobe APP14, JFIF) and otherwise
-    /// converts 3-component images only.
+    /// `/ColorTransform`:
+    /// - `Some(true)`: the encoder transformed RGB→YCbCr or CMYK→YCCK; the decoder converts
+    ///   back.
+    /// - `Some(false)`: the encoder did not transform; components are returned as stored and
+    ///   *are* RGB or CMYK.
+    /// - `None`: the codestream decides (Adobe APP14 transform flag; otherwise 3-component
+    ///   images are converted and 4-component ones are not).
+    ///
+    /// In every case 1 component gives [`ImageColor::Gray`], 3 give [`ImageColor::Rgb`], 4
+    /// give [`ImageColor::Cmyk`], unless an ICC profile (APP2) gives [`ImageColor::Icc`].
     pub color_transform: Option<bool>,
 }
 
@@ -122,9 +140,10 @@ pub trait JpegDecoder {
 
 /// JPEG 2000 decoding (JPXDecode, ISO 32000-2 §7.4.9): a JP2 file or a raw codestream.
 pub trait Jpeg2000Decoder {
-    /// Decodes the full-resolution image. Components deeper than 8 bits are returned as 16-bit
-    /// samples scaled to the full 16-bit range; shallower ones as 8-bit samples scaled to
-    /// 0–255.
+    /// Decodes the full-resolution image, unscaled (see [`DecodedImage`]).
+    /// - Components with different bit depths fail with [`BackendError::Unsupported`].
+    /// - Subsampled components are upsampled to full resolution by pixel replication.
+    /// - Signed components are made unsigned by adding `2^(source_bits - 1)`.
     fn decode(
         &self,
         input: &[u8],
@@ -198,32 +217,44 @@ pub trait CcittDecoder {
 mod tests {
     use super::*;
 
-    fn image(width: u32, height: u32, components: u16, bits: u8) -> DecodedImage {
+    fn image(width: u32, height: u32, components: u16, container: u8, bits: u8) -> DecodedImage {
         DecodedImage {
             width,
             height,
             components,
-            bits_per_component: bits,
+            bits_per_component: container,
+            source_bits: bits,
             color: ImageColor::Unknown,
             has_alpha: false,
+            adobe_app14: None,
             samples: Vec::new(),
         }
     }
 
     #[test]
     fn image_expected_len() {
-        assert_eq!(image(4, 3, 3, 8).expected_len(), Some(36));
-        assert_eq!(image(4, 3, 3, 16).expected_len(), Some(72));
-        assert_eq!(image(0, 3, 3, 8).expected_len(), None);
-        assert_eq!(image(4, 0, 3, 8).expected_len(), None);
-        assert_eq!(image(4, 3, 0, 8).expected_len(), None);
-        assert_eq!(image(4, 3, 3, 4).expected_len(), None);
-        assert_eq!(image(4, 3, 3, 1).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 8, 8).expected_len(), Some(36));
+        assert_eq!(image(4, 3, 3, 8, 1).expected_len(), Some(36));
+        assert_eq!(image(4, 3, 3, 16, 12).expected_len(), Some(72));
+        assert_eq!(image(4, 3, 3, 16, 16).expected_len(), Some(72));
+        assert_eq!(image(0, 3, 3, 8, 8).expected_len(), None);
+        assert_eq!(image(4, 0, 3, 8, 8).expected_len(), None);
+        assert_eq!(image(4, 3, 0, 8, 8).expected_len(), None);
+    }
+
+    #[test]
+    fn image_container_must_fit_source_bits() {
+        assert_eq!(image(4, 3, 3, 8, 0).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 8, 9).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 16, 8).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 16, 17).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 4, 4).expected_len(), None);
+        assert_eq!(image(4, 3, 3, 1, 1).expected_len(), None);
     }
 
     #[test]
     fn image_expected_len_overflow_is_none() {
-        let huge = image(u32::MAX, u32::MAX, u16::MAX, 16);
+        let huge = image(u32::MAX, u32::MAX, u16::MAX, 16, 16);
         assert_eq!(huge.expected_len(), None);
     }
 
