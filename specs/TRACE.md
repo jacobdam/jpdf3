@@ -69,3 +69,4 @@ that builds each feature (PLAN §8).
 | F-P2-3 | AI chat/summarize (no backend) | | | |
 | F-P2-4 | Batch, compare, PDF/A | | | |
 | F-P2-5 | iOS, then Android | | | |
+| F-P2-6 | Read aloud (text to speech) | | | |

@@ -226,6 +226,10 @@ permissive licenses (e.g. PDFium's Foxit fonts (BSD) or Liberation (OFL)).
 - **AI chat/summarize** — no backend: either the user brings their own API key (the client calls the
   provider directly) or an on-device model (Apple Foundation Models / WebGPU LLM). Decided at Phase 2 start.
 - Batch processing, compare documents, PDF/A conversion and validation
+- **Read aloud** (text to speech: current page, all pages, from the current page; speed and
+  voice). The engine supplies the text in reading order; the platform speech APIs (macOS
+  speech synthesis, Web Speech API) only speak it. Web offers only on-device voices
+  (`localService`), so document text never leaves the device (R11). Owner decision on #31.
 - **iOS** (reuses UniFFI + much of the SwiftUI), then **Android** (UniFFI Kotlin + Jetpack Compose)
 
 ---
@@ -344,7 +348,7 @@ Milestones M4+ can overlap once their dependencies are met.
 | **M8** | Content editing | text/image edit, add text/images/links, watermark, header/footer, Bates, crop, redaction, compress | redaction verified by text-extraction + render; compress ratio vs qpdf/gs reported |
 | **M9** | Signatures | verify (all PAdES levels, MDP), sign via platform signer, LTV/DSS, timestamps | external validators accept our signatures; known-bad corpus rejected |
 | **M10** | Hardening & 1.0 | long fuzz campaign, perf tuning, accessibility, localization scaffolding, sandbox/notarization, PWA offline, CSP | 1.5× PDFium target; 30-day fuzz with 0 open crashes; release |
-| **P2** | Phase 2 | OCR, PDF→Office, AI chat, iOS, Office→PDF, Android | scoped at the start of P2 |
+| **P2** | Phase 2 | OCR, PDF→Office, AI chat, read aloud, iOS, Office→PDF, Android | scoped at the start of P2 |
 
 ---
 
