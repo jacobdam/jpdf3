@@ -14,6 +14,7 @@ Phase: bootstrap (pilot)
   Waiting on deps: #9 (←#6–#8), #11 (←#10), #15 (←#12), #16 (←#14), #19 (←#17,#18,#22),
   #21 pilot fire drill (←#4,#12,#13,#19).
 - Removed the merged leftover worktree `t/2-bootstrap-labels`.
+- #2 (enable GitHub Pages) is resolved and closed; the `pages` job is green on main.
 
 ## Next step
 - Work `ready` M0 issues lowest number first: #4 jpdf-cli stub. When an issue merges, add

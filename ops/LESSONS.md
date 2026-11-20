@@ -26,6 +26,6 @@ instead of adding near-duplicates.
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).
-- Creating numbered issues that reference each other: a blocked or failed create shifts later
-  numbers → create dependencies first, then check numbers before writing "Depends on: #N"
+- Creating numbered issues that reference each other: re-creating a blocked issue after later
+  ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
