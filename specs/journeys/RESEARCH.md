@@ -35,7 +35,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Rotate | Rotate view left/right | J-RD-09 |
 | Sidebar | Show/hide sidebar; thumbnails panel | J-RD-10 |
 | Sidebar | Bookmarks panel: navigate, expand/collapse all | J-RD-11 |
-| Sidebar | Bookmarks panel: add, add child, rename, delete | #8 (editing) |
+| Sidebar | Bookmarks panel: add, add child, rename, delete | J-PG-14 |
 | Sidebar | Annotation list: group by page, sort by page/date/type, jump to annotation | J-RD-12 |
 | Sidebar | Annotation list: select, delete | J-ANN-19 |
 | Sidebar | Attachments | J-RD-13 (list only; never opened, CONSTITUTION 7) |
@@ -64,7 +64,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Reading | Full-text translation | Phase 2 (F-P2-3, AI features) |
 | Reading | AI assistant / chat about the document | Phase 2 (F-P2-3) |
 | Reading | Screenshot OCR, OCR to searchable PDF | Phase 2 (F-P2-1) |
-| Create | New blank PDF, new PDF from files/images/copied pages, scan to PDF | #8 (pages, convert) |
+| Create | New blank PDF, new PDF from files/images/copied pages, scan to PDF | J-PG-01, J-PG-09, J-OS-04, J-PG-13; scan: out (see #8 section) |
 
 ## Annotate and comment (#7)
 
@@ -101,5 +101,54 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Security | Password prompt to unlock annotating a restricted file | J-ANN-23 |
 | Robustness | Other tools' annotations kept as they are | J-ANN-24 (PLAN §4 safety; not a PDFgear item) |
 | Print | Print with annotations; print comment contents | J-RD-21, J-ANN-25 |
-| Links | Insert a link on an area or on text | #8 (edit: links) |
+| Links | Insert a link on an area or on text | J-ED-04 |
 | Forms | Highlight form fields | #9 (forms) |
+
+## Pages, edit, optimize and convert (#8)
+
+Sources: the page ribbon, page organizer, insert, merge, split, compress, image-to-PDF, crop,
+edit toolbar, link tool, bookmark panel, watermark, header and footer, page number and convert
+string tables in the same bundle, plus PLAN §4 (Pages, Edit, Optimize & save).
+
+| Area | PDFgear feature (our words) | Status |
+|---|---|---|
+| Pages | Insert a new blank page | J-PG-01 |
+| Pages | Append or insert pages from another file, at the beginning, end, before or after the selected page, with a page range | J-PG-02 |
+| Pages | Insert a local image as a page | J-PG-03 |
+| Pages | Delete pages (a document keeps at least one page) | J-PG-04 |
+| Pages | Extract pages | J-PG-05 |
+| Pages | Reorder pages by dragging thumbnails; undo for page moves | J-PG-06, J-PG-16 |
+| Pages | Rotate pages left/right | J-PG-07 |
+| Pages | Duplicate pages | J-PG-08 (PLAN §4; not seen in PDFgear) |
+| Pages | Merge files (add files, per-file range, order, output name) | J-PG-09 |
+| Pages | Split by custom page ranges or every N pages | J-PG-10 |
+| Pages | Split by size or by bookmarks | J-PG-11 (PLAN §4; PDFgear splits by range only) |
+| Pages | Page labels | J-PG-12 (PLAN §4; not seen in PDFgear) |
+| Create | New blank PDF | J-PG-01 |
+| Create | New PDF from copied pages | J-PG-13 |
+| Create | New PDF from files | J-PG-09 |
+| Create | New PDF from images; image to PDF with page size (match the image, A3, A4, A5, Letter, Legal), orientation, margins, one file or one per image | J-OS-04 |
+| Create | Scan a document to PDF (scanner, camera, phone app) | out (device integration beyond a reader; revisit in an audit) |
+| Sidebar | Bookmarks panel: add, add child, rename, delete | J-PG-14 |
+| Security | Page changes on restricted and signed files | J-PG-15 (PLAN §4 safety; not a PDFgear item) |
+| Edit | Edit existing text | J-ED-01 |
+| Edit | Add text with font, size and style presets | J-ED-02 |
+| Edit | Add an image; move, resize, rotate, flip, replace, arrange (layer order), delete | J-ED-03 |
+| Edit | Crop an image inside the page | out for M8 (images are cropped by replacing them; revisit in an audit) |
+| Links | Insert a link on an area or on text, to a page or a web address | J-ED-04 |
+| Links | Edit and delete links | J-ED-05 |
+| Edit | Watermark: text or image, font, size, color, opacity, rotation, above or below the content, page range; remove | J-ED-06 |
+| Edit | Header and footer: six positions, file name, date and page number fields, margins, page subset (all, odd, even, custom range); remove | J-ED-07 |
+| Edit | Page numbers: style, position, alignment, start number, range | J-ED-07 |
+| Edit | Bates numbering | J-ED-08 (PLAN §4; not seen in PDFgear) |
+| Edit | Page background | J-ED-09 (PLAN §4; not seen in PDFgear) |
+| Edit | Crop pages, with numeric width and height and "apply to all pages" | J-ED-10 |
+| Save | Save (incremental), Save As | J-OS-01, J-OS-02 (Save As platform conventions: #9) |
+| Optimize | Compress with low, medium and high levels and a size report | J-OS-03 (our levels: Lossless, Balanced, Smallest) |
+| Optimize | Compress several files in a list | Phase 2 (F-P2-4, batch) |
+| Optimize | Online compression or conversion | out (files never leave the device, PLAN R11) |
+| Convert | PDF to PNG, PDF to JPEG | J-OS-05 |
+| Convert | PDF to Word, Excel, PowerPoint, RTF, HTML, XML, text | Phase 2 (F-P2-2) |
+| Convert | Word, Excel, PowerPoint, RTF, text to PDF | Phase 2 (F-P2-2) |
+| Convert | Merge, split and convert several files in a list | Phase 2 (F-P2-4, batch) |
+| Robustness | A failed save leaves the original file intact | J-OS-06 (platform convention; not a PDFgear item) |
