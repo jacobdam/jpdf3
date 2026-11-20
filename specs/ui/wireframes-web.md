@@ -17,9 +17,13 @@ in our own words from the IA; nothing is copied from PDFgear (CONSTITUTION 20).
    20", "incorrect password"); only its first letter may be capitalized when it starts a
    sentence or a label. Other labels here are placeholders in our own words and may be
    reworded in a feature spec, as long as they stay short and in sentence case.
-3. **Untrusted text** (file names, URLs, metadata, annotation text) is drawn in `«…»` below.
-   It is always plain text, escaped by the engine, truncated in the middle except where IA §0
-   rule 3 forbids truncation (URLs and hosts).
+3. **Untrusted text** is everything that comes from a file: file names, the document title
+   (J-RD-27), URLs and hosts, metadata, annotation text and authors, page labels, outline
+   titles, layer names, attachment names, field names, signer names. It is drawn in `«…»`
+   below, even where the drawing shows a plain example. It is always plain text, the engine's
+   escaped display string, truncated in the middle (start and end visible) with the full
+   escaped value in the tooltip / accessible description, except where IA §0 rule 3 forbids
+   truncation (URLs and hosts wrap instead).
 4. **ASCII conventions:** `[Label]` button, `[▾ Label]` menu button, `(•)` / `( )` radio,
    `[x]` / `[ ]` check box, `[____]` text field, `|` separator, `░` page placeholder, `▓`
    selected, `ⓘ` the reason of a disabled control (tooltip + `aria-describedby`), `…`
@@ -37,12 +41,12 @@ in our own words from the IA; nothing is copied from PDFgear (CONSTITUTION 20).
 | `spacing` unit | 8 px (MUI `theme.spacing(1)`) | every margin and gap is a multiple of 4 px; prefer 8 |
 | `appbar.row` | 48 px (`Toolbar variant="dense"` with 48 px min height) | the AppBar's two rows |
 | `toolrow` | 40 px | the mode tool row |
-| `statusbar` | 32 px | the status bar |
+| `statusbar` | 32 px; its fields are dense `InputBase` inputs 28 px high (MUI's `size="small"` outlined fields are 40 px and don't fit) | the status bar |
 | `findbar` | 44 px | the find bar |
 | `sidebar.width` | 280 px default; min 200 px (fits a small thumbnail plus its label); max ⅓ of the window | left `Drawer` |
-| `sidebar.tabs` | 40 px high, icon tabs with labels in tooltips and `aria-label` | panel `Tabs` |
+| `sidebar.tabs` | one row, 40 px high; seven icon-only `Tab`s with `minWidth: 36` px (7 × 36 = 252 px fits the 280 px default); narrower than that the strip scrolls (`variant="scrollable"`); names in tooltips and `aria-label` | panel `Tabs` |
 | `inspector.width` | 300 px default; min 260 px; max 400 px | right `Drawer` |
-| `docview.min` | 360 px | the document view never gets narrower (§W-29) |
+| `docview.min` | 360 px | the drawers shrink to their minimum widths and then the breakpoints of W-29 apply before the document view gets narrower; below 600 px viewport width the document view takes the full width (pages may scroll in two dimensions, the SC 1.4.10 exception for content that needs it) |
 | `target.min` | 32 × 32 px for toolbar and list buttons (`IconButton size="small"` with padding); never below 24 × 24 px (WCAG 2.2 SC 2.5.8) | every interactive element |
 | `gap.page` | 16 px between pages; 24 px around the page column | document view |
 | `thumb.small` / `thumb.large` | 96 px / 160 px longest side | Thumbnails panel |
@@ -81,6 +85,10 @@ Arial, sans-serif`; no web-font download (strict CSP, no third-party requests). 
 | control boundary (field outlines, dividers that bound a control) | `#8a8a8a` | `#8a8a8a` | ≥ 3.1:1 / ≥ 4.8:1 (SC 1.4.11) |
 | focus ring | 2 px `#0b0b0b` inside a 2 px `#ffffff` outline (both appearances) | | ≥ 3:1 against any background (accessibility.md §1) |
 
+| `action.selected` (selected tool, selected list row) | `primary.main` at 16 % with a 2 px `primary.main` bottom bar on tools | `primary.main` at 24 % with the same bar | the bar is ≥ 5.2:1 / ≥ 9.5:1, so the state never relies on the tint alone (SC 1.4.11) |
+| `action.disabled` (disabled icon and label) | `#5f5f5f` at 60 % | `#b0b0b0` at 60 % | disabled controls are exempt from contrast; they also carry the reason (W-16) |
+| `info.main` / `warning.main` / `success.main` (Alert icons and borders) | `#0b6bcb` / `#9a5b00` / `#2e7d32` | `#7cc4fa` / `#ffb74d` / `#81c784` | ≥ 4.5:1 on paper and default; Alert text uses `text.primary` |
+
 Pages are never recolored by the theme; only the page tint (J-RD-20) changes them, through the
 engine. Search hits on the page have a fill and a 2 px outline; the current hit uses
 `primary.main` for its outline (accessibility.md §3: color is never the only signal).
@@ -97,7 +105,7 @@ hit is instant under reduced motion.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ [▾ File] [▾ Edit] [▾ View] [▾ Go] [▾ Tools] [▾ Help]                                 │ AppBar row 1
+│ [▾ File] [▾ Edit] [▾ View] [▾ Go] [▾ Tools] [▾ Help]                                 │ main toolbar (no tab bar)
 ├──────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                      │
 │      jpdf                                                                (h6)        │
@@ -143,9 +151,10 @@ hit is instant under reduced motion.
 │   Files you open appear here.                                     (body2, secondary) │
 ```
 
-When the browser holds no persistent file handles (reader.md shared rules) the sentence instead
-explains that this browser doesn't keep access to files between visits, so recent files can't
-be listed. Never an empty list box.
+Shown only when there are no recent files at all; never an empty list box. When the browser
+can't keep file handles (the no-handles case of J-RD-03), the W-01 list still shows the names
+only (no size), and clicking an entry opens the file picker instead of the file; a `caption`
+line under the list says so.
 
 ### W-03 Start screen, session restore (IA §2; J-RD-24)
 
@@ -165,8 +174,8 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ [▾ File] [▾ Edit] [▾ View] [▾ Go] [▾ Tools] [▾ Help] │ «big-manual.pdf» ✕ │           │ row 1
-│ [Open][Save][Print] │ Read  Annotate  Edit  Pages  Forms  Secure │ [◧][◨] [-][+] …    │ row 2
+│ «big-manual.pdf» [✕]                                                                 │ tab bar
+│ [▾ File]…[▾ Help] │ [Open][Save][Print] │ Read Annotate Edit Pages Forms Secure │ …   │ main toolbar
 ├──────────────┬───────────────────────────────────────────────────────┬───────────────┤
 │ Thumbnails   │                ┌──────────────────┐                   │               │
 │ ┌────┐       │                │ page 1 rendered  │                   │               │
@@ -176,7 +185,7 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 │ │░░░░│ 2     │                │░░░░░░░░░░░░░░░░░░│  placeholders of  │               │
 │ └────┘       │                │░░░░░░░░░░░░░░░░░░│  the right size   │               │
 ├──────────────┴───────────────────────────────────────────────────────┴───────────────┤
-│ — / 812     100% ▾    Single ▾        Loading… ▬▬▬▬▬▭▭▭▭ 38%  [Cancel]               │
+│ — / 812     100% ▾    Single Page ▾   Loading… ▬▬▬▬▬▭▭▭▭ 38%  [Cancel]               │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -191,12 +200,12 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │[Skip to document] (visible only on focus)                                            │
-│ [▾ File] [▾ Edit] [▾ View] [▾ Go] [▾ Tools] [▾ Help] │ «report.pdf» ● ✕ │ «b.pdf» ✕ │ │ row 1: menus + document Tabs
-│ [Open][Save][Print] │ ▓Read▓ Annotate Edit Pages Forms Secure │ [Select|Hand]          │ row 2: main toolbar
-│                       [◧ Sidebar][◨ Inspector] [-][+] [‹ Back][Forward ›] [⛶] [Find] │
+│ «report.pdf» ● [✕] │ «b.pdf» [✕] │                                                   │ row 1: document tab bar
+│ [▾ File][▾ Edit][▾ View][▾ Go][▾ Tools][▾ Help] | [Open][Save][Print] | [↶][↷]        │ row 2: main toolbar
+│ | ▓Read▓ Annotate Edit Pages Forms Secure | [Select|Hand] | [◧][◨] [-][+] [‹][›]      │   (one row on screen;
+│   [⟲ view][⟳ view] [⛶ Full screen][▶ Presentation] [Find]                            │    wrapped here for width)
 ├──────────────┬───────────────────────────────────────────────────────────────────────┤
-│[▤][≣][✎][📎] │                                                                       │
-│[◫][⌕][✓]     │            ┌──────────────────────────┐                               │
+│▤ ≣ ✎ 📎 ◫ ⌕ ✓│            ┌──────────────────────────┐                               │
 │ Thumbnails   │            │                          │                               │
 │ ┌────┐       │            │        page 11           │                               │
 │ │ 10 │       │            │                          │                               │
@@ -205,29 +214,44 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 │ │▓11▓│ ✓     │            ┌──────────────────────────┐                               │
 │ └────┘       │            │        page 12           │                               │
 ├──────────────┴───────────────────────────────────────────────────────────────────────┤
-│ [ 11 / 20 ]    [100% ▾]   [Continuous ▾]                                    Edited   │ status bar
+│ [ 11 / 20 ]    [100% ▾]   [Single Page Continuous ▾]                        Edited   │ status bar
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Row 1 (`AppBar position="static"`, `background.paper`, bottom divider): menu buttons
-  (`Button` + `Menu`, IA §6), then the document `Tabs variant="scrollable"`; each tab has the
-  file name (middle-truncated, max 240 px, full escaped name in the tooltip), an 8 px dot when
-  edited, and a close `IconButton`. The tab strip is shown even with one document.
-- Row 2 (`Toolbar`): file actions; the mode switcher as `Tabs` (labels with icons, 40 px
-  high, `primary.main` indicator); then the Read-only Select / Hand `ToggleButtonGroup`; then
-  view controls. With less than about 1100 px the view controls after zoom move into a
-  `[⋯ More]` menu (§W-29). Inspector toggle is present in every mode.
+- Both rows sit in one `AppBar position="static"` (`background.paper`, bottom divider), in
+  the focus order of accessibility.md §1 (tabs → main toolbar).
+- Row 1, the document tab bar (`Tabs variant="scrollable"`): each tab shows the file name, or
+  the document title when the file sets `/DisplayDocTitle` (J-RD-27; the file name stays in
+  the tooltip), middle-truncated at 240 px, with an 8 px dot when edited. The close button is
+  an `IconButton` placed **next to** the `Tab` element, not inside it (`role="tab"` can't
+  contain a focusable control; axe `nested-interactive`); Delete on a focused tab also closes
+  it. The tab bar is shown even with one document.
+- Row 2, the main toolbar (`Toolbar`): the menu buttons (`Button` + `Menu`, IA §6, W-32)
+  first; file actions; Undo / Redo (annotate.md's web toolbar rule); the mode switcher as
+  `Tabs` (labels with icons, 40 px high, `primary.main` indicator); the Read-only Select /
+  Hand `ToggleButtonGroup`; then sidebar and inspector toggles, zoom, back / forward, rotate
+  view left / right, full screen, presentation (shortcuts.md names the toolbar as their web
+  path) and Find. Below 1200 px window width everything after back / forward moves into a
+  `[⋯ More]` menu (W-29). Inspector toggle is present in every mode.
 - Mode tool row: hidden in Read (IA §3).
-- Sidebar: persistent `Drawer`, panel `Tabs` with icon tabs (Thumbnails, Outline,
-  Annotations, Attachments, Layers, Search results, Signatures), always all seven, in this
-  order (IA §4). Under the tabs: the panel title (`subtitle2`) and its actions.
+- Sidebar: persistent `Drawer`, panel `Tabs` with seven icon tabs in one row (Thumbnails,
+  Outline, Annotations, Attachments, Layers, Search results, Signatures), always all seven, in
+  this order (IA §4). Under the tabs: the panel title (`subtitle2`) and its actions. The
+  drawer's inner edge is a resize handle (a 4 px `role="separator"` with
+  `aria-valuenow`, arrows resize it); View > sidebar and inspector width presets are the
+  single-pointer alternative (accessibility.md §4).
 - Thumbnails: current page has a 2 px `primary.main` border; selected pages also show a check
-  mark (accessibility.md §3). Page label under each (`caption`).
+  mark (accessibility.md §3). Page label under each (`caption`, «…», middle-truncated).
 - Document view: `background.default` backdrop, pages centred, `gap.page` between them. It is
   a focusable `region` named "Document" (shortcuts.md rule 5).
-- Status bar (`Toolbar` dense, `background.paper`, top divider, `caption` text): page field
-  (`TextField size="small"`, 96 px, shows "11 / 20", or the label plus "(11 of 20)"), zoom
-  `Select`, layout `Select`; trailing: job progress (when any) and the edited state.
+- Status bar (`Toolbar` dense, `background.paper`, top divider, `caption` text): the page
+  field (a dense outlined `InputBase`, 28 px high, 96 px wide for "11 / 20" and growing to
+  220 px for the label plus "(11 of 20)"; a longer label is middle-truncated while the
+  " (11 of 20)" part always stays visible; the full escaped label in the tooltip); the zoom
+  and layout menus as dense `Select`s on `InputBase` (28 px). Layout options are J-RD-07's:
+  "Single Page", "Single Page Continuous", "Two Pages", "Two Pages Continuous", and a "Show
+  cover page" check item in the same menu. Trailing: job progress (when any) and the edited
+  state.
 
 ### W-06 Annotate mode (IA §3; J-ANN-01…J-ANN-26)
 
@@ -247,12 +271,12 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 │              │                                                   │ [_______________] │
 │              │                                                   │ Replies (2)  …    │
 ├──────────────┴───────────────────────────────────────────────────┴───────────────────┤
-│ [ 3 / 20 ]   [100% ▾]  [Continuous ▾]                                       Edited   │
+│ [ 3 / 20 ]   [100% ▾]  [Single Page Continuous ▾]                           Edited   │
 ```
 
 - Tool row: a second `Toolbar` (`toolrow`, `background.paper`, bottom divider). Tools are a
   single-selection `ToggleButtonGroup` (`size="small"`, icon + tooltip with the tool name and
-  its key); groups separated by vertical `Divider`s. `Shapes`, `Stamps`, `Signature` are
+  its key; the selected tool uses `action.selected`, §1.3); groups separated by vertical `Divider`s. `Shapes`, `Stamps`, `Signature` are
   split buttons: the button uses the last choice, the arrow opens a `Menu`. The quick
   controls (color, width, opacity) edit the active tool's defaults or the selection. `[⋯]`
   is the More menu (flatten annotations, export / import comments).
@@ -263,8 +287,8 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 ### W-07 Edit mode (IA §3; J-ED-01…J-ED-10)
 
 ```
-│ [Select] | [Edit text][Add text][Add image][Link] | [Watermark][Header and footer]    │
-│ [Bates numbers][Background] | [Crop]                                                 │
+│ [Select] | [Edit text][Add text][Add image][Link] | [▾ Watermark][▾ Header and footer]│
+│ [▾ Bates numbers][▾ Background] | [Crop]                                             │
 ├──────────────┬───────────────────────────────────────────────────┬───────────────────┤
 │ Thumbnails   │     ┌──────────────────────────┐                  │ Text              │
 │              │     │  ┌──────────────────┐    │                  │ Font [▾ «Helv…»]  │
@@ -275,8 +299,10 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 - The text box being edited has a 1 px `primary.main` outline and handles at the corners
   (8 × 8 px visual inside a 24 × 24 px hit area).
-- Watermark, header and footer, Bates numbers and background open their creator `Dialog`
-  (`sm`, W-25 style) with a live preview; their inspector shows the settings of the open job.
+- Watermark, header and footer, Bates numbers and background are split buttons: the button
+  opens their creator dialog (W-33) with a live preview, the arrow's menu has Add, Update and
+  Remove (J-ED-06…J-ED-09; Remove asks first, W-23). Their inspector shows the settings of the
+  open job.
 - Missing fonts: the inspector shows the "substituted" note under Font (J-ANN-05).
 
 ### W-08 Pages mode (IA §3; J-PG-01…J-PG-16)
@@ -351,7 +377,7 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 ```
 ├──────────────┬───────────────────────────────────────────────────────────────────────┤
-│ Search res…  │ [⌕ report________] 3 of 9 [‹][›] [Aa][ab|] ▬▬▬▭ [Cancel]       [✕]    │ find bar
+│ Search res…  │ [⌕ report____] 3 of 9 [‹][›] [Case Sensitive][Whole Words] ▬▭ [Cancel] [✕]│ find bar
 │ 9 results    ├───────────────────────────────────────────────────────────────────────┤
 │ Page 2       │            ┌──────────────────────────┐                               │
 │  …annual «re…│            │  the ╔report╗ shows      │  current hit: primary outline │
@@ -361,7 +387,7 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 - The find bar is a `Paper` strip above the document view (not over it), `findbar` high:
   `TextField size="small"` 280 px, the count ("1 of 9", `aria-live="polite"`), previous/next
-  `IconButton`s, two `ToggleButton`s (match case, whole word), a `LinearProgress` and
+  `IconButton`s, two `ToggleButton`s labelled with J-RD-15's "Case Sensitive" and "Whole Words", a `LinearProgress` and
   `Cancel` only while a search runs, and a close button.
 - Search results panel: before a search a hint to type a query; after a search with no hits
   "No results" in both the panel and the find bar count.
@@ -402,6 +428,9 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 - Groups (`subtitle2` headers, 16 px padding, 12 px between fields, labels above fields).
   Mixed values show "—" with an accessible name ending in "mixed".
+- One annotation selected: a "use as default" button at the end of the inspector (J-ANN-16).
+  A value the engine rejects shows its typed error under that field (`FormHelperText error`)
+  and the field keeps the previous value.
 - In Read mode the inspector is hidden by default; when shown it is read-only.
 
 ### W-14 Open failed (IA §7; J-RD-02, J-RD-05)
@@ -415,8 +444,8 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 
 - No tab is created; the rest of the window is unchanged. The message uses the journeys'
   terms ("not a PDF", "file too complex", "file not found") and no internal detail. The
-  snackbar stays until dismissed (no auto-hide for errors) and is announced through
-  `role="alert"`.
+  snackbar stays until dismissed (no auto-hide for errors) and is announced politely
+  (`role="status"`, accessibility.md §2).
 
 ### W-15 Document failed after opening (IA §7)
 
@@ -430,16 +459,18 @@ is the user gesture that re-grants file access. Files that no longer exist are l
 ```
 
 Only that tab shows the error view (icon, `h6` title, `body2` reason, one button), centred in
-the document view; sidebar panels show their empty texts; other tabs keep working.
+the document view; sidebar panels show "Not available" (not their empty texts, which would
+claim the file has no outline); other tabs keep working.
 
 ### W-16 Restricted (IA §3 notes, §7; J-RD-29, J-ANN-23, J-PG-15)
 
 ```
-│ {Select} | {Highlight ⓘ}{Underline ⓘ}{Strikeout ⓘ} … {Ink ⓘ}   [Unlock with password] │
+│ [Select] | {Highlight ⓘ}{Underline ⓘ}{Strikeout ⓘ} … {Ink ⓘ}   [Unlock with password] │
 │ ⓘ The document's permissions don't allow adding comments.                            │
 ```
 
-The disabled tools stay in place and focusable; a one-line reason (`caption`,
+The select tool stays enabled (selecting text and filling forms aren't annotation
+operations; IA §3 notes). The disabled tools stay in place and focusable; a one-line reason (`caption`,
 `text.secondary`) appears under the tool row once (not per tool), with the "Unlock with
 password" button at the end of the row where the journeys allow it. Menu items show the same
 reason as their secondary text.
@@ -452,12 +483,17 @@ reason as their secondary text.
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 ```
 
-- One `Snackbar` at a time, at most one action, auto-hide after 8 s except errors and
-  notices with an action (they stay until acted on or dismissed; WCAG 2.2 SC 2.2.1).
-- Notices: scripts present (once per document), "unsupported link", "unsupported action",
-  link target missing, the full-screen offer from `/PageMode /FullScreen` (`[Full screen]`),
-  the first-annotation author notice (author "Guest", `[Set name]`), no text under a markup
-  drag. Wording beyond the quoted journey terms is our own.
+- One `Snackbar` at a time, at most one action. **No notice hides by itself**: each stays
+  until dismissed, acted on, or replaced by a newer notice (which is then announced). This is
+  the same rule on macOS; security notices (scripts, "unsupported link", "unsupported
+  action") must never vanish unseen.
+- Notices: scripts present (once per document, J-RD-28), "unsupported link", "unsupported
+  action", "link target not found" (J-RD-17), copy not allowed by the permissions (J-RD-16),
+  the full-screen offer from `/PageMode /FullScreen` (`[Full screen]`, J-RD-27), the
+  first-annotation author notice (author "Guest", `[Set name]`), no text under a markup drag
+  (J-ANN-01), annotations beyond the per-page limit not shown (J-ANN-24), the save notice of
+  J-OS-01, and a skipped session file `«name»: file not found` (J-RD-24). Wording beyond the
+  quoted journey terms is our own.
 
 ### W-18 Password (IA §8; J-RD-04, J-RD-30)
 
@@ -487,9 +523,14 @@ reason as their secondary text.
 │ text. Enter the owner password to allow them for    │
 │ this session.                                       │
 │ Owner password [____________________________]       │
+│ ⨯ incorrect password                  (error.main)  │
 │                                 [Cancel] [Unlock]   │
 └─────────────────────────────────────────────────────┘
 ```
+
+The field follows W-18's rules (no `<form>`, `autocomplete="off"`, `type="password"`, paste
+allowed, never stored or logged); a wrong password shows "incorrect password" in place
+(J-RD-29). Unlock is the default.
 
 ### W-20 External link (IA §8; J-RD-17, J-RD-18)
 
@@ -497,16 +538,18 @@ reason as their secondary text.
 ┌ Dialog maxWidth="sm" ───────────────────────────────────────────────┐
 │ Open this web address?                                              │
 │ ┌ monospace, wraps, never truncated ──────────────────────────────┐ │
-│ │ https://xn--exmple-cua.com/very/long/path?with=query&and=more…  │ │
-│ │ (continues on the next lines, whole URL shown)                   │ │
+│ │ https://xn--exmple-cua.com/very/long/path?with=query&and=more&  │ │
+│ │ page=2&ref=mail                                                  │ │
 │ └──────────────────────────────────────────────────────────────────┘ │
 │ Host: xn--exmple-cua.com                              (subtitle2)   │
 │                                              [Cancel] [Open]        │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Cancel is the default (`autoFocus`). For `mailto:` with attachment parameters a line under
-the URL says they were removed.
+Cancel is the default (`autoFocus`). The URL and the host are the engine's display strings
+(CONSTITUTION 6, reader.md link policy); both wrap anywhere (`overflow-wrap: anywhere`) and are
+never truncated, however long (a host can be 253 characters). For `mailto:` with attachment
+parameters a line under the URL says they were removed.
 
 ### W-21 Unsaved changes (IA §8; journey pending in #42)
 
@@ -573,10 +616,12 @@ same layout with their journey wording.
 │ ┌ preview (engine-rendered, current sheet) ┐  Content                  │
 │ │                                           │  (•) document only        │
 │ │                                           │  ( ) document and annotations│
-│ │                                           │  [ ] Comment contents on  │
-│ │                                           │      extra pages          │
+│ │                                           │  [ ] Print comment        │
+│ │                                           │      contents on extra pages│
 │ └───────────────────────────────────────────┘  Pages                    │
-│        ‹  Sheet 1 of 2  ›                       (•) All  ( ) [2-4,7___]  │
+│        ‹  Sheet 1 of 2  ›                       (•) All ( ) Current      │
+│                                                ( ) [2-4,7___]           │
+│                                                ⨯ invalid page range     │
 │                                                Scale [Fit ▾]            │
 │                                                Pages per sheet [2 ▾]    │
 │                                                [x] Auto-rotate          │
@@ -584,14 +629,20 @@ same layout with their journey wording.
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Print hands the engine-produced output to the browser's print dialog. Below `sm` the preview
-moves above the options.
+Options are J-RD-21's: content, page range (all, current, a range such as "2-4,7"; an
+invalid range such as "9-3" or "0" shows a hint under the field and disables Print), scale
+(fit / actual size / custom %), pages per sheet (1, 2, 4), auto-rotate, and J-ANN-25's "print
+comment contents on extra pages" check box (the visible label is that string, first letter
+capitalized). Print hands the engine-produced output to the browser's print dialog. Below `sm`
+the preview moves above the options.
 
 ### W-26 Document properties (IA §8; J-RD-22)
 
-A `Dialog` (`sm`) with `Tabs`: File (name, size, PDF version, page size, page count,
-producer, creation and modification dates), Description (title, author, subject, keywords),
-Security (encryption, permissions as a list with allowed / not allowed). Values are read-only
+A `Dialog` (`sm`) with `Tabs`: File (file name, file size, page count, page size of the
+current page, PDF version, creator, producer, created and modified dates in local time, tagged
+yes/no, fast web view yes/no), Description (title, author, subject, keywords), Security
+(encryption, permissions as a list with allowed / not allowed); these are J-RD-22's fields.
+All values except the file size and page count come from the file and follow §0 rule 3. Values are read-only
 `body2`, labels `caption` in `text.secondary`, two columns (label 160 px). Escaped values
 use monospace. `[Close]`.
 
@@ -601,7 +652,7 @@ use monospace. `[Close]`.
 ┌ Dialog maxWidth="md" ─────────────────────────────────────────────────┐
 │ Preferences                                                           │
 │ ┌──────────────┬─────────────────────────────────────────────────────┐ │
-│ │ ▓General▓    │ Appearance  (•) Light ( ) Dark ( ) Follow system     │ │
+│ │ ▓General▓    │ Appearance  ( ) Light ( ) Dark (•) Follow system     │ │
 │ │ Viewing      │ [x] Restore open documents at launch                 │ │
 │ │ Annotations  │ Author name [Guest____________]                      │ │
 │ │ Printing     │                                                      │ │
@@ -639,11 +690,12 @@ last page.
 | Width | Layout |
 |---|---|
 | ≥ 1200 px (lg) | Sidebar and inspector docked (persistent `Drawer`s). |
-| 900–1199 px | Both docked; view controls after zoom move into `[⋯ More]` in row 2; the tool row moves its tail tools into its More menu. |
-| 600–899 px (sm–md) | Inspector becomes a `Drawer variant="temporary"` over the document view, opened by its toggle or by selecting an object; sidebar stays docked at min width. Menu buttons collapse into one `[☰ Menu]` button with the same groups as nested menus. |
+| 900–1199 px | Both docked, shrinking toward their minimum widths so the document view keeps `docview.min` (200 + 260 + 360 = 820 px fits); the main toolbar's controls after back / forward move into `[⋯ More]`; the tool row moves its tail tools into its More menu. |
+| 600–899 px (sm–md) | Inspector becomes a non-modal overlay over the right of the document view (a `Drawer variant="persistent"` positioned over the view: no backdrop, no focus trap), opened and closed only by its toggle, so selecting an object never moves focus away from the document view (arrow-key nudges keep working, shortcuts.md rule 6); sidebar stays docked at min width. Menu buttons collapse into one `[☰ Menu]` button with the same groups as nested menus. |
 | < 600 px (xs) | Sidebar also temporary. The mode `Tabs` become a `Select`. The status bar keeps the page field and zoom; layout moves into the View menu. |
 
-At every width the document view keeps at least `docview.min`; at 200 % browser zoom on a
+Down to 600 px the document view keeps at least `docview.min`; below that it takes the full
+width (§1.1); at 200 % browser zoom on a
 1280 px window (640 CSS px) every command stays reachable through the menus (accessibility.md
 §3).
 
@@ -669,12 +721,111 @@ The tab shows an 8 px dot before the close button (the dot has `aria-label` "edi
 close button's name becomes "Close «name», edited"); `document.title` becomes
 `• «name» — jpdf`; the status bar shows "Edited" (`caption`). All three clear after Save.
 
+### W-32 Menus (IA §6)
+
+```
+[▾ File]
+┌──────────────────────────────────────┐
+│ New                              ▸   │
+│ Merge files…                         │
+│ Open…                        Ctrl+O  │
+│ Open recent                      ▸   │
+│ Close                                │
+│ ──────────────────────────────────── │
+│ Save                         Ctrl+S  │
+│ Save as…                             │
+│ Export pages as images…              │
+│ Compress…                            │
+│ ──────────────────────────────────── │
+│ Print…                       Ctrl+P  │
+│ Document properties…                 │
+└──────────────────────────────────────┘
+```
+
+- Menu buttons open MUI `Menu`s with dense `MenuItem`s: label (`body2`), key as secondary text
+  (`caption`, `text.secondary`, right-aligned) only where shortcuts.md defines a web key
+  ("Ctrl" means the platform's primary modifier, shortcuts.md rule 2), `▸` for submenus,
+  `Divider` between groups. The groups and items are IA §6's table, in its order.
+- An item the engine reports unavailable stays focusable (`aria-disabled`), dimmed, with the
+  reason as a second line (`caption`). Items needing more input end in "…".
+
+### W-33 Creator dialogs (IA §8 Creators)
+
+```
+┌ Dialog maxWidth="sm" (md for merge and split) ────────────────────────┐
+│ Add watermark                                                    (h6) │
+│ ┌ preview (engine-rendered page) ─────┐  Options                       │
+│ │                                     │  Text  [«CONFIDENTIAL»_____]   │
+│ │                                     │  Font  [▾ …]  Size [48 ▾]      │
+│ │                                     │  Opacity [══●══]  Rotation [45]│
+│ │                                     │  Position (•) on top of the    │
+│ └─────────────────────────────────────┘    page content ( ) behind …   │
+│      ‹  Page 1 of 20  ›                   Pages [all pages ▾]          │
+│                                              [Cancel] [Apply]          │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+One template for every creator in IA §8 (custom stamp, signature, watermark, header and
+footer, Bates, background, page labels, split, merge, compress, export, new from images):
+preview on the left (engine-rendered; omitted where there is nothing to preview), options on
+the right in a single column (labels above fields, 16 px between groups), the action button
+named after the action as the default, Cancel beside it. Option names are the journeys'
+quoted strings. The per-creator details (signature draw / type / image tabs, the merge file
+list with per-row errors, the compress result report, split modes) are drawn in #45.
+
+### W-34 Save As (IA §6; J-OS-02)
+
+```
+┌ Dialog maxWidth="xs" ───────────────────────────────┐
+│ Save as                                             │
+│ [ ] Remove earlier versions                         │
+│     Writes the file again from scratch; earlier     │
+│     revisions are not kept.                         │
+│ ⚠ (signed file) Signatures will no longer be valid. │
+│                         [Cancel] [Choose location…] │
+└─────────────────────────────────────────────────────┘
+```
+
+The browser's save picker can't hold our options, so a small dialog comes first: the "remove
+earlier versions" check box, off by default (J-OS-02), with the signed-file warning line shown
+only when it applies (wording from J-OS-02's error branch), then the file-handle adapter's
+save picker.
+
+### W-35 Keyboard shortcuts list (IA §6 Help; shortcuts.md)
+
+A `Dialog` (`md`) opened from Help or the "?" key (single key, shortcuts.md rule 5): a filter
+field and a two-column table per context (shortcuts.md's tables: command, key), `subtitle2`
+group headers, keys drawn as `<kbd>` chips (monospace, control-boundary outline). `[Close]`.
+
+### W-36 Note popup (J-ANN-04)
+
+```
+        [note icon]
+        ┌ Popper (paper, elevation 8, 280 × auto) ┐
+        │ «Ann» · 20 Nov 2026 14:02     [⋯] [✕]   │
+        │ [comment text____________________]      │
+        │ [________________________________]      │
+        └──────────────────────────────────────────┘
+```
+
+A non-modal `Popper` anchored next to its icon, kept inside the visible page area; the text
+field gets focus when it opens; Esc or clicking outside closes it and keeps the text
+(shortcuts.md rule 9). Author and date are untrusted text.
+
+### W-37 Magnifier (IA §9; J-RD-25)
+
+A 200 px circular loupe (2 px control-boundary ring, elevation 8) centred on the pointer,
+showing the engine's rendering of the area under it at 4× the current zoom ("+" / "-" change
+the factor), with the factor in a `caption` chip at the ring's bottom. It never covers the
+pointer's hot spot (offset 24 px up-right near the edges).
+
 ## 3. Reviewer checklist (AUTOMATION §5.4)
 
 The audit's vision reviewer checks each screenshot for:
 1. The areas of W-05 in the right order and the component named here (AppBar rows, Tabs,
    Drawers, status bar).
-2. Sizes within ±2 px of §1.1 at 100 % zoom; all gaps on the 4 px grid; text in the §1.2
+2. Screenshots are taken at device pixel ratio 1, window 1280 × 800, browser zoom 100 %. Sizes
+   within ±2 px of §1.1; all gaps on the 4 px grid; text in the §1.2
    variants.
 3. Every empty, loading and error state shows text, as in W-02, W-04, W-12, W-14, W-15.
 4. Contrast and focus ring as in §1.3, in both appearances; page content never recolored by
