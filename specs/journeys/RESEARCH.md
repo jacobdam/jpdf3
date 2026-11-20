@@ -84,7 +84,7 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Shapes | Polygon, polyline, cloud | J-ANN-09, J-ANN-10 (PLAN §4; PDFgear's shape menu is smaller) |
 | Drawing | Freehand ink (pen) | J-ANN-11 |
 | Drawing | Eraser | J-ANN-12 |
-| Stamps | Built-in stamps; stamp with date, or date and time | J-ANN-13 |
+| Stamps | Built-in stamps; stamp with date, or date and time | J-ANN-13 (our set: the ISO 32000-2 standard stamp names) |
 | Stamps | Custom text stamp with color; custom image stamp with background removal | J-ANN-14 |
 | Signatures | Create a signature by drawing (trackpad), typing (keyboard) or from an image, with background removal; a small saved-signature limit | J-ANN-15 |
 | Signatures | Digital signatures, certify, signature panel, deferred signatures | #9 (signatures) |
@@ -96,7 +96,7 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Comments | Replies and review status | J-ANN-18 (PLAN §4) |
 | List | Sort by page, date, type; expand/collapse; select all; delete | J-RD-12, J-ANN-19 |
 | History | Undo and redo | J-ANN-20 |
-| Flatten | Flatten annotations | J-ANN-21 (PLAN §4) |
+| Flatten | Flatten annotations; save without earlier versions | J-ANN-21, J-ANN-26 (PLAN §4) |
 | Exchange | Export and import comments (XFDF, FDF) | J-ANN-22 (PLAN §4) |
 | Security | Password prompt to unlock annotating a restricted file | J-ANN-23 |
 | Robustness | Other tools' annotations kept as they are | J-ANN-24 (PLAN §4 safety; not a PDFgear item) |

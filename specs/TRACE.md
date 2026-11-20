@@ -18,17 +18,17 @@ that builds each feature (PLAN §8).
 
 | Req | Requirement | Journeys | Specs | Other tests |
 |---|---|---|---|---|
-| R1 | Security first: forbid unsafe, limits, no JS, fuzzing | J-RD-04, J-RD-05, J-RD-13, J-RD-18, J-RD-27, J-RD-28, J-RD-29, J-ANN-14, J-ANN-22, J-ANN-23, J-ANN-24 | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge policy; judge crash grading; `jpdf-cli` limit tests |
+| R1 | Security first: forbid unsafe, limits, no JS, fuzzing | J-RD-04, J-RD-05, J-RD-13, J-RD-18, J-RD-27, J-RD-28, J-RD-29, J-ANN-14, J-ANN-22, J-ANN-23, J-ANN-24, J-ANN-09, J-ANN-11, J-ANN-18 | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge policy; judge crash grading; `jpdf-cli` limit tests |
 | R2 | Performance (never at the cost of R1) | J-RD-01, J-RD-26 | | judge bench (later, #18) |
 | R3 | Platforms: macOS and web first | | | `cargo xtask ci linux`, `cargo xtask ci macos` |
 | R4 | Untrusted native layer | J-RD-05, J-RD-23, J-ANN-16 | | |
 | R5 | Spec coverage: ISO 32000-2 + real-world 1.x + repair | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge open rate |
-| R6 | Test corpus with rendering compared to other engines | | | judge render ratchet |
+| R6 | Test corpus with rendering compared to other engines | J-ANN-01, J-ANN-07, J-ANN-21, J-ANN-26 | | judge render ratchet |
 | R7 | Feature parity with PDFgear | (see F-rows below) | | |
 | R8 | UI: PDFgear ideas, native look | | | |
 | R9 | Dependencies behind our own traits | | | judge dependency policy |
 | R10 | Licensing: MIT, permissive deps, no committed corpora | | | judge license policy |
-| R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03, J-RD-24, J-ANN-15 | | |
+| R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03, J-RD-24, J-ANN-15, J-ANN-14, J-ANN-22 | | |
 | R12 | Digital signatures: verify, PAdES, timestamps, LTV | | | |
 | R13 | No human in the loop: specs, tests, ratchets decide | | [specs/tooling/check-specs.md](tooling/check-specs.md) | `cargo xtask check-specs` |
 
@@ -45,7 +45,7 @@ that builds each feature (PLAN §8).
 | F-AN-2 | Annotate: sticky note, text box, callout | J-ANN-04, J-ANN-05, J-ANN-06 | | |
 | F-AN-3 | Annotate: shapes, ink, eraser | J-ANN-07, J-ANN-08, J-ANN-09, J-ANN-10, J-ANN-11, J-ANN-12 | | |
 | F-AN-4 | Annotate: stamps, visual signatures | J-ANN-13, J-ANN-14, J-ANN-15 | | |
-| F-AN-5 | Annotate: properties, replies/status, flatten, XFDF/FDF | J-ANN-16, J-ANN-17, J-ANN-18, J-ANN-19, J-ANN-20, J-ANN-21, J-ANN-22, J-ANN-23, J-ANN-24, J-ANN-25 | | |
+| F-AN-5 | Annotate: properties, replies/status, flatten, XFDF/FDF | J-ANN-16, J-ANN-17, J-ANN-18, J-ANN-19, J-ANN-20, J-ANN-21, J-ANN-22, J-ANN-23, J-ANN-24, J-ANN-25, J-ANN-26 | | |
 | F-ED-1 | Edit: existing text (font substitution warning) | | | |
 | F-ED-2 | Edit: add text, images, links; move/resize/delete images | | | |
 | F-ED-3 | Edit: watermark, header/footer, Bates, background | | | |
