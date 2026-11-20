@@ -68,6 +68,11 @@ instead of adding near-duplicates.
   alive at once exceed 2 GiB → from the start, use a per-document lexing budget charged per
   byte, a per-document object budget, overlap rejection by byte span, one parsed object alive
   at a time, and compact xref entries ([journal](journal/2026-11-20.md), PR #24).
+- Writing signature or network journeys → give approval signatures a default change policy
+  (shadow attacks are legal edits), keep certificate-derived URLs off loopback/private
+  addresses, check web limits (CORS, mixed content, CSP, `fetch` redirect modes) and macOS ATS
+  before promising a request, and draw the fixture PKI's expiry timeline before writing
+  clock steps ([journal](journal/2026-11-20.md), PR #46).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 

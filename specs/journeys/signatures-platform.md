@@ -464,9 +464,12 @@ exactly 3 requests: OCSP for the signer, OCSP for `jpdf Test TSA`, and the CRL f
 CA` → save (incremental) → the catalog has `/DSS` with `/Certs`, `/OCSPs` and `/CRLs` holding
 those responses and every certificate of both chains (ISO 32000-2 §12.8.4.3) → the signature
 check holds at B-LT → Preferences > Signatures: set the archive timestamp server URL to the `jpdf Test Archive
-TSA` endpoint → Add document timestamp → 1 request to that server, and 1 CRL request for
-`jpdf Test Archive TSA`'s CRL (added to the DSS with the update) → a new update holds a
-`/Type /DocTimeStamp` signature with `/SubFilter /ETSI.RFC3161` → the signature check holds at
+TSA` endpoint → Add document timestamp → 1 request to that server, then 1 CRL request for
+`jpdf Test Archive TSA`'s CRL → the save appends two updates: one holding a `/Type
+/DocTimeStamp` signature with `/SubFilter /ETSI.RFC3161` whose byte range ends at the end of
+that revision, then a DSS-only update adding the archive TSA's certificate and CRL (its
+certificate is known only from the response, so it can't be inside the revision the
+timestamp covers) → the document timestamp reports `No changes` ("Validation data added") → the signature check holds at
 B-LTA → set the test clock past the expiry of the signer, `jpdf Test CA` and `jpdf Test TSA`,
 but before `jpdf Test Archive TSA` and `jpdf Test Root` expire, with no online check → the
 signature is still `Valid`, validated at the document timestamp's time by past signature
@@ -548,7 +551,8 @@ typed permission errors → enter the owner password (J-RD-29) → both are enab
   a file change, J-PC-02) and reads only from it, so a document never mixes bytes from two
   versions of the file. After each save the snapshot is replaced by the saved bytes; it is
   deleted when the document closes; snapshots left by a crash are deleted at the next launch
-  (recovery never needs them: J-PC-03 restores only against an unchanged source file). The
+  (web: only snapshots whose owning tab's Web Lock is free, so a live tab's snapshot is never
+  deleted; recovery never needs them: J-PC-03 restores only against an unchanged source file). The
   forms-security.md redaction residue search covers snapshots.
 
 ## J-PC-01: Unsaved changes when closing and quitting
@@ -620,7 +624,8 @@ is deleted → edit A, close it with Don't Save (J-PC-01) → its recovery data 
 once.
 Web, two tabs: open A in tab 1 and B in tab 2, edit both, wait for both checkpoints, crash tab
 1 only, and open the app in a new tab → only A is offered (each app tab holds a Web Lock for
-its own recovery records, and only records whose lock is free are offered).
+its own recovery records, and only records whose lock is free are offered) → tab 2's session snapshot is still in OPFS and
+B keeps working in tab 2.
 Encrypted documents: open an AES-256 R6 fixture whose open password is a 24-character random
 sentinel, edit it, wait for the checkpoint → the update is encrypted with the document's key
 as a save would write it; searching app storage for the page text sentinels and the password
