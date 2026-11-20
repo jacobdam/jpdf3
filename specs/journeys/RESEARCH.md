@@ -37,7 +37,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Sidebar | Bookmarks panel: navigate, expand/collapse all | J-RD-11 |
 | Sidebar | Bookmarks panel: add, add child, rename, delete | #8 (editing) |
 | Sidebar | Annotation list: group by page, sort by page/date/type, jump to annotation | J-RD-12 |
-| Sidebar | Annotation list: select, delete | #7 (annotate) |
+| Sidebar | Annotation list: select, delete | J-ANN-19 |
 | Sidebar | Attachments | J-RD-13 (list only; never opened, CONSTITUTION 7) |
 | Sidebar | Layers (optional content) | J-RD-14 (PLAN §4; not seen in PDFgear) |
 | Search | Find with next/previous result | J-RD-15, J-RD-31 |
@@ -52,7 +52,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Print | Print document only or with annotations | J-RD-21 |
 | Print | Preference to choose the content before every print | #9 (platform conventions: preferences) |
 | Print | Scale, scale to fit, pages per sheet, auto-rotate | J-RD-21 |
-| Print | Print note contents on extra pages | #7 (annotate: comment summary) |
+| Print | Print note contents on extra pages | J-ANN-25 |
 | Print | Permission-restricted printing and copying, unlocked with the owner password | J-RD-29 |
 | Properties | File information (location, size, pages, page size, version, producer, dates) | J-RD-22 |
 | Properties | Description (title, author, subject, keywords) | J-RD-22 |
@@ -65,3 +65,41 @@ Each journeys issue (#6–#9) adds its own section here.
 | Reading | AI assistant / chat about the document | Phase 2 (F-P2-3) |
 | Reading | Screenshot OCR, OCR to searchable PDF | Phase 2 (F-P2-1) |
 | Create | New blank PDF, new PDF from files/images/copied pages, scan to PDF | #8 (pages, convert) |
+
+## Annotate and comment (#7)
+
+Sources: the annotation toolbar, annotation list, stamp and signature dialogs, the Annotate
+ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
+
+| Area | PDFgear feature (our words) | Status |
+|---|---|---|
+| Markup | Highlight selected text | J-ANN-01, J-ANN-03 |
+| Markup | Underline, strikethrough | J-ANN-02 |
+| Markup | Squiggly underline | J-ANN-02 (PLAN §4; not seen in PDFgear) |
+| Notes | Sticky note: add, edit | J-ANN-04 |
+| Notes | Text box | J-ANN-05 |
+| Notes | Callout | J-ANN-06 |
+| Shapes | Rectangle, ellipse | J-ANN-07 |
+| Shapes | Line, arrow | J-ANN-08 |
+| Shapes | Polygon, polyline, cloud | J-ANN-09, J-ANN-10 (PLAN §4; PDFgear's shape menu is smaller) |
+| Drawing | Freehand ink (pen) | J-ANN-11 |
+| Drawing | Eraser | J-ANN-12 |
+| Stamps | Built-in stamps; stamp with date, or date and time | J-ANN-13 (our set: the ISO 32000-2 standard stamp names) |
+| Stamps | Custom text stamp with color; custom image stamp with background removal | J-ANN-14 |
+| Signatures | Create a signature by drawing (trackpad), typing (keyboard) or from an image, with background removal; a small saved-signature limit | J-ANN-15 |
+| Signatures | Digital signatures, certify, signature panel, deferred signatures | #9 (signatures) |
+| Signatures | Online signature requests (e-sign service) | out (needs a backend; PLAN R11) |
+| Properties | Stroke width presets, font size presets, color, opacity | J-ANN-16 |
+| Editing | Copy, cut, paste, remove annotation | J-ANN-17 |
+| Editing | Magnetism / auto-align when dragging annotations (preference) | J-ANN-17 |
+| Comments | Add or edit a remark on an annotation | J-ANN-04, J-ANN-18 |
+| Comments | Replies and review status | J-ANN-18 (PLAN §4) |
+| List | Sort by page, date, type; expand/collapse; select all; delete | J-RD-12, J-ANN-19 |
+| History | Undo and redo | J-ANN-20 |
+| Flatten | Flatten annotations; save without earlier versions | J-ANN-21, J-ANN-26 (PLAN §4) |
+| Exchange | Export and import comments (XFDF, FDF) | J-ANN-22 (PLAN §4) |
+| Security | Password prompt to unlock annotating a restricted file | J-ANN-23 |
+| Robustness | Other tools' annotations kept as they are | J-ANN-24 (PLAN §4 safety; not a PDFgear item) |
+| Print | Print with annotations; print comment contents | J-RD-21, J-ANN-25 |
+| Links | Insert a link on an area or on text | #8 (edit: links) |
+| Forms | Highlight form fields | #9 (forms) |
