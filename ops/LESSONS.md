@@ -25,6 +25,8 @@ instead of adding near-duplicates.
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
 - A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
   fails unless every upstream job succeeded (bootstrap).
+- main red with `judge-verdict` green and only `pages` failed (deploy-pages "No artifacts named
+  github-pages") → infra: `gh run rerun --failed <id>`, no code change ([journal](journal/2026-11-20.md)).
 
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
