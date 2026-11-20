@@ -8,8 +8,13 @@ Shared rules for every journey in this file:
   disk are identical before and after, and the document is not marked as edited.
 - "Fixture" means a PDF we generate in the test harness (never a corpus file).
 - Web: files are opened from the local disk and never leave the device (PLAN R11). Every web
-  journey asserts that after the app shell has loaded there are **zero** network requests,
-  and none to another origin at any time.
+  journey asserts that after the app shell has loaded the only network requests are
+  same-origin GETs for static app assets (code, fonts, CMaps); no request carries file bytes,
+  passwords or anything derived from the document; and no cross-origin request is ever made.
+- Web file handles: the app keeps persistent file handles behind an adapter. Web tests use
+  the desktop Chromium build and inject Origin Private File System handles (always granted)
+  through it, and assert the app's own "reopen" buttons, never the browser's permission
+  prompt. The fallback for browsers without persistent handles is forced by a test flag.
 - All rendering, text, search, page-label resolution and hit-testing come from the Rust
   engine; the native layer only displays results (CONSTITUTION 6). Tints and print output
   are produced by the engine's renderer, not by CSS or platform filters.
@@ -18,7 +23,9 @@ Shared rules for every journey in this file:
   macOS key that the browser reserves, web uses the app's toolbar or the alternative given.
 - "Budgets" refer to PLAN §5 (performance targets): first page < 200 ms for a typical 10 MB
   document, 60 fps scrolling, peak memory bounded by `Limits` and not proportional to file
-  size for linearized reading. A journey that names a number states it.
+  size for linearized reading. These timing targets are enforced by the bench (`tools/bench`),
+  not by the E2E tests: journeys assert ordering and behavior, which stay stable on shared CI
+  runners.
 
 ## J-RD-01: Open a PDF from the file dialog and see the first page fast
 - milestone: M4
@@ -27,7 +34,8 @@ Shared rules for every journey in this file:
 
 Steps: launch the app → choose Open (toolbar button; macOS also File > Open and Cmd+O; web
 also Ctrl+O) → pick a 20-page, 10 MB fixture in the system file dialog (web: the browser file
-picker) → the first page is visible in < 200 ms after the file is chosen (PLAN §5) → the
+picker) → the first page is rendered before the thumbnails and later pages (the PLAN §5
+first-page target is measured by the bench) → the
 window title shows the file name → the page indicator reads "1 / 20" → the rendered first
 page matches the MuPDF and Poppler renders of the same page within the render-ratchet
 tolerance.
@@ -55,13 +63,12 @@ opens the same way.
 Steps: open fixtures A then B → close both → the start screen lists B then A with name,
 size and last-opened time → click A → it opens → remove A from the start-screen list → it
 disappears → reopen B from the list after deleting it on disk → a "file not found" message
-is shown and B is removed from the list → clear the list → it is still empty after
-restarting the app.
+is shown and B is removed from the list → open fixture C, then close it → clear the list →
+it is still empty after restarting the app.
 macOS: File > Open Recent shows the same files (system recent-documents menu; Clear Menu
-empties it). Web: the list keeps local file handles only, never copies of the bytes; in a
-browser with persistent handles, reopening asks for permission once (one click); in a
-browser without them, the list shows names only and clicking asks the user to pick the file
-again.
+empties it). Web: the list keeps local file handles only, never copies of the bytes (test handles per
+the shared rules). With the no-handles test flag set, the list shows names only, and
+clicking an entry opens the file picker instead of the file.
 
 ## J-RD-04: Open a password-protected PDF
 - milestone: M4
@@ -84,10 +91,11 @@ holds it.
 - test: e2e.web.rd_open_damaged, e2e.macos.rd_open_damaged
 
 Steps: open a fixture with a broken xref table (offsets shifted) → it opens after repair
-with the same page count MuPDF and Poppler report → open a fixture truncated after its
-third page object (no xref, no trailer) → it opens by repair with 3 pages → open a fixture
-that exceeds an engine limit (nesting deeper than `Limits`) → a typed "file too complex"
-error within the limit's time budget, no crash → open a random-bytes file renamed `.pdf` →
+with the same page count MuPDF and Poppler report → open a fixture whose catalog and page
+tree come first, truncated after its third page's content (no xref, no trailer) → it opens
+by repair with the same page count MuPDF and Poppler report → open a fixture
+whose page 1 content nests deeper than `Limits` allows → a typed "file too complex" error
+at open or at first render of page 1, never a crash or hang → open a random-bytes file renamed `.pdf` →
 a "not a PDF" error → after each error the app stays responsive and opens a valid fixture.
 macOS: the app window never crashes, even if the XPC helper has to restart.
 
@@ -101,8 +109,9 @@ Next Page (Right arrow, Page Down, toolbar) → page 2 → Last Page (End) → p
 Page (Home) → page 1 → type "iii" in the page field → physical page 3 → type "7" → the page
 labelled 7 (physical page 11): an exact label match wins, otherwise the text is read as a
 physical page number → type "#7" → physical page 7 → type "99" → an "invalid page" hint, the
-page doesn't change → Go Back (macOS Cmd+[, web Alt+Left) → the previous view position → Go
-Forward (macOS Cmd+], web Alt+Right) → returns.
+page doesn't change → Go Back (macOS Cmd+[, web the toolbar Back button) → physical page 11
+→ Go Back → physical page 3 → Go Forward (macOS Cmd+], web the toolbar Forward button) →
+physical page 11.
 The page field shows the label and "(11 of 20)" when labels differ from physical numbers.
 
 ## J-RD-07: Switch page layout (single, continuous, two-page, cover)
@@ -118,8 +127,8 @@ cover page" → page 1 alone, then 2–3, 4–5 → in every mode the current pa
 fixture whose /PageLayout is TwoColumnLeft → it opens in two-page continuous without cover
 (the file's /PageLayout wins when the user has not set a default) → set Single Page as the
 default layout in Preferences → open both fixtures again → both open in Single Page (an
-explicit user default wins over the file) → a fixture with /ViewerPreferences /Direction
-/R2L shows spreads right to left.
+explicit user default wins over the file) → open a fixture with /ViewerPreferences /Direction
+/R2L and switch to Two Pages → its spreads run right to left (page 2 left of page 1).
 
 ## J-RD-08: Zoom and fit
 - milestone: M4
@@ -130,8 +139,9 @@ Steps: open a fixture with a Letter page and an A3 landscape page → Zoom In (m
 web Ctrl+= handled by the app, toolbar +) → the zoom goes to the next step and the indicator
 shows the percentage → Zoom Out → the previous step → Actual Size → 100%, where 1 PDF point
 (times /UserUnit if present) is 1 typographic point on screen (web: 1 CSS pt = 4/3 CSS px)
-→ Fit Width → the page width fills the view → Fit Page → the whole page is visible → Fit
-Height → the page height fills the view → type 250 in the zoom field → 250% → Ctrl+scroll
+→ Fit Width → the current page's width fills the view → Fit Page → the whole current page
+is visible → Fit Height → the current page's height fills the view → go to the A3 page →
+the fit mode is kept and recomputed for it → type 250 in the zoom field → 250% → Ctrl+scroll
 (macOS also trackpad pinch, not part of the automated test) → zooms around the pointer →
 type 5 and then 99999 → the zoom clamps to 10% and 6400% → text is re-rendered sharp at 400%
 (the rendered tile's pixel density matches the zoom; no upscaled bitmap) → set Fit Width as
@@ -143,7 +153,7 @@ the default zoom → new files open at Fit Width.
 - test: e2e.web.rd_rotate_view, e2e.macos.rd_rotate_view
 
 Steps: open a fixture whose page 2 has /Rotate 90 → Rotate Right (macOS Cmd+R, web the
-toolbar button or Ctrl+Shift+Plus) → all pages display rotated 90° clockwise on top of their
+toolbar button) → all pages display rotated 90° clockwise on top of their
 own rotation (page 2 shows at 180°) → Rotate Left twice → rotated 90° counter-clockwise →
 text selection and links still hit the right glyphs and areas in the rotated view → close
 the file → no "save changes?" prompt → the file bytes are unchanged → reopen → the file's
@@ -201,7 +211,9 @@ FileAttachment annotation → the Attachments tab lists all three with name, siz
 and page (for the annotation) → there is no "Open" action, double-click does nothing, and
 nothing is written to disk or launched (CONSTITUTION 7) → a fixture with a Launch action and
 a GoToE action on links → clicking each link does nothing except an "unsupported action"
-notice → a fixture with no attachments shows the Attachments tab with "No attachments".
+notice → an attachment named "report" + U+202E + "txt.exe" is listed with the control
+character shown escaped, so the real `.exe` ending is visible → a fixture with no
+attachments shows the Attachments tab with "No attachments".
 
 ## J-RD-14: Show and hide layers (optional content)
 - milestone: M4
@@ -209,12 +221,13 @@ notice → a fixture with no attachments shows the Attachments tab with "No atta
 - test: e2e.web.rd_layers, e2e.macos.rd_layers
 
 Steps: open a fixture with four OCGs: A (ON), B (OFF by default), C and D (a radio-button
-group, C ON), and A also listed in /Locked; B has /Usage /Print /PrintState /ON → the
+group, C ON), and A also listed in /Locked; B has /Usage /Print /PrintState /ON, and the default
+configuration has an /AS entry for the Print event covering B (ISO 32000-2 §8.11.4.4) → the
 Layers tab lists them in the /Order tree with that visibility → B's content is not drawn,
 matching MuPDF and Poppler → turn B on → its content appears → turn on D → C turns off →
 A's toggle is disabled → turn B off again and print (J-RD-21 mechanism) → the printed output
-includes B, because print uses each layer's print state where /Usage /Print gives one and
-the current view state otherwise → close → the file is unchanged → reopen → default
+includes B, because the /AS Print entry applies B's print state; the other layers print as
+currently shown → close → the file is unchanged → reopen → default
 visibility again.
 
 ## J-RD-15: Search the document
@@ -222,12 +235,13 @@ visibility again.
 - platform: web, macos
 - test: e2e.web.rd_search, e2e.macos.rd_search
 
-Steps: open a 50-page fixture containing "Report", "report" and "reporting" → Find (macOS
+Steps: open a 50-page fixture containing "Report" 3 times, "report" 4 times and
+"reporting" 2 times → Find (macOS
 Cmd+F, web Ctrl+F handled by the app) → type "report" → matches are highlighted on the
-pages, the first one is selected and scrolled into view, and a count shows "1 of N" → Next
+pages, the first one is selected and scrolled into view, and a count shows "1 of 9" → Next
 (Enter) and Previous (Shift+Enter) cycle through and wrap → the results list shows each
 match with page number and surrounding text → turn on Case Sensitive → "Report" no longer
-matches → turn on Whole Words → "reporting" no longer matches → search for a word that is
+matches: 6 results → turn on Whole Words → "reporting" no longer matches: 4 results → search for a word that is
 not there → "No results" → Esc closes the find bar and removes the highlights.
 
 ## J-RD-16: Select and copy text
@@ -262,9 +276,10 @@ target not found" notice → links still work in two-page mode and in a rotated 
 - test: e2e.web.rd_external_link, e2e.macos.rd_external_link
 
 Steps: open a fixture with URI links to `https://example.com/a`, `http://example.com/b`, a
-`mailto:` address, a host with non-ASCII characters, and a link whose visible text shows a
-different URL → hover → a tooltip shows the real target → click the https link → a
-confirmation shows the full URL (non-ASCII hosts in punycode) → Cancel → nothing opens →
+`mailto:` address, a host with non-ASCII characters, a link whose visible text shows a
+different URL, and a URI containing U+202E → hover → a tooltip shows the real target → click the https link → a
+confirmation shows the full URL (non-ASCII hosts in punycode, control and
+bidi characters shown escaped) → Cancel → nothing opens →
 click again → Open → the system browser opens the URL (web: a new tab with
 `noopener,noreferrer`; the test intercepts the open call) → `http:` and `mailto:` ask the
 same way.
@@ -304,8 +319,8 @@ page tint → print output (J-RD-21 mechanism) is never tinted → the file is u
 - platform: web, macos
 - test: e2e.web.rd_print, e2e.macos.rd_print
 
-Steps: open a fixture with three annotations: one with the Print flag, one without it, one
-with Print and Hidden → Print (macOS Cmd+P, web the toolbar button) → the print options
+Steps: open a 10-page fixture with three annotations on page 3: one with the Print flag,
+one without it, one with Print and Hidden → Print (macOS Cmd+P, web the toolbar button) → the print options
 offer content (document only / document and annotations), page range (all, current,
 "2-4,7"), scale (fit / actual size / custom %), pages per sheet (1, 2, 4) and auto-rotate →
 choose "document and annotations", range "2-4,7", 2 per sheet → the engine's print job has
@@ -327,9 +342,11 @@ with xmp:ModifyDate 2025-01-01 → File > Document Properties (macOS Cmd+I, web 
 item) → shows file name, file size, page count, page size of the current page, PDF version,
 title, author, subject, keywords, creator, producer, created and modified dates (in local
 time), tagged and fast web view yes/no; macOS also shows the location (the web app has no
-file path) → the title shown is "XMP Title" (the newer metadata wins, ISO 32000-2 §14.3.2)
-→ the Security section lists the encryption method and each permission (print, copy,
-modify, annotate, fill forms, assemble, accessibility) → metadata containing control
+file path) → the title shown is "XMP Title" and the modified date is 2025-01-01, both from the
+newer metadata (ISO 32000-1 §14.3.2 for PDF 1.x files) → open a second fixture where the Info
+/ModDate (2026-01-01) is newer than the XMP date → it shows "Info Title" and 2026-01-01 → the Security section lists the encryption method and each permission (print,
+high-quality print, copy, modify, annotate, fill forms, assemble); text extraction for
+accessibility is always shown as allowed (ISO 32000-2 deprecates that bit) → metadata containing control
 characters, U+202E (right-to-left override) and a 10,000-character value is shown escaped
 and truncated, never interpreted → Close → the file is unchanged.
 
@@ -342,8 +359,8 @@ Steps: open three fixtures → each is its own tab (macOS: native window tabs; w
 the app's tab bar) → switch tabs (macOS Ctrl+Tab / Ctrl+Shift+Tab; web clicking the tab bar
 or Alt+PageDown / Alt+PageUp) → each keeps its own page, zoom, layout and sidebar state →
 open a file that is already open → the existing tab is focused, not a duplicate (macOS: same
-file URL; web: `FileSystemHandle.isSameEntry`, or the same name, size and content hash when
-handles are unavailable) → close the middle tab (macOS Cmd+W; web the tab's close button) →
+file URL; web: the same file handle, or, with the no-handles test flag, the same name, size
+and content hash) → close the middle tab (macOS Cmd+W; web the tab's close button) →
 the others stay → a test-only fault injected into one document's engine session makes that
 tab show an error, while the other tabs keep working.
 
@@ -357,9 +374,9 @@ Steps: turn on "Restore open documents at launch" in Preferences → open fixtur
 again → A and B reopen at the same pages, zoom and layout → a file deleted in between is
 skipped with a notice → an encrypted file asks for its password again (passwords are never
 stored) → turn the preference off → launch → the start screen shows, nothing reopens.
-Web: browsers need a user gesture to re-grant file access, so the app lists the session's
-files and reopens them all after one click; a browser without persistent file handles shows
-the names only (as in J-RD-03).
+Web: browsers need a user gesture to re-grant file access, so on launch the app lists the
+session's files with one "Reopen all" button; clicking it reopens them as above (test handles
+per the shared rules). With the no-handles test flag set, the list shows names only.
 
 ## J-RD-25: Inspect detail with the magnifier
 - milestone: M4
@@ -377,11 +394,12 @@ never changed.
 - test: e2e.web.rd_progressive_large, e2e.macos.rd_progressive_large
 
 Steps: open a linearized 2,000-page, 300 MB fixture → page 1 renders from the
-first-page section within 500 ms, before the rest of the file is read → a progress
+first-page section before any byte past that section is read (engine read log) → a progress
 indicator shows the loading state → jump to page 1,900 before loading finishes → it renders
-without waiting for the whole file to be indexed → scroll quickly through 200 pages → the
-UI keeps 60 fps scrolling (PLAN §5), and peak engine memory stays under its `Limits` bound
-and does not grow with file size (compared with a 30 MB variant of the same fixture) →
+without waiting for the whole file to be indexed → scroll quickly through 200 pages → no
+input event waits on the engine (rendering is asynchronous; the 60 fps target is measured
+by the bench), and peak engine memory stays under its `Limits` bound and does not grow with
+file size (compared with a 30 MB variant of the same fixture) →
 close the file mid-load → loading is cancelled and memory is released.
 
 ## J-RD-27: Respect the document's initial view safely
@@ -392,7 +410,7 @@ close the file mid-load → loading is cancelled and memory is released.
 Steps: open a fixture whose /OpenAction is a destination to page 4 at /FitH → it opens on
 page 4 at fit width → a fixture with /PageMode /UseOutlines → it opens with the Outline tab
 shown → /PageMode /UseThumbs → the Thumbnails tab → /PageMode /UseAttachments → the
-Attachments tab (nothing is opened) → /PageMode /FullScreen → it opens in the normal window
+Attachments tab (nothing is opened) → /PageMode /UseOC → the Layers tab → /PageMode /FullScreen → it opens in the normal window
 with a notice offering full screen; full screen starts only if the user accepts → a
 /ViewerPreferences with /HideToolbar and /HideMenubar → the toolbar and menus stay visible
 (the app never hides its own chrome because a file asks) → /ViewerPreferences /DisplayDocTitle
@@ -408,8 +426,10 @@ page /AA open action, a link /AA mouse-enter action and a widget /AA action; eve
 tries something visible (show an alert, go to page 9, open `https://example.com/x`, print)
 → open, scroll through every page, hover and click every link and widget → no alert
 appears, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
-7) → a one-time notice says the document contains scripts that were not run → a fixture
-whose /OpenAction is a Launch action → nothing launches, the same kind of notice.
+7) → a one-time notice says the document contains scripts that were not run → fixtures whose
+/OpenAction is a Launch action, a URI action, and whose page /AA is a SubmitForm action and an
+ImportData action → nothing launches, no link confirmation appears unprompted, no network
+request is made, nothing is read from disk, and the same kind of notice is shown.
 
 ## J-RD-29: Unlock permission-restricted features with the owner password
 - milestone: M4
