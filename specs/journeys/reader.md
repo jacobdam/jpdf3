@@ -26,6 +26,15 @@ Shared rules for every journey in this file:
   size for linearized reading. These timing targets are enforced by the bench (`tools/bench`),
   not by the E2E tests: journeys assert ordering and behavior, which stay stable on shared CI
   runners.
+- Engine gate: steps that act "while" a load, search or render is running (Esc, jump, close)
+  first pause the engine job through a test-only gate in the engine API (the job blocks
+  after N pages or N bytes until the test releases it), act, then release. This keeps those
+  steps independent of machine speed. The gate is compiled only into test builds.
+- Link policy: the engine classifies every link target (allowed scheme or not), normalizes
+  it (punycode hosts, escaped control and bidi characters, stripped mailto attachment
+  parameters) and returns the display string and the openable URL. The native layer only
+  shows the confirmation and calls the platform open API (CONSTITUTION 5 and 6).
+- Random-bytes fixtures use a fixed seed.
 
 ## J-RD-01: Open a PDF from the file dialog and see the first page fast
 - milestone: M4
@@ -33,13 +42,15 @@ Shared rules for every journey in this file:
 - test: e2e.web.rd_open_dialog, e2e.macos.rd_open_dialog
 
 Steps: launch the app → choose Open (toolbar button; macOS also File > Open and Cmd+O; web
-also Ctrl+O) → pick a 20-page, 10 MB fixture in the system file dialog (web: the browser file
-picker) → the first page is rendered before the thumbnails and later pages (the PLAN §5
+also Ctrl+O) → pick a 20-page, 10 MB fixture in the system file dialog (web: the test answers the
+picker through the file-handle adapter from the shared rules; with the no-handles flag, the
+`<input type=file>` fallback is driven through Playwright's `filechooser` event) → the first page is rendered before the thumbnails and later pages (the PLAN §5
 first-page target is measured by the bench) → the
 window title shows the file name → the page indicator reads "1 / 20" → the rendered first
 page matches the MuPDF and Poppler renders of the same page within the render-ratchet
 tolerance.
-Error branch: cancel the dialog → nothing opens, no error is shown.
+Error branch: cancel the dialog (web: the adapter returns "cancelled"; fallback: the
+`filechooser` is dismissed) → nothing opens, no error is shown.
 
 ## J-RD-02: Open a PDF by drag and drop
 - milestone: M4
@@ -81,7 +92,8 @@ the file name and no page content or thumbnail visible → enter a wrong passwor
 → cancel the prompt on another encrypted fixture → nothing opens, no page content or
 thumbnail is shown.
 Security check: after the run, the test searches the app's storage (macOS: the app and
-helper containers and the unified log for the test process; web: IndexedDB, localStorage,
+helper containers, the user's Keychain items for the app, its preferences domain and the
+unified log for the test process; web: IndexedDB, localStorage,
 Cache Storage, console log) for the password string → not found. The recent files list never
 holds it.
 
@@ -93,7 +105,7 @@ holds it.
 Steps: open a fixture with a broken xref table (offsets shifted) → it opens after repair
 with the same page count MuPDF and Poppler report → open a fixture whose catalog and page
 tree come first, truncated after its third page's content (no xref, no trailer) → it opens
-by repair with the same page count MuPDF and Poppler report → open a fixture
+by repair with exactly 3 pages (the pages whose content survives) → open a fixture
 whose page 1 content nests deeper than `Limits` allows → a typed "file too complex" error
 at open or at first render of page 1, never a crash or hang → open a random-bytes file renamed `.pdf` →
 a "not a PDF" error → after each error the app stays responsive and opens a valid fixture.
@@ -196,7 +208,8 @@ each entry once and does not hang.
 
 Steps: open a fixture with highlights, notes, ink and a FreeText annotation on pages 1, 3
 and 8 → the Annotations tab lists them grouped by page with type icon, author, date and
-comment text → sort by date → by type → back to page → filter to "Notes" only → click an
+comment text (one comment is `<b>x</b><img src=x onerror=alert(1)>`, shown
+literally with those characters, no image request, no alert) → sort by date → by type → back to page → filter to "Notes" only → click an
 entry → the view jumps to it and it is selected on the page → collapse and expand a page
 group → a fixture with no annotations shows "No annotations". Popup and Link annotations
 are not listed. Annotation text is shown as plain text (never interpreted as markup).
@@ -285,7 +298,14 @@ click again → Open → the system browser opens the URL (web: a new tab with
 same way.
 Only `https`, `http` and `mailto` can ever be opened. Links with `javascript:`, `data:`,
 `file:`, `vbscript:`, `smb:` and a custom app scheme (`exampleapp:`), and a GoToR action to
-another local file, never open anything and show an "unsupported link" notice.
+another local file, never open anything and show an "unsupported link" notice. The same holds
+for the usual bypass spellings: `JaVaScript:`, a leading space or control character
+(`\u0001javascript:`), and a tab or newline inside the scheme (`java\tscript:`). A relative
+URI is resolved against the catalog's `/URI /Base` first, then checked the same way.
+A `mailto:a@example.com?attach=/etc/passwd&attachment=/etc/passwd&subject=hi` link: the
+confirmation shows the full address and query, and the URL handed to the system (intercepted
+by the test) keeps `subject` but has no `attach` or `attachment` parameter in any case
+spelling.
 
 ## J-RD-19: Read in full screen and presentation mode
 - milestone: M4
@@ -395,12 +415,14 @@ never changed.
 
 Steps: open a linearized 2,000-page, 300 MB fixture → page 1 renders from the
 first-page section before any byte past that section is read (engine read log) → a progress
-indicator shows the loading state → jump to page 1,900 before loading finishes → it renders
+indicator shows the loading state (the load is held at the engine gate after page 1) →
+jump to page 1,900 while the load is still held → it renders
 without waiting for the whole file to be indexed → scroll quickly through 200 pages → no
 input event waits on the engine (rendering is asynchronous; the 60 fps target is measured
 by the bench), and peak engine memory stays under its `Limits` bound and does not grow with
 file size (compared with a 30 MB variant of the same fixture) →
-close the file mid-load → loading is cancelled and memory is released.
+hold a fresh load at the engine gate and close the file → the engine job reports
+"cancelled" and engine memory returns to its pre-open level (engine memory stats).
 
 ## J-RD-27: Respect the document's initial view safely
 - milestone: M4
@@ -422,7 +444,8 @@ with a notice offering full screen; full screen starts only if the user accepts 
 - test: e2e.web.rd_scripts_inert, e2e.macos.rd_scripts_inert
 
 Steps: open a fixture with a document /OpenAction JavaScript, a /Names /JavaScript entry, a
-page /AA open action, a link /AA mouse-enter action and a widget /AA action; every script
+page /AA open action, document /AA actions (WC, WS, DS, WP, DP), a link /AA mouse-enter
+action, a widget /AA action, and Rendition, Sound, Movie and RichMedia actions; every script
 tries something visible (show an alert, go to page 9, open `https://example.com/x`, print)
 → open, scroll through every page, hover and click every link and widget → no alert
 appears, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
@@ -464,7 +487,7 @@ Steps: open a fixture where "annual report" is split across a line break, "offic
 "ffi" ligature glyph mapped by a ToUnicode CMap, and pages hold Japanese and Arabic text →
 search "annual report" → found across the line break → search "office" → found on the
 ligature → search a Japanese word → found → search an Arabic word → found, highlighted on
-the right glyphs (right to left) → start a search in a 2,000-page fixture and press Esc
-while it runs → the engine job reports "cancelled" before reaching the last page, no further
+the right glyphs (right to left) → start a search in a 2,000-page fixture, held at the engine gate after
+50 pages, and press Esc → release the gate → the engine job reports "cancelled" before reaching the last page, no further
 results are added, and the page view keeps responding to scrolling throughout (the search
 runs as a cancellable engine job).

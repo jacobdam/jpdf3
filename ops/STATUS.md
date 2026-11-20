@@ -5,9 +5,13 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #30 for #6 (journeys 1/4: reader): 31 journeys J-RD-01…31 (all M4), RESEARCH.md, TRACE
-  rows. Two review rounds done, auto-merge on.
+  rows. Three review rounds done, `ai-review` posted, auto-merge on.
 
 ## Last session
+- Resumed PR #30 (the previous session ended before posting `ai-review`). A fresh review
+  found no blockers. Fixed six should-fix items: an engine test gate for "while running"
+  steps, the engine owns link policy, URI bypass spellings, mailto `attach` stripping, the web
+  picker mechanism, an exact repair page count.
 - #6: reader journeys plus the PDFgear inventory note `specs/journeys/RESEARCH.md`. Each
   journeys issue (#7–#9) adds its own section there. Shared rules at the top of
   `reader.md` (network, file-handle test adapter, shortcuts, budgets) apply to later journey files too.
