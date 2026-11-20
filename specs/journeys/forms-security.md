@@ -59,13 +59,18 @@ verify, history is honest, permissions.
      is the area's fill color (default black), except glyphs of the overlay text when one is set.
   3. Kept: every sentinel outside the areas (`keep-n`) is still extracted by `pdftotext -bbox`
      with its box within 0.5 pt of where it was; the renders outside the areas (each area grown
-     by 2 pt) match the renders before redaction within the render-ratchet tolerance.
+     by 2 pt, and leaving out the rectangles of fields and annotations that the journey changed
+     through "Remove these too") match the renders before redaction within the render-ratchet
+     tolerance; a field cleared that way gets a regenerated `/AP /N`.
   4. Write and verify holds (one revision; `qpdf --check` clean).
   5. Residue: page thumbnails (`/Thumb`) of redacted pages are removed; fonts used by removed
      text are re-subset so that glyphs and `/ToUnicode` entries no remaining text uses are gone;
      images re-encoded by the engine drop JPEG metadata segments (EXIF, XMP, embedded
      thumbnails) and `/Alternates`; crash-recovery copies of the document (#42) that hold
-     pre-redaction content are deleted when the redacted file is saved. Known residual risk,
+     pre-redaction content are deleted when the redacted file is saved (tested once #42 defines
+     crash recovery; not part of the M8 gate before that). The font check compares the glyph
+     sets of each font program before and after (fonts extracted with `mutool extract`, glyphs
+     listed with fontTools) against the glyphs of the remaining text. Known residual risk,
      stated in the redaction help text: the width of the gap left by removed text is kept so
      that the remaining text does not move.
 - **Passwords.** New passwords are entered twice (password and confirm), are prepared with
@@ -187,9 +192,9 @@ our page render, the print output (J-RD-21) and the saved file are unchanged by 
 (an app overlay from engine rectangles) → click the first field → Tab moves focus through
 page 1 in row order (left to right, then the next row), skipping the read-only field → Tab
 after the last page 1 field leaves the document view for the next region
-(specs/ui/accessibility.md) → go to page 2 (Page Down) and press Tab until the document view
-has focus again → focus visits page 2's three fields in structure order → Shift+Tab goes back
-one field → with focus on a field, Esc removes focus from it (J-FM-01) → Tab with no field
+(specs/ui/accessibility.md) → click empty space on page 2 (the document view gets focus on
+page 2) → press Tab → focus lands on page 2's first field in structure order, and two more Tabs
+visit the other two in structure order → Shift+Tab goes back one field → with focus on a field, Esc removes focus from it (J-FM-01) → Tab with no field
 focused focuses the first field of the current page → turn the highlight off → the overlay is
 gone.
 VoiceOver/accessibility check: each focused field exposes its tooltip (`/TU`) as its label, or
@@ -248,7 +253,8 @@ form has a circular calculation; a calculation naming a field that does not exis
 0 and lists it in the notice; results are rounded half-even to 15 significant digits before
 formatting (`avg` of 0.7, 0 and 0 stores `0.233333333333333`); a result past ±10^15 shows a
 typed range error in the calculated field instead of a number; typed values `1e400`, `NaN`,
-`Infinity` and a value with more than 15 significant digits are rejected by the keystroke rule,
+`Infinity` and a value with more than 15 significant digits are rejected by the engine's number
+parser,
 and `-0` is accepted and shown as `0.00`; `AVG` over an empty field list (`new Array()`) gives
 `0` (no division by zero); a `/CO` holding
 more entries than `Limits` form fields, a non-field object or the same field twice opens with
@@ -309,14 +315,16 @@ the catalog has an `/AcroForm` with `/Fields` holding exactly `customer` (with k
 with Helvetica, and no `/NeedAppearances` → each field has the type, flags and entries it was
 given: `customer.name` `/FT /Tx`, `/Ff` bit 2, `/MaxLen 40`, `/TU (Full name)`, `/Q 1`,
 `/DV (Jane)` and `12 Tf` in `/DA`; `customer.id` `/Ff` bits 1 and 25, `/MaxLen 6`, `/MK` with
-`/BC [1 0 0]` and `/BG [0.9 0.9 0.9]`, `/F` Hidden and Print; `customer.notes` `/Ff` bit 13;
+`/BC [1 0 0]` and `/BG [0.9 0.9 0.9]`, `/F` NoView and Print with Hidden clear (ISO 32000-2
+Table 167: Hidden would also stop printing); `customer.notes` `/Ff` bit 13;
 `Check1` `/FT /Btn` with on state `/yes` and `/F` without Print; radio group `plan` with `/Ff`
 bits 15 and 16 and on states `/basic`, `/pro`, `/team`; `Dropdown1` `/FT /Ch` with bits 18 and
 19 and `/Opt [[(r) (Red)] [(g) (Green)] [(b) (Blue)]]`; `List1` bit 22; `Button1` bit 17,
 `/MK /CA (Clear)` and a ResetForm action; `Signature1` `/FT /Sig` with no `/V` → every widget
 has `/P` to its page and appears in that page's `/Annots`; every widget not named above for
 `/F` has `/F` Print; the pages get no `/Tabs` entry (annotation order, which is creation order);
-the appearance check holds → the unique full names in `qpdf --json`'s `acroform` fields (one
+the appearance check holds (for `customer.id`, which is not shown on screen, the check
+compares print-mode renders instead) → the unique full names in `qpdf --json`'s `acroform` fields (one
 entry per widget) are exactly the nine terminal fields → reopen and press Tab from the top of
 page 1 → focus visits the page 1 fields in the order they were created, skipping `customer.id`
 (read-only and hidden).
@@ -620,7 +628,8 @@ structure element kept with an empty `/Alt`); (10) text in an annotation appeara
 the engine cannot decode to edit its pixels → the confirmation lists that mark as not
 redactable within the limit and offers "Remove the whole image" (the image's full area is
 painted) → declined, Apply is refused as a whole with a typed error naming the limit (as for
-invalid marks in J-SC-07) and every mark stays a mark → accepted, all marks apply; (12) a
+invalid marks in J-SC-07) and every mark stays a mark → accepted, all marks apply, and the image's full bounds count as the redacted area for checks
+2 and 3; (12) a
 DCT (JPEG) image with EXIF data partly under a mark (pixels outside the area match the original
 within the render-ratchet tolerance, since JPEG re-encoding is lossy; the EXIF segment is gone).
 

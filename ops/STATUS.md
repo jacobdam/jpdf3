@@ -4,19 +4,17 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- Nothing open.
+- PR #43 (#9, journeys 4/5: forms and security, specs/journeys/forms-security.md): reviewed,
+  auto-merge on; waiting for judge-verdict.
 
 ## Last session
-- main went red after the #39 merge: only the Pages deploy failed (artifact fetch, infra).
-  Reran the failed job → green. PR #40 (#10, UI spec 1/2) merged; main HEAD a23f8cc:
-  CI run 44790741558 green (all jobs, incl. judge-verdict and pages).. #9 and #11 labeled `ready`.
+- Wrote 22 forms/security journeys (J-FM-01…12, J-SC-01…10), bringing the total to 111. Split
+  signatures and platform conventions into #42 (journeys 5/5).
 
 ## Next step
-- #9 (journeys 4/4) is `ready` (#6, #7, #8 merged) → do it next.
-  It must also write the "unsaved changes" and "file changed on disk" journeys that
-  `specs/ui/information-architecture.md` §8 points to (now "no journey yet; #9"), and the Forms
-  and Secure mode details (§3) and Signatures panel (§4).
-- #11 (wireframes) is `ready` (#10 merged): use the IA's §10 platform mapping and its states table.
+- Once #43 merges: label #42 `ready` and do it next (signatures + platform conventions; fill the
+  IA rows that still say #42: Signatures panel, Unsaved changes, File changed on disk).
+- #11 (wireframes) is `ready`.
 - #21 still waits on #12, #13 and #19.
 
 ## Blockers / owner-todo
