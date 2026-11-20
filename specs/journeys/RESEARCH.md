@@ -60,7 +60,7 @@ Each journeys issue (#6–#9) adds its own section here.
 | Performance | Large and web-optimized files load progressively | J-RD-26 (PLAN §4) |
 | Open | Initial view from the file (open destination, page mode, viewer preferences) | J-RD-27 (PLAN §4 safety; not a PDFgear item) |
 | Security | Scripts and automatic actions in files are never run | J-RD-28 (CONSTITUTION 7) |
-| Reading | Read aloud (text to speech: current page, all pages, from here; speed; voice) | out of PLAN §4 → discovery #31 (proposed Phase 2) |
+| Reading | Read aloud (text to speech: current page, all pages, from here; speed; voice) | Phase 2 (F-P2-6; owner decision on #31) |
 | Reading | Full-text translation | Phase 2 (F-P2-3, AI features) |
 | Reading | AI assistant / chat about the document | Phase 2 (F-P2-3) |
 | Reading | Screenshot OCR, OCR to searchable PDF | Phase 2 (F-P2-1) |
