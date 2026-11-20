@@ -1,0 +1,40 @@
+name: owner-commands
+# PROTECTED (CONSTITUTION 12). The owner's /hold and /release on a PR.
+# /hold turns the PR back into a draft: GitHub never merges a draft, so the hold no longer depends
+# on the agent's good behaviour. Agents share the owner's account, but every agent comment starts
+# with the agent tag (guard-enforced), so agents cannot trigger this.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: owner-commands-${{ github.event.issue.number }}
+
+jobs:
+  command:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'jacobdam' &&
+      !contains(github.event.comment.body, '🤖 jpdf-agent') &&
+      (startsWith(github.event.comment.body, '/hold') || startsWith(github.event.comment.body, '/release'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Apply the command
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          if [[ "$BODY" == /hold* ]]; then
+            gh pr merge "$PR" --disable-auto || true
+            gh pr ready "$PR" --undo
+            gh pr comment "$PR" --body "🤖 jpdf-agent /hold applied: this PR is a draft again and auto-merge is off. Only the owner's /release undoes it."
+          else
+            gh pr ready "$PR"
+            gh pr comment "$PR" --body "🤖 jpdf-agent /release applied: this PR is ready again. The next agent session re-enables auto-merge."
+          fi
