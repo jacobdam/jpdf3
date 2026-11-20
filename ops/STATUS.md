@@ -5,17 +5,17 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #49 (#12, web app skeleton + Playwright harness in `cargo xtask ci linux`,
-  specs/ui-web/app-skeleton.md, ADR 0002): reviewed; auto-merge on, waiting for
-  judge-verdict. After merge, Pages should show the W-02 start screen.
+  specs/ui-web/app-skeleton.md, ADR 0002): CI went red after the last push of the previous
+  session. Fixed (CI attempt 1 of 3), re-reviewed, auto-merge on, waiting for judge-verdict.
+  After merge, Pages should show the W-02 start screen.
 
 ## Last session
-- Built `apps/web` (Vite 7, React 19, MUI 9, strict meta CSP with Trusted Types) and the
-  Playwright harness; `e2e.json` now reports `e2e.web.app_start_empty` (a harness ID, not a
-  journey ID, ADR 0002 item 2).
-- License finding: CONSTITUTION 10 (no build-only exemption) excludes Vite 8, ESLint,
-  Babel plugins and axe-core; required tools (Playwright, Vite, Rollup) also bundle
-  CC-BY/BlueOak/CC0/0BSD code. Disclosed in ADR 0002, proposal
-  ops/proposals/test-only-licenses.md, owner-todo #50.
+- Fixed PR #49's red check. A Playwright color assertion depended on timing: the disabled
+  `Open file` button darkened on hover, a real UX bug. The button is now flat and keeps its
+  look and its two-tone focus ring on hover, and tests wait for transitions to finish.
+- Before that: built `apps/web` (Vite 7, React 19, MUI 9, strict CSP, Trusted Types) and the
+  harness. License gap (CONSTITUTION 10 has no build-only exemption) is disclosed in ADR 0002,
+  ops/proposals/test-only-licenses.md and owner-todo #50.
 
 ## Next step
 - #13 (macOS skeleton + XCUITest, the W-05 layout). Then #14, #17, #18, #20, #22 (`ready`).

@@ -67,6 +67,12 @@ instead of adding near-duplicates.
   Babel-based plugins and axe-core all fail it. Check component facts with a Playwright
   `toHaveCSS` assertion, not by eye (MUI 9 ignores Typography `color`) ([journal](journal/2026-11-20.md), PR #49).
 
+- Asserting computed styles in Playwright after a pointer or focus action → await
+  `el.getAnimations()` to finish before `toHaveCSS`, or a 250 ms MUI transition makes the
+  result depend on timing. Check a disabled control's hover and focused-hover states: an sx
+  `&:hover` override ties with the theme's focus-visible rule and wins, so set only the
+  property you mean ([journal](journal/2026-11-20.md), PR #49).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects

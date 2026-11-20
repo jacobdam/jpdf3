@@ -30,10 +30,12 @@ async function watch(page: Page): Promise<string[]> {
   return problems;
 }
 
-/** Waits until every CSS transition/animation on the element has finished. */
+/** Waits until every CSS transition/animation on the element has finished or been cancelled. */
 async function settled(locator: Locator): Promise<void> {
   await locator.evaluate((el) =>
-    Promise.all(el.getAnimations().map((a) => a.finished)).then(() => undefined),
+    Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined))).then(
+      () => undefined,
+    ),
   );
 }
 

@@ -109,10 +109,10 @@ tests:
 - the start screen shows every W-02 element in order; `Open file` is `aria-disabled`,
   focusable with Tab, shows the two-tone focus ring (kept on hover), is described by its
   reason, keeps its resting look on hover (no darkening, no elevation; wireframes-web.md §0
-  rule 5), and Enter or a click does nothing (same URL, no dialog, no file chooser); the theme's primary and
-  secondary text colors are applied (Emotion works under the CSP); no console errors or
-  warnings, uncaught errors, CSP violations or foreign requests (checked in every browser
-  test);
+  rule 5), and Enter or a click does nothing (same URL, no dialog, no file chooser); the
+  theme's primary and secondary text colors are applied (Emotion works under the CSP); no
+  console errors or warnings, uncaught errors, CSP violations or foreign requests (checked
+  in every browser test);
 - dark appearance uses the dark palette, and an unfocused hover changes neither background
   nor shadow;
 - reduced motion leaves no transition on the button;
