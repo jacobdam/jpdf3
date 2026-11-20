@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CSP } from "../csp";
 
 // specs/ui-web/app-skeleton.md §Tests. The W-02 start screen of the production build.
@@ -28,6 +28,13 @@ async function watch(page: Page): Promise<string[]> {
     });
   });
   return problems;
+}
+
+/** Waits until every CSS transition/animation on the element has finished. */
+async function settled(locator: Locator): Promise<void> {
+  await locator.evaluate((el) =>
+    Promise.all(el.getAnimations().map((a) => a.finished)).then(() => undefined),
+  );
 }
 
 test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty" }, async ({
@@ -64,6 +71,12 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   // The two-tone focus ring (wireframes-web.md §1.3).
   await expect(open).toHaveCSS("outline", "2px solid rgb(11, 11, 11)");
   await expect(open).toHaveCSS("box-shadow", "rgb(255, 255, 255) 0px 0px 0px 4px");
+  // Hovering the focused button keeps both halves of the ring and the resting color.
+  await open.hover();
+  await settled(open);
+  await expect(open).toHaveCSS("outline", "2px solid rgb(11, 11, 11)");
+  await expect(open).toHaveCSS("box-shadow", "rgb(255, 255, 255) 0px 0px 0px 4px");
+  await expect(open).toHaveCSS("background-color", "rgb(21, 101, 192)");
   // Activating it does nothing: no navigation, no file chooser, no dialog.
   let chooser = false;
   page.on("filechooser", () => {
@@ -78,7 +91,7 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   // Emotion's styles applied under the CSP: the theme's primary color (light appearance).
   // The pointer is still over the button after the click above: a disabled control keeps its
   // resting color on hover (no hover darkening).
-  await open.hover({ force: true });
+  await settled(open);
   await expect(open).toHaveCSS("background-color", "rgb(21, 101, 192)");
   await expect(open).toHaveCSS("text-transform", "none");
   await expect(page.getByText("Files you open appear here.", { exact: true })).toHaveCSS(
@@ -96,10 +109,14 @@ test("dark appearance uses the dark palette", { tag: "@e2e.web.app_start_empty" 
   const problems = await watch(page);
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("./");
-  await expect(page.getByRole("button", { name: "Open file" })).toHaveCSS(
-    "background-color",
-    "rgb(144, 202, 249)",
-  );
+  const open = page.getByRole("button", { name: "Open file" });
+  await expect(open).toHaveCSS("background-color", "rgb(144, 202, 249)");
+  await expect(open).toHaveCSS("box-shadow", "none");
+  // Unfocused hover: no darkening and no lift (a disabled control looks the same).
+  await open.hover();
+  await settled(open);
+  await expect(open).toHaveCSS("background-color", "rgb(144, 202, 249)");
+  await expect(open).toHaveCSS("box-shadow", "none");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(18, 18, 18)");
   expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
   expect(problems).toEqual([]);

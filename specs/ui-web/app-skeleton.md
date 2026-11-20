@@ -107,12 +107,14 @@ is enforced yet; the first-page budget (J-RD-01) applies from M4.
 Playwright (`apps/web/e2e/`), all tagged `@e2e.web.app_start_empty` except the reporter unit
 tests:
 - the start screen shows every W-02 element in order; `Open file` is `aria-disabled`,
-  focusable with Tab, shows the two-tone focus ring, is described by its reason, and Enter
-  or a click does nothing (same URL, no dialog, no file chooser); the theme's primary and
+  focusable with Tab, shows the two-tone focus ring (kept on hover), is described by its
+  reason, keeps its resting look on hover (no darkening, no elevation; wireframes-web.md §0
+  rule 5), and Enter or a click does nothing (same URL, no dialog, no file chooser); the theme's primary and
   secondary text colors are applied (Emotion works under the CSP); no console errors or
   warnings, uncaught errors, CSP violations or foreign requests (checked in every browser
   test);
-- dark appearance uses the dark palette;
+- dark appearance uses the dark palette, and an unfocused hover changes neither background
+  nor shadow;
 - reduced motion leaves no transition on the button;
 - the CSP meta tag is the first `<head>` element, has exactly `csp.ts`'s policy, is the only
   one, and no script is inline;

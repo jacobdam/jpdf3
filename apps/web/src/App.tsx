@@ -34,13 +34,16 @@ export function App() {
             <Tooltip title={OPEN_REASON} describeChild>
               <Button
                 variant="contained"
+                disableElevation
                 aria-disabled="true"
                 onClick={(event) => event.preventDefault()}
                 sx={{
                   opacity: 0.6,
                   cursor: "default",
-                  // A disabled control must not look interactive: no hover darkening or lift.
-                  "&:hover": { bgcolor: "primary.main", boxShadow: "none" },
+                  // A disabled control is dimmed and must not look interactive (wireframes-web.md
+                  // §0 rule 5): no hover darkening; disableElevation removes the lift. Only the
+                  // background is set here so the theme's focus ring still applies on hover.
+                  "&:hover": { bgcolor: "primary.main" },
                 }}
               >
                 Open file
