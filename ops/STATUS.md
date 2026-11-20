@@ -4,23 +4,23 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #30 for #6 (journeys 1/4: reader): 31 journeys J-RD-01…31 (all M4), RESEARCH.md, TRACE
-  rows. Three review rounds done, `ai-review` posted, auto-merge on.
+- PR #32 for #7 (journeys 2/4: annotate): 26 journeys J-ANN-01…26 (25 at M5, one at M6),
+  RESEARCH.md section, TRACE rows. Two review rounds plus a delta check; `ai-review` posted,
+  auto-merge on.
 
 ## Last session
-- Resumed PR #30 (the previous session ended before posting `ai-review`). A fresh review
-  found no blockers. Fixed six should-fix items: an engine test gate for "while running"
-  steps, the engine owns link policy, URI bypass spellings, mailto `attach` stripping, the web
-  picker mechanism, an exact repair page count.
-- #6: reader journeys plus the PDFgear inventory note `specs/journeys/RESEARCH.md`. Each
-  journeys issue (#7–#9) adds its own section there. Shared rules at the top of
-  `reader.md` (network, file-handle test adapter, shortcuts, budgets) apply to later journey files too.
-- Discovery #31: read aloud (PDFgear has it; PLAN §4 doesn't). Proposed for Phase 2; owner call.
+- #6 merged (PR #30): 31 reader journeys and `specs/journeys/RESEARCH.md`.
+- #7: annotate journeys. Shared rules at the top of `annotate.md` (strict writing, flags per
+  kind, counting rule, "save and verify" persistence check, hostile text/image sets) apply to
+  later journey files that change documents. J-ANN-03 requires an ADR for the QuadPoints
+  point order before M5 implementation.
 
 ## Next step
-- The lowest `ready` M0 issue: #7 (journeys 2/4: annotate). Reuse the J-RD shared rules
-  and the LESSONS entry on writing journeys. Run `cargo xtask check-specs` and add each ID to `specs/TRACE.md`.
-- #8 must cover document WS/DS (save) actions being inert; J-RD-28 hands them off.
+- The lowest `ready` M0 issue: #8 (journeys 3/4: pages, edit, optimize, convert). Reuse the
+  J-RD and J-ANN shared rules and the LESSONS entry on writing journeys. Run
+  `cargo xtask check-specs` and add each ID to `specs/TRACE.md`.
+- #8 must also cover: document WS/DS (save) actions being inert (J-RD-28 hand-off), and the
+  link tool (insert a link on an area or text) and bookmark editing from RESEARCH.md.
 - #21 still waits on #12, #13 and #19.
 - A cheap open-rate win for later: nested page trees (44 of the 45 local failures).
 

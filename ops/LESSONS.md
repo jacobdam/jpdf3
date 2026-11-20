@@ -34,7 +34,10 @@ instead of adding near-duplicates.
 - Writing journeys (append-only gates) → give every step one checkable result and a test
   mechanism Playwright/XCUITest can drive; never use browser-reserved keys (Ctrl+Tab/W/N/T/R,
   F11, Alt+Left); keep timing/fps targets in the bench, not E2E; web file handles go behind a
-  test adapter ([journal](journal/2026-11-20.md), PR #30).
+  test adapter; no "X or Y" outcomes; state the fixture and exact counts; every disabled UI
+  control also gets a direct binding call expecting the engine's typed error; a security
+  promise must hold for incremental saves (old revisions stay in the file)
+  ([journal](journal/2026-11-20.md), PR #30, PR #32).
 
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
@@ -57,6 +60,9 @@ instead of adding near-duplicates.
   ([journal](journal/2026-11-20.md), PR #30).
 - Re-review after a push: `gh pr diff` can return the previous diff for a while → give the
   reviewer `git diff origin/main...HEAD` instead ([journal](journal/2026-11-20.md)).
+- Branching from an unmerged PR branch → after it squash-merges, `git merge origin/main`
+  gives add/add conflicts on the shared files; if main's tree equals the old PR head (`git
+  diff <head> origin/main` empty), resolve with `git checkout --ours` ([journal](journal/2026-11-20.md), PR #32).
 - The guard blocks force pushes → once a branch is pushed, bring in main with `git merge
   origin/main`, never rebase ([journal](journal/2026-11-20.md)).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
