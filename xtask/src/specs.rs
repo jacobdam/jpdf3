@@ -467,9 +467,14 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
     // (id, field lines) per journey; the judge's body runs to the next journey heading.
     let mut bodies: Vec<(String, Vec<String>)> = Vec::new();
     let mut fence = Fence::default();
+    let mut fence_start = 0;
     for (n, line) in text.lines().enumerate() {
         let lineno = n + 1;
+        let was_open = fence.open.is_some();
         let in_fence = fence.line(line);
+        if !was_open && fence.open.is_some() {
+            fence_start = lineno;
+        }
         if let Some(head) = is_journey_heading(line) {
             if let Some((id, rest)) = split_journey_id(head) {
                 match rest.strip_prefix(':') {
@@ -503,6 +508,11 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
         if let Some((_, lines)) = bodies.last_mut() {
             lines.push(line.to_owned());
         }
+    }
+
+    // The judge ignores fences, so an unclosed one would hide malformed headings to the end.
+    if fence.open.is_some() {
+        problems.push(format!("line {fence_start}: code fence never closed"));
     }
 
     for (id, lines) in bodies {
@@ -681,6 +691,21 @@ fn clean_md_path(token: &str) -> Option<&str> {
     (t.ends_with(".md") && !t.contains('*')).then_some(t)
 }
 
+/// Lexically resolves `.` and `..` in a repo-relative path; `None` if it leaves the repo.
+fn normalize(path: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for c in path.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            c => parts.push(c),
+        }
+    }
+    Some(parts.join("/"))
+}
+
 /// `specs/...md` paths mentioned anywhere in `text`, not as part of a longer path.
 fn mentioned_spec_paths(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -696,15 +721,16 @@ fn mentioned_spec_paths(text: &str) -> BTreeSet<String> {
             .and_then(|b| b.chars().next_back())
             .is_none_or(|p| !(p.is_alphanumeric() || "_-./".contains(p)));
         if preceded_ok && let Some(t) = clean_md_path(token) {
-            out.insert(t.to_owned());
+            // Lexical only; a path leaving the repo is kept as-is and reported by `check_trace`.
+            out.insert(normalize(t).unwrap_or_else(|| t.to_owned()));
         }
         rest = tail.get(len.max(1)..).unwrap_or_default();
     }
     out
 }
 
-/// Relative Markdown link targets `](target.md)` in `text`, resolved against `specs/`, and
-/// targets that would leave `specs/` (contain a `..` component; never resolved).
+/// Relative Markdown link targets `](target.md)` in `text`, resolved lexically against
+/// `specs/`, and targets that would leave the repository (never resolved).
 fn link_targets(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut out = BTreeSet::new();
     let mut escaping = BTreeSet::new();
@@ -715,11 +741,10 @@ fn link_targets(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
         let target = tail.get(..len).unwrap_or_default();
         let external = target.contains("://") || target.starts_with('/') || target.starts_with('#');
         if !external && let Some(t) = clean_md_path(target) {
-            if t.split('/').any(|c| c == "..") {
-                escaping.insert(t.to_owned());
-            } else {
-                out.insert(format!("specs/{t}"));
-            }
+            match normalize(&format!("specs/{t}")) {
+                Some(n) => out.insert(n),
+                None => escaping.insert(t.to_owned()),
+            };
         }
         rest = tail;
     }
@@ -752,7 +777,9 @@ pub fn check_trace(
         }
     }
     for p in &paths {
-        if !exists(p) {
+        if normalize(p).is_none() {
+            out.push(format!("path {p} leaves the repository (not checked)"));
+        } else if !exists(p) {
             out.push(format!("mentions missing file {p}"));
         }
     }
@@ -763,7 +790,9 @@ pub fn check_trace(
         }
     }
     for p in escaping {
-        out.push(format!("link target {p} leaves specs/ (not checked)"));
+        out.push(format!(
+            "link target {p} leaves the repository (not checked)"
+        ));
     }
     out
 }
@@ -1167,12 +1196,26 @@ mod tests {
 
     #[test]
     fn link_leaving_specs_is_reported_not_resolved() {
-        let p = check_trace("[x](../../etc/x.md)", &BTreeSet::new(), &[], |_| {
-            panic!("must not be resolved")
+        let text = "[x](../../etc/x.md) specs/../../h.md [plan](../PLAN.md) specs/./a/../b.md";
+        let p = check_trace(text, &BTreeSet::new(), &[], |p| {
+            assert!(p == "PLAN.md" || p == "specs/b.md", "resolved {p}");
+            true
         });
         assert_eq!(
             p,
-            vec!["link target ../../etc/x.md leaves specs/ (not checked)".to_owned()]
+            vec![
+                "path specs/../../h.md leaves the repository (not checked)".to_owned(),
+                "link target ../../etc/x.md leaves the repository (not checked)".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unclosed_fence_in_journey_file_is_reported() {
+        let text = "## J-A-1: a\n- milestone: M1\n- platform: web\n- test: e2e.web.a\n```\n## J-ann-02: b\n";
+        assert_eq!(
+            problems_for(text),
+            vec!["line 5: code fence never closed".to_owned()]
         );
     }
 

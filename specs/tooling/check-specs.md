@@ -36,6 +36,8 @@ exits **0** when there are no problems, **1** when there are, **2** on a usage e
      heading after a UTF-8 BOM;
    - a bare `##` line is a problem anywhere (the judge's `\s+` crosses newlines and would read
      the following text as a heading);
+   - a code fence still open at the end of a journey file is a problem (the judge ignores
+     fences, so it would hide malformed headings below it);
    - journey files in subdirectories of `specs/journeys/` are a problem (the judge ignores them);
    - `- milestone:` is required and must be `M<digits>`;
    - `- platform:` is required: a comma list of `web`, `macos`, no duplicates;
@@ -57,8 +59,9 @@ exits **0** when there are no problems, **1** when there are, **2** on a usage e
    - Every `specs/…md` path it mentions must exist. A mention starts at `specs/` not preceded
      by a word character, `.`, `-` or `/` (so `x/specs/a.md` is not a mention). Surrounding
      `*`/`_` emphasis and a `#anchor` are dropped; globs (containing `*`) are not mentions.
-   - Every relative Markdown link target `](….md)` must exist under `specs/`; a target with a
-     `..` component is reported and never resolved, so nothing outside `specs/` is touched.
+   - Every relative Markdown link target `](….md)` (resolved against `specs/`) must exist.
+   - `.` and `..` in mentions and links are resolved lexically; a path that would leave the
+     repository is reported and never resolved, so nothing outside the repository is touched.
 
 ## Persistence
 Read-only: the checker never writes files except `e2e.json` through `ci`, which it already did.
@@ -83,7 +86,7 @@ in `.md` (so a file named exactly `.md` counts, as in the judge's glob), and a d
 name ends in `.md` is reported (the judge's glob would match it and fail to read it).
 
 ## Security
-Repository text is data. The checker only reads files under `specs/`; it never executes or
+Repository text is data. The checker only reads files under `specs/` (and checks that paths TRACE.md names exist inside the repository); it never executes or
 fetches anything. It never reads `ops/judge/corpus/` (CONSTITUTION 13). It does not replace the
 judge's own policy and journey checks; it runs earlier and is stricter so problems show up
 in the agent's local checks.
