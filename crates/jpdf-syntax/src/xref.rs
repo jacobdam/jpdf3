@@ -1,6 +1,6 @@
 //! Classic cross-reference tables and trailers. ISO 32000-2 §7.5.4–§7.5.6.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use crate::error::{SyntaxError, malformed};
 use crate::lexer::{LexBudget, Parser, Token};
@@ -11,11 +11,14 @@ use crate::object::{Dict, ObjRef, Object};
 /// in the last lines; real files often carry trailing junk, so read leniently.
 const STARTXREF_WINDOW: usize = 64 * 1024;
 
-/// One xref entry (ISO 32000-2 §7.5.4). 16 bytes: memory stays bounded for 10M entries.
+/// One xref entry (ISO 32000-2 §7.5.4), packed into 12 bytes so 10M entries cost ~120 MB.
+/// Offsets fit in `u32` because files are far below 4 GiB (`Limits::max_file_size`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Entry {
-    Free,
-    InUse { generation: u16, offset: usize },
+struct Entry {
+    num: u32,
+    offset: u32,
+    generation: u16,
+    in_use: bool,
 }
 
 /// A file whose cross-reference information has been read.
@@ -23,7 +26,8 @@ enum Entry {
 pub struct XrefDocument<'a> {
     data: &'a [u8],
     limits: Limits,
-    entries: BTreeMap<u32, Entry>,
+    /// Sorted by object number, one entry per number (the newest).
+    entries: Vec<Entry>,
     trailer: Dict,
     budget: LexBudget,
 }
@@ -36,7 +40,7 @@ impl<'a> XrefDocument<'a> {
         }
         let budget = LexBudget::new(data.len(), limits);
         let mut offset = find_startxref(data, limits, &budget)?;
-        let mut entries: BTreeMap<u32, Entry> = BTreeMap::new();
+        let mut entries: Vec<Entry> = Vec::new();
         let mut trailer: Option<Dict> = None;
         let mut visited = HashSet::new();
         let mut total_entries: usize = 0;
@@ -60,9 +64,12 @@ impl<'a> XrefDocument<'a> {
                     "hybrid cross-reference (/XRefStm)",
                 ));
             }
+            if section_trailer.get(b"Encrypt").is_some() {
+                return Err(SyntaxError::Unsupported("encrypted documents"));
+            }
             let prev = section_trailer.get(b"Prev").cloned();
             if trailer.is_none() {
-                trailer = Some(section_trailer);
+                trailer = Some(trim_trailer(section_trailer));
             }
             match prev {
                 None => break,
@@ -74,9 +81,10 @@ impl<'a> XrefDocument<'a> {
             }
         }
         let trailer = trailer.ok_or_else(|| malformed("no trailer", data.len()))?;
-        if trailer.get(b"Encrypt").is_some() {
-            return Err(SyntaxError::Unsupported("encrypted documents"));
-        }
+        // ISO 32000-2 §7.5.6: sections were read newest first; the stable sort keeps that order
+        // among equal numbers and `dedup` keeps the first, so the newest entry wins.
+        entries.sort_by_key(|e| e.num);
+        entries.dedup_by_key(|e| e.num);
         Ok(Self {
             data,
             limits: limits.clone(),
@@ -86,7 +94,8 @@ impl<'a> XrefDocument<'a> {
         })
     }
 
-    /// The newest trailer dictionary.
+    /// The newest trailer dictionary, trimmed to the entries the engine uses (`/Root` as a
+    /// reference, `/Size` as an integer).
     pub fn trailer(&self) -> &Dict {
         &self.trailer
     }
@@ -94,12 +103,24 @@ impl<'a> XrefDocument<'a> {
     /// Resolves an indirect reference. ISO 32000-2 §7.3.10: a reference to a free or missing
     /// object is the null object.
     pub fn resolve(&self, r: ObjRef) -> Result<Object, SyntaxError> {
-        let Some(Entry::InUse { generation, offset }) = self.entries.get(&r.num).copied() else {
+        let entry = self
+            .entries
+            .binary_search_by_key(&r.num, |e| e.num)
+            .ok()
+            .and_then(|i| self.entries.get(i));
+        let Some(&Entry {
+            offset,
+            generation,
+            in_use: true,
+            ..
+        }) = entry
+        else {
             return Ok(Object::Null);
         };
         if generation != r.generation {
             return Ok(Object::Null);
         }
+        let offset = usize::try_from(offset).unwrap_or(usize::MAX);
         let mut p = Parser::new(self.data, offset, &self.limits, &self.budget);
         let header = (
             p.lexer.next_token()?,
@@ -114,6 +135,22 @@ impl<'a> XrefDocument<'a> {
         // `endobj` (or `stream`) is not required: the value is all we need.
         p.parse_object()
     }
+}
+
+/// Keeps only the trailer entries the engine reads (ISO 32000-2 §7.5.5, Table 15), so a hostile
+/// trailer full of junk does not stay in memory while the rest of the document is parsed.
+fn trim_trailer(trailer: Dict) -> Dict {
+    Dict(
+        trailer
+            .0
+            .into_iter()
+            .filter(|(k, v)| match k.as_slice() {
+                b"Root" => matches!(v, Object::Ref(_)),
+                b"Size" => matches!(v, Object::Integer(_)),
+                _ => false,
+            })
+            .collect(),
+    )
 }
 
 /// ISO 32000-2 §7.5.5: the last `startxref` keyword and the byte offset after it.
@@ -138,14 +175,14 @@ fn find_startxref(data: &[u8], limits: &Limits, budget: &LexBudget) -> Result<us
 }
 
 /// ISO 32000-2 §7.5.4: `xref`, subsections `start count` + entries, then `trailer << … >>`.
-/// Entries go straight into `entries`; ISO 32000-2 §7.5.6: sections are read newest first, so
-/// an entry already present wins. Returns the trailer dictionary.
+/// Entries are appended to `entries` in file order (deduplicated by the caller). Returns the
+/// trailer dictionary.
 fn parse_section(
     data: &[u8],
     offset: usize,
     limits: &Limits,
     budget: &LexBudget,
-    entries: &mut BTreeMap<u32, Entry>,
+    entries: &mut Vec<Entry>,
     total_entries: &mut usize,
 ) -> Result<Dict, SyntaxError> {
     let mut p = Parser::new(data, offset, limits, budget);
@@ -185,11 +222,19 @@ fn parse_section(
             );
             let parsed = match entry {
                 (Some(Token::Integer(o)), Some(Token::Integer(g)), Some(Token::Keyword(k))) => {
-                    match (usize::try_from(o), u16::try_from(g), k) {
-                        (Ok(offset), Ok(generation), b"n") => {
-                            Some(Entry::InUse { generation, offset })
-                        }
-                        (_, Ok(_), b"f") => Some(Entry::Free),
+                    match (u32::try_from(o), u16::try_from(g), k) {
+                        (Ok(offset), Ok(generation), b"n") => Some(Entry {
+                            num,
+                            offset,
+                            generation,
+                            in_use: true,
+                        }),
+                        (_, Ok(generation), b"f") => Some(Entry {
+                            num,
+                            offset: 0,
+                            generation,
+                            in_use: false,
+                        }),
                         _ => None,
                     }
                 }
@@ -198,7 +243,7 @@ fn parse_section(
             let Some(parsed) = parsed else {
                 return Err(malformed("invalid xref entry", at));
             };
-            entries.entry(num).or_insert(parsed);
+            entries.push(parsed);
             if i.saturating_add(1) < count {
                 num = num
                     .checked_add(1)
@@ -235,6 +280,12 @@ mod tests {
             XrefDocument::parse(data, &l).map(|_| ()),
             Err(SyntaxError::LimitExceeded("cross-reference entries"))
         );
+    }
+
+    #[test]
+    fn xref_entries_stay_compact() {
+        // Memory bound: 10M entries must stay near 120 MB (2 GiB address-space limit).
+        assert_eq!(std::mem::size_of::<Entry>(), 12);
     }
 
     #[test]

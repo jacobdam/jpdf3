@@ -69,7 +69,7 @@ from the judge).
 `jpdf_syntax::Limits` (re-exported by `jpdf-engine`), defaults:
 - `max_file_size` 512 MiB (checked by the CLI before reading and again by the engine);
 - `max_nesting_depth` 256 for arrays/dictionaries (stack-overflow guard);
-- `max_objects_per_parse` 4 000 000 objects produced while parsing one indirect object
+- `max_objects_per_parse` 2 000 000 objects produced while parsing one indirect object
   (memory bound for huge arrays/dictionaries);
 - `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
   bound; the reference look-ahead never decodes strings).
@@ -87,10 +87,14 @@ from the judge).
   quadratically.
 
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
-16 bytes each in a `BTreeMap` (no rehash doubling); decoded strings are capped per object.
-Measured peak RSS (macOS) so far: a 500 MiB file with 10 M xref entries ~0.95 GB; a 477 MiB
-file of nested strings 0.54 GB. RSS is not address space: a test under a real `RLIMIT_AS`
-on Linux is tracked as a follow-up.
+packed into a sorted `Vec` of 12-byte records (newest entry per object number); the stored
+trailer keeps only `/Root` and `/Size`; the page-tree walk keeps at most one parsed object
+alive (catalog and `/Pages` are dropped once their references are extracted). With the
+per-object caps, peak memory ≈ file + 12 B × xref entries + one capped parse.
+Measured (Linux, release, real `ulimit -v 2097152` as in the judge): every adversarial file
+from review — 512 MiB with 10 M xref entries and four maximal objects, 500 MiB nested
+strings, quadratic-overlap files — finishes with exit 0 or 2, and the two largest also fit
+under 1.5 GiB. macOS peak footprint for the worst one: 1.31 GB.
 
 All input-derived arithmetic is checked; numbers that overflow `i64` are malformed input.
 Work is linear in file size: the lexing budget bounds total lexing to 4× the file.
