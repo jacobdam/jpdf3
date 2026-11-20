@@ -104,14 +104,22 @@ fn follows_prev_into_older_sections() {
 
 #[test]
 fn prev_loop_is_malformed() {
-    let pdf = minimal_pdf(1);
-    let text = String::from_utf8_lossy(&pdf).to_string();
-    let xref_at = text.find("xref\n").unwrap();
-    let looped = text.replace("/Root 1 0 R ", &format!("/Root 1 0 R /Prev {xref_at} "));
-    assert!(matches!(
-        open(looped.as_bytes()),
-        Err(EngineError::Malformed { .. })
-    ));
+    // The xref offset does not depend on the trailer, so build once to learn it, then point
+    // /Prev back at the same section.
+    let (_, xref_at) = build(b"%PDF-1.7\n", 1, &page_objects(1), "");
+    let (looped, _) = build(
+        b"%PDF-1.7\n",
+        1,
+        &page_objects(1),
+        &format!("/Prev {xref_at}"),
+    );
+    assert_eq!(
+        open(&looped),
+        Err(EngineError::Malformed {
+            what: "/Prev loop in cross-reference chain",
+            offset: Some(xref_at),
+        })
+    );
 }
 
 #[test]
@@ -191,9 +199,10 @@ fn deep_nesting_and_huge_numbers_in_objects() {
 }
 
 /// Each page object hides the next one inside a literal string, so resolving every kid would
-/// rescan the rest of the file (quadratic). The per-document lexing budget must stop it.
+/// rescan the rest of the file (quadratic). The second kid starts inside the first one's span,
+/// so it is rejected as overlapping before any rescan.
 #[test]
-fn overlapping_objects_hit_the_lexing_budget() {
+fn objects_nested_in_strings_are_rejected_as_overlapping() {
     let pages = 2000;
     let header = b"%PDF-1.7\n".to_vec();
     let catalog = "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n";
@@ -229,7 +238,10 @@ fn overlapping_objects_hit_the_lexing_budget() {
     );
     assert_eq!(
         open(&file),
-        Err(EngineError::LimitExceeded("bytes lexed per document"))
+        Err(EngineError::Malformed {
+            what: "indirect objects overlap",
+            offset: Some(offsets[3]),
+        })
     );
 }
 
@@ -413,4 +425,72 @@ fn large_valid_files_fit_the_lexing_budget() {
         ..Limits::default()
     };
     assert_eq!(Document::open(&pdf, &tight).map(|d| d.page_count()), Ok(0));
+}
+
+/// Kid headers hidden on one comment line all share the body that follows, so every kid would
+/// re-parse the same expensive dictionary. Overlapping objects are rejected instead.
+#[test]
+fn overlapping_objects_sharing_one_body_are_rejected() {
+    let kids = 50;
+    let mut file = b"%PDF-1.7\n".to_vec();
+    let mut offsets = vec![file.len()];
+    file.extend(b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n");
+    offsets.push(file.len());
+    let refs: Vec<String> = (0..kids).map(|i| format!("{} 0 R", i + 3)).collect();
+    file.extend(
+        format!(
+            "2 0 obj << /Type /Pages /Kids [{}] >> endobj\n%",
+            refs.join(" ")
+        )
+        .as_bytes(),
+    );
+    for i in 0..kids {
+        offsets.push(file.len());
+        file.extend(format!("{} 0 obj << /Type /Page %", i + 3).as_bytes());
+    }
+    file.extend(b"\n");
+    for _ in 0..10_000 {
+        file.extend(b"/a 1 ");
+    }
+    file.extend(b">> endobj\n");
+    let xref_at = file.len();
+    file.extend(format!("xref\n0 {}\n0000000000 65535 f\r\n", offsets.len() + 1).as_bytes());
+    for o in &offsets {
+        file.extend(format!("{o:010} 00000 n\r\n").as_bytes());
+    }
+    file.extend(
+        format!(
+            "trailer << /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
+            offsets.len() + 1
+        )
+        .as_bytes(),
+    );
+    assert_eq!(
+        open(&file),
+        Err(EngineError::Malformed {
+            what: "indirect objects overlap",
+            offset: Some(offsets[3]),
+        })
+    );
+}
+
+#[test]
+fn out_of_range_xref_offset_reads_as_null() {
+    let mut bad = minimal_pdf(1);
+    // Point object 3 (the only page) at an offset beyond u32: the kid resolves to null.
+    let marker = b" 00000 n\r\n";
+    let entry_at = bad
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .unwrap()
+        - 10;
+    bad[entry_at..entry_at + 10].copy_from_slice(b"9999999999");
+    // The xref still parses; only the page itself is missing.
+    assert_eq!(
+        open(&bad),
+        Err(EngineError::Malformed {
+            what: "page tree kid is not a dictionary",
+            offset: None,
+        })
+    );
 }

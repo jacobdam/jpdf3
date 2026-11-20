@@ -1,6 +1,7 @@
 //! Classic cross-reference tables and trailers. ISO 32000-2 §7.5.4–§7.5.6.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::error::{SyntaxError, malformed};
 use crate::lexer::{LexBudget, Parser, Token};
@@ -30,6 +31,11 @@ pub struct XrefDocument<'a> {
     entries: Vec<Entry>,
     trailer: Dict,
     budget: LexBudget,
+    /// Byte spans (start → end) of indirect objects parsed so far. Objects in a well-formed
+    /// file never overlap (ISO 32000-2 §7.3.10, §7.5.3); hostile files overlap them so that
+    /// many references re-parse the same expensive bytes. Rejecting overlap keeps total object
+    /// parsing to about one pass over the file.
+    spans: RefCell<BTreeMap<usize, usize>>,
 }
 
 impl<'a> XrefDocument<'a> {
@@ -91,6 +97,7 @@ impl<'a> XrefDocument<'a> {
             entries,
             trailer,
             budget,
+            spans: RefCell::new(BTreeMap::new()),
         })
     }
 
@@ -121,6 +128,7 @@ impl<'a> XrefDocument<'a> {
             return Ok(Object::Null);
         }
         let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+        self.check_no_overlap(offset, None)?;
         let mut p = Parser::new(self.data, offset, &self.limits, &self.budget);
         let header = (
             p.lexer.next_token()?,
@@ -133,7 +141,34 @@ impl<'a> XrefDocument<'a> {
             _ => return Err(malformed("object header does not match xref", offset)),
         }
         // `endobj` (or `stream`) is not required: the value is all we need.
-        p.parse_object()
+        let value = p.parse_object()?;
+        let end = p.lexer.pos();
+        self.check_no_overlap(offset, Some(end))?;
+        self.spans.borrow_mut().insert(offset, end);
+        Ok(value)
+    }
+
+    /// Fails if an object starting at `start` (and ending at `end`, once known) overlaps an
+    /// object parsed earlier. Re-reading the same object (same start) is allowed.
+    fn check_no_overlap(&self, start: usize, end: Option<usize>) -> Result<(), SyntaxError> {
+        let spans = self.spans.borrow();
+        if spans.contains_key(&start) {
+            return Ok(());
+        }
+        let inside_earlier = spans
+            .range(..start)
+            .next_back()
+            .is_some_and(|(_, e)| *e > start);
+        let covers_later = end.is_some_and(|end| {
+            spans
+                .range(start.saturating_add(1)..)
+                .next()
+                .is_some_and(|(s, _)| *s < end)
+        });
+        if inside_earlier || covers_later {
+            return Err(malformed("indirect objects overlap", start));
+        }
+        Ok(())
     }
 }
 
@@ -228,6 +263,14 @@ fn parse_section(
                             offset,
                             generation,
                             in_use: true,
+                        }),
+                        // An offset beyond any accepted file cannot resolve: read it as free
+                        // (a reference to it is null, ISO 32000-2 §7.3.10) instead of failing.
+                        (Err(_), Ok(generation), b"n") if o > 0 => Some(Entry {
+                            num,
+                            offset: 0,
+                            generation,
+                            in_use: false,
                         }),
                         (_, Ok(generation), b"f") => Some(Entry {
                             num,
