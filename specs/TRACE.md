@@ -51,7 +51,7 @@ that builds each feature (PLAN §8).
 | F-ED-3 | Edit: watermark, header/footer, Bates, background | J-ED-06, J-ED-07, J-ED-08, J-ED-09 | | |
 | F-ED-4 | Edit: crop; true redaction + metadata scrub | J-ED-10 | | judge `redact` |
 | F-PG-1 | Pages: insert, delete, extract, reorder, rotate, duplicate | J-PG-01, J-PG-02, J-PG-03, J-PG-04, J-PG-05, J-PG-06, J-PG-07, J-PG-08, J-PG-13, J-PG-15, J-PG-16 | | |
-| F-PG-2 | Pages: merge, split, page labels | J-PG-09, J-PG-10, J-PG-11, J-PG-12, J-PG-14 | | |
+| F-PG-2 | Pages: merge, split, page labels, bookmark editing | J-PG-09, J-PG-10, J-PG-11, J-PG-12, J-PG-14 | | |
 | F-FM-1 | Forms: fill, safe calculations, create/edit fields, flatten | | | judge `fill` |
 | F-SC-1 | Security: encrypt AES-256 R6, decrypt, permissions/passwords | | | judge `encrypt` |
 | F-SC-2 | Signatures: verify (integrity, chain, trust, timestamp, MDP, changes) | | | judge `verify-signatures` |

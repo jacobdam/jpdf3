@@ -35,7 +35,10 @@ tests, hostile text and hostile images.
   labels (J-PG-12) are not accepted in range fields. The shared invalid set, each rejected with
   a typed error that names the problem and leaves the document unchanged: `0`, `5-3`, `1,,2`,
   `-`, `7` on a 6-page file, `1-99999999999999999999` (overflow), `١-٣` (non-ASCII digits), an
-  empty field, and a 10 001-item list (over the range-items limit).
+  empty field, and a 10 001-item list (over `Limits` range items). Items may come in any order
+  (`5-10, 1-3`); the operation uses them in the order given. Named limits used below are
+  `Limits` fields: range items, pages per operation, document pages, string length, URI length,
+  outline depth, page side, image limits and render pixels.
 - **Save and verify** (incremental). Save (macOS Cmd+S; web Ctrl+S or the toolbar Save button,
   through the file-handle adapter; with the no-handles flag, Playwright's `download` event) →
   the original file's bytes are an exact prefix of the saved file → close → reopen the saved
@@ -44,15 +47,19 @@ tests, hostile text and hostile images.
   render-ratchet tolerance → `qpdf --check` (an external program) reports no errors.
 - **Write and verify** (a new file: extract, split, merge, Save As, compress, convert). The
   output is a full rewrite (PLAN M6): one revision (one cross-reference section, no `/Prev`),
-  a cross-reference stream with object streams (ISO 32000-2 §7.5.7, §7.5.8), no object that no
-  page, outline, name tree or AcroForm reaches, and a fresh `/ID` whose first element differs
-  from the source's → reopen it → the journey's expected state holds → MuPDF and Poppler renders
+  a cross-reference stream with object streams (ISO 32000-2 §7.5.7, §7.5.8) and no object that
+  is unreachable from the trailer (`/Root`, `/Info`, `/Encrypt`). File identifiers (ISO 32000-2
+  §14.4): Save As and compress keep the source's first `/ID` element and write a new second one;
+  a new document (extract, split, merge, new from pages or images) gets a fresh `/ID` whose
+  first element differs from every source's → reopen it → the journey's expected state holds → MuPDF and Poppler renders
   match ours as above → `qpdf --check` reports no errors → no sentinel of a page that is not in
   the output appears anywhere in the output bytes (streams decompressed by `qpdf --qdf`).
 - **History is honest.** An incremental save keeps earlier revisions inside the file, so a
   deleted, replaced or cropped-away page or content can still be recovered from it. No dialog
   in these journeys says that content is removed from the file unless the save is a full
-  rewrite; deletions note this and point to Save As with "remove earlier versions" (J-OS-02).
+  rewrite. The confirmations for deleting pages (J-PG-04) and the Remove commands of J-ED-06…09
+  say this and point to Save As with "remove earlier versions" (J-OS-02); deleting single
+  objects (text, images, links, bookmarks) shows no confirmation and makes no removal claim.
 - **Multi-file output** (extract to separate files, split, PDF to images, one PDF per image):
   macOS asks for a folder; web asks for a directory through the file-handle adapter, and with
   the no-handles flag the engine writes one ZIP archive that Playwright captures through the
@@ -61,34 +68,42 @@ tests, hostile text and hostile images.
   characters invalid on macOS or Windows are replaced by `_`, reserved names (`CON`, `NUL`, …)
   get a `_` suffix, names are cut to 120 UTF-8 bytes on a character boundary, and duplicates
   get ` (2)`, ` (3)`, …. Existing files are never overwritten without a confirmation.
-- **Permissions.** On an encrypted file whose permissions forbid assembly (ISO 32000-2
-  §7.6.4.2, Table 22 bit 11), page operations and bookmark editing are disabled; where they
-  forbid modification (bit 4), content editing is disabled. Entering the owner password (J-RD-29)
-  enables them. An encrypted file stays encrypted with the same handler and passwords after an
-  incremental save.
+- **Permissions** (ISO 32000-2 §7.6.4.2, Table 22, security handler revision 3 or later).
+  Assembly is allowed when bit 4 (modify) or bit 11 (assemble) is set; when it is not, page
+  operations and bookmark editing are disabled. Content editing needs bit 4. Taking pages or
+  page images out of the file (copy pages, extract, split, export images, and using the file as
+  the source of an insert or a merge) needs assembly allowed and bit 5 (copy). Entering the owner
+  password (J-RD-29) lifts all of these. An encrypted file stays encrypted with the same handler
+  and passwords after an incremental save, a Save As and a compress; a new document made from it
+  (extract, split, merge, new from pages, insert into another file) is not encrypted, and the
+  dialog says so before it is written. External tools in the checks get the passwords.
 - **Artifacts.** Watermarks, headers and footers, page numbers, Bates numbers and backgrounds
   that we add are drawn by a Form XObject placed in the page content inside a marked-content
-  sequence `/Artifact` with the matching `/Type` and `/Subtype` (ISO 32000-2 §14.8.2.2), so that
-  the engine can find, replace and remove exactly the ones a tool added and leave all other
-  content alone.
+  sequence `/Artifact` with the matching `/Type` and `/Subtype` (ISO 32000-2 §14.8.2.2; a
+  background also carries `/BBox`). The Form XObject carries a page-piece dictionary
+  `/PieceInfo << /jpdf << /LastModified … /Private << /Kind /Watermark >> >> >>` (§14.5, the
+  `/Kind` naming the tool). Update and Remove act only on artifacts whose XObject carries that
+  entry. Artifacts that other tools marked the same standard way are left in place, and a notice
+  states how many were left; content that is not marked at all is never detected or touched.
 
 ## J-PG-01: Insert blank pages
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.pg_insert_blank, e2e.macos.pg_insert_blank
 
-Steps: open a 3-page fixture whose page 2 is A4 landscape and the others Letter portrait →
-select thumbnail 2 → Insert → Blank page → position "after the selected page", size "same as
-the selected page", count 2 → the thumbnails show 5 pages and pages 3 and 4 are blank A4
-landscape → select page 1 → insert 1 blank page "before" with size Letter → 6 pages → the page
-indicator reads "2 / 6" while page 2 (the old page 1) is shown → save and verify (pages: blank,
-P1, P2, blank, blank, P3; the new pages 1, 4 and 5 have `/MediaBox` [0 0 612 792], [0 0 842 595]
-and [0 0 842 595] as chosen, an empty content stream and `/Resources` present) → File > New > Blank
-document creates a new untitled 1-page Letter document → Save As writes it; write and verify
-(1 page, no sentinels).
-Error branch: count 0 and count 10 001 (over the pages-per-operation limit) are rejected with
-a typed error; a custom size of 0 × 0, a negative width and a width past the ISO 32000-2 Annex C
-page size limit (14 400 units) are rejected.
+Steps: open a 3-page fixture whose page 2 has `/MediaBox [0 0 841.89 595.28]` (A4 landscape, no
+`/Rotate`) and the others `[0 0 612 792]` → select thumbnail 2 → Insert → Blank page → position
+"after the selected page", size "same as the selected page", count 2 → the thumbnails show 5
+pages and pages 3 and 4 are blank A4 landscape → select page 1 → insert 1 blank page "before"
+with size Letter → 6 pages → the page indicator reads "2 / 6" while page 2 (the old page 1) is
+shown → save and verify (pages: blank, P1, P2, blank, blank, P3; the new pages 1, 4 and 5 have
+`/MediaBox` [0 0 612 792], [0 0 841.89 595.28] and [0 0 841.89 595.28], an empty content
+stream and `/Resources` present) → File > New > Blank document creates a new untitled 1-page
+Letter document → Save As writes it; write and verify (1 page, no sentinels).
+Error branch: count 0 and count 10 001 (over pages per operation) are rejected with a typed
+error; custom sizes of 0 × 500, 500 × 0, 2 × 500 (under the 3-unit minimum), a negative width,
+`NaN`, `1e999` and a side past `Limits` page side (14 400 units, following the ISO 32000-2
+Annex C portability advice) are rejected.
 
 ## J-PG-02: Insert pages from another PDF
 - milestone: M6
@@ -102,25 +117,30 @@ goes to B4 (now page 4) → the inserted pages keep their annotations and their 
 widget, and the field joins A's AcroForm (A had no field with that name) → B's outline and
 named destination are not copied (only pages are inserted) and a notice says so → save and
 verify (the pages as above; B's link resolves to page 4 in MuPDF via `mutool show`; the field
-`name` is in `/AcroForm /Fields`).
+`name` is in `/AcroForm /Fields`) → insert pages 1–2 of a tagged fixture T (with
+`/StructTreeRoot` and `/StructParents` on its pages) at the end → a warning says the inserted
+pages are not tagged → save and verify (the inserted pages and their annotations carry no
+`/StructParents` or `/StructParent`; A's own structure is unchanged).
 Error branch: pick a file that is not a PDF, a truncated PDF and an encrypted PDF whose
-password the user cancels → each shows the J-RD-05 style error and nothing is inserted; pick a
-file whose page count would make the result exceed the document page limit → typed error,
-nothing inserted.
+password the user cancels → each shows the J-RD-05 style error and nothing is inserted; pick an
+encrypted source whose permissions forbid copying (see J-PG-15); pick a file whose page count
+would make the result exceed `Limits` document pages → typed error, nothing inserted.
 
 ## J-PG-03: Insert pages from images
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.pg_insert_image, e2e.macos.pg_insert_image
 
-Steps: open a 2-page fixture → Insert → From image → pick a 600 × 400 baseline JPEG with EXIF
-orientation 6 and a 300 × 300 PNG with alpha → position "at the end", page size "fit the image"
-→ 4 pages; page 3 is 400 × 600 pt (the EXIF rotation applied by the engine, 72 dpi when
-the file states none) and page 4 is 300 × 300 → save and verify (pages P1, P2, image, image;
-the JPEG is stored with `/Filter /DCTDecode` and its stream bytes equal the source file's JPEG
-bytes, its orientation applied by the page content's transformation matrix; the PNG is stored
-with `/FlateDecode` and its alpha as an `/SMask`; MuPDF and Poppler renders of pages 3 and 4
-match the decoded source images within the render-ratchet tolerance).
+Steps: open a 2-page fixture → Insert → From image → pick a JPEG stored as 600 × 400 pixels
+with EXIF orientation 6, JFIF density 72 dpi and an EXIF GPS tag, and a 300 × 300-pixel PNG with
+alpha and no density → position "at the end", page size "match the image" → 4 pages; page 3 is
+400 × 600 pt (the EXIF rotation applied by the engine) and page 4 is 300 × 300 pt (72 dpi when
+the file states none) → save and verify (pages P1, P2, image, image; the JPEG is stored with
+`/Filter /DCTDecode`, its stream bytes equal the source file's bytes minus the APP1 (EXIF, XMP)
+segments, which the engine strips so no GPS data enters the PDF, and its orientation is applied
+by the page content's transformation matrix; the PNG is stored with `/FlateDecode` and its
+alpha as an `/SMask`; MuPDF and Poppler renders of pages 3 and 4 match the decoded source
+images within the render-ratchet tolerance).
 Error branch: the hostile image set from annotate.md; each is rejected and no page is added.
 
 ## J-PG-04: Delete pages
@@ -129,13 +149,13 @@ Error branch: the hostile image set from annotate.md; each is rejected and no pa
 - test: e2e.web.pg_delete, e2e.macos.pg_delete
 
 Steps: open a 6-page fixture where page 3 has a highlight and page 5 holds the only widget of a
-form field → select thumbnails 3 and 5 (macOS Cmd+click, web Ctrl+click) → Delete (the Delete
+form field → select thumbnails 3 and 5 (Cmd+click; web on Linux and Windows Ctrl+click) → Delete (the Delete
 key in the thumbnail panel, or the toolbar) → the confirmation says that 2 pages will be
 deleted and that a normal save keeps the earlier version of the file inside it (shared rule
 "History is honest") → confirm → 4 pages: P1, P2, P4, P6 → the form field whose only widget was
 on page 5 is removed from the AcroForm → delete by range: `2-3` → P1, P6 → save and verify
 (pages P1, P6; `/AcroForm /Fields` no longer lists the removed field) → Save As with "remove
-earlier versions" → write and verify (no sentinel of pages 2–5 appears in the output bytes).
+earlier versions" on → write and verify (no sentinel of pages 2–5 appears in the output bytes).
 Error branch: select all pages → Delete is disabled, the hint says a document keeps at least
 one page, and the binding call returns a typed error.
 
@@ -150,8 +170,11 @@ file as `part.pdf` → the source document is unchanged and not marked edited �
 `part.pdf` (pages P2, P3, P7; the outline keeps only the 3 entries that point at extracted
 pages, now pointing at pages 1, 2 and 3; the link from P2 to P3 goes to page 2; the link from P2
 to P9 is removed; the attachment is not copied; no sentinel of the other 7 pages appears in the
-output bytes) → Extract again with range `1-2` and "a separate file per page" → two files named
-from the source name and the page number per the multi-file output rule → each holds one page.
+output bytes; the outline keeps only entries for extracted pages, unlike J-PG-16, because an
+entry for a page that is not in a new file has no meaning there) → Extract again with range `1-2`
+and "a separate file per page" → two files named `<name>-1.pdf` and `<name>-2.pdf` per the
+multi-file output rule → write and verify each (pages P1; P2). A tagged source gives untagged
+output with the J-PG-09 warning.
 Error branch: the shared invalid range set → each typed error; the Extract button stays
 disabled while the range field is invalid.
 
@@ -160,15 +183,17 @@ disabled while the range field is invalid.
 - platform: web, macos
 - test: e2e.web.pg_reorder, e2e.macos.pg_reorder
 
-Steps: open a 6-page fixture → show the thumbnails in the page organizer (a grid view of all
-pages) → drag thumbnail 5 before thumbnail 2 → pages P1, P5, P2, P3, P4, P6 → select
-thumbnails 1 and 2 and drag them after the last page → P2, P3, P4, P6, P1, P5 → keyboard path:
-focus thumbnail 1, move it right twice with the organizer's move shortcut (macOS Cmd+Option+→,
-web Alt+Shift+→; each move is one undo step) → P3, P4, P2, P6, P1, P5, and an accessibility
-announcement states the new position → undo twice → P2, P3, P4, P6, P1, P5 → redo twice → P3,
-P4, P2, P6, P1, P5 → save and
-verify (that order; the update section rewrites only the page tree nodes, not the page
-objects; a Link on P3 that points to P4 still goes to P4).
+Steps: open a 6-page fixture with a flat page tree (one `/Pages` node) and a Link on P3 that
+points to P4 → show the thumbnails in the page organizer (a grid view of all pages) → drag
+thumbnail 5 before thumbnail 2 → pages P1, P5, P2, P3, P4, P6 → select thumbnails 1 and 2 and
+drag them after the last page → P2, P3, P4, P6, P1, P5 → keyboard path: focus thumbnail 1, move
+it right twice with the organizer's move shortcut (macOS Cmd+Option+→, web Ctrl+Shift+→; both
+also as Move left/right toolbar buttons; each move is one undo step) → P3, P4, P2, P6, P1, P5,
+and an accessibility announcement states the new position → undo twice → P2, P3, P4, P6, P1,
+P5 → redo twice → P3, P4, P2, P6, P1, P5 → save and verify (that order; the update section
+rewrites the `/Pages` node and no page object; the Link on P3 still goes to P4) → repeat the
+first drag on a fixture with a nested page tree (two levels) → save and verify (pages whose
+parent node changed are rewritten with the new `/Parent`; `/Count` is correct on every node).
 Error branch: drop a thumbnail onto its own position → nothing changes and nothing is added
 to the undo stack.
 
@@ -191,13 +216,15 @@ rotation of J-RD-09 still rotates on top of the saved rotation and is not saved.
 - test: e2e.web.pg_duplicate, e2e.macos.pg_duplicate
 
 Steps: open a 3-page fixture where page 2 has a highlight, a sticky note with its popup, a Link
-to page 3 and a widget of the text field `name` → select page 2 → Duplicate → 4 pages: P1, P2,
-P2, P3, the copy right after the original → save and verify (the copy's content stream and
-resources are shared with the original, not duplicated; its annotations are new objects with
-new unique `/NM`, `/P` pointing at the copy and the popup's `/Parent` pointing at the copied
-note; the copied Link still goes to page 4 (P3); the copied widget is a second widget of the
-same field `name`, so both widgets show the same value (ISO 32000-2 §12.7.4)) → type a value in
-one widget → both widgets show it.
+to page 3 and a widget of the text field `name` with value `x` → select page 2 → Duplicate → 4
+pages: P1, P2, P2, P3, the copy right after the original → save and verify (the copy's content
+stream and resources are shared with the original, not duplicated; its annotations are new
+objects with new unique `/NM`, `/P` pointing at the copy and the popup's `/Parent` pointing at
+the copied note; the copied Link still goes to page 4 (P3); the field `name` now has two
+`/Kids` widgets, one per copy, sharing the field's `/V (x)`, and both appearances show `x`;
+ISO 32000-2 §12.7.4). Typing into such widgets is a forms journey (#9). On a tagged fixture
+→ Duplicate → a warning says the copy is not tagged → save and verify (the copy and its
+annotations carry no `/StructParents` or `/StructParent`, so no parent-tree key is shared).
 
 ## J-PG-09: Merge files into a new document
 - milestone: M6
@@ -205,19 +232,23 @@ one widget → both widgets show it.
 - test: e2e.web.pg_merge, e2e.macos.pg_merge
 
 Steps: File > Merge files → add fixtures A (3 pages, outline, field `name`, named destination
-`intro`), B (2 pages, outline, field `name`, named destination `intro`) and C (4 pages,
-encrypted with user password "u1") → C asks for its password (J-RD-04); enter it → set C's
-range to `2-3` → reorder the list to B, A, C → Merge → save as `merged.pdf` → write and verify
-(pages B1, B2, A1, A2, A3, C2, C3; the outline has one top-level entry per source file named
-after the file, holding that file's outline; the fields are named `name` (from B) and `name_2`
-(from A) so that they keep separate values; the named destinations are `intro` (B) and
-`intro_2` (A), and links that used them follow the renaming; the output is not encrypted, and
-the dialog said so before merging; the source files are unchanged).
+`intro`, a Link on A1 that uses `intro`), B (2 pages, outline, field `name`, named destination
+`intro`) and C (4 pages, no outline, encrypted with user password "u1" and all permissions
+allowed) → C asks for its password (J-RD-04); enter it → set C's range to `2-3` → reorder the
+list to B, A, C → the dialog says that the merged file will not be encrypted → Merge → save as
+`merged.pdf` → write and verify (pages B1, B2, A1, A2, A3, C2, C3; the outline has one
+top-level entry per source file with an outline, named after the file and holding that file's
+outline, so B and A get entries and C none; the fields are named `name` (from B) and `name_2`
+(from A) so that they keep separate values, and when `name_2` is taken the next free suffix is
+used; the named destinations are `intro` (B) and `intro_2` (A), and the Link on A1 uses
+`intro_2`; the source files are unchanged).
 Error branch: adding a non-PDF and a truncated PDF shows an error on that row and Merge stays
-disabled until the row is removed; a merge whose total page count exceeds the document page
-limit is rejected before any work starts; if any source is tagged (has `/StructTreeRoot`), the
-merged file drops the structure trees and `/MarkInfo` with a warning that the result is not
-tagged.
+disabled until the row is removed; a per-file range from the shared invalid set marks that row;
+a source whose permissions forbid copying or assembly (J-PG-15) shows a row error unless its
+owner password is entered; a merge whose total page count exceeds `Limits` document pages is
+rejected before any work starts; if any source is tagged (has `/StructTreeRoot`), the merged
+file drops the structure trees, `/StructParents` and `/MarkInfo`, with a warning that the result
+is not tagged.
 
 ## J-PG-10: Split by page ranges and every N pages
 - milestone: M6
@@ -228,7 +259,8 @@ Steps: open a 10-page fixture → Split → "by page ranges" with `1-3, 4, 5-10`
 folder per the multi-file output rule → three files named from the source name and part number
 (`<name>-1.pdf`, `<name>-2.pdf`, `<name>-3.pdf`) → write and verify each (pages P1–P3; P4;
 P5–P10; no sentinel of another part in its bytes) → Split again "every 4 pages" → three files
-with 4, 4 and 2 pages → the source document is unchanged and not marked edited.
+with 4, 4 and 2 pages → write and verify each (P1–P4; P5–P8; P9–P10) → the source document is
+unchanged and not marked edited. Ranges need not cover every page; uncovered pages go nowhere.
 Error branch: the shared invalid range set; overlapping ranges (`1-3, 2-5`) are rejected with
 a typed error that names the overlap; "every 0 pages" is rejected.
 
@@ -237,14 +269,18 @@ a typed error that names the overlap; "every 0 pages" is rejected.
 - platform: web, macos
 - test: e2e.web.pg_split_size_outline, e2e.macos.pg_split_size_outline
 
-Steps: open a 12-page fixture where every page holds a distinct 400 KB image, and an outline
-with four top-level entries pointing at pages 1, 4, 9 and 9 → Split → "by size", at most 1 MB
-per file → each output file is at most 1 MB and holds as many consecutive pages as fit (2 pages
-each, 6 files) → write and verify each → Split → "by top-level bookmarks" → three files: pages
-1–3, 4–8, 9–12, named from the entry titles (the second entry pointing at page 9 starts no
-empty file, and a notice says one entry was skipped) → a fixture whose entry titles are
-`../../evil`, `CON`, a 300-character title, a title with U+202E and two equal titles produces
-names sanitized per the multi-file output rule.
+Steps: open a 12-page fixture where every page holds a distinct 400 KB image (KB = 1000 bytes,
+MB = 1 000 000 bytes) → Split → "by size", at most 1 MB per file → each output file is at most
+1 MB and holds as many consecutive pages as fit (2 pages each, 6 files) → write and verify each
+→ open a 12-page fixture whose outline's top-level entries are, in outline order: `Intro` →
+page 3, `Body` → page 9, `Late` → page 6, `Dup` → page 9, `Web` (a URI action) and `Empty` (no
+destination) → Split → "by top-level bookmarks" → parts are cut at the distinct destination
+pages in page order, and pages before the first one form a leading part → four files:
+`<name>-0.pdf` (pages 1–2), `Intro.pdf` (3–5), `Late.pdf` (6–8), `Body.pdf` (9–12; named after
+the first entry in outline order for that page) → write and verify each → a notice says that
+`Dup`, `Web` and `Empty` started no file → a fixture whose top-level titles are `../../evil`,
+`CON`, 300 × `a`, `abc` U+202E `fdp.exe`, `Same` and `Same` produces `____evil.pdf`,
+`CON_.pdf`, 120 × `a` + `.pdf`, `abc_fdp.exe.pdf`, `Same.pdf` and `Same (2).pdf`.
 Error branch: "by size" with a limit smaller than one page (a page whose image alone is 2 MB,
 limit 1 MB) → that page is written alone into one file over the limit, and the result lists it
 with a warning; a limit of 0 is rejected; "by bookmarks" on a file without an outline is
@@ -256,14 +292,16 @@ disabled.
 - test: e2e.web.pg_labels, e2e.macos.pg_labels
 
 Steps: open a 10-page fixture with no `/PageLabels` → Page labels → for pages 1–3 choose style
-lowercase roman starting at 1; for pages 4–10 choose decimal with prefix `A-` starting at 1 →
-the thumbnails and the page indicator show "i", "ii", "iii", "A-1" … "A-7" → type `A-2` in the
-page field (J-RD-06) → the view goes to page 5 → save and verify (`/PageLabels` is a number tree
-with entries for page indexes 0 and 3: `/S /r` and `/S /D /P (A-)`, ISO 32000-2 §12.4.2; `mutool
-show` lists them; the hostile text as a prefix is stored literally) → remove all labels → the
-indicator shows physical numbers again; save → `/PageLabels` is gone from the catalog.
+lowercase roman starting at 1; for pages 4–8 choose decimal with prefix `A-` starting at 1; for
+pages 9–10 choose decimal with the hostile text as prefix, starting at 1 → the thumbnails and
+the page indicator show "i", "ii", "iii", "A-1" … "A-5", then the hostile prefix followed by
+"1" and "2", shown literally → type `A-2` in the page field (J-RD-06) → the view goes to page 5
+→ save and verify (`/PageLabels` is a number tree with entries for page indexes 0, 3 and 8:
+`/S /r`, `/S /D /P (A-)` and `/S /D` with the hostile prefix as `/P`, ISO 32000-2 §12.4.2;
+`mutool show` lists them) → remove all labels → the indicator shows physical numbers again →
+save → `/PageLabels` is gone from the catalog.
 Error branch: a start number of 0 and a start number past 2^31 − 1 are rejected; a prefix over
-the string-length limit is rejected.
+`Limits` string length is rejected.
 
 ## J-PG-13: Create a new document from copied pages
 - milestone: M6
@@ -271,48 +309,59 @@ the string-length limit is rejected.
 - test: e2e.web.pg_new_from_pages, e2e.macos.pg_new_from_pages
 
 Steps: open fixtures A (4 pages) and B (3 pages) in two tabs (J-RD-23) → in A, select
-thumbnails 2 and 4 → Copy pages (Cmd+C / Ctrl+C in the thumbnail panel) → in B, select page 1
+thumbnails 2 and 4 (Cmd+click; web on Linux and Windows Ctrl+click) → Copy pages (Cmd+C /
+Ctrl+C in the thumbnail panel) → in B, select page 1
 → Paste pages → A2 and A4 are inserted after B1 → File > New > From copied pages → a new
 untitled document with A2 and A4 → Save As → write and verify (pages A2, A4) → save B and
 verify (pages B1, A2, A4, B2, B3). The copied pages live in the app's own page clipboard
 (engine references), never on the system clipboard as PDF bytes.
 Error branch: close A before pasting → Paste pages still works from the engine's copy of the
-pages; with nothing copied, Paste pages and New from copied pages are disabled.
+pages; with nothing copied, Paste pages and New from copied pages are disabled (binding calls
+return typed errors); Copy pages on a restricted file is J-PG-15.
 
 ## J-PG-14: Edit bookmarks
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.pg_bookmarks_edit, e2e.macos.pg_bookmarks_edit
 
-Steps: open a 5-page fixture with a two-level outline → Outline tab → go to page 3 → Add
-bookmark → a new top-level entry with an editable title appears after the current one → type
-`Chapter 3` plus the hostile text, Return → the entry points at page 3 at the current scroll
-position → select it → Add child bookmark → `Section 3.1` → rename an existing entry (double-click
-or the context menu) → drag an entry to become a child of another → delete an entry that has
-children → the confirmation says how many entries go → confirm → undo restores them → save and
-verify (the outline matches the panel: titles exactly as typed, `/Parent`, `/First`, `/Last`,
-`/Prev`, `/Next` consistent and `/Count` correct for open and closed entries per ISO 32000-2
-§12.3.3; each new entry has an explicit `/Dest` [page /XYZ left top null]; `mutool show
-outline` lists the same tree).
-Error branch: the depth limit (an outline nested past the outline-depth limit) blocks adding a
-child below it with a typed error.
+Steps: open a 5-page fixture whose outline is: `One` (page 1, open) with children `One.a` (page
+1) and `One.b` (page 2); `Two` (page 4, closed) with child `Two.a` (page 5) → Outline tab → go to
+page 3 → select `One` → Add bookmark → a new top-level entry with an editable title appears
+right after `One` → type `Chapter 3` plus the hostile text and U+202E, Return → the entry points
+at page 3 at the current top-left of the view → select it → Add child bookmark → `Section 3.1`
+→ rename `Two.a` to `Two-A` (double-click or the context menu) → drag `One.b` onto `Two` → it
+becomes `Two`'s last child → delete `One` → the confirmation says 2 entries will be deleted
+(`One` and `One.a`) → confirm → undo → both are back → redo → save and verify (the outline is
+exactly: `Chapter 3…` (open) > `Section 3.1`; `Two` (closed) > `Two-A`, `One.b`; titles exactly
+as typed, written as UTF-16BE with a BOM where not ASCII; `/Parent`, `/First`, `/Last`, `/Prev`,
+`/Next` consistent; `/Count` is 3 on the root, 1 on `Chapter 3…` and −2 on `Two`, per ISO
+32000-2 §12.3.3; each new entry has `/Dest [page /XYZ left top null]` with left and top within
+1 pt of the view's top-left; `mutool show <file> outline` lists the same tree).
+Error branch: dragging `Two` onto its own child is rejected; a title with U+0000 and a title
+over `Limits` string length are rejected with a typed error; adding a child below the
+`Limits` outline depth is rejected.
 
 ## J-PG-15: Page operations on protected and signed files
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.pg_permissions, e2e.macos.pg_permissions
 
-Steps: open a fixture encrypted with AES-256 (R6) whose permissions forbid assembly → the page
-organizer's insert, delete, rotate, reorder, duplicate, extract-to-file and label controls are
-disabled with a hint, and each binding call returns a typed permission error → enter the owner
-password (J-RD-29) → the controls are enabled → rotate page 1 → save and verify (still
-encrypted with the same handler, R6, and passwords; the update section's strings and streams
-are encrypted) → open a fixture with a signed signature field (generated by the harness with
-pyHanko) → delete page 2 → the confirmation says that changing pages will make the signature
-show as changed after signing → cancel → nothing changed → do it and confirm → save → the
-original signed revision is a byte prefix of the file, so the old signature's byte range is
-untouched (checked with pyHanko as an external validator: the signature is intact and reports
-changes after signing).
+Steps: open a fixture encrypted with AES-256 (R6) with permission bits 4 and 11 both clear and
+bit 5 clear → the page organizer's insert, delete, rotate, reorder, duplicate, label and
+bookmark controls, and Copy pages, Extract, Split and Export images, are disabled with a hint;
+using the file as the source of Insert from file (J-PG-02) or Merge (J-PG-09) shows a row error;
+each binding call returns a typed permission error → open a second fixture with bit 4 set and
+bit 11 clear → page operations are enabled (assembly is allowed by bit 4) → back in the first
+file, enter the owner password (J-RD-29) → everything is enabled → rotate page 1 → save and
+verify (still encrypted with the same handler, R6, and passwords; the update section's strings
+and streams are encrypted; qpdf, MuPDF and Poppler are given the password) → Copy pages → New
+from copied pages → the new document's Save As dialog says it will not be encrypted → open a
+fixture with a signed signature field (generated by the harness with pyHanko) → delete page 2 →
+the confirmation says that changing pages will make the signature show as changed after
+signing → cancel → nothing changed → do it and confirm → save → the original signed revision is
+a byte prefix of the file, so the old signature's byte range is untouched (checked with pyHanko
+as an external validator: the signature is intact and reports changes after signing).
+Certification (DocMDP) restrictions are a signatures journey (#9).
 
 ## J-PG-16: Links, bookmarks and undo across page operations
 - milestone: M6
@@ -320,7 +369,8 @@ changes after signing).
 - test: e2e.web.pg_refs_undo, e2e.macos.pg_refs_undo
 
 Steps: open a 6-page fixture where page 1 has Links to pages 3 and 5, an outline entry points
-at page 5, a named destination `d5` points at page 5 and an Open action points at page 3 →
+at page 5 (kept without a destination on delete, unlike J-PG-05, because the user may still
+want the entry in this same document), a named destination `d5` points at page 5 and an Open action points at page 3 →
 delete page 5 → the Link to page 5 is removed from page 1 and the Link to page 3 still goes
 to P3; the outline entry keeps its title but loses its destination (clicking it does nothing
 and the entry shows as inactive); `d5` is removed from the `/Dests` name tree; the Open action
@@ -334,19 +384,23 @@ Link and the Open action to P3's page object).
 - platform: web, macos
 - test: e2e.web.ed_text_existing, e2e.macos.ed_text_existing
 
-Steps: open a fixture with a paragraph in a fully embedded TrueType font, a line in a subset
-font lacking the glyphs for `Q` and `é`, a line in a non-embedded standard 14 font and a line
-drawn with a Type 3 font → Edit → Edit text → click in the first paragraph → the paragraph
-becomes an editable box, with the caret at the clicked glyph → replace a word, delete a
-sentence, type the hostile text → click outside → the text rewraps inside the original box
-using the same font → edit the subset line, typing `Qé` → a warning names the missing glyphs,
-offers a bundled substitute font, and on accept the new characters are drawn in it → edit the
-standard 14 line → the edited line is drawn with the bundled metric-compatible font, embedded
-as a subset, and a notice says so (we always write embedded fonts) → click the
-Type 3 line → a hint says that text in this font can't be edited and nothing changes → save
-and verify (the extracted text from `pdftotext` and `mutool draw -F txt` shows the edits and
-the hostile text literally; text and graphics outside the edited boxes render identically to
-the original; the substitute font is embedded as a subset).
+Steps: open a fixture with a paragraph `The quick brown fox jumps. It runs far.` in a fully
+embedded TrueType font, a line in a subset font lacking the glyphs for `Q` and `é`, a line in a
+non-embedded standard 14 font, a line drawn with a Type 3 font and a line in a font with a
+custom encoding and no `/ToUnicode` → Edit → Edit text → click on `brown` → the paragraph
+becomes an editable box, with the caret at the clicked glyph → replace `brown` with `red`,
+delete `It runs far.`, type the hostile text at the end → click outside → the text rewraps
+inside the original box using the same font; text that no longer fits grows the box downward
+→ edit the subset line, typing `Qé` → a warning names the missing glyphs and offers a bundled
+substitute font → decline → the typed `Qé` is removed and the line is as before → type `Qé`
+again and accept → the new characters are drawn in the substitute → edit the standard 14 line
+→ the edited line is drawn with the bundled metric-compatible font, embedded as a subset, and a
+notice says so (we always write embedded fonts) → click the Type 3 line and the line without
+`/ToUnicode` → a hint says that text in this font can't be edited and nothing changes → save and
+verify (after whitespace normalization, the text from `pdftotext` and `mutool draw -F txt`
+reads `The quick red fox jumps.` followed by the hostile text literally, and the subset line
+ends in `Qé`; text and graphics outside the edited boxes render identically to the original;
+the substitute fonts are embedded as subsets).
 Error branch: undo after each edit restores the previous text exactly.
 
 ## J-ED-02: Add text to a page
@@ -355,31 +409,35 @@ Error branch: undo after each edit restores the previous text exactly.
 - test: e2e.web.ed_text_add, e2e.macos.ed_text_add
 
 Steps: open a 2-page fixture → Edit → Add text → click on page 1 → an editable box appears →
-type two lines including the hostile text and `é 中 ∑` → set a bundled font, 18 pt, bold, red,
+type two lines including the hostile text and `é 中 ∑` → set the bundled sans font (its CJK and
+math fallbacks are bundled too), 18 pt, bold (the bundled bold face, never synthetic), red,
 centered → drag the box to a new spot and resize it → the text rewraps → save and verify (the
-text is page content, not an annotation: the annotation count is unchanged; `pdftotext` returns
-exactly the typed text; the bundled font is embedded as a subset that covers every character
-typed; MuPDF and Poppler draw all characters) → reopen → Edit text on the added text edits it
-like J-ED-01.
+text is page content, not an annotation: the annotation count is unchanged; after whitespace
+normalization, `pdftotext` returns exactly the typed text; each bundled font used is embedded
+as a subset covering the characters drawn with it; MuPDF and Poppler draw all characters) →
+reopen → Edit text on the added text edits it like J-ED-01.
 Error branch: a font size of 0, a negative size and a size past the font-size limit are
-rejected; a character no bundled font covers is drawn as the bundled fallback's missing-glyph
-box and a warning names it.
+rejected; U+E000 (no bundled font covers it) is drawn as the fallback font's missing-glyph box
+and a warning names it.
 
 ## J-ED-03: Add images and edit them
 - milestone: M8
 - platform: web, macos
 - test: e2e.web.ed_image, e2e.macos.ed_image
 
-Steps: open a 2-page fixture → Edit → Add image → pick a PNG with alpha → click on page 1 → the
+Steps: open a 2-page fixture whose pages share one `/Resources` dictionary that holds image
+`Im1`, drawn on both pages → Edit → Add image → pick a PNG with alpha → click on page 1 → the
 image is placed at its natural size (72 dpi when the file states none), scaled down to fit the
 page when larger → drag it, then drag a corner handle → the aspect ratio is kept; with Shift it
 is free → rotate it 90° and flip it horizontally → bring it to the back (behind the page text)
-→ Replace → pick a JPEG → the new image takes the same box → save and verify (one image XObject
-drawn by the page content with the final matrix; the JPEG's stream bytes equal the source
-file's; `pdfimages -list` (Poppler) and `mutool info -I` list it; the page text still extracts
-and is drawn above the image) → Edit an image that came with the file: move, resize and delete
-it → save and verify (the image draw is gone from the content; the image XObject is no longer
-referenced from that page's resources).
+→ Replace → pick a JPEG of a different aspect ratio → the new image is fitted inside the old
+box with its aspect ratio kept and centered → save and verify (one new image XObject drawn by
+the page content with the final matrix; the JPEG's stream bytes equal the source file's minus
+APP1 segments, as in J-PG-03; `pdfimages -list` (Poppler) and `mutool info -I` list it; the page
+text still extracts and is drawn above the image) → on page 1, move, resize and then delete
+`Im1` → save and verify (page 1's content no longer draws `Im1`; page 1 now has its own
+`/Resources` without `Im1`; page 2 still uses the shared dictionary and renders `Im1` exactly
+as before).
 Error branch: the hostile image set from annotate.md; each is rejected and nothing is placed.
 
 ## J-ED-04: Insert links on an area or on text
@@ -390,45 +448,55 @@ Error branch: the hostile image set from annotate.md; each is rejected and nothi
 Steps: open a 5-page fixture → Edit → Link → drag a rectangle on page 1 → choose "go to page"
 → page 4 → a Link annotation is created → select a phrase on page 2 with the Link tool → choose
 "open a web address" → type `https://example.org/a b` → the engine normalizes it per the J-RD-18
-link policy and shows the normalized form → save and verify (two `/Subtype /Link` annotations:
-one with `/Dest` [page-4 /XYZ null null null], one with `/A << /S /URI /URI (…) >>` whose URI
-is the normalized string; the text link's `/QuadPoints` cover the phrase; `/Border [0 0 0]`, so
-nothing is drawn; MuPDF lists both links with `mutool show`) → in reading mode, click each →
-J-RD-17 navigation and the J-RD-18 confirmation.
-Error branch: the targets `javascript:alert(1)`, `file:///etc/passwd`, `data:text/html,x`,
-`vbscript:x`, a URI with embedded newlines and one over the URI-length limit are each rejected
-with a typed error and no link is created; page 0 and page 6 are rejected.
+link policy and shows `https://example.org/a%20b` → save and verify (two `/Subtype /Link`
+annotations: one with `/Dest [page-4 /XYZ null null null]`, one with `/A << /S /URI /URI
+(https://example.org/a%20b) >>`; the text link's `/QuadPoints` cover the phrase; `/Border [0 0
+0]`, so nothing is drawn; MuPDF lists both links with `mutool show`) → in reading mode, click
+each → J-RD-17 navigation and the J-RD-18 confirmation (web tests stub the platform open call,
+so no cross-origin request is made).
+Error branch: the targets `javascript:alert(1)`, `JaVaScRiPt:alert(1)`, ` javascript:x` (leading
+space), a tab before `javascript:`, `java` TAB `script:x`, `%6Aavascript:x`, `file:///etc/passwd`,
+`data:text/html,x`, `vbscript:x`, a URI with embedded newlines and one over `Limits` URI length
+are each rejected with a typed error and no link is created; page 0 and page 6 are rejected; an
+IDN host and a host with a bidi character are accepted and shown in the J-RD-18 normalized form
+(punycode, escaped bidi).
 
 ## J-ED-05: Edit and delete links
 - milestone: M8
 - platform: web, macos
 - test: e2e.web.ed_link_edit, e2e.macos.ed_link_edit
 
-Steps: open a fixture with a page link, a URI link, a Launch-action link and a JavaScript-action
+Steps: open a fixture with a page link to page 2, a URI link to `https://example.org/old` whose
+`/A` has `/Next` chained to a JavaScript action, a Launch-action link and a JavaScript-action
 link made by another tool → Edit → Link → the four link areas show outlines → select the page
-link → change its target page → select the URI link → change the address → resize it → the
-Launch and JavaScript links can be selected and deleted but not edited (a hint says the action
-is unsupported, CONSTITUTION 7) → delete the JavaScript link → save and verify (the page link
-goes to the new page; the URI is the new normalized address with the new `/Rect`; the Launch
-link is byte-identical (untouched); the JavaScript link is gone from `/Annots`).
+link → change its target to page 3 → select the URI link → change the address to
+`https://example.com/new` → resize it → the Launch and JavaScript links can be selected and
+deleted but not edited (a hint says the action is unsupported, CONSTITUTION 7) → delete the
+JavaScript link → save and verify (the page link goes to page 3; the URI link has a new `/A <<
+/S /URI /URI (https://example.com/new) >>` with no `/Next` and the new `/Rect`; the Launch link
+is byte-identical (untouched); the JavaScript link is gone from `/Annots`) → click the URI link
+in reading mode → only the J-RD-18 confirmation; no script runs.
 
 ## J-ED-06: Add, update and remove watermarks
 - milestone: M8
 - platform: web, macos
 - test: e2e.web.ed_watermark, e2e.macos.ed_watermark
 
-Steps: open a 4-page fixture with one A4 landscape page and a watermark made by another tool
-(plain page content, not an artifact) → Edit → Watermark → Add → text `DRAFT` plus the hostile
-text, a bundled font, 72 pt, red, opacity 30%, rotation 45°, "behind the page content", pages
-`1-3` → the preview shows it → apply → pages 1–3 show the watermark centered, also on the
-landscape page → Watermark → Update → switch to an image watermark (a PNG with alpha), scale
-50%, "on top of the page content" → apply → the text watermark is replaced → save and verify
-(each of pages 1–3 has one marked-content sequence `/Artifact << /Type /Pagination /Subtype
-/Watermark >>` drawing a shared Form XObject; on top means after the existing content, behind
-means before it; `/CA` and `/ca` 0.3 in an ExtGState for the text version; page 4 is
-unchanged; text extraction of the page body is unchanged) → Watermark → Remove → only our
-watermark disappears; the other tool's watermark stays, and a notice says that one watermark
-could not be identified.
+Steps: open a 4-page fixture with one A4 landscape page, a watermark drawn as plain page content
+by another tool on page 1, and another tool's watermark on page 2 marked as `/Artifact <<
+/Type /Pagination /Subtype /Watermark >>` without our page-piece entry → Edit → Watermark → Add
+→ text `DRAFT` plus the hostile text, a bundled font, 72 pt, red, opacity 30%, rotation 45°,
+"behind the page content", pages `1-3` → the preview shows it → apply → pages 1–3 show the
+watermark centered, also on the landscape page → save and verify (each of pages 1–3 has one of
+our artifact sequences, before the existing content, drawing a shared Form XObject whose
+ExtGState sets `/CA` and `/ca` 0.3; page 4 is unchanged; the text of the page body extracts as
+before plus the watermark text) → Watermark → Update → switch to an image watermark (a PNG with
+alpha), scale 50%, opacity 60%, "on top of the page content" → apply → the text watermark is
+replaced → save and verify (one of our sequences per page, now after the existing content, with
+`/ca` 0.6; the text watermark's XObject is no longer referenced) → Watermark → Remove → our
+watermarks disappear; the notice says 1 watermark made by another app was left in place (page
+2's); page 1's plain-content watermark stays → save and verify (no artifact sequence of ours and
+no reference to our XObjects remains; the other tools' watermarks are unchanged).
 Error branch: an opacity outside 0–100%, a font size of 0 and the hostile image set are
 rejected.
 
@@ -437,17 +505,21 @@ rejected.
 - platform: web, macos
 - test: e2e.web.ed_header_footer, e2e.macos.ed_header_footer
 
-Steps: open an 8-page fixture with page labels (J-PG-12) → Edit → Header & footer → left header
-`{file}`, right header `{date}` with the format `yyyy-MM-dd`, center footer `Page {page} of
-{pages}` → margins 15 mm top and bottom → font 10 pt → pages: odd pages only within `1-7` →
-the preview shows page 1 → apply → pages 1, 3, 5 and 7 show them → date comes from the test
-clock and `{page}` uses physical page numbers by default; switch the option to page labels →
-the footer shows the labels → the hostile text in a field is drawn literally → Edit → Page
-numbers (a preset of the same tool) → bottom right, starting at 5 → save and verify (each
-header and footer is an `/Artifact << /Type /Pagination /Subtype /Header >>` or `/Footer`
-sequence; page numbers use `/Subtype /PageNum`; `pdftotext` of page 3 contains `Page 3 of 8`;
-even pages have none) → Header & footer → Remove → all of ours are removed; save → the pages
-render as the original.
+Steps: the test clock is 2026-03-04 23:30 UTC and the app's time zone is UTC → open an 8-page
+fixture whose page labels are `i`, `ii` for pages 1–2 and `1` … `6` for pages 3–8 → Edit →
+Header & footer → left header `{file}`, right header `{date}` with the format `yyyy-MM-dd`,
+center footer `Page {page} of {pages}` plus the hostile text → margins 15 mm top and bottom →
+font 10 pt → pages: odd pages only within `1-7` → the preview shows page 1 → apply → pages 1, 3,
+5 and 7 show them → save and verify (each header and footer is one of our artifact sequences
+with `/Subtype /Header` or `/Footer`; `pdftotext` of page 3 contains the fixture's file name,
+`2026-03-04` and `Page 3 of 8` followed by the hostile text literally; even pages have none) →
+Header & footer → Update → switch `{page}` to page labels → save and verify (page 3's footer
+reads `Page 1 of 8`, page 1's `Page i of 8`; `{pages}` stays the physical count) → Edit → Page
+numbers (a preset of the same tool) → all pages, bottom right, starting at 5 → save and verify
+(page 1 shows `5` and page 8 shows `12`, each in a sequence with `/Subtype /PageNum`) → Header &
+footer → Remove → headers and footers are removed and the page numbers stay → save and verify
+(no `/Header` or `/Footer` sequence of ours remains; the pages render as the original plus the
+page numbers).
 Error branch: margins that leave no room (top + bottom ≥ page height) are rejected; an
 unknown `{token}` is drawn literally with a warning.
 
@@ -458,12 +530,14 @@ unknown `{token}` is drawn literally with a warning.
 
 Steps: open a 3-page fixture → Edit → Bates numbering → prefix `ACME-`, suffix `-C`, 6 digits,
 start 41, bottom right → apply → the pages show `ACME-000041-C`, `ACME-000042-C`,
-`ACME-000043-C` → save and verify (each number is an `/Artifact << /Type /Pagination /Subtype
-/Bates >>` sequence, ISO 32000-2 §14.8.2.2; `pdftotext` returns the three numbers in page
-order) → Bates numbering → Remove → the numbers are gone.
+`ACME-000043-C` → save and verify (each number is one of our artifact sequences with `/Subtype
+/Bates`, ISO 32000-2 §14.8.2.2; `pdftotext` returns the three numbers in page order) → Bates
+numbering → Update → prefix: the hostile text → it is drawn literally → Bates numbering →
+Remove → save and verify (no `/Bates` sequence of ours remains; the pages render as the
+original).
 Error branch: start 999 999 with 6 digits on 3 pages would need 7 digits → rejected before
 anything is applied, with a message naming the last number; a start below 0, more than 15
-digits and a prefix over the string-length limit are rejected.
+digits and a prefix over `Limits` string length are rejected.
 
 ## J-ED-09: Set a page background
 - milestone: M8
@@ -474,9 +548,10 @@ Steps: open a 3-page fixture with transparent page backgrounds and one page whos
 starts by filling the page white → Edit → Background → color light yellow, opacity 100%, all
 pages → apply → pages 1 and 2 show yellow behind the text; page 3 shows white, because its own
 fill covers the background → switch to an image background (a JPEG), "stretch to page" → save
-and verify (each page's content starts with an `/Artifact << /Type /Background >>` sequence
-drawing a shared Form XObject; existing content is unchanged after it) → Background → Remove →
-the original appearance returns.
+and verify (each page's content starts with one of our `/Artifact << /Type /Background /BBox
+[…] >>` sequences, the `/BBox` equal to the page's crop box, drawing a shared Form XObject;
+existing content is unchanged after it) → Background → Remove → the original appearance
+returns → save and verify (no background sequence of ours remains).
 Error branch: the hostile image set is rejected.
 
 ## J-ED-10: Crop pages
@@ -484,15 +559,17 @@ Error branch: the hostile image set is rejected.
 - platform: web, macos
 - test: e2e.web.ed_crop, e2e.macos.ed_crop
 
-Steps: open a 4-page fixture whose page 2 has a `/CropBox` larger than its `/MediaBox` (read
-leniently: clipped to the media box) and whose page 4 has `/Rotate 90` → Edit → Crop → drag a
-crop rectangle on page 1 → the outside is dimmed → type width 400 pt and height 500 pt in the
-fields → the rectangle follows → choose "apply to all pages" → OK → the notice says cropping
+Steps: open a 4-page fixture: page 1 Letter, page 2 Letter with a `/CropBox` larger than its
+`/MediaBox` (read leniently: clipped to the media box), page 3 with a 300 × 300 media box, page
+4 Letter with `/Rotate 90` → Edit → Crop → drag a crop rectangle on page 1 → the outside is
+dimmed → type x 100, y 100 (from the lower-left of the displayed page), width 400 pt and height
+500 pt → the rectangle follows → choose "apply to all pages" → OK → the notice says cropping
 hides content but does not remove it from the file (true redaction is in the security
-journeys) → pages show cropped; page 4's crop follows its rotation (the rectangle drawn on the
-rotated view maps to the unrotated page space) → save and verify (each page has a `/CropBox`
-inside its `/MediaBox`; page 1's is 400 × 500; MuPDF and Poppler render only the crop box) →
-Crop → "reset" on page 1 → its `/CropBox` equals its `/MediaBox` again.
+journeys) → save and verify (page 1 and page 2 have `/CropBox [100 100 500 600]`; page 3's crop
+box is clipped to its media box, `[100 100 300 300]`, and the notice listed page 3; page 4's
+rectangle is in its displayed (rotated) orientation, so in unrotated page space its crop box is
+500 wide and 400 tall and lies inside its media box; MuPDF and Poppler render only the crop
+box) → Crop → "reset" on page 1 → save and verify (page 1's `/CropBox` equals its `/MediaBox`).
 Error branch: a width of 0, a negative height, a crop larger than the media box and a numeric
 field of `1e999` are rejected with a typed error.
 
@@ -501,15 +578,16 @@ field of `1e999` are rejected with a typed error.
 - platform: web, macos
 - test: e2e.web.os_save_incremental, e2e.macos.os_save_incremental
 
-Steps: open a 3-page fixture with two revisions already, whose catalog has `/AA` entries for
-"will save" and "did save" (`/WS`, `/DS`) holding JavaScript that would call `app.alert` and
-submit a form to a URL → rotate page 2 and add a highlight → the title shows the edited marker
-→ Save → no alert appears, no network request is made, no script runs (CONSTITUTION 7; the
-J-RD-28 hand-off) → the edited marker clears → save and verify (the file now has three
-revisions: one new cross-reference section whose `/Prev` points at the previous one; the
-update section holds only the changed page, its new annotation and the objects that refer to
-them; the catalog `/AA` is kept unchanged) → Save again with no changes → the file bytes are
-unchanged (no empty revision is appended).
+Steps: open a 3-page fixture with two revisions already, whose catalog `/AA` has a "will save"
+action `/WS` (a SubmitForm action to a URL, chained by `/Next` to JavaScript that calls
+`app.alert`) and a "did save" action `/DS` (a Launch action chained to a URI action) → rotate
+page 2 and add a highlight → the title shows the edited marker → Save → no alert appears, no
+network request is made, nothing is launched and no script runs (CONSTITUTION 7; the J-RD-28
+hand-off) → the edited marker clears → save and verify (the file now has three revisions: one
+new cross-reference section whose `/Prev` points at the previous one; the update section holds
+only the changed page, its new annotation and the objects that refer to them; the trailer keeps
+the first `/ID` element and has a new second one; the catalog `/AA` is kept unchanged) → Save
+again with no changes → the file bytes are unchanged (no empty revision is appended).
 Error branch: a fixture whose last cross-reference section was repaired on open (J-RD-05
 lenient read) → Save writes a full rewrite instead, and a notice says why; write and verify.
 
@@ -520,13 +598,16 @@ lenient read) → Save writes a full rewrite instead, and a notice says why; wri
 
 Steps: open a fixture with three revisions, unused objects, an object deleted in a later
 revision that still carries a sentinel string, uncompressed streams and an old-style
-cross-reference table → Save As → choose a new name with "remove earlier versions" on → write
-and verify (the deleted object's sentinel appears nowhere in the output bytes; all streams that
-we rewrite use `/FlateDecode`; images keep their original filters; the output is smaller than
-the input) → the window title and the recent files list now show the new name; the original
-file's bytes are unchanged → edit and Save → the save is incremental on the new file → Save As
-with "remove earlier versions" off → the output keeps the earlier revisions unchanged as a byte
-prefix and appends one update section.
+cross-reference table → Save As → "remove earlier versions" is off by default; turn it on →
+choose a new name → write and verify (the deleted object's sentinel appears nowhere in the
+output bytes; all streams that we rewrite use `/FlateDecode`; images keep their original
+filters; the output is smaller than the input) → the window title and the recent files list now
+show the new name; the original file's bytes are unchanged → edit and Save → the save is
+incremental on the new file → Save As with "remove earlier versions" off → the output keeps the
+earlier revisions unchanged as a byte prefix and appends one update section.
+Error branch: a signed fixture (pyHanko) → turning "remove earlier versions" on warns that the
+signatures will no longer verify and defaults to Cancel; with the option off, Save As keeps the
+signed revision as a byte prefix and pyHanko reports the signature intact.
 
 ## J-OS-03: Compress a document
 - milestone: M8
@@ -534,54 +615,68 @@ prefix and appends one update section.
 - test: e2e.web.os_compress, e2e.macos.os_compress
 
 Steps: open a 5-page fixture with three 300 dpi photos (JPEG and PNG), a fully embedded
-TrueType font, two identical image streams and uncompressed content → Compress → the levels
-are: Lossless (no image recompression), Balanced (images downsampled to at most 150 dpi,
-JPEG quality 75) and Smallest (at most 96 dpi, JPEG quality 60), and every level uses object
-streams, removes unused and duplicate objects and subsets fully embedded fonts → choose
-Lossless → the report shows the original size, the new size and the ratio, each equal to the
-actual byte counts → save as `small.pdf` → write and verify (renders match within the
-render-ratchet tolerance; the two identical images are one object; the font is a subset that
-still covers all text; text extracts unchanged) → Compress again with Balanced → the output is
-smaller than the Lossless one; text and vector regions match within the render-ratchet
-tolerance; each image region has a PSNR of at least 30 dB against the original render → images
-used as soft masks, in patterns or with JBIG2 or CCITT filters are left as they are.
-Error branch: a signed fixture → the dialog warns that compressing writes a new file whose
-signatures will no longer verify and defaults to Cancel; an image whose decoded size exceeds
-the image limits is left untouched and listed in the report, never decoded.
+TrueType font, a font referenced by `/AcroForm /DR` for a text field, two identical image
+streams and uncompressed content → Compress → the levels are: Lossless (no image
+recompression), Balanced (images downsampled to at most 150 dpi, JPEG quality 75) and Smallest
+(at most 96 dpi, JPEG quality 60), and every level uses object streams, removes unused and
+duplicate objects and subsets fully embedded fonts except fonts used by form fields or
+`/AcroForm /DR` (kept whole so that fields stay editable) → choose Lossless → the report shows
+the original size, the new size, each equal to the actual byte counts, and the ratio new ÷
+original as a percentage rounded to one decimal → save as `small.pdf` → write and verify
+(renders match within the render-ratchet tolerance; the two identical images are one object;
+the page font is a subset that still covers all text; the form font is whole; text extracts
+unchanged) → Compress the original with Balanced → the output is smaller than the Lossless one;
+text and vector regions match within the render-ratchet tolerance; each image region has a
+PSNR of at least 30 dB against the original render → Compress with Smallest → the output is no
+larger than the Balanced one and each image region has a PSNR of at least 25 dB → images used
+as soft masks, in patterns or with JBIG2 or CCITT filters are left as they are. The comparison
+with qpdf and Ghostscript ratios (PLAN M8 exit criterion) is reported by the bench
+(`tools/bench`), not by this journey.
+Error branch: a fixture that is already optimal → the report says there is no reduction
+(ratio ≥ 100%) and Save writes the result only if the user confirms; a signed fixture → the
+dialog warns that compressing writes a new file whose signatures will no longer verify and
+defaults to Cancel; an image whose decoded size exceeds the image limits is left untouched and
+listed in the report, never decoded.
 
 ## J-OS-04: Convert images to a PDF
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.os_images_to_pdf, e2e.macos.os_images_to_pdf
 
-Steps: File > New > From images → add a JPEG with EXIF orientation 8, a 16-bit interlaced
-PNG, a CMYK progressive JPEG and a grayscale PNG with alpha → reorder by drag → page size "A4",
-orientation "auto" (portrait or landscape per image aspect), margin "small" (fixed at 18 pt) →
-Convert → "one file" → save as `photos.pdf` → write and verify (4 pages in the chosen order,
-each A4 with the image fitted inside the margins and centered; JPEG stream bytes equal the
-source JPEG bytes and the EXIF rotation is applied by the content's matrix; the CMYK JPEG uses
-`/DeviceCMYK` with the `/Decode` array required for Adobe-inverted CMYK; the PNGs use
-`/FlateDecode` with the alpha as `/SMask`; renders match the decoded source images within the
-render-ratchet tolerance) → again with page size "match the image" and "one file per image" →
-4 files per the multi-file output rule.
+Steps: File > New > From images → add, each with JFIF density 72 dpi or none: a JPEG stored as 600
+× 400 pixels with EXIF orientation 8 (shown 400 × 600, portrait), a 16-bit interlaced 800 ×
+400 PNG (landscape), a 500 × 500 CMYK progressive JPEG with an Adobe APP14 marker (inverted
+CMYK; portrait, as auto picks landscape only when width > height) and a 300 × 600 grayscale
+PNG with alpha (portrait) → reorder by drag to: PNG 16-bit, JPEG, gray PNG, CMYK JPEG → page
+size "A4", orientation "auto", margin "small" (18 pt) → Convert → "one file" → save as
+`photos.pdf` → write and verify (4 pages in that order: A4 landscape, portrait, portrait,
+portrait, each image fitted inside the margins and centered; JPEG stream bytes equal the source
+bytes minus APP1 segments (J-PG-03) and the EXIF rotation is applied by the content's matrix;
+the CMYK JPEG uses `/DeviceCMYK` with `/Decode [1 0 1 0 1 0 1 0]` for the inverted data; the
+PNGs use `/FlateDecode` with the alpha as `/SMask`; renders match the decoded source images
+within the render-ratchet tolerance) → again with page size "match the image" and "one file per
+image" → 4 files per the multi-file output rule, page sizes 800 × 400, 400 × 600, 300 × 600 and
+500 × 500 pt.
 Error branch: the hostile image set from annotate.md → each bad file is marked on its row and
 skipped, the others convert, and the result lists the skipped files; adding more images than
-the pages-per-operation limit is rejected.
+`Limits` pages per operation is rejected.
 
 ## J-OS-05: Export pages as images
 - milestone: M6
 - platform: web, macos
 - test: e2e.web.os_pdf_to_images, e2e.macos.os_pdf_to_images
 
-Steps: open a 4-page fixture whose page 3 has `/Rotate 90` and a `/CropBox` → File > Export →
-Images → format PNG, 150 dpi, pages `2-3` → choose the output per the multi-file output rule →
-two files named from the source name and page number → each PNG is 8-bit RGB with the page's
-crop box size at 150 dpi, rotated as displayed, and matches the MuPDF render of that page at 150
-dpi within the render-ratchet tolerance → export page 1 as JPEG quality 85, with annotations
-off → the JPEG matches the render without annotations → the exported files carry no metadata
-from the PDF (no title, author or XMP chunks).
-Error branch: a dpi of 0 and a dpi whose pixel size would exceed the render pixel limit are
-rejected with a typed error that names the largest allowed dpi for that page.
+Steps: open a 4-page fixture whose page 1 has a square annotation and page 3 has `/Rotate 90`
+and a `/CropBox` → File > Export → Images → format PNG, 150 dpi, pages `2-3` → choose the output
+per the multi-file output rule → two files `<name>-2.png` and `<name>-3.png` → each PNG is 8-bit
+RGB with the page's crop box size at 150 dpi, rotated as displayed, and matches the MuPDF render
+of that page at 150 dpi within the render-ratchet tolerance → export page 1 as JPEG quality 85,
+with annotations off → the JPEG has a PSNR of at least 35 dB against our render of page 1
+without annotations → the exported files carry no metadata from the PDF (no title, author or
+XMP chunks).
+Error branch: a dpi of 0 and a dpi whose pixel size would exceed `Limits` render pixels are
+rejected with a typed error that names the largest allowed dpi for that page; on a file that
+forbids copying, export is J-PG-15.
 
 ## J-OS-06: Saving fails safely
 - milestone: M6
