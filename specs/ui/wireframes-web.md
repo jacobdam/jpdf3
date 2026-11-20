@@ -579,7 +579,8 @@ button). Closing the browser tab with edits also triggers the browser's own leav
 └─────────────────────────────────────────────────────┘
 ```
 
-`Keep my version` is the default.
+`Keep my version` is the default and the dismiss action (Esc); it counts as IA §8's safe
+dismiss button.
 
 ### W-23 Confirm delete (IA §8; J-PG-04, J-ANN-19, J-PG-14)
 

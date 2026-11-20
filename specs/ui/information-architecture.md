@@ -193,7 +193,7 @@ a context menu outside VoiceOver.
 | Thumbnail(s) | Insert before/after, delete, extract, rotate, duplicate, copy pages, paste pages | J-PG-01…J-PG-08, J-PG-13 |
 | Outline entry | Go to, add, add child, rename, cut, paste (as last child), paste after (as next sibling), delete | J-RD-11, J-PG-14 |
 | Annotation list entry | Go to, reply, set status, delete | J-ANN-19 |
-| Document tab | Close, close others, show in Finder (macOS only) | J-RD-23 |
+| Document tab | Close, close others (web); macOS uses the system tab menu, and Show in Finder is in the title's proxy-icon menu | J-RD-23 |
 
 ## 7. States
 
@@ -219,7 +219,8 @@ a context menu outside VoiceOver.
 
 Dialogs are modal to their document (macOS sheets on the window; web MUI `Dialog`), keep
 keyboard focus inside, default the focused button to the safe choice and always have a
-visible Cancel or Close button. Web: dialogs, menus and snackbars render inside the
+visible button that dismisses them safely (Cancel or Close; in single-choice alerts OK, and in
+File changed on disk Keep). Web: dialogs, menus and snackbars render inside the
 full-screen element while full screen is on (MUI `container`), so they stay visible.
 
 | Dialog | Content | Default button | Journeys |
@@ -253,7 +254,7 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 
 | Concept | macOS (SwiftUI, HIG) | Web (React, MUI) |
 |---|---|---|
-| Document tabs | Native window tabs; one document per window | An app tab bar (MUI `Tabs`) under the AppBar |
+| Document tabs | Native window tabs; one document per window | An app tab bar (MUI `Tabs`) as the AppBar's first row, above the main toolbar |
 | Main toolbar | Window toolbar (`.toolbar`), customizable | MUI `AppBar` + `Toolbar` |
 | Mode switcher | Segmented `Picker` in the toolbar's principal area | MUI `Tabs` / `ToggleButtonGroup` |
 | Mode tool row | A secondary toolbar row below the window toolbar | A second MUI `Toolbar` |
@@ -265,7 +266,8 @@ full-screen element while full screen is on (MUI `container`), so they stay visi
 | Transient messages | Inline text in the area concerned, or a non-modal bar inside the window with at most one action (author name, full-screen offer, unsupported action); never system notifications | MUI `Snackbar` or `Alert` bar, with at most one action |
 | Context menus | `.contextMenu` | MUI `Menu` at the pointer |
 
-Narrow windows (web < 900 px wide, macOS minimum window size): the inspector collapses
-first, then the sidebar becomes an overlay; the document view never drops below a usable width.
+Narrow windows (web < 900 px wide, macOS below 1040 pt): the inspector collapses
+first, then the sidebar becomes an overlay (web) or collapses to a column its toggle shows
+again (macOS, the split view's own behavior); the document view never drops below a usable width.
 Exact breakpoints, sizes and tokens: [wireframes-web.md](wireframes-web.md) and
 [wireframes-macos.md](wireframes-macos.md) (§1 tokens, W-29 narrow windows).

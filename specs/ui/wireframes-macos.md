@@ -17,15 +17,28 @@ PDFgear (CONSTITUTION 20).
    (journey strings verbatim, first letter may be capitalized; untrusted text in `«…»`,
    plain and escaped). macOS menu items and buttons use title case where the HIG asks for it
    (menu items, push buttons: "Keep My Version"); a journey string inside such a label keeps
-   its words. Ellipsis (…) ends every command that opens a dialog or a sheet.
+   its words. Ellipsis (…) ends a command that needs more input before it acts (Open…, Save
+   As…, Print…, Split…); confirmations and information windows (Delete, Document
+   Properties) take none.
 3. **System first.** Standard behaviors come from the system and are not redrawn: window
    tabs, full screen, the Open Recent menu, the print panel, the save panel, the
-   unsaved-changes alert of the document architecture, the toolbar customization sheet,
+   unsaved-changes alert of the document architecture (with `autosavesInPlace` returning
+   false: no autosave in place and no Versions browser, so closing never writes the file
+   silently; J-OS-01's incremental save stays the only write), the toolbar customization sheet,
    Settings window, focus ring, Increase Contrast, Reduce Motion, Reduce Transparency.
 4. **Logic stays in the engine** (CONSTITUTION 6): the views only draw engine results; the
    PDF engine runs in the XPC helper.
 5. ASCII conventions are the web file's §0 rule 4; `{Label ⓘ}` is a disabled control whose
-   help tag and accessibility hint carry the engine's reason (IA §0 rule 2).
+   help tag and accessibility hint carry the engine's reason (IA §0 rule 2). Such controls are
+   **not** `.disabled(true)` (a disabled control can't take focus, so Full Keyboard Access
+   would skip it): they stay enabled but inert, drawn with the dimmed style, with
+   `.accessibilityHint` holding the reason and an "unavailable" accessibility value; activating
+   one shows the reason and does nothing else.
+6. **Window structure.** The `NavigationSplitView` sidebar runs the full window height (the
+   system default). The tool row, notice bar, find bar, document view and status bar all
+   belong to the detail column; the inspector is the trailing column. Drawings below show
+   the bars across the window only for width; on screen they never extend under the sidebar
+   or the inspector.
 
 ## 1. Tokens
 
@@ -40,7 +53,7 @@ PDFgear (CONSTITUTION 20).
 | `toolrow` | 36 | the mode tool row (a bar under the toolbar) |
 | `findbar` | 32 | the find bar |
 | `statusbar` | 28 | the status bar |
-| `sidebar.width` | ideal 240, min 180, max ⅓ of the window (`navigationSplitViewColumnWidth(min:ideal:max:)`) | sidebar column |
+| `sidebar.width` | ideal 240, min 180, max ⅓ of the window (`navigationSplitViewColumnWidth(min:ideal:max:)`; `max` takes a fixed value, so the view recomputes it from the window width with a `GeometryReader`) | sidebar column |
 | `inspector.width` | ideal 270, min 240, max 360 (`inspectorColumnWidth(min:ideal:max:)`) | inspector |
 | `docview.min` | 320 | the document view never gets narrower (§W-29) |
 | `target.min` | 28 × 28 default, never below 20 × 20 (HIG macOS hit targets) | every control |
@@ -59,7 +72,7 @@ applies where SwiftUI supports it. No custom fonts in the chrome.
 | Text style | macOS size / weight | Use |
 |---|---|---|
 | `.title2` | 17 / regular | start window heading, error view title |
-| `.headline` | 13 / semibold | sheet titles, inspector group headers, panel headers |
+| `.headline` | 13 / bold | sheet titles, inspector group headers, panel headers |
 | `.body` | 13 / regular | default UI text, lists, fields |
 | `.callout` | 12 / regular | secondary lines in lists, the tool-row reason line |
 | `.caption` | 10 / regular | thumbnail labels |
@@ -134,8 +147,10 @@ another symbol; it must be an SF Symbol, never a copied icon.
   button (`.keyboardShortcut(.defaultAction)`, `.borderedProminent`).
 - Create buttons are `.bordered`, stacked, 8 apart.
 - Recent: a `List` with file icon (`NSWorkspace` icon for the type), name, size and date
-  (`.secondary`); double-click or Return opens; context menu Remove from Recent; Clear Menu is
-  in File > Open Recent (system). The same files appear in File > Open Recent.
+  (`.secondary`); a single click (or Return on the focused row) opens the file (J-RD-03);
+  each row has a small remove button (`xmark.circle`, shown on hover and on keyboard focus;
+  Delete on a focused row does the same); a `Clear` button sits right of the "Recent"
+  header. The same files appear in File > Open Recent (system, with its Clear Menu).
 - A recent file that no longer exists: the row is removed and an inline line under the list
   says `«name»: file not found` (J-RD-03).
 
@@ -172,8 +187,8 @@ The window opens at once with the file name in the title. Progress is a `Progres
 ### W-05 Document open, Read mode (IA §1, §3; J-RD-06…J-RD-10)
 
 ```
-┌─●─●─●─ [◧] «report.pdf» — Edited                                                         ┐
-│  [📂][⬇][🖨]   ⟨▓Read▓|Annotate|Edit|Pages|Forms|Secure⟩   ⟨Select|Hand⟩  [−][+] [‹][›] [⌕] [◨]│ unified toolbar
+┌─●─●─●─ [◧] «report.pdf» Edited [📂][⬇][🖨] ⟨▓Read▓|Annotate|Edit|Pages|Forms|Secure⟩       ┐ unified toolbar:
+│        ⟨Select|Hand⟩ [↶][↷] [−][+] [‹][›] [⟲][⟳] [⌕] [◨]                                     │ one row on screen
 ├──────────────────────────────────────────────────────────────────────────────────────────┤
 │ «report.pdf»                         │ «b.pdf»                                    [+]    │ native tab bar (2+ docs)
 ├─────────────┬────────────────────────────────────────────────────────────────────────────┤
@@ -186,30 +201,35 @@ The window opens at once with the file name in the title. Progress is a `Progres
 │ │▓11▓│      │              ┌──────────────────────────┐                                  │
 │ └────┘      │              │         page 12          │                                  │
 ├─────────────┴────────────────────────────────────────────────────────────────────────────┤
-│ [ 11 / 20 ]   100% ⌄   Continuous ⌄                                                      │ status bar
+│ [ 11 / 20 ]   100% ⌄   Single Page Continuous ⌄                                          │ status bar
 └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - Window: a document window per file (native tabs merge them; the tab bar appears with two or
-  more tabs, the system default). The title is the file name (middle-truncated by the system),
-  with "Edited" added by the system when there are unsaved changes; the proxy icon offers the
-  path menu.
+  more tabs, the system default). The title is the file name (middle-truncated by the
+  system), or the escaped document title when the file sets `/DisplayDocTitle` (J-RD-27; the
+  proxy icon and its path menu still name the file), with "Edited" added by the system when
+  there are unsaved changes. Show in Finder is in the proxy-icon menu and the File menu.
 - Toolbar (`.toolbar`, customizable, default set as drawn): leading the sidebar toggle;
   Open, Save, Print; principal the mode `Picker` (`.segmented`, labels with symbols); the Read
-  mode's Select / Hand `Picker`; zoom out / in; back / forward; Find (shows the find bar);
-  trailing the inspector toggle. Full screen is the system's (green button, View menu).
+  mode's Select / Hand `Picker`; undo / redo; zoom out / in; back / forward; rotate view left
+  / right; Find (shows the find bar); trailing the inspector toggle. Full screen is the system's (green button, View menu).
 - Sidebar: `NavigationSplitView` sidebar column; at its top a segmented `Picker` of seven
   symbol-only segments (Thumbnails, Outline, Annotations, Attachments, Layers, Search results,
   Signatures; names in help tags and accessibility labels), in IA §4 order; under it the
   panel header (`.headline`) and its small action buttons.
 - Thumbnails: the current page has a 3 pt accent border; selected pages use the selection
-  color plus a check mark badge; labels in `.caption` under each.
+  color plus a check mark badge; page labels («…», middle-truncated) in `.caption` under each.
 - Document view: an AppKit-hosted scroll view (`NSViewRepresentable`) drawing engine tiles on
   `underPageBackgroundColor`; pages have a soft system shadow. It is one accessibility
   element group per page ("Page N of M") with the engine's text layer (accessibility.md §2).
 - Status bar: a 28 pt bar in the window content (`windowBackgroundColor`, top `Divider`),
-  `.small` controls: page field (`TextField`, 80 wide, "11 / 20" or the label plus "(11 of
-  20)"), zoom pop-up, layout pop-up; trailing job progress and Cancel when a job runs.
+  `.small` controls: page field (`TextField`, 80 wide for "11 / 20", growing to 200 for the
+  label plus "(11 of 20)"; a longer label is middle-truncated while " (11 of 20)" stays
+  visible, full escaped label in the help tag), zoom pop-up, layout pop-up with J-RD-07's
+  "Single Page", "Single Page Continuous", "Two Pages", "Two Pages Continuous" and a "Show
+  cover page" item; trailing job progress and Cancel when a job runs. The sidebar and
+  inspector widths also have View-menu presets (accessibility.md §4).
 
 ### W-06 Annotate mode (IA §3; J-ANN-01…J-ANN-26)
 
@@ -227,7 +247,7 @@ The window opens at once with the file name in the title. Progress is a `Progres
 │   Highli…   │                                                      │ ▾ Comment          │
 │             │                                                      │ [                ] │
 ├─────────────┴──────────────────────────────────────────────────────┴────────────────────┤
-│ [ 3 / 20 ]   100% ⌄   Continuous ⌄                                                       │
+│ [ 3 / 20 ]   100% ⌄   Single Page Continuous ⌄                                           │
 ```
 
 - Tool row: a bar under the toolbar (`.bar` material, `toolrow` high, bottom `Divider`),
@@ -242,13 +262,14 @@ The window opens at once with the file name in the title. Progress is a `Progres
 
 ```
 │ [↖] | [Edit Text][Add Text][Add Image][Link] | [Watermark ⌄][Header & Footer ⌄]          │
-│       [Bates ⌄][Background ⌄] | [Crop]                       (row overflows into [⋯])   │
+│       [Bates Numbers ⌄][Background ⌄] | [Crop]               (row overflows into [⋯])   │
 ```
 
 The row is drawn here wrapped only for width; on screen it is one row and its tail moves into
 `[⋯]`. Text editing uses the engine's caret and selection drawn by the view; Format menu
-(Bold, Italic, Underline) is enabled while editing. Watermark, header and footer, Bates and
-background open their creator sheets with a live preview. Missing fonts show the
+(Bold, Italic, Underline) is enabled while editing. Watermark, header and footer, Bates numbers and
+background are pull-down buttons: the primary action opens the creator sheet (W-33) with a
+live preview, the menu has Add, Update and Remove (J-ED-06…J-ED-09; Remove asks first, W-23). Missing fonts show the
 "substituted" note in the inspector.
 
 ### W-08 Pages mode (IA §3; J-PG-01…J-PG-16)
@@ -286,19 +307,20 @@ built-in set (no scripts; CONSTITUTION 7).
 ### W-10 Secure mode (IA §3)
 
 ```
-│ [Encrypt…][Permissions…][Remove Security…] | [Mark for Redaction][Apply Redactions…]      │
+│ [Encrypt…][Permissions…][Remove Security…] | [Mark for Redaction][Apply Redactions]      │
 │       [Scrub Metadata…] | [Sign…][Certify…] | [Signatures]     (one row; tail into [⋯])   │
 ```
 
 Redaction marks: a 2 pt `systemRed` outline with a diagonal hatch until applied. Apply
-Redactions… shows a confirmation alert (W-23) with the redaction journeys' wording. The Signatures
+Redactions shows a confirmation alert (W-23) whose wording comes from the redaction journeys
+(pending in #9's PR). The Signatures
 panel's empty state is "No signatures".
 
 ### W-11 Find bar and Search results (IA §1, §4; J-RD-15, J-RD-31)
 
 ```
 ├─────────────┬────────────────────────────────────────────────────────────────────────────┤
-│ Search Res… │ [⌕ report              ⓧ]  3 of 9  [‹][›]  [Aa] [Whole Word]  ▬▬▭ [Cancel] [Done]│ find bar
+│ Search Res… │ [⌕ report     ⓧ] 3 of 9 [‹][›] [Case Sensitive][Whole Words] ▬▭ [Cancel] [Done]│ find bar
 │ 9 results   ├────────────────────────────────────────────────────────────────────────────┤
 │ ▾ Page 2    │              ┌──────────────────────────┐                                  │
 │   …«report» │              │ the ╔report╗ shows       │                                  │
@@ -306,7 +328,7 @@ panel's empty state is "No signatures".
 
 The find bar is a `.bar` strip at the top of the document view (like the system find bar): a
 search field (220 wide), the count ("1 of 9", posted as an accessibility announcement),
-previous / next, match case and whole word toggles, a small progress bar and Cancel only while
+previous / next, the "Case Sensitive" and "Whole Words" toggles (J-RD-15), a small progress bar and Cancel only while
 searching, and Done to close. Search results panel: before a search a hint; after one "No
 results".
 
@@ -326,7 +348,9 @@ and a disabled toggle with the reason.
 Same three states as the web file's W-13 (nothing selected → defaults of the active tool;
 several → shared properties with "Mixed" shown as the placeholder of the field; locked →
 disabled controls with the reason as help tag and one `.callout` line explaining the lock).
-Read mode: hidden by default, read-only when shown.
+Read mode: hidden by default, read-only when shown. One annotation selected: a "use as
+default" button at the end (J-ANN-16); a value the engine rejects shows its typed error under
+that field in `.red` `.callout` text and the field keeps the previous value.
 
 ### W-14 Open failed (IA §7; J-RD-02, J-RD-05)
 
@@ -351,7 +375,8 @@ working.
 
 ### W-16 Restricted (IA §3 notes, §7; J-RD-29, J-ANN-23, J-PG-15)
 
-The tool row keeps the disabled tools (dimmed, still reachable with Full Keyboard Access);
+The tool row keeps the unavailable tools in place, inert and dimmed but focusable (§0 rule 5),
+while the select tool stays available (IA §3 notes);
 a `.callout` line under the row states the reason once, with an `Unlock with Password…`
 button at its end where the journeys allow it. Menu items are disabled and their help tag
 gives the reason.
@@ -364,9 +389,10 @@ gives the reason.
 ├──────────────────────────────────────────────────────────────────────────────────────────┤
 ```
 
-A non-modal bar (`.bar` material, 32 pt) under the tool row, inside the window, one at a time
-with at most one action button; never a system notification. Same notices as the web file's
-W-17. Each is posted as an accessibility announcement.
+A non-modal bar (`.bar` material, 32 pt) under the tool row, inside the detail column, one at
+a time with at most one action button; never a system notification. Same notices, wording and
+no-auto-hide rule as the web file's W-17 (a notice stays until dismissed, acted on or replaced).
+Each is posted as an accessibility announcement.
 
 ### W-18 Password (IA §8; J-RD-04, J-RD-30)
 
@@ -380,7 +406,8 @@ W-17. Each is posted as an accessibility announcement.
 └──────────────────────────────────────────────────────┘
 ```
 
-A `SecureField` with AutoFill off (`.textContentType(nil)`), paste allowed; the error appears
+A plain `SecureField` (no content type set, so the system has no reason to offer AutoFill;
+as in IA §8, only J-RD-04's storage check is promised), paste allowed; the error appears
 in place, the field keeps focus with its text selected. Open is the default button. The window
 behind shows no page content or thumbnails (the sidebar and document view are empty
 `underPageBackgroundColor`). Cancel closes the window.
@@ -388,14 +415,16 @@ behind shows no page content or thumbnails (the sidebar and document view are em
 ### W-19 Owner password unlock (IA §8; J-RD-29)
 
 A sheet like W-18: title "Unlock Restricted Actions", a line listing the restricted
-permissions in plain words, an owner-password `SecureField`, `[Cancel] [Unlock]` (Unlock is
-the default). The unlock lasts for this session only.
+permissions in plain words, an owner-password `SecureField` with W-18's rules, the
+"incorrect password" line in place after a wrong password (J-RD-29), `[Cancel] [Unlock]`
+(Unlock is the default). The unlock lasts for this session only.
 
 ### W-20 External link (IA §8; J-RD-17, J-RD-18)
 
 A sheet 480 wide: title "Open This Web Address?", the engine-normalized URL in a selectable
 monospaced `Text` that wraps and is never truncated, the host on its own line
-(`.headline`), and `[Cancel] [Open]` with **Cancel** as the default button
+(`.headline`, also wrapping, never truncated); both are the engine's display strings
+(CONSTITUTION 6), and `[Cancel] [Open]` with **Cancel** as the default button
 (`.keyboardShortcut(.defaultAction)` on Cancel). A `mailto:` with attachment parameters adds
 a line that they were removed.
 
@@ -411,20 +440,25 @@ a line that they were removed.
 ```
 
 The document architecture's standard alert (system wording, which differs from the journeys'
-"save changes?" term). Tests therefore find it by its accessibility identifier
-`unsaved-changes`, never by text, so an absence check can't pass because of wording. On quit
+"save changes?" term; no public API sets an identifier on it). Tests therefore detect it
+structurally: a sheet attached to the document window containing "Don't Save" and "Save"
+buttons; an absence check asserts the window has no sheet, so it can't pass because of
+wording. On quit
 with several edited documents the system's review-changes flow applies.
 
 ### W-22 File changed on disk (IA §8; journey pending in #42)
 
 An alert sheet: "“«report.pdf»” was changed by another app." / "Reload it, or keep your
-version and save it later." / `[Reload] [Keep My Version]`, Keep My Version the default.
+version and save it later." / `[Reload] [Keep My Version]`, Keep My Version the default and
+the Esc action (the safe dismiss button of IA §8).
 
 ### W-23 Confirm delete and other confirmations (IA §8)
 
-Alert sheets (`.confirmationDialog` / `.alert`) with the journeys' wording, a
-`role: .destructive` action (Delete, Flatten, Remove) and Cancel as the default
-(`role: .cancel`). Example: "Delete 3 pages?" / the pages and the earlier-versions note with
+Alert sheets (`.alert`) with the journeys' wording, a `role: .destructive` action (Delete,
+Flatten, Remove) and Cancel (`role: .cancel`, Esc). Return must trigger Cancel, not the
+destructive action: the alert is built so Cancel is the key button
+(`.keyboardShortcut(.defaultAction)` on Cancel, or an `NSAlert` with Cancel first), and an
+XCUITest presses Return and asserts nothing was deleted. Example: "Delete 3 pages?" / the pages and the earlier-versions note with
 "remove earlier versions" (as in the web file's W-23) / `[Cancel] [Delete]`.
 
 ### W-24 Save failed (IA §8; J-OS-06)
@@ -435,16 +469,24 @@ original file was not changed." / `[OK]`.
 ### W-25 Print (IA §8; J-RD-21, J-ANN-25)
 
 The system print panel (`NSPrintOperation` with the engine-rendered pages) with an accessory
-view (`NSPrintPanelAccessorizing`) holding our options: Content pop-up ("document only",
-"document and annotations"), a Comment contents on extra pages checkbox, and Auto-rotate.
-Pages, scale and pages per sheet are the system panel's own controls, read back into the
-engine's print job. The accessory view has 20 pt margins and `.regular` controls.
+view (`NSPrintPanelAccessorizing`) holding the options the standard panel lacks: Content
+pop-up ("document only", "document and annotations"), a "Print comment contents on extra
+pages" checkbox (J-ANN-25), Scale (fit / actual size / custom %), a Current Page choice next
+to the panel's page range, and Auto-rotate. Pages per sheet uses the panel's Layout pane. The
+page range "2-4,7" is typed into our accessory's Range field (the system From/To range can't
+hold a list) and the engine validates it; an invalid range ("9-3", "0") shows a hint under
+the field and the job doesn't start (J-RD-21). The engine builds the print job from these
+values. The accessory view has 20 pt margins and `.regular` controls.
 
 ### W-26 Document properties (IA §8; J-RD-22)
 
-File > Document Properties… opens a sheet 520 wide with a segmented `Picker` (File,
+File > Document Properties opens a sheet 520 wide with a segmented `Picker` (File,
 Description, Security) and a two-column `Grid` (labels trailing-aligned `.secondary`, values
-`.body`, selectable). `[Done]`.
+`.body`, selectable). Fields are J-RD-22's: file name, location (macOS only), file size, page
+count, page size of the current page, PDF version, creator, producer, created and modified
+dates in local time, tagged and fast web view yes/no; title, author, subject, keywords;
+encryption and the permissions list. File-supplied values follow the untrusted-text rule.
+`[Close]` (IA §8's default button).
 
 ### W-27 Settings (IA §8)
 
@@ -469,7 +511,7 @@ at once.
 |---|---|
 | ≥ 1040 pt | Sidebar and inspector shown as columns. |
 | 800–1039 pt | The inspector hides when the window shrinks into this range (its toggle reopens it as a column, taking width from the document view); toolbar items that don't fit go to the system overflow (»). |
-| 640–799 pt | The sidebar collapses (`NavigationSplitViewVisibility.detailOnly`); its toggle shows it over the document view. |
+| 640–799 pt | The sidebar collapses (`NavigationSplitViewVisibility.detailOnly`); its toggle shows it again as a column (the macOS split view has no overlay mode), and the inspector hides while it is shown so the document view keeps `docview.min`. |
 
 The document view keeps at least `docview.min`. The window can't be smaller than
 `window.min`.
@@ -478,21 +520,86 @@ The document view keeps at least `docview.min`. The window can't be smaller than
 
 `.contextMenu` / `NSMenu` built from the engine's hit test at the pointer (Control-click too),
 standard menu typography, key equivalents shown where shortcuts.md defines them. Items per
-target are in IA §6; Document tab's menu adds Show in Finder.
+target are in IA §6. The window-tab menu is the system's (no items added).
 
 ### W-31 Edited state (IA §7; J-OS-01)
 
 The system handles it: the close button shows the edited dot and the title adds "Edited"
 (`NSDocument` / `isDocumentEdited`). Both clear after Save.
 
+### W-32 Menu bar (IA §6)
+
+```
+ jpdf  File  Edit  Format  View  Go  Tools  Window  Help
+       ┌─────────────────────────────────┐
+       │ New Blank Document          ⌘N  │
+       │ New from Images…                │
+       │ Merge Files…                    │
+       │ Open…                       ⌘O  │
+       │ Open Recent                  ▸  │
+       │ ─────────────────────────────── │
+       │ Close                       ⌘W  │
+       │ Save                        ⌘S  │
+       │ Save As…                   ⇧⌘S  │
+       │ Export Pages as Images…         │
+       │ Compress…                       │
+       │ Show in Finder                  │
+       │ ─────────────────────────────── │
+       │ Print…                      ⌘P  │
+       │ Document Properties         ⌘I  │
+       └─────────────────────────────────┘
+```
+
+- SwiftUI `Commands` (`CommandGroup(replacing:)` for the standard groups, `CommandMenu` for
+  Go and Tools): App (About, Settings…, Services, Hide, Quit), File, Edit, Format, View, Go,
+  Tools, Window, Help, with IA §6's items in its order and title case.
+- Key equivalents are exactly shortcuts.md's macOS column, shown by the system next to each
+  item. Cmd+I belongs to Document Properties except while text is being edited, when the
+  Format menu's Italic takes it and Document Properties shows no key (shortcuts.md rule 11).
+- Format is present but its items are disabled except while editing text.
+- An unavailable item is disabled (menus are not in the Full Keyboard Access tab loop, so the
+  §0 rule 5 exception isn't needed here) and its help tag gives the engine's reason.
+
+### W-33 Creator sheets (IA §8 Creators)
+
+The same template as the web file's W-33, as a sheet: engine-rendered preview on the left
+(320 wide, page stepper under it), a grouped `Form` of options on the right, `[Cancel]` and
+the action button (default) at the bottom right, 20 pt margins. Option names are the
+journeys' quoted strings. Per-creator details are drawn in #45.
+
+### W-34 Save As (IA §6; J-OS-02)
+
+The system save panel (`NSSavePanel`) with an accessory view holding the "Remove Earlier
+Versions" checkbox (J-OS-02's "remove earlier versions", off by default) and, for a signed
+file, the warning line from J-OS-02's error branch under it.
+
+### W-35 Keyboard shortcuts list (IA §6 Help)
+
+Help > Keyboard Shortcuts opens a window (560 × 600, resizable) with a search field and
+shortcuts.md's tables grouped by context (`.headline` headers; keys in SF Mono with the
+system's modifier glyphs).
+
+### W-36 Note popup (J-ANN-04)
+
+A non-modal `.popover` anchored to the note icon (280 wide), with author and date
+(`.callout`, `.secondary`, untrusted text), a multi-line `TextEditor` focused on open, and a
+close button; Esc or clicking outside closes it and keeps the text (shortcuts.md rule 9).
+
+### W-37 Magnifier (IA §9; J-RD-25)
+
+A 200 pt circular loupe with a 1 pt separator ring and a system shadow, following the pointer,
+showing the engine's rendering at 4× the current zoom ("+" / "-" change the factor); the
+factor in a `.caption` capsule at the bottom of the ring.
+
 ## 3. Reviewer checklist (AUTOMATION §5.4)
 
 1. Areas of W-05 present, with the system idioms named here (unified toolbar, segmented mode
    picker, split-view sidebar, inspector column, sheets).
-2. Sizes within ±2 pt of §1.1; text only in the §1.2 styles; no custom colors (§1.3).
+2. Screenshots are taken at @2x on a 1280 × 800 pt window, so ±2 pt is ±4 device pixels.
+   Sizes within ±2 pt of §1.1; text only in the §1.2 styles; no custom colors (§1.3).
 3. Every empty, loading and error state shows text (W-02, W-04, W-12, W-14, W-15).
 4. Both appearances, Increase Contrast and Reduce Transparency screenshots look correct; page
    content never recolored by the appearance.
 5. Disabled controls visible with their reason (W-16); sheets with the default button named
-   here; Cancel present on every sheet.
+   here; a safe dismiss button on every sheet (Cancel, Close, OK, or Keep My Version in W-22).
 6. Untrusted text plain, escaped, middle-truncated (URLs never truncated).
