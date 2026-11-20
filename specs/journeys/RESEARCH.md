@@ -20,8 +20,8 @@ Each journeys issue (#6–#9, #42) adds its own section here.
 | Open | Password prompt for encrypted files; wrong-password message | J-RD-04, J-RD-30 |
 | Open | Error when a file can't be opened | J-RD-05 |
 | Open | Reopen the files from the last session at launch (preference) | J-RD-24 |
-| Open | Offer to restore an unsaved file after a crash | #42 (platform conventions) |
-| Open | Alert when the open file changed on disk | #42 (platform conventions) |
+| Open | Offer to restore an unsaved file after a crash | J-PC-03 |
+| Open | Alert when the open file changed on disk | J-PC-02 |
 | Open | Open from a folder; notify when new PDFs arrive; menu-bar helper; start at login | out (OS integration beyond a reader; revisit in an audit) |
 | Documents | Several documents in tabs; next/previous tab | J-RD-23 |
 | Navigation | Page number field, go to page | J-RD-06 |
@@ -50,7 +50,7 @@ Each journeys issue (#6–#9, #42) adds its own section here.
 | Reading | Warm and dark reading tints for pages | J-RD-20 |
 | Reading | App appearance light/dark/auto | J-RD-20 |
 | Print | Print document only or with annotations | J-RD-21 |
-| Print | Preference to choose the content before every print | #42 (platform conventions: preferences) |
+| Print | Preference to choose the content before every print | J-PC-04 |
 | Print | Scale, scale to fit, pages per sheet, auto-rotate | J-RD-21 |
 | Print | Print note contents on extra pages | J-ANN-25 |
 | Print | Permission-restricted printing and copying, unlocked with the owner password | J-RD-29 |
@@ -87,7 +87,7 @@ ribbon and the edit menu in the same string tables, plus PLAN §4 (Annotate).
 | Stamps | Built-in stamps; stamp with date, or date and time | J-ANN-13 (our set: the ISO 32000-2 standard stamp names) |
 | Stamps | Custom text stamp with color; custom image stamp with background removal | J-ANN-14 |
 | Signatures | Create a signature by drawing (trackpad), typing (keyboard) or from an image, with background removal; a small saved-signature limit | J-ANN-15 |
-| Signatures | Digital signatures, certify, signature panel, deferred signatures | #42 (signatures) |
+| Signatures | Digital signatures, certify, signature panel, deferred signatures | J-SG-01, J-SG-06, J-SG-07, J-SG-08 (deferred signatures are signature fields: J-FM-08, signed in J-SG-07) |
 | Signatures | Online signature requests (e-sign service) | out (needs a backend; PLAN R11) |
 | Properties | Stroke width presets, font size presets, color, opacity | J-ANN-16 |
 | Editing | Copy, cut, paste, remove annotation | J-ANN-17 |
@@ -143,7 +143,7 @@ string tables in the same bundle, plus PLAN §4 (Pages, Edit, Optimize & save).
 | Edit | Bates numbering | J-ED-08 (PLAN §4; not seen in PDFgear) |
 | Edit | Page background | J-ED-09 (PLAN §4; not seen in PDFgear) |
 | Edit | Crop pages, with numeric width and height and "apply to all pages" | J-ED-10 |
-| Save | Save (incremental), Save As | J-OS-01, J-OS-02 (Save As platform conventions: #42) |
+| Save | Save (incremental), Save As | J-OS-01, J-OS-02, J-PC-07 |
 | Optimize | Compress with low, medium and high levels and a size report | J-OS-03 (our levels: Lossless, Balanced, Smallest) |
 | Optimize | Compress several files in a list | Phase 2 (F-P2-4, batch) |
 | Optimize | Online compression or conversion | out (files never leave the device, PLAN R11) |
@@ -182,4 +182,36 @@ security summary and the redaction confirmation in the same string tables, plus 
 | Redaction | Search and mark every match | J-SC-06 (PLAN §4; not seen in PDFgear) |
 | Redaction | Remove hidden information (metadata, scripts, attachments, earlier versions) | J-SC-09 (PLAN §4 F-ED-4; not a PDFgear item) |
 | Redaction | Redact and remove hidden information in protected files | J-SC-10 (PLAN §4 safety) |
-| Signatures | Digital IDs (import, create self-signed), certificate manager, trust a certificate, deferred signatures | #42 (signatures) |
+| Signatures | Digital IDs (import, create self-signed), certificate manager, trust a certificate, deferred signatures | J-SG-04, J-SG-05, J-FM-08, J-SG-07 |
+
+## Signatures and platform conventions (#42)
+
+Sources: the digital ID, certificate, signature panel, signature validity and certify strings
+in the same string tables, the unsaved-file restore prompt, plus PLAN §4 (Security &
+signatures; Optimize & save), PLAN R12 and macOS / web platform conventions (Apple HIG, the
+document architecture, browser file handles).
+
+| Area | PDFgear feature (our words) | Status |
+|---|---|---|
+| Signatures | Signature panel with a validity summary per signature and for the document | J-SG-01 |
+| Signatures | Valid, invalid and unknown validity; "changed since signing" message | J-SG-01, J-SG-02, J-SG-03 |
+| Signatures | Validate as of the signing time | J-SG-01, J-SG-09 (timestamp time when one validates) |
+| Signatures | Show certificate; trust a certificate; unknown-signer explanation | J-SG-04 |
+| Signatures | Certificate manager (trusted certificates) | J-SG-04 |
+| Signatures | Digital IDs: import a P12 file with its password, create a self-signed ID | J-SG-05 |
+| Signatures | Sign by drawing a rectangle; reason, location, contact; appearance | J-SG-06 |
+| Signatures | Sign an empty signature field ("deferred" signature) | J-SG-07 |
+| Signatures | Certify with a choice of allowed changes | J-SG-08 |
+| Signatures | Prompt about placed signatures that were not applied | out (our signatures are applied when placed: Sign writes the file at once, J-SG-06) |
+| Signatures | Request signatures from others online | out (files never leave the device, PLAN R11) |
+| Signatures | View the signed version of a revision | J-SG-03 (PLAN §4 "changes after signing"; not seen in PDFgear) |
+| Signatures | FieldMDP locks and seed values | J-SG-03, J-SG-07 (PLAN §4; not seen in PDFgear) |
+| Signatures | Timestamps, OCSP/CRL, long-term validation (B-T, B-LT, B-LTA) | J-SG-09, J-SG-10 (PLAN §4; not seen in PDFgear) |
+| Signatures | Signing and verifying encrypted files | J-SG-11 (PLAN §4; not a PDFgear item) |
+| Platform | Unsaved changes on close and quit | J-PC-01 (platform convention) |
+| Platform | File changed on disk | J-PC-02 (platform convention) |
+| Platform | Restore an unsaved file after a crash | J-PC-03 |
+| Platform | Preference to choose the print content each time | J-PC-04 |
+| Platform | Several windows; move a tab to a new window | J-PC-05 (platform convention) |
+| Platform | Keyboard shortcuts list | J-PC-06 |
+| Platform | Save As naming, replace an existing file, Revert to Saved | J-PC-07 (platform convention) |

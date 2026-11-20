@@ -100,7 +100,7 @@ fills in the rest. A change here that contradicts a journey is a bug in this fil
 | Close tab | Cmd+W | the tab's close button | J-RD-23 |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab (also Cmd+Shift+] / Cmd+Shift+[) | Alt+PageDown / Alt+PageUp | J-RD-23 |
 | Preferences | Cmd+, | menu | — |
-| Keyboard shortcuts list | Help menu | ? (single key, rule 5) | — |
+| Keyboard shortcuts list | Help menu | ? (single key, rule 5) | J-PC-06 |
 | Quit | Cmd+Q | — | — |
 
 ## Edit

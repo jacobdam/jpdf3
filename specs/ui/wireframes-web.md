@@ -557,7 +557,7 @@ Cancel is the default (`autoFocus`). The URL and the host are the engine's displ
 never truncated, however long (a host can be 253 characters). For `mailto:` with attachment
 parameters a line under the URL says they were removed.
 
-### W-21 Unsaved changes (IA §8; journey pending in #42)
+### W-21 Unsaved changes (IA §8; J-PC-01)
 
 ```
 ┌ Dialog maxWidth="xs" ───────────────────────────────┐
@@ -574,7 +574,7 @@ because of different wording; tests also find the dialog by `data-testid="unsave
 button). Closing the browser tab with edits also triggers the browser's own leave-page prompt
 (`beforeunload`), whose wording the app doesn't control.
 
-### W-22 File changed on disk (IA §8; journey pending in #42)
+### W-22 File changed on disk (IA §8; J-PC-02)
 
 ```
 ┌ Dialog maxWidth="xs" ───────────────────────────────┐

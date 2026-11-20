@@ -4,21 +4,23 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #44 (#11, UI spec 2/2: wireframes for web and macOS, specs/ui/wireframes-*.md): reviewed;
-  auto-merge on, waiting for judge-verdict.
+- PR #46 (#42, journeys 5/5: signatures and platform conventions,
+  specs/journeys/signatures-platform.md, J-SG-01…11, J-PC-01…07): reviewed; auto-merge on,
+  waiting for judge-verdict.
 
 ## Last session
-- Wrote web and macOS wireframes W-01…W-37 with per-platform tokens and a vision-reviewer
-  checklist; aligned IA §6/§8/§10. Split the per-creator wireframes into #45.
-- PR #43 (#9, forms and security journeys) merged; #42 labeled `ready`.
+- Wrote the last journeys batch. The journeys backlog (#6–#9, #42) is complete: every
+  RESEARCH.md row now names a journey, Phase 2 or out. Filled TRACE F-SC-2…F-SC-4 and R12, and
+  the IA rows (Signatures panel, the Secure row, new dialogs, menus, preferences). W-21/W-22 now
+  point to J-PC-01/J-PC-02.
+- Filed discovery issues #47 (web CSP and macOS ATS for TSA/OCSP/CRL requests, needed before
+  M9) and #48 (trust anchors beyond the user's own list). Added the new dialogs to #45's
+  wireframe scope.
+- Removed two stale worktrees from merged PRs (#43, #44).
 
 ## Next step
-- #42 (journeys 5/5: signatures and platform conventions) is `ready` → do it next. It must
-  fill the IA rows that still say #42 (Signatures panel, Unsaved changes, File changed on
-  disk). Wireframes W-21/W-22 already draw those two dialogs and say "journey pending in
-  #42"; update them to the new journey IDs.
-- Then #12 (web skeleton + Playwright) / #13 (macOS skeleton + XCUITest), which implement
-  the W-05 layout from the wireframes. #45 (per-creator wireframes) is low priority.
+- #12 (web skeleton + Playwright) / #13 (macOS skeleton + XCUITest), which implement the W-05
+  layout. Then #14, #17, #18, #20 and #22 (all `ready`). #45 (wireframes) is low priority.
 - #21 still waits on #12, #13 and #19.
 
 ## Blockers / owner-todo

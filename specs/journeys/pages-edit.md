@@ -367,7 +367,7 @@ the confirmation says that changing pages will make the signature show as change
 signing → cancel → nothing changed → do it and confirm → save → the original signed revision is
 a byte prefix of the file, so the old signature's byte range is untouched (checked with pyHanko
 as an external validator: the signature is intact and reports changes after signing).
-Certification (DocMDP) restrictions are a signatures journey (#42).
+Certification (DocMDP) restrictions are covered by J-SG-03 and J-SG-08.
 
 ## J-PG-16: Links, bookmarks and undo across page operations
 - milestone: M6
