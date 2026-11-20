@@ -31,6 +31,11 @@ instead of adding near-duplicates.
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27).
 
+- Writing journeys (append-only gates) → give every step one checkable result and a test
+  mechanism Playwright/XCUITest can drive; never use browser-reserved keys (Ctrl+Tab/W/N/T/R,
+  F11, Alt+Left); keep timing/fps targets in the bench, not E2E; web file handles go behind a
+  test adapter ([journal](journal/2026-11-20.md), PR #30).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects
