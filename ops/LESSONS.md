@@ -20,3 +20,6 @@ instead of adding near-duplicates.
   fails unless every upstream job succeeded (bootstrap).
 
 ## Process
+- The guard blocks a Bash call whose text contains a GitHub CLI write it can't parse, even inside a
+  heredoc or a chained command → write files with Write/Edit and run each CLI write as its own
+  single command ([journal](journal/2026-11-20.md)).
