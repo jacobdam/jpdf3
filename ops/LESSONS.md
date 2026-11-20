@@ -62,6 +62,11 @@ instead of adding near-duplicates.
   Full Keyboard Access, NSDocument autosave writes silently, the macOS split view has no
   overlay sidebar ([journal](journal/2026-11-20.md), PR #44).
 
+- Choosing npm packages (web app, test tools) → run `npm run licenses` in apps/web on the
+  candidate tree first: CONSTITUTION 10 has no build-only exemption, and Vite 8, ESLint,
+  Babel-based plugins and axe-core all fail it. Check component facts with a Playwright
+  `toHaveCSS` assertion, not by eye (MUI 9 ignores Typography `color`) ([journal](journal/2026-11-20.md), PR #49).
+
 ## Engine & security
 - Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
   sections make references re-parse the same bytes (quadratic time); several capped objects

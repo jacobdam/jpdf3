@@ -141,7 +141,7 @@ test("reduced motion removes transitions", { tag: "@e2e.web.app_start_empty" }, 
 test("the CSP blocks inline script and inline style", {
   tag: "@e2e.web.app_start_empty",
 }, async ({ page }) => {
-  await watch(page);
+  const problems = await watch(page);
   await page.goto("./");
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();
   const result = await page.evaluate(() => {
@@ -173,6 +173,16 @@ test("the CSP blocks inline script and inline style", {
     }
   });
   expect(innerHtmlBlocked).toBe(true);
+  // Only the violations this test provokes: CSP / Trusted Types console errors. No uncaught
+  // errors, warnings or foreign requests.
+  const unexpected = problems.filter(
+    (p) =>
+      !(
+        p.startsWith("console error: ") &&
+        /Content Security Policy|TrustedScript|TrustedHTML|Trusted Type/.test(p)
+      ),
+  );
+  expect(unexpected).toEqual([]);
 });
 
 test("a file dropped on the window is not opened by the browser", {
