@@ -465,5 +465,6 @@ Steps: open a fixture where "annual report" is split across a line break, "offic
 search "annual report" → found across the line break → search "office" → found on the
 ligature → search a Japanese word → found → search an Arabic word → found, highlighted on
 the right glyphs (right to left) → start a search in a 2,000-page fixture and press Esc
-while it runs → the search stops within 100 ms and the UI never freezes (the search runs as
-a cancellable engine job).
+while it runs → the engine job reports "cancelled" before reaching the last page, no further
+results are added, and the page view keeps responding to scrolling throughout (the search
+runs as a cancellable engine job).
