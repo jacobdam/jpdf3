@@ -81,7 +81,15 @@ fn ci_linux_runs_the_check_after_writing_e2e() {
         err.contains("xtask: web: ./apps/web/package.json not found"),
         "{err}"
     );
-    assert!(err.ends_with("check-specs: 14 problem(s)\n"), "{err}");
+    // The short fuzz run comes last; the fixture has no fuzz/ project, so it fails fast
+    // (before installing any tool) and the exit code stays 1.
+    assert!(
+        err.ends_with(
+            "check-specs: 14 problem(s)\n\
+             xtask: fuzz: ./fuzz/Cargo.toml not found (run from the repository root)\n"
+        ),
+        "{err}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

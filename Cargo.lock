@@ -76,6 +76,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpdf-testgen"
+version = "0.0.0"
+dependencies = [
+ "jpdf-engine",
+]
+
+[[package]]
 name = "jpdf-text"
 version = "0.0.0"
 
@@ -90,3 +97,6 @@ version = "0.0.0"
 [[package]]
 name = "xtask"
 version = "0.0.0"
+dependencies = [
+ "jpdf-testgen",
+]

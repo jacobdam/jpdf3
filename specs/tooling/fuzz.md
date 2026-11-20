@@ -1,0 +1,92 @@
+# Fuzz infrastructure (`fuzz/`, `cargo xtask fuzz`, jpdf-testgen)
+
+Area: tooling
+ISO 32000-2 clauses: §7.5.2 (header), §7.5.4–§7.5.6 (xref, trailer, incremental updates) for the generated seeds; none for the tooling itself
+Journeys: none (development tool; PLAN §6.3, R1; ops/judge/CONTRACT.md §3)
+Status: implemented
+
+## Behavior
+1. **`fuzz/`** is a cargo-fuzz project (issue #17). It is excluded from the root workspace
+   (`exclude = ["fuzz"]`), has its own `[workspace]` and its own `fuzz/Cargo.lock`, and builds
+   only on nightly (`cargo +nightly fuzz …`). The judge runs every target from
+   `cargo fuzz list` nightly for up to 5 minutes each with `-rss_limit_mb=2048` (CONTRACT §3).
+2. **Targets** (each `#![forbid(unsafe_code)]`; the judge scans their text for `unsafe`):
+   | target | input | reaches |
+   |---|---|---|
+   | `engine_open` | raw bytes into `Document::open(data, &Limits::default())`, the path behind `jpdf-cli info` | header/`startxref` search, xref, trailer, page tree |
+   | `engine_objects` | bytes split by 0xFF: chunk 0 = extra trailer entries, chunks 1… = object bodies numbered from 1 (max 64), wrapped by `jpdf_testgen::from_fuzz_chunks` into a file whose xref table is always correct | object parser, dictionaries, `/Prev` and trailer handling, page tree, from an empty corpus |
+   | `syntax_resolve` | the same input both raw and through the template; `XrefDocument::parse`, then `resolve` on `/Root` and on object numbers 0–255 twice | `resolve` on free, missing, mismatched and re-read objects; overlap checks |
+   A `cli_args` target is not added: argument parsing lives in the `jpdf-cli` binary and is
+   covered by `tools/jpdf-cli/tests/cli.rs`; a target needs a library entry point (later, if
+   the parser grows).
+3. **Seeds.** `tools/jpdf-testgen` (workspace crate, no dependencies) writes small PDFs whose
+   xref offsets are correct by construction: 0/1/3-page files, a 2-update incremental file, a
+   nested page tree, and a truncated file (`engine_open`); three chunk-format inputs
+   (`engine_objects`, `syntax_resolve`). Seeds are generated, never committed: CONSTITUTION 18
+   keeps PDFs out of the repo except minimized repros in `tests/regress/`. `fuzz/corpus/` and
+   `fuzz/artifacts/` are git-ignored.
+4. **`cargo xtask fuzz [--short] [--seconds N] [--target NAME]`** writes the seeds into
+   `fuzz/corpus/<target>/seed-<name>` (overwriting old seed files, keeping what the fuzzer
+   found), then runs each listed target with `-max_total_time=N -rss_limit_mb=2048
+   -timeout=10`. Default N = 300 (as the judge), `--short` = 30, `--seconds` takes 1–3600.
+   Exit 0 when no target fails, 1 when any target crashes, hangs or runs out of memory (the
+   message names the targets and how to minimize), 2 on a usage error.
+5. **`cargo xtask ci linux`** runs the `--short` run for every target after the web build and
+   check-specs (PLAN §6.3: "run on every PR (short)"). With `CI` set and the tools missing it
+   first installs nightly (`rustup toolchain install nightly --profile minimal`) and
+   cargo-fuzz 0.13.2 (`cargo install --locked --version`). Locally a missing tool fails with
+   the install hint.
+6. **Rule for new code** (`fuzz/README.md`): every new parser, filter, backend adapter and
+   engine command handler adds a target and its seeds (`xtask/src/fuzz.rs` `seeds_for`); a
+   unit test fails if a target in `fuzz/Cargo.toml` has no seeds.
+7. **Crashes.** A crash artifact is minimized (`cargo +nightly fuzz tmin`) and committed as a
+   repro under `tests/regress/` by the PR that fixes it, with a test that opens it.
+
+## Persistence
+Nothing persists in the repo. The local corpus in `fuzz/corpus/` grows across runs; CI starts
+from the generated seeds each time.
+
+## Undo
+Not applicable (tooling).
+
+## Errors
+- Missing nightly or cargo-fuzz: `xtask: fuzz: `cargo +nightly fuzz list` failed (install: …)`, exit 1.
+- Unknown `--target`: lists the known targets, exit 1.
+- Bad arguments: the usage line, exit 2 (`--seconds` outside 1–3600, unknown flag, missing value).
+- Crash/hang/OOM: `crash, hang or out-of-memory in [targets]; artifacts are in fuzz/artifacts/ …`, exit 1.
+
+## Limits
+Targets use `Limits::default()`, the same as `jpdf-cli`, so a finding is a real-world bug.
+The run limits mirror the judge: 2048 MB RSS; 10 s per input (the judge uses libFuzzer's
+default 1200 s, so our gate is stricter); inputs up to libFuzzer's default 4096 bytes.
+`from_fuzz_chunks` writes at most 64 objects; its output is linear in the input size.
+
+## Security
+- No `unsafe` in our fuzz sources (CONSTITUTION 3; `forbid(unsafe_code)` compiles with
+  `fuzz_target!`). `libfuzzer-sys` (needed by every cargo-fuzz target) contains `unsafe` and
+  bundles LLVM libFuzzer under NCSA, outside the CONSTITUTION 10 list; it is only in
+  `fuzz/Cargo.lock`, never in the root lockfile or any shipped artifact. ADR 0005 records the
+  decision; ops/proposals/test-only-licenses.md asks the owner (#50).
+- Seeds are our own generated bytes, never corpus files (CONSTITUTION 13, 18).
+
+## Accessibility
+Not applicable (tooling).
+
+## Platforms
+macOS (arm64) and Linux (x86_64) with a nightly toolchain. The engine code fuzzed is the same
+on every platform.
+
+## Performance
+`--short` adds about 90 s of fuzzing plus the one-off nightly build to `ci linux`; on CI the
+first install of cargo-fuzz takes about 1–2 minutes more. Locally, a 20 s run reaches ≈ 900
+coverage edges on the template targets from an empty corpus versus 33 for `engine_open`
+without seeds (≈ 1150 with seeds).
+
+## Tests
+- `tools/jpdf-testgen/tests/seeds.rs`: every xref entry points at its object; minimal files
+  open with their page counts; each `engine_open` seed opens with its expected result
+  (truncated → `Malformed`, nested tree → `Unsupported` until nested trees land); template
+  seeds open; chunk encoding round-trips; the template caps objects and never panics.
+- `xtask/src/fuzz.rs` unit tests: argument parsing (bounds, unknown flags), every target in
+  `fuzz/Cargo.toml` has seeds, seed writing keeps fuzzer-found files.
+- `cargo +nightly fuzz list` lists the three targets; `cargo xtask fuzz --short` runs them.

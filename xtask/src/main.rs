@@ -1,6 +1,7 @@
 //! Project task runner (NOT protected; the agent extends it). Contract: ops/judge/CONTRACT.md §2.
 #![forbid(unsafe_code)]
 
+mod fuzz;
 mod json;
 mod macos;
 mod specs;
@@ -9,8 +10,8 @@ mod web;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str =
-    "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | check-specs [--root DIR]";
+const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | check-specs [--root DIR] \
+     | fuzz [--short] [--seconds N] [--target NAME]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -39,7 +40,21 @@ fn main() -> ExitCode {
                 }
             };
             let specs = check_specs(Path::new("."));
-            if web == ExitCode::SUCCESS { specs } else { web }
+            // PLAN §6.3: a short fuzz run on every PR (specs/tooling/fuzz.md).
+            let fuzz = match fuzz::ci(Path::new(".")) {
+                Ok(()) => {
+                    eprintln!("xtask: fuzz: no crash");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: fuzz: {e}");
+                    ExitCode::from(1)
+                }
+            };
+            [web, specs, fuzz]
+                .into_iter()
+                .find(|c| *c != ExitCode::SUCCESS)
+                .unwrap_or(ExitCode::SUCCESS)
         }
         (Some("ci"), Some("macos")) => match macos::ci(Path::new("."), &out) {
             // specs/ui-macos/app-skeleton.md. check-specs runs in `ci linux`.
@@ -53,6 +68,21 @@ fn main() -> ExitCode {
             }
         },
         (Some("nightly"), _) => ExitCode::SUCCESS,
+        // specs/tooling/fuzz.md. Needs nightly + cargo-fuzz; not part of `ci linux`.
+        (Some("fuzz"), _) => {
+            let result = fuzz::parse(args.get(1..).unwrap_or_default())
+                .and_then(|opts| fuzz::run(Path::new("."), &opts));
+            match result {
+                Ok(()) => {
+                    eprintln!("xtask: fuzz: no crash");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: fuzz: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         (Some("check-specs"), _) => {
             let known = match args.len() {
                 1 => true,

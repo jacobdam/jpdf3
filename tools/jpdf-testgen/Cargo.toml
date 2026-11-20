@@ -1,0 +1,16 @@
+[package]
+name = "jpdf-testgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+jpdf-engine = { path = "../../crates/jpdf-engine" }
