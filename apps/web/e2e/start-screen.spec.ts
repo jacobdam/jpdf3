@@ -52,6 +52,10 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
   // Emotion's styles applied under the CSP: the theme's primary color (light appearance).
   await expect(open).toHaveCSS("background-color", "rgb(21, 101, 192)");
   await expect(open).toHaveCSS("text-transform", "none");
+  await expect(page.getByText("Files you open appear here.", { exact: true })).toHaveCSS(
+    "color",
+    "rgb(95, 95, 95)",
+  );
 
   expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
   expect(problems).toEqual([]);

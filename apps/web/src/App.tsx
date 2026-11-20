@@ -47,7 +47,7 @@ export function App() {
           <Typography variant="subtitle2" component="h2">
             Recent files
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Files you open appear here.
           </Typography>
         </Stack>
