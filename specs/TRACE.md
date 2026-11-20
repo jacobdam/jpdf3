@@ -25,7 +25,7 @@ that builds each feature (PLAN §8).
 | R5 | Spec coverage: ISO 32000-2 + real-world 1.x + repair | | [specs/cli/jpdf-cli.md](cli/jpdf-cli.md) | judge open rate |
 | R6 | Test corpus with rendering compared to other engines | J-ANN-01, J-ANN-07, J-ANN-21, J-ANN-26, J-PG-03, J-OS-02, J-OS-03, J-OS-04, J-OS-05 | | judge render ratchet |
 | R7 | Feature parity with PDFgear | (see F-rows below) | | |
-| R8 | UI: PDFgear ideas, native look | | | |
+| R8 | UI: PDFgear ideas, native look | (every journey; mapping in the UI spec) | [specs/ui/information-architecture.md](ui/information-architecture.md), [specs/ui/shortcuts.md](ui/shortcuts.md), [specs/ui/accessibility.md](ui/accessibility.md) | judge `ui_spec_present`; axe-core and XCUITest accessibility audits (#12, #13) |
 | R9 | Dependencies behind our own traits | | | judge dependency policy |
 | R10 | Licensing: MIT, permissive deps, no committed corpora | | | judge license policy |
 | R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03, J-RD-24, J-ANN-14, J-ANN-15, J-ANN-22, J-PG-13, J-OS-05 | | |
