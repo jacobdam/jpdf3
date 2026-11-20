@@ -1,0 +1,145 @@
+# Bench harness (`tools/bench`, `cargo xtask bench`)
+
+Area: tooling
+ISO 32000-2 clauses: none for the tooling itself; the generated sample uses §7.5.2–§7.5.5 through jpdf-testgen
+Journeys: none (development tool; PLAN §5 "CI", §8 M0; issue #18)
+Status: implemented
+
+## Behavior
+1. **`tools/bench`** is the workspace crate `jpdf-bench` (library + binary, no third-party
+   dependencies; it depends only on `jpdf-testgen`). It times `jpdf-cli` as an **external
+   program**, and the same work done by reference engines, also only as external programs
+   (CONSTITUTION 16: no engine is linked, read or copied).
+2. **Usage.**
+   ```
+   jpdf-bench --cli PATH --out FILE.json [--corpus DIR] [--sample N] [--runs R] [--warmup W]
+              [--mutool PATH|none] [--pdfium PATH|none] [--work DIR]
+   ```
+   - `--cli`: the `jpdf-cli` binary (required).
+   - `--out`: the JSON report (required). Parent directories are created.
+   - `--corpus DIR`: bench the `*.pdf` files directly inside `DIR` (not recursive), sorted by
+     file name (byte order), the first `--sample N` of them (default 20, 1 ≤ N ≤ 10 000).
+     Without `--corpus`, the **generated sample** is used (item 3). Point it only at corpus
+     tiers agents may read (smoke, regress); the sealed corpus is never benched.
+   - `--runs R` timed runs per measurement (default 5, 1–100), after `--warmup W` untimed runs
+     (default 1, 0–10).
+   - `--mutool`: default `mutool` from `PATH` if `mutool -v` runs; `none` disables it.
+   - `--pdfium`: default `pdfium_test` from `PATH` if it starts (run once with no arguments;
+     any exit counts as present); `none` disables it.
+   - An explicit `--mutool`/`--pdfium` path that cannot be started is a usage error; the
+     default lookup that finds nothing just leaves the engine out.
+   - `--work DIR`: scratch directory for the generated sample and the engines' output files;
+     default `<out>.work/` next to the report. The bench overwrites its own file names there
+     and never deletes anything.
+   - Unknown flags, missing values, out-of-range numbers or a missing `--cli`/`--out` → usage on
+     stderr, exit 2. A bench that ran writes the report and exits 0, whatever the engines did.
+     A `--cli` that is not a file and I/O failures (cannot write the report, cannot read the
+     corpus dir) → exit 1, and no report is written.
+3. **Generated sample** (default; offline, deterministic): `jpdf_testgen::minimal_pdf` with 1,
+   10, 100 and 1000 empty pages, named `gen-pages-0001.pdf` … `gen-pages-1000.pdf`. It
+   exercises the harness and the open path while the engine can't render; the real
+   comparison uses `--corpus` once corpus tiers exist (#22).
+4. **Operations** (page 1 only, matching what the judge times):
+   | id | jpdf-cli | mutool | pdfium_test |
+   |---|---|---|---|
+   | `info` | `info F` | `show F pages` | — |
+   | `render72` | `render F --page 1 --dpi 72 --out W` | `draw -q -r 72 -o W F 1` | `--png --scale=1 --pages=0 F` |
+   | `render150` | `render F --page 1 --dpi 150 --out W` | `draw -q -r 150 -o W F 1` | `--png --scale=2.083333 --pages=0 F` |
+   | `text` | `text F --page 1` | `draw -q -F txt -o W F 1` | `--txt --pages=0 F` |
+   `pdfium_test` writes its output next to its input, so the bench copies each file into the
+   work dir first. The PDFium argument lists are unit-tested but **not run in CI**: no runner
+   has a PDFium binary today.
+5. **Timing.** A run is the wall time from spawn to exit (process start included, like the
+   judge's `mu_ms`). stdout and stderr go to the null device. A measurement = `W` warmup runs
+   + `R` timed runs; its time is the **median** of the `R` runs, in microseconds.
+6. **Status.** Each run's exit is classified with CONTRACT §1: 0 `ok`, 2 `error`, 3
+   `not_implemented`, a time-limit kill `timeout`, anything else (including a signal or a
+   spawn failure) `crash`. The first non-`ok` run stops the measurement and sets its status;
+   its time is `null`. **A failed or unimplemented operation is never reported as a time**,
+   and never as zero. For reference engines the same mapping is applied, but only `ok`
+   counts; any other status just removes that file from the ratio.
+7. **Time limits** per run, from CONTRACT §1: info 20 s, render 30 s, text 60 s. The child
+   is killed at the limit.
+8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
+   per-file times of `ok` measurements (nearest-rank p95; `null` when no file is `ok`).
+   **Ratio** per operation and reference engine: the geometric mean over files where both
+   jpdf and the reference are `ok` of `max(jpdf_us, 1) / max(ref_us, 1)`, plus
+   `ratio_samples`; `null` with 0 samples. This is the same shape as the judge's
+   `bench_ratio` (geometric mean of per-page ratios), so local and judge trends agree.
+9. **Report** (`schema: "jpdf-bench/1"`, UTF-8 JSON, keys in fixed order, numbers with at
+   most 3 decimals):
+   ```json
+   {"schema":"jpdf-bench/1",
+    "machine":{"id":"<16 hex>","os":"macos","arch":"aarch64","cpu":"Apple M2","logical_cpus":8,"memory_bytes":17179869184},
+    "revision":"<git HEAD or null>",
+    "config":{"sample":"generated"|"corpus","files":4,"runs":5,"warmup":1},
+    "engines":{"jpdf":{"present":true},"mutool":{"present":true,"version":"mutool version 1.28.6"},"pdfium":{"present":false,"version":null}},
+    "operations":{"info":{"engines":{"jpdf":{"ok":4,"error":0,"not_implemented":0,"timeout":0,"crash":0,"median_ms":1.234,"p95_ms":2.5},"mutool":{…}},
+                          "ratio":{"mutool":{"value":0.8,"samples":4},"pdfium":{"value":null,"samples":0}}}, …},
+    "files":[{"name":"gen-pages-0001.pdf","bytes":512,"results":{"info":{"jpdf":{"status":"ok","ms":1.2},"mutool":{"status":"ok","ms":1.5}}, …}}]}
+   ```
+   Absent engines are omitted from `operations.*.engines` and `files[].results`; an engine with
+   no command for an operation (pdfium `info`) is omitted from that operation. File names
+   are base names only, never absolute paths.
+10. **Machine identification.** `id` = FNV-1a 64-bit (hex) of `os|arch|cpu|logical_cpus|memory_bytes`.
+    `cpu` comes from `sysctl -n machdep.cpu.brand_string` (macOS) or the first `model name`
+    in `/proc/cpuinfo` (Linux); `memory_bytes` from `sysctl -n hw.memsize` or `MemTotal` in
+    `/proc/meminfo`. Unknown values are `"unknown"` / `0`, which still hash. No host name,
+    user name or serial number is recorded. Trends compare reports with the same `id` only.
+11. **`cargo xtask bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W]`** builds
+    `jpdf-cli` and `jpdf-bench` with `cargo build --release --locked` (the judge's build) and
+    runs the bench with `--cli target/release/jpdf-cli --out DIR/bench.json` (default
+    `DIR` = `target/xtask-out`). It forwards the other flags. Exit: the bench's exit code.
+    `cargo xtask nightly` (#19) will call it and keep the trend; the 5% regression check of
+    PLAN §5 compares two reports with the same machine id and lands with #19.
+
+## Persistence
+The report is the only output. The dashboard (#15) and the nightly (#19) read it.
+
+## Undo
+Not applicable.
+
+## Errors
+Usage errors exit 2, I/O errors exit 1, both with one line on stderr. Engine failures are data
+in the report, never a bench failure.
+
+## Limits
+Sample ≤ 10 000 files, runs ≤ 100, warmup ≤ 10; per-run time limits as in item 7. The bench
+reads only file names and sizes from the corpus; engines read the PDFs, under their own limits.
+Arithmetic on times uses `u128`/`f64` from `Duration`, saturating where it converts.
+
+## Security
+Corpus PDFs are hostile, but the bench never parses them: it only passes paths to external
+programs, with arguments as an argv list (no shell). Report strings are JSON-escaped (file
+names can hold any character). The bench runs only `--cli`, `mutool`, `pdfium_test`, `git`
+(for `revision`) and `sysctl` on macOS.
+
+## Accessibility
+Not applicable (CLI tool).
+
+## Platforms
+macOS and Linux. Windows is out of scope (the judge runs Linux; development is on macOS).
+
+## Performance
+The generated sample with defaults is 4 files × 4 operations × up to 2 engines × 6 runs ≈ 200
+process starts, a few seconds. The tool's overhead per run is one spawn plus polling the
+child every 0.2 ms.
+
+## Tests
+`tools/bench/tests/bench.rs` and unit tests in the crate:
+- argument parsing: defaults, every range boundary, unknown flag → exit 2;
+- exit classification for 0, 2, 3, 1, signals and timeouts (shell-script fake engines in a
+  test temp dir under `target/`);
+- a not-implemented engine yields `null` times and is excluded from ratios (never zero);
+- statistics: median of even/odd counts, nearest-rank p95 at 1, 19, 20 and 21 values,
+  geometric mean, ratio with sub-microsecond clamps;
+- JSON escaping of control characters, quotes, U+2028/U+2029 and non-ASCII names; reports
+  are checked with Python's strict `json` parser (`python3 -I`, present on macOS and the
+  Linux runners), including an odd corpus file name that must round-trip;
+- end to end with a fake `jpdf-cli` that behaves like the M0 stub (`info` exits 0, the rest
+  exit 3): `info` measurements are `ok` with positive times, `render*`/`text` are
+  `not_implemented` with `null` times and 0 ratio samples; with a fake `mutool`, the `info`
+  ratio has 4 samples and `render72` has none; no absolute path appears in the report;
+- exit codes of the bench itself (usage 2, missing `--cli` or corpus 1, no report written);
+- `cargo xtask bench` argument forwarding (xtask unit tests). The real `jpdf-cli` + `mutool`
+  run is manual (`cargo xtask bench`): its release build is too slow for every test run.
