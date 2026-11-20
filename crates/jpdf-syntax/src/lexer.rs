@@ -2,8 +2,8 @@
 
 use std::cell::Cell;
 
+use crate::Limits;
 use crate::error::{SyntaxError, malformed};
-use crate::limits::Limits;
 use crate::object::{Dict, ObjRef, Object};
 
 /// ISO 32000-2 §7.2.3, Table 1: white-space characters.
