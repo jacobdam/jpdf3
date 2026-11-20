@@ -4,14 +4,17 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- Nothing yet.
+- Nothing.
 
 ## Last session
-- Owner session set up the judge, CI, guard hooks, driver and session protocol.
+- M0 bootstrap step 1 done: labels (TICK §2 list + `digest`) and milestones M0–M10 created.
+- Opened owner-todo #2: main's `pages` job fails because GitHub Pages isn't enabled.
 
 ## Next step
-- M0 bootstrap step 1: create labels and milestones M0–M10 (ops/TICK.md §2, M0 bootstrap).
+- M0 bootstrap step 2: write the M0 issue backlog from PLAN.md §8 (M0 row), AUTOMATION.md and
+  ops/judge/CONTRACT.md.
 
 ## Blockers / owner-todo
-- Owner: import ops/rulesets/main.json; enable GitHub Pages (source: GitHub Actions);
-  grant Screen Recording + Accessibility to Terminal (macOS UI tests, PDFgear comparison).
+- #2 Enable GitHub Pages (source: GitHub Actions); main's `pages` job stays red until then.
+- Owner: import ops/rulesets/main.json; grant Screen Recording + Accessibility to Terminal
+  (macOS UI tests, PDFgear comparison).
