@@ -11,6 +11,13 @@ name = "jpdf-backends"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-cli"
+version = "0.0.0"
+dependencies = [
+ "jpdf-engine",
+]
+
+[[package]]
 name = "jpdf-color"
 version = "0.0.0"
 
@@ -21,6 +28,9 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-cos"
 version = "0.0.0"
+dependencies = [
+ "jpdf-syntax",
+]
 
 [[package]]
 name = "jpdf-crypt"
@@ -33,6 +43,10 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-engine"
 version = "0.0.0"
+dependencies = [
+ "jpdf-cos",
+ "jpdf-syntax",
+]
 
 [[package]]
 name = "jpdf-filters"
