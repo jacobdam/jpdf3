@@ -7,21 +7,30 @@ Shared rules for every journey in this file:
 - Reader journeys never modify the file: unless a step says otherwise, the file's bytes on
   disk are identical before and after, and the document is not marked as edited.
 - "Fixture" means a PDF we generate in the test harness (never a corpus file).
-- Web: the file is opened from the local disk and never leaves the device (PLAN R11); the
-  test asserts that no network request carries document bytes.
-- All rendering, text, search and hit-testing come from the Rust engine; the native layer
-  only displays results (CONSTITUTION 6).
+- Web: files are opened from the local disk and never leave the device (PLAN R11). Every web
+  journey asserts that after the app shell has loaded there are **zero** network requests,
+  and none to another origin at any time.
+- All rendering, text, search, page-label resolution and hit-testing come from the Rust
+  engine; the native layer only displays results (CONSTITUTION 6). Tints and print output
+  are produced by the engine's renderer, not by CSS or platform filters.
+- Shortcuts: macOS uses the standard macOS keys. The web app never relies on keys the
+  browser reserves (Ctrl+Tab, Ctrl+W, Ctrl+N, Ctrl+T, Ctrl+R, F11); where a step names a
+  macOS key that the browser reserves, web uses the app's toolbar or the alternative given.
+- "Budgets" refer to PLAN §5 (performance targets): first page < 200 ms for a typical 10 MB
+  document, 60 fps scrolling, peak memory bounded by `Limits` and not proportional to file
+  size for linearized reading. A journey that names a number states it.
 
 ## J-RD-01: Open a PDF from the file dialog and see the first page fast
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_open_dialog, e2e.macos.rd_open_dialog
 
-Steps: launch the app → choose Open (menu, toolbar button, Cmd/Ctrl+O) → pick a 20-page
-fixture in the system file dialog (web: the browser file picker) → the first page is visible
-within the first-page budget of PLAN §8 M4 → the window title shows the file name → the page
-indicator reads "1 / 20" → the rendered first page matches the MuPDF and Poppler renders of
-the same page within the render-ratchet tolerance.
+Steps: launch the app → choose Open (toolbar button; macOS also File > Open and Cmd+O; web
+also Ctrl+O) → pick a 20-page, 10 MB fixture in the system file dialog (web: the browser file
+picker) → the first page is visible in < 200 ms after the file is chosen (PLAN §5) → the
+window title shows the file name → the page indicator reads "1 / 20" → the rendered first
+page matches the MuPDF and Poppler renders of the same page within the render-ratchet
+tolerance.
 Error branch: cancel the dialog → nothing opens, no error is shown.
 
 ## J-RD-02: Open a PDF by drag and drop
@@ -29,11 +38,14 @@ Error branch: cancel the dialog → nothing opens, no error is shown.
 - platform: web, macos
 - test: e2e.web.rd_open_drop, e2e.macos.rd_open_drop
 
-Steps: drag a fixture PDF onto the empty start screen → it opens on page 1 → drag a second
-fixture onto the open document window → it opens as another document (tab or window, per
-J-RD-23) without closing the first → drag a non-PDF file (a `.txt`) → a "not a PDF" error is
-shown, nothing else changes → drag several PDFs at once → each opens as its own document.
-macOS: dropping onto the Dock icon also opens the file.
+Steps: drop a fixture PDF onto the empty start screen → it opens on page 1 → drop a second
+fixture onto the open document window → it opens as another document (J-RD-23) without
+closing the first → drop a non-PDF file (a `.txt`) → a "not a PDF" error is shown, nothing
+else changes → drop two PDFs at once → each opens as its own document.
+Test mechanism: web dispatches a `drop` event with a `DataTransfer` holding the files
+(Playwright); macOS drives the window's drop handler through a test pasteboard hook, and
+covers Finder/Dock opening by sending the open-documents Apple Event (`open -a`) → the file
+opens the same way.
 
 ## J-RD-03: Reopen a file from the recent files list
 - milestone: M4
@@ -41,12 +53,15 @@ macOS: dropping onto the Dock icon also opens the file.
 - test: e2e.web.rd_recent_files, e2e.macos.rd_recent_files
 
 Steps: open fixtures A then B → close both → the start screen lists B then A with name,
-size and last-opened time → click A → it opens → File > Open Recent shows the same list
-(macOS: the system recent-documents menu) → remove A from the list → it disappears → clear
-the list → it is empty after restarting the app → reopen B from the list after deleting it
-on disk → a "file not found" message is shown and B is removed from the list.
-Web: the list keeps local file handles only (no copies of the bytes); if the browser can't
-keep handles, the list shows names only and asks the user to pick the file again.
+size and last-opened time → click A → it opens → remove A from the start-screen list → it
+disappears → reopen B from the list after deleting it on disk → a "file not found" message
+is shown and B is removed from the list → clear the list → it is still empty after
+restarting the app.
+macOS: File > Open Recent shows the same files (system recent-documents menu; Clear Menu
+empties it). Web: the list keeps local file handles only, never copies of the bytes; in a
+browser with persistent handles, reopening asks for permission once (one click); in a
+browser without them, the list shows names only and clicking asks the user to pick the file
+again.
 
 ## J-RD-04: Open a password-protected PDF
 - milestone: M4
@@ -54,75 +69,85 @@ keep handles, the list shows names only and asks the user to pick the file again
 - test: e2e.web.rd_open_password, e2e.macos.rd_open_password
 
 Steps: open an AES-256 (R6) fixture with a user password → a password prompt appears with
-the file name and no page content visible → enter a wrong password → an "incorrect password"
-message, the prompt stays → enter the right password → page 1 is shown → repeat with an
-RC4-40, an RC4-128 and an AES-128 fixture → each opens with the right password → cancel the
-prompt on another encrypted fixture → nothing opens, no page content or thumbnail is shown.
-Owner-password-only fixture: opens without a prompt; Document Properties (J-RD-22) lists the
-restrictions.
-Security: the password is never written to disk, logs or the recent files list.
+the file name and no page content or thumbnail visible → enter a wrong password → an
+"incorrect password" message, the prompt stays → enter the right password → page 1 is shown
+→ cancel the prompt on another encrypted fixture → nothing opens, no page content or
+thumbnail is shown.
+Security check: after the run, the test searches the app's storage (macOS: the app and
+helper containers and the unified log for the test process; web: IndexedDB, localStorage,
+Cache Storage, console log) for the password string → not found. The recent files list never
+holds it.
 
 ## J-RD-05: Open a damaged or hostile file
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_open_damaged, e2e.macos.rd_open_damaged
 
-Steps: open a fixture with a broken xref table (offsets shifted) → it opens after repair,
-like MuPDF and Poppler, with the same page count they report → open a truncated fixture →
-the readable pages are shown, or a clear "could not open" error if none are → open a fixture
-that exceeds an engine limit (deep nesting, huge object count) → a typed "file too complex"
-error, no crash, no hang longer than the limit → open a random-bytes file renamed `.pdf` → a
-"not a PDF" error → after each error the app stays responsive and opens a valid fixture.
-macOS: the XPC helper may be restarted; the app window never crashes.
+Steps: open a fixture with a broken xref table (offsets shifted) → it opens after repair
+with the same page count MuPDF and Poppler report → open a fixture truncated after its
+third page object (no xref, no trailer) → it opens by repair with 3 pages → open a fixture
+that exceeds an engine limit (nesting deeper than `Limits`) → a typed "file too complex"
+error within the limit's time budget, no crash → open a random-bytes file renamed `.pdf` →
+a "not a PDF" error → after each error the app stays responsive and opens a valid fixture.
+macOS: the app window never crashes, even if the XPC helper has to restart.
 
 ## J-RD-06: Navigate between pages
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_navigate_pages, e2e.macos.rd_navigate_pages
 
-Steps: open a 20-page fixture with page labels i–iv, 1–16 → Next Page (arrow key, Page Down,
-toolbar) → page 2 → Last Page (End / Cmd+Down) → page 20 → First Page (Home / Cmd+Up) →
-page 1 → type "7" in the page field → the physical page 7 is shown; typing the label "3" →
-the page labelled 3 (physical 7) → type "99" → an "invalid page" hint, the page doesn't
-change → Go Back (Cmd+[ / Alt+Left) → previous view position → Go Forward → returns.
-The page field shows both the label and "(7 of 20)" when labels differ from numbers.
+Steps: open a 20-page fixture with page labels i–iv on pages 1–4 and 1–16 on pages 5–20 →
+Next Page (Right arrow, Page Down, toolbar) → page 2 → Last Page (End) → page 20 → First
+Page (Home) → page 1 → type "iii" in the page field → physical page 3 → type "7" → the page
+labelled 7 (physical page 11): an exact label match wins, otherwise the text is read as a
+physical page number → type "#7" → physical page 7 → type "99" → an "invalid page" hint, the
+page doesn't change → Go Back (macOS Cmd+[, web Alt+Left) → the previous view position → Go
+Forward (macOS Cmd+], web Alt+Right) → returns.
+The page field shows the label and "(11 of 20)" when labels differ from physical numbers.
 
 ## J-RD-07: Switch page layout (single, continuous, two-page, cover)
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_view_modes, e2e.macos.rd_view_modes
 
-Steps: open a 9-page fixture on page 5 → View > Single Page → only page 5 shows; scrolling
-moves page by page → Single Page Continuous → pages scroll as one strip → Two Pages → spreads
-are 1–2, 3–4, 5–6, …, so pages 5–6 show side by side → Two Pages Continuous → scrolling strip of spreads → turn on "Show cover page" → page 1
-alone, then 2–3, 4–5 → in every mode the current page stays 5 → set a default layout in
-Preferences → newly opened files use it → a file whose /PageLayout asks for TwoColumnLeft
-opens in two-page continuous unless the user changed the default.
-Right-to-left documents (/Direction R2L) show spreads right to left.
+Steps: with default preferences, open a 9-page fixture whose catalog has no /PageLayout, go
+to page 5 → View > Single Page → only page 5 shows; scrolling moves page by page → Single Page
+Continuous → pages scroll as one strip → Two Pages → spreads are 1–2, 3–4, 5–6, …, so pages
+5–6 show side by side → Two Pages Continuous → a scrolling strip of spreads → turn on "Show
+cover page" → page 1 alone, then 2–3, 4–5 → in every mode the current page stays 5 → open a
+fixture whose /PageLayout is TwoColumnLeft → it opens in two-page continuous without cover
+(the file's /PageLayout wins when the user has not set a default) → set Single Page as the
+default layout in Preferences → open both fixtures again → both open in Single Page (an
+explicit user default wins over the file) → a fixture with /ViewerPreferences /Direction
+/R2L shows spreads right to left.
 
 ## J-RD-08: Zoom and fit
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_zoom_fit, e2e.macos.rd_zoom_fit
 
-Steps: open a fixture with a Letter page and an A3 landscape page → Zoom In (Cmd/Ctrl +) →
-zoom steps up and the indicator shows the percentage → Zoom Out → steps down → Actual Size →
-100% (1 PDF point = 1 CSS px on web, 1 pt on macOS) → Fit Width → the page width fills the
-view → Fit Page → the whole page is visible → Fit Height → page height fills the view →
-type 250 in the zoom field → 250% → pinch (trackpad) or Ctrl+scroll → zooms around the
-pointer → zoom is clamped to the engine limits (e.g. 10%–6400%), never past them → text stays
-sharp at 400% (tiles re-rendered, not scaled bitmaps) → set Fit Width as the default zoom →
-new files open at Fit Width.
+Steps: open a fixture with a Letter page and an A3 landscape page → Zoom In (macOS Cmd+=,
+web Ctrl+= handled by the app, toolbar +) → the zoom goes to the next step and the indicator
+shows the percentage → Zoom Out → the previous step → Actual Size → 100%, where 1 PDF point
+(times /UserUnit if present) is 1 typographic point on screen (web: 1 CSS pt = 4/3 CSS px)
+→ Fit Width → the page width fills the view → Fit Page → the whole page is visible → Fit
+Height → the page height fills the view → type 250 in the zoom field → 250% → Ctrl+scroll
+(macOS also trackpad pinch, not part of the automated test) → zooms around the pointer →
+type 5 and then 99999 → the zoom clamps to 10% and 6400% → text is re-rendered sharp at 400%
+(the rendered tile's pixel density matches the zoom; no upscaled bitmap) → set Fit Width as
+the default zoom → new files open at Fit Width.
 
 ## J-RD-09: Rotate the view
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_rotate_view, e2e.macos.rd_rotate_view
 
-Steps: open a fixture → Rotate Right (Cmd+R) → all pages display rotated 90° clockwise →
-Rotate Left twice → rotated 90° counter-clockwise → text selection and links still hit the
-right glyphs and areas in the rotated view → close the file → no "save changes?" prompt →
-the file bytes are unchanged → reopen → normal orientation.
+Steps: open a fixture whose page 2 has /Rotate 90 → Rotate Right (macOS Cmd+R, web the
+toolbar button or Ctrl+Shift+Plus) → all pages display rotated 90° clockwise on top of their
+own rotation (page 2 shows at 180°) → Rotate Left twice → rotated 90° counter-clockwise →
+text selection and links still hit the right glyphs and areas in the rotated view → close
+the file → no "save changes?" prompt → the file bytes are unchanged → reopen → the file's
+own orientation again.
 (Rotating pages in the file itself is a Pages journey, not this one.)
 
 ## J-RD-10: Browse thumbnails in the sidebar
@@ -133,9 +158,9 @@ the file bytes are unchanged → reopen → normal orientation.
 Steps: open a 500-page fixture → show the sidebar (View > Sidebar) → Thumbnails tab → the
 thumbnails of the visible range appear first, the rest render lazily while scrolling → the
 current page is highlighted → click thumbnail 250 → the view jumps to page 250 → scroll the
-document → the highlight follows → change thumbnail size (small/large) → layout updates →
-hide the sidebar → the document area widens. Memory stays within the M4 budget while
-scrolling all 500 thumbnails.
+document → the highlight follows → change the thumbnail size (small/large) → the layout
+updates → hide the sidebar → the document area widens. Scrolling all 500 thumbnails keeps
+the engine's peak memory under its `Limits` cache bound (thumbnails are evicted, not kept).
 
 ## J-RD-11: Navigate with the outline (bookmarks)
 - milestone: M4
@@ -143,12 +168,15 @@ scrolling all 500 thumbnails.
 - test: e2e.web.rd_outline, e2e.macos.rd_outline
 
 Steps: open a fixture with a three-level outline (some entries closed by default, one with a
-/XYZ destination, one with a named destination, one with a GoTo action) → Outline tab shows
-the top level, with entries open or closed as the file says → expand a closed entry →
-children show → Expand All / Collapse All → click each kind of entry → the view goes to the
-right page and position → the outline entry for the current section is highlighted while
-scrolling → a fixture with no outline shows "No outline" → a fixture with an outline loop
-(/Next pointing back) shows each entry once and does not hang.
+/XYZ destination, one with a named destination, one with a GoTo action, one with a URI
+action, one with a JavaScript action, one with a Launch action) → the Outline tab shows the
+top level, with entries open or closed as the file says → expand a closed entry → children
+show → Expand All / Collapse All → click each destination and GoTo entry → the view goes to
+the right page and position → click the URI entry → the J-RD-18 confirmation appears →
+click the JavaScript and Launch entries → nothing happens except an "unsupported action"
+notice → the entry for the current section is highlighted while scrolling → a fixture with
+no outline shows "No outline" → a fixture with an outline loop (/Next pointing back) shows
+each entry once and does not hang.
 (Adding, renaming and deleting bookmarks is in the editing journeys, #8.)
 
 ## J-RD-12: Review annotations in the annotation list
@@ -157,11 +185,11 @@ scrolling → a fixture with no outline shows "No outline" → a fixture with an
 - test: e2e.web.rd_annotation_list, e2e.macos.rd_annotation_list
 
 Steps: open a fixture with highlights, notes, ink and a FreeText annotation on pages 1, 3
-and 8 → Annotations tab lists them grouped by page with type icon, author, date and comment
-text → sort by date → by type → back to page → filter to "Notes" only → click an entry →
-the view jumps to it and it is selected on the page → expand/collapse a page group →
-a fixture with no annotations shows "No annotations". Popup and Link annotations are not
-listed. Annotation text is shown as plain text (never interpreted as markup).
+and 8 → the Annotations tab lists them grouped by page with type icon, author, date and
+comment text → sort by date → by type → back to page → filter to "Notes" only → click an
+entry → the view jumps to it and it is selected on the page → collapse and expand a page
+group → a fixture with no annotations shows "No annotations". Popup and Link annotations
+are not listed. Annotation text is shown as plain text (never interpreted as markup).
 
 ## J-RD-13: See the attachments list without opening anything
 - milestone: M4
@@ -169,39 +197,38 @@ listed. Annotation text is shown as plain text (never interpreted as markup).
 - test: e2e.web.rd_attachments_list, e2e.macos.rd_attachments_list
 
 Steps: open a fixture with two embedded files (one `.exe`, one `.txt`) and one
-FileAttachment annotation → Attachments tab lists all three with name, size, description
+FileAttachment annotation → the Attachments tab lists all three with name, size, description
 and page (for the annotation) → there is no "Open" action, double-click does nothing, and
 nothing is written to disk or launched (CONSTITUTION 7) → a fixture with a Launch action and
-a GoToE action on a link → clicking the link does nothing except a "this action is not
-supported" notice → a fixture with no attachments has no Attachments tab or shows "None".
+a GoToE action on links → clicking each link does nothing except an "unsupported action"
+notice → a fixture with no attachments shows the Attachments tab with "No attachments".
 
 ## J-RD-14: Show and hide layers (optional content)
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_layers, e2e.macos.rd_layers
 
-Steps: open a fixture with three OCGs (one OFF by default, two in a radio-button group,
-one locked) → Layers tab lists them in the /Order tree with their default visibility →
-the OFF layer's content is not drawn, matching MuPDF/Poppler → turn it on → its content
-appears → turn on the other member of the radio group → the first one turns off → the
-locked layer's toggle is disabled → print (J-RD-21) uses the layers' print state (/Usage
-/Print) → close → the file is unchanged → reopen → default visibility again.
+Steps: open a fixture with four OCGs: A (ON), B (OFF by default), C and D (a radio-button
+group, C ON), and A also listed in /Locked; B has /Usage /Print /PrintState /ON → the
+Layers tab lists them in the /Order tree with that visibility → B's content is not drawn,
+matching MuPDF and Poppler → turn B on → its content appears → turn on D → C turns off →
+A's toggle is disabled → turn B off again and print (J-RD-21 mechanism) → the printed output
+includes B, because print uses each layer's print state where /Usage /Print gives one and
+the current view state otherwise → close → the file is unchanged → reopen → default
+visibility again.
 
 ## J-RD-15: Search the document
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_search, e2e.macos.rd_search
 
-Steps: open a 50-page fixture containing "Report", "report" and "reporting" → Find (Cmd/
-Ctrl+F) → type "report" → matches are highlighted on the pages, the first one is selected
-and scrolled into view, and a count shows "1 of N" → Next (Enter / Cmd+G) and Previous
-(Shift+Enter / Shift+Cmd+G) cycle through and wrap → the results list shows each match with
-page number and surrounding text → turn on Case Sensitive → "Report" no longer matches →
-turn on Whole Words → "reporting" no longer matches → search a phrase that crosses a line
-break → it is found → search for a word that is not there → "No results" → search a
-non-Latin fixture (CJK, Arabic) → matches are found → Esc closes the find bar and removes
-highlights. Search runs in the engine; a long search can be cancelled and the UI never
-freezes.
+Steps: open a 50-page fixture containing "Report", "report" and "reporting" → Find (macOS
+Cmd+F, web Ctrl+F handled by the app) → type "report" → matches are highlighted on the
+pages, the first one is selected and scrolled into view, and a count shows "1 of N" → Next
+(Enter) and Previous (Shift+Enter) cycle through and wrap → the results list shows each
+match with page number and surrounding text → turn on Case Sensitive → "Report" no longer
+matches → turn on Whole Words → "reporting" no longer matches → search for a word that is
+not there → "No results" → Esc closes the find bar and removes the highlights.
 
 ## J-RD-16: Select and copy text
 - milestone: M4
@@ -210,12 +237,13 @@ freezes.
 
 Steps: open a two-column fixture → choose the text select tool → drag across a paragraph in
 column 1 → the selection follows reading order and does not jump into column 2 → Copy
-(Cmd/Ctrl+C) → the clipboard holds that paragraph's text, matching `pdftotext` for the same
-region except for whitespace → double-click a word → selects it → triple-click → selects the
-line → Select All (Cmd/Ctrl+A) → the page text is selected → copy text from a fixture with
-ligatures and a ToUnicode CMap → the clipboard has the decoded Unicode (e.g. "fi", not a
-private-use glyph) → open a fixture whose permissions deny copying (owner password set) →
-Copy is disabled and a notice explains why.
+(Cmd/Ctrl+C) → the clipboard holds that paragraph's text, equal to `pdftotext` output for the
+same region after collapsing whitespace → double-click a word → it is selected →
+triple-click → the line is selected (macOS: the paragraph, per platform convention) → Select
+All (Cmd/Ctrl+A) → the whole document's text is selected → copy text from a fixture with an
+"fi" ligature glyph mapped by a ToUnicode CMap → the clipboard has "fi" → open a fixture whose
+permissions deny copying (owner password set, empty user password) → Copy is disabled and a
+notice explains why (J-RD-29 covers unlocking).
 
 ## J-RD-17: Follow an internal link
 - milestone: M4
@@ -223,77 +251,87 @@ Copy is disabled and a notice explains why.
 - test: e2e.web.rd_internal_link, e2e.macos.rd_internal_link
 
 Steps: open a fixture with a table of contents made of Link annotations (/Dest arrays,
-named destinations, GoTo actions) → hovering a link shows a hand cursor and the target page
+named destinations, GoTo actions) → hovering a link shows a tooltip with the target page
 → click "Chapter 3" → the view goes to the target page and position → Go Back → returns to
-the table of contents → a link with a broken destination does nothing and shows a "link
-target not found" notice → links still work in every view mode and rotation.
+the table of contents → a link with a broken destination does nothing but show a "link
+target not found" notice → links still work in two-page mode and in a rotated view.
 
 ## J-RD-18: Follow an external link with confirmation
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_external_link, e2e.macos.rd_external_link
 
-Steps: open a fixture with URI links to `https://example.com/a`, a `mailto:` address, a
-`javascript:` URI, a `file:` URI and a URI with misleading display text → hover → the real
-target is shown → click the https link → a confirmation shows the full URL (with the
-punycode form of any non-ASCII host) → Cancel → nothing opens → click again → Open → the
-default browser opens the URL (web: a new tab with `noopener,noreferrer`) → the `mailto:`
-link asks for confirmation the same way → the `javascript:` and `file:` links never open
-anything and show "unsupported link" → no PDF JavaScript runs at any point (CONSTITUTION 7).
+Steps: open a fixture with URI links to `https://example.com/a`, `http://example.com/b`, a
+`mailto:` address, a host with non-ASCII characters, and a link whose visible text shows a
+different URL → hover → a tooltip shows the real target → click the https link → a
+confirmation shows the full URL (non-ASCII hosts in punycode) → Cancel → nothing opens →
+click again → Open → the system browser opens the URL (web: a new tab with
+`noopener,noreferrer`; the test intercepts the open call) → `http:` and `mailto:` ask the
+same way.
+Only `https`, `http` and `mailto` can ever be opened. Links with `javascript:`, `data:`,
+`file:`, `vbscript:`, `smb:` and a custom app scheme (`exampleapp:`), and a GoToR action to
+another local file, never open anything and show an "unsupported link" notice.
 
 ## J-RD-19: Read in full screen and presentation mode
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_presentation, e2e.macos.rd_presentation
 
-Steps: open a 10-page fixture → Enter Full Screen (Ctrl+Cmd+F / F11) → toolbar and sidebar
-hide, the document fills the screen, moving the pointer to the top shows the toolbar → Exit
-→ back to the window → Start Presentation (slide mode) from page 3 → page 3 fills the screen
-on black → arrow keys, Space and click advance; Left/Backspace go back → at the last page a
-hint says it is the end and Esc exits → Esc at any time returns to the normal view on the
-current page → page transitions (/Trans) are shown as a simple fade or not at all; no
-auto-advance (/Dur) unless the user turns it on.
+Steps: open a 10-page fixture → Enter Full Screen (macOS Ctrl+Cmd+F; web the toolbar
+button, using the Fullscreen API) → toolbar and sidebar hide, the document fills the screen,
+moving the pointer to the top shows the toolbar → Esc → back to the window → Start
+Presentation from page 3 → page 3 fills the screen on black → Right arrow, Space and click
+advance; Left arrow goes back → on the last page an "end of document" hint is shown and
+advancing does nothing → Esc returns to the normal view on the current page → page
+transitions (/Trans) and auto-advance (/Dur) in the file are ignored: pages change
+instantly and only on user input.
 
 ## J-RD-20: Read with a dark or sepia page tint
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_page_tint, e2e.macos.rd_page_tint
 
-Steps: open a fixture with black text on white and a color photo → View > Page Tint > Dark →
-pages show light text on a dark background, and the photo keeps recognizable colors (images
-are not inverted) → Sepia → a warm paper tone → Off → original colors → the tint persists
-for the next file → the app appearance setting (Light / Dark / Follow system) changes the
-chrome independently of the page tint → print and export are never tinted → the file is
-unchanged.
+Steps: open a fixture with black text on white and a color photo → View > Page Tint > Dark
+→ the page background renders dark and the text light, while every pixel in the photo
+region stays within ΔE 10 of the untinted render (images are not inverted) → Sepia → the
+page background renders in the sepia tone and the photo region again stays within ΔE 10 →
+Off → the render equals the untinted render → the tint persists for the next file → the app
+appearance setting (Light / Dark / Follow system) changes the chrome independently of the
+page tint → print output (J-RD-21 mechanism) is never tinted → the file is unchanged.
 
 ## J-RD-21: Print a document
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_print, e2e.macos.rd_print
 
-Steps: open a fixture with annotations (one marked NoView+Print, one Hidden) → Print
-(Cmd/Ctrl+P) → the print options offer document only / document and annotations, page range
-(all, current, "2-4,7"), scale (fit / actual size / custom %), pages per sheet and auto-rotate
-→ the preview reflects each choice → print to PDF (macOS: Save as PDF; web: the browser's
-print-to-PDF) → the output has the chosen pages, and annotations follow their print flags
-(the Print-flagged one appears, the Hidden one doesn't) → an invalid range ("9-3", "0") is
-rejected with a hint → a fixture whose permissions deny printing → Print is disabled with a
-notice.
+Steps: open a fixture with three annotations: one with the Print flag, one without it, one
+with Print and Hidden → Print (macOS Cmd+P, web the toolbar button) → the print options
+offer content (document only / document and annotations), page range (all, current,
+"2-4,7"), scale (fit / actual size / custom %), pages per sheet (1, 2, 4) and auto-rotate →
+choose "document and annotations", range "2-4,7", 2 per sheet → the engine's print job has
+those 4 pages on 2 sheets, and only the Print-flagged annotation appears (ISO 32000-2
+§12.5.3: no Print flag or Hidden means not printed) → choose "document only" → no
+annotation appears → an invalid range ("9-3", "0") is rejected with a hint.
+Test mechanism: the test inspects the engine-produced print job (rendered sheets) before it
+is handed to the platform (web: before `window.print()`; macOS: through a test hook on the
+print operation).
 
 ## J-RD-22: View document properties
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_properties, e2e.macos.rd_properties
 
-Steps: open a fixture with Info and XMP metadata that disagree on the title, PDF 1.7,
-tagged, linearized, encrypted with an owner password → File > Document Properties (Cmd+D /
-Ctrl+D) → shows file name, location, file size, page count, page size of the current page,
-PDF version, title, author, subject, keywords, creator, producer, created and modified dates
-(in local time), tagged and fast web view yes/no → the title follows ISO 32000-2 §14.3.2
-precedence and both values are visible → the Security section lists the encryption method
-and each permission (print, copy, modify, annotate, fill forms, assemble, accessibility) →
-metadata with control characters or very long values is shown escaped and truncated, never
-interpreted → Close → the file is unchanged.
+Steps: open a PDF 1.7 fixture, tagged, linearized, encrypted with an owner password, whose
+Info /Title is "Info Title" with /ModDate 2024-01-01 and whose XMP dc:title is "XMP Title"
+with xmp:ModifyDate 2025-01-01 → File > Document Properties (macOS Cmd+I, web the menu
+item) → shows file name, file size, page count, page size of the current page, PDF version,
+title, author, subject, keywords, creator, producer, created and modified dates (in local
+time), tagged and fast web view yes/no; macOS also shows the location (the web app has no
+file path) → the title shown is "XMP Title" (the newer metadata wins, ISO 32000-2 §14.3.2)
+→ the Security section lists the encryption method and each permission (print, copy,
+modify, annotate, fill forms, assemble, accessibility) → metadata containing control
+characters, U+202E (right-to-left override) and a 10,000-character value is shown escaped
+and truncated, never interpreted → Close → the file is unchanged.
 
 ## J-RD-23: Work with several documents at once
 - milestone: M4
@@ -301,22 +339,27 @@ interpreted → Close → the file is unchanged.
 - test: e2e.web.rd_multi_docs, e2e.macos.rd_multi_docs
 
 Steps: open three fixtures → each is its own tab (macOS: native window tabs; web: tabs in
-the app's tab bar) → Next Tab / Previous Tab (Ctrl+Tab / Ctrl+Shift+Tab) cycle them → each
-keeps its own page, zoom, layout and sidebar state → open a file that is already open →
-the existing tab is focused, not a duplicate → close the middle tab (Cmd/Ctrl+W) → the
-others stay → one document crashing its engine session (hostile fixture) shows an error in
-that tab only; the others keep working.
+the app's tab bar) → switch tabs (macOS Ctrl+Tab / Ctrl+Shift+Tab; web clicking the tab bar
+or Alt+PageDown / Alt+PageUp) → each keeps its own page, zoom, layout and sidebar state →
+open a file that is already open → the existing tab is focused, not a duplicate (macOS: same
+file URL; web: `FileSystemHandle.isSameEntry`, or the same name, size and content hash when
+handles are unavailable) → close the middle tab (macOS Cmd+W; web the tab's close button) →
+the others stay → a test-only fault injected into one document's engine session makes that
+tab show an error, while the other tabs keep working.
 
 ## J-RD-24: Restore the previous session on launch
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_restore_session, e2e.macos.rd_restore_session
 
-Steps: turn on "Reopen files from the last session" in Preferences → open fixtures A (page
-12, 150%) and B (page 3, fit width) → quit the app (web: close the tab) → launch again →
-A and B reopen at the same pages, zoom and layout → a file deleted in between is skipped
-with a notice → an encrypted file asks for its password again (passwords are never stored)
-→ turn the preference off → launch → the start screen shows, nothing reopens.
+Steps: turn on "Restore open documents at launch" in Preferences → open fixtures A (page
+12, 150%) and B (page 3, fit width) → quit the app (web: close the browser tab) → launch
+again → A and B reopen at the same pages, zoom and layout → a file deleted in between is
+skipped with a notice → an encrypted file asks for its password again (passwords are never
+stored) → turn the preference off → launch → the start screen shows, nothing reopens.
+Web: browsers need a user gesture to re-grant file access, so the app lists the session's
+files and reopens them all after one click; a browser without persistent file handles shows
+the names only (as in J-RD-03).
 
 ## J-RD-25: Inspect detail with the magnifier
 - milestone: M4
@@ -324,18 +367,83 @@ with a notice → an encrypted file asks for its password again (passwords are n
 - test: e2e.web.rd_magnifier, e2e.macos.rd_magnifier
 
 Steps: open a fixture with 4-pt text → View > Magnifier → a loupe follows the pointer and
-shows the area under it at a higher zoom, rendered sharp from the engine (not an upscaled
-bitmap) → scroll or a shortcut changes the loupe zoom → Esc or toggling the menu item turns
-it off → the page view zoom never changed.
+shows the area under it at 4× the current zoom, rendered by the engine at that resolution →
+press "+" while the loupe is shown → 8× → Esc → the loupe turns off → the page view zoom
+never changed.
 
 ## J-RD-26: Open a very large or web-optimized file progressively
 - milestone: M4
 - platform: web, macos
 - test: e2e.web.rd_progressive_large, e2e.macos.rd_progressive_large
 
-Steps: open a 2,000-page, 300 MB fixture → the first page appears within the first-page
-budget while the rest loads → a progress indicator shows loading state → jump to page 1,900
-before loading finishes → it renders without waiting for the whole file to be indexed →
-open a linearized fixture → page 1 renders from the first-page section before the rest is
-read → scrolling quickly through hundreds of pages keeps the UI responsive and memory within
-the M4 budget → close the file mid-load → loading is cancelled and memory is released.
+Steps: open a linearized 2,000-page, 300 MB fixture → page 1 renders from the
+first-page section within 500 ms, before the rest of the file is read → a progress
+indicator shows the loading state → jump to page 1,900 before loading finishes → it renders
+without waiting for the whole file to be indexed → scroll quickly through 200 pages → the
+UI keeps 60 fps scrolling (PLAN §5), and peak engine memory stays under its `Limits` bound
+and does not grow with file size (compared with a 30 MB variant of the same fixture) →
+close the file mid-load → loading is cancelled and memory is released.
+
+## J-RD-27: Respect the document's initial view safely
+- milestone: M4
+- platform: web, macos
+- test: e2e.web.rd_initial_view, e2e.macos.rd_initial_view
+
+Steps: open a fixture whose /OpenAction is a destination to page 4 at /FitH → it opens on
+page 4 at fit width → a fixture with /PageMode /UseOutlines → it opens with the Outline tab
+shown → /PageMode /UseThumbs → the Thumbnails tab → /PageMode /UseAttachments → the
+Attachments tab (nothing is opened) → /PageMode /FullScreen → it opens in the normal window
+with a notice offering full screen; full screen starts only if the user accepts → a
+/ViewerPreferences with /HideToolbar and /HideMenubar → the toolbar and menus stay visible
+(the app never hides its own chrome because a file asks) → /ViewerPreferences /DisplayDocTitle
+→ the window title shows the document title instead of the file name.
+
+## J-RD-28: Scripts and automatic actions in a PDF never run
+- milestone: M4
+- platform: web, macos
+- test: e2e.web.rd_scripts_inert, e2e.macos.rd_scripts_inert
+
+Steps: open a fixture with a document /OpenAction JavaScript, a /Names /JavaScript entry, a
+page /AA open action, a link /AA mouse-enter action and a widget /AA action; every script
+tries something visible (show an alert, go to page 9, open `https://example.com/x`, print)
+→ open, scroll through every page, hover and click every link and widget → no alert
+appears, the page never changes on its own, no URL is opened, no print starts (CONSTITUTION
+7) → a one-time notice says the document contains scripts that were not run → a fixture
+whose /OpenAction is a Launch action → nothing launches, the same kind of notice.
+
+## J-RD-29: Unlock permission-restricted features with the owner password
+- milestone: M4
+- platform: web, macos
+- test: e2e.web.rd_owner_unlock, e2e.macos.rd_owner_unlock
+
+Steps: open a fixture with an empty user password and an owner password that denies
+printing and copying → it opens without a prompt → Print and Copy are disabled; Document
+Properties lists the restrictions → choose "Unlock with password" → enter a wrong password
+→ "incorrect password" → enter the owner password → Print and Copy become available for
+this session → close and reopen → restricted again (the password is never stored).
+
+## J-RD-30: Open files with every supported encryption variant
+- milestone: M4
+- platform: web, macos
+- test: e2e.web.rd_open_encryption_variants, e2e.macos.rd_open_encryption_variants
+
+Steps: open fixtures encrypted with RC4-40 (R2), RC4-128 (R3), AES-128 (R4) and AES-256
+(R6), each with the user password "user" → each prompts and opens with that password, and
+its first page matches the MuPDF and Poppler renders → open an R6 fixture whose user
+password is non-ASCII ("pässwörd", prepared with SASLprep as ISO 32000-2 §7.6.4.3 requires for R6) → it
+opens with that password typed as composed or decomposed Unicode → open an R6 fixture with
+an empty user password and an owner password → it opens without a prompt → open a fixture
+using the deprecated R5 handler → it opens (read leniently, CONSTITUTION 17).
+
+## J-RD-31: Search across lines, ligatures and non-Latin scripts
+- milestone: M4
+- platform: web, macos
+- test: e2e.web.rd_search_text_forms, e2e.macos.rd_search_text_forms
+
+Steps: open a fixture where "annual report" is split across a line break, "office" uses an
+"ffi" ligature glyph mapped by a ToUnicode CMap, and pages hold Japanese and Arabic text →
+search "annual report" → found across the line break → search "office" → found on the
+ligature → search a Japanese word → found → search an Arabic word → found, highlighted on
+the right glyphs (right to left) → start a search in a 2,000-page fixture and press Esc
+while it runs → the search stops within 100 ms and the UI never freezes (the search runs as
+a cancellable engine job).

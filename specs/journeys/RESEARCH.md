@@ -17,12 +17,12 @@ Each journeys issue (#6–#9) adds its own section here.
 | Open | Open file dialog | J-RD-01 |
 | Open | Drag and drop files to open | J-RD-02 |
 | Open | Recent files on the start screen (name, size, opened time; clear list) and Open Recent menu | J-RD-03 |
-| Open | Password prompt for encrypted files; wrong-password message | J-RD-04 |
+| Open | Password prompt for encrypted files; wrong-password message | J-RD-04, J-RD-30 |
 | Open | Error when a file can't be opened | J-RD-05 |
 | Open | Reopen the files from the last session at launch (preference) | J-RD-24 |
 | Open | Offer to restore an unsaved file after a crash | #9 (platform conventions) |
 | Open | Alert when the open file changed on disk | #9 (platform conventions) |
-| Open | Open from a folder; "received PDFs" reminder; menu-bar helper; start at login | out (OS integration beyond a reader; revisit in an audit) |
+| Open | Open from a folder; notify when new PDFs arrive; menu-bar helper; start at login | out (OS integration beyond a reader; revisit in an audit) |
 | Documents | Several documents in tabs; next/previous tab | J-RD-23 |
 | Navigation | Page number field, go to page | J-RD-06 |
 | Navigation | Back to previous view / forward to next view | J-RD-06, J-RD-17 |
@@ -40,22 +40,26 @@ Each journeys issue (#6–#9) adds its own section here.
 | Sidebar | Annotation list: select, delete | #7 (annotate) |
 | Sidebar | Attachments | J-RD-13 (list only; never opened, CONSTITUTION 7) |
 | Sidebar | Layers (optional content) | J-RD-14 (PLAN §4; not seen in PDFgear) |
-| Search | Find with next/previous result | J-RD-15 |
+| Search | Find with next/previous result | J-RD-15, J-RD-31 |
 | Search | Case-sensitive and whole-words options | J-RD-15 |
 | Text | Select text, copy, select all | J-RD-16 |
 | Links | Internal links | J-RD-17 |
 | Links | External links open in the browser (we add a confirmation) | J-RD-18 |
 | Reading | Full screen | J-RD-19 |
 | Reading | Slide (presentation) mode with end-of-document hint and Esc to exit | J-RD-19 |
-| Reading | Eye-protection and night page tints | J-RD-20 |
+| Reading | Warm and dark reading tints for pages | J-RD-20 |
 | Reading | App appearance light/dark/auto | J-RD-20 |
-| Print | Print document only or with annotations; ask before printing (preference) | J-RD-21 |
-| Print | Scale, scale to fit, pages per sheet, auto-rotate, show notes | J-RD-21 |
-| Print | Permission-restricted printing (password to unlock) | J-RD-21, J-RD-04 |
+| Print | Print document only or with annotations | J-RD-21 |
+| Print | Preference to choose the content before every print | #9 (platform conventions: preferences) |
+| Print | Scale, scale to fit, pages per sheet, auto-rotate | J-RD-21 |
+| Print | Print note contents on extra pages | #7 (annotate: comment summary) |
+| Print | Permission-restricted printing and copying, unlocked with the owner password | J-RD-29 |
 | Properties | File information (location, size, pages, page size, version, producer, dates) | J-RD-22 |
 | Properties | Description (title, author, subject, keywords) | J-RD-22 |
 | Properties | Security summary | J-RD-22 |
 | Performance | Large and web-optimized files load progressively | J-RD-26 (PLAN §4) |
+| Open | Initial view from the file (open destination, page mode, viewer preferences) | J-RD-27 (PLAN §4 safety; not a PDFgear item) |
+| Security | Scripts and automatic actions in files are never run | J-RD-28 (CONSTITUTION 7) |
 | Reading | Read aloud (text to speech: current page, all pages, from here; speed; voice) | out of PLAN §4 → discovery issue for Phase 2 |
 | Reading | Full-text translation | Phase 2 (F-P2-3, AI features) |
 | Reading | AI assistant / chat about the document | Phase 2 (F-P2-3) |
