@@ -131,6 +131,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Branching from an unmerged PR branch → after it squash-merges, `git merge origin/main`
   gives add/add conflicts on the shared files; if main's tree equals the old PR head (`git
   diff <head> origin/main` empty), resolve with `git checkout --ours` ([journal](journal/2026-11-20.md), PR #32).
+- Finding "the last X" from git (last audit, last retro) → `git log -1 --diff-filter=A` with an
+  exact filename pattern (`[0-9][0-9][0-9][0-9].md`); the plain last-touch commit resets on any
+  typo fix ([journal](journal/2026-11-21.md), PR #90).
+- Writing a record (retro, audit, journal) that claims GitHub side effects (labels, new issues)
+  → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
