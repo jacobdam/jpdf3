@@ -8,8 +8,8 @@ nightly; PLAN §6.3 also asks for a short run on every PR. Every cargo-fuzz targ
 `libfuzzer-sys`, which:
 - contains `unsafe` (CONSTITUTION 8 bans it from the dependency tree, with only the RustCrypto
   allowlist as exception), and
-- is licensed `(MIT OR Apache-2.0) AND NCSA` because it bundles LLVM's libFuzzer. NCSA is not
-  in the CONSTITUTION 10 list.
+- is licensed `(MIT OR Apache-2.0) AND NCSA` because it bundles LLVM's libFuzzer. NCSA was not
+  in the CONSTITUTION 10 list when this ADR was written (see item 2 for the amendment).
 Fuzz builds also need nightly and sanitizer flags, which the pinned stable toolchain lacks.
 Fuzzing from an empty corpus barely gets past `startxref` (33 coverage edges in 20 s).
 CONSTITUTION 18 keeps PDFs out of the repo except minimized repros in `tests/regress/`.
@@ -20,11 +20,12 @@ CONSTITUTION 18 keeps PDFs out of the repo except minimized repros in `tests/reg
    so the judge's dependency checks (root `cargo metadata`, `cargo deny`, `cargo vet`) and
    every shipped artifact stay as they are. The judge still scans our fuzz sources for
    `unsafe`, and each target has `#![forbid(unsafe_code)]`.
-2. We use `libfuzzer-sys` despite NCSA, as the owner-written CONTRACT §3 requires cargo-fuzz
-   and there is no cargo-fuzz target without it. This is the same situation as Playwright's
-   bundled licenses (ADR 0002 item 5). ops/proposals/test-only-licenses.md now lists NCSA for
-   the owner's decision (#50). If the owner rules against it, the fuzz project must be
-   replaced by an owner-approved fuzzer, which needs a CONTRACT change.
+2. We use `libfuzzer-sys` (`(MIT OR Apache-2.0) AND NCSA`). The owner-written CONTRACT §3
+   requires cargo-fuzz, and there is no cargo-fuzz target without it. CONSTITUTION 10, as
+   amended for #50 (PR #95), allows NCSA for test and build tools whose code never reaches a
+   shipped artifact. The fuzz project is exactly that: it is outside the workspace and the
+   root lockfile, and no shipped crate, app or bundle links it. `deny.toml` stays strict for
+   the root workspace (owner ruling on #50).
 3. **Seeds are generated, not committed**: `tools/jpdf-testgen` (a dependency-free workspace
    crate) writes small PDFs with correct xref offsets, and `cargo xtask fuzz` writes them into
    the git-ignored `fuzz/corpus/`.

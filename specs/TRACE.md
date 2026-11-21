@@ -27,7 +27,7 @@ that builds each feature (PLAN §8).
 | R7 | Feature parity with PDFgear | (see F-rows below) | | |
 | R8 | UI: PDFgear ideas, native look | (every journey; mapping in the UI spec), J-PC-06 | [specs/ui/information-architecture.md](ui/information-architecture.md), [specs/ui/shortcuts.md](ui/shortcuts.md), [specs/ui/accessibility.md](ui/accessibility.md) | judge `ui_spec_present`; axe-core and XCUITest accessibility audits (#12, #13) |
 | R9 | Dependencies behind our own traits | | [specs/core/backend-traits.md](core/backend-traits.md) | judge dependency policy; `jpdf_traits::conformance` suites (each adapter must pass its trait's suite) |
-| R10 | Licensing: MIT, permissive deps, no committed corpora | | | judge license policy |
+| R10 | Licensing: MIT, permissive deps, no committed corpora | | [specs/tooling/licenses.md](tooling/licenses.md) | judge license policy; `npm run licenses` in `ci linux` (production tree strict, test/build tools per CONSTITUTION 10; `scripts/licenses.test.mjs`) |
 | R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03, J-RD-24, J-ANN-14, J-ANN-15, J-ANN-22, J-PG-13, J-OS-05, J-FM-07, J-SG-09, J-SG-10 | | |
 | R12 | Digital signatures: verify, PAdES, timestamps, LTV | J-SG-01, J-SG-02, J-SG-03, J-SG-06, J-SG-09 | | |
 | R13 | No human in the loop: specs, tests, ratchets decide | | [specs/tooling/check-specs.md](tooling/check-specs.md) | `cargo xtask check-specs` |
