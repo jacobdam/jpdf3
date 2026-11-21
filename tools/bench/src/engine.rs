@@ -239,27 +239,31 @@ pub fn probe(
         match child.try_wait() {
             Ok(Some(st)) => {
                 let took = start.elapsed();
-                // Background children the engine left behind die with their group.
                 // The leader is already reaped here (std has no wait-without-reap), so
-                // the group id stays reserved only while such a child is alive; if none
-                // is, the kill finds no group (ESRCH), unless the id was reused within
-                // these microseconds.
+                // the watchdog lets go of the group id first: a bench killed from now on
+                // must not make it signal an id that may be reused.
+                watch(None);
+                // Background children the engine left behind die with their group. The
+                // id stays reserved only while such a child is alive; if none is, the
+                // kill finds no group (ESRCH), unless the id was reused within these
+                // microseconds.
                 kill_group(group);
                 break (classify_exit(st), took);
             }
             Ok(None) if start.elapsed() >= limit => {
                 let took = start.elapsed();
                 kill_tree(&mut child);
+                watch(None);
                 break (Status::Timeout, took);
             }
             Ok(None) => thread::sleep(POLL),
             Err(_) => {
                 kill_tree(&mut child);
+                watch(None);
                 break (Status::Crash, start.elapsed());
             }
         }
     };
-    watch(None);
     // A grandchild may hold the pipe open; don't wait for it longer than a moment.
     let captured = rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
     Some((status, took, captured))
@@ -392,6 +396,53 @@ pub fn measure_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs the watchdog script on `input` (then end of input) against a `sleep` in its own
+    /// group; returns whether the sleeper survived. `{g}` in `input` is the sleeper's group.
+    #[cfg(unix)]
+    fn sleeper_survives(input: &str) -> bool {
+        use std::os::unix::process::CommandExt;
+        let mut sleeper = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut dog = Command::new("/bin/sh")
+            .args(["-c", WATCHDOG_SCRIPT, "watchdog"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let text = input.replace("{g}", &sleeper.id().to_string());
+        let mut pipe = dog.stdin.take().unwrap();
+        pipe.write_all(text.as_bytes()).unwrap();
+        drop(pipe);
+        assert!(dog.wait().unwrap().success());
+        let start = Instant::now();
+        // A killed sleeper is reaped by us, so try_wait sees it exit.
+        while start.elapsed() < Duration::from_secs(2) {
+            if sleeper.try_wait().unwrap().is_some() {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+        true
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watchdog_kills_only_the_group_still_registered() {
+        // spec item 7: end of input kills the last registered group, `-` unregisters it,
+        // and a later registration replaces an earlier one.
+        assert!(!sleeper_survives("{g}\n"));
+        assert!(sleeper_survives("{g}\n-\n"));
+        assert!(sleeper_survives(""));
+        assert!(!sleeper_survives("1\n-\n{g}\n"));
+        // Anything but digits kills nothing (not even `kill -- -` forms).
+        assert!(sleeper_survives("{g}\n-1\n"));
+        assert!(sleeper_survives("{g}\n{g}x\n"));
+    }
 
     #[test]
     fn exit_codes() {

@@ -83,7 +83,8 @@ index (workspace lints); files above 1 MiB are reported as a problem and not par
 is opened only if it is a regular file (not followed if a symlink; a FIFO or device, which would
 block the open or never end, is reported as `cannot read: not a regular file`), its size is
 checked on the open file, and the read stops one byte past 1 MiB, so a file that grows after the
-check is reported, never read whole (#83). This covers `_TEMPLATE.md` and `TRACE.md`, which are
+check is reported, never read whole (#83). A file swapped for a FIFO between the type check and
+the open is not covered (the open would block; std has no portable non-blocking open). This covers `_TEMPLATE.md` and `TRACE.md`, which are
 read by name, not found by the walk. Directory
 walks do not follow symlinks; a symlink under `specs/` is reported as a problem (the judge
 would follow it, so skipping it silently could hide a spec). Files are selected by name ending

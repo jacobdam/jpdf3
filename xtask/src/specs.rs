@@ -247,7 +247,9 @@ fn rel_display(root: &Path, p: &Path) -> String {
 fn read_text(path: &Path) -> Result<String, String> {
     // Only a regular file is opened: a symlink isn't followed (like the walk), and a FIFO or
     // device would block the open or never end. The open file is checked again (fstat), and
-    // the read is capped, so a file swapped or grown after the check can't hang or flood us.
+    // the read is capped, so a file grown after the check can't flood us. Not covered: a
+    // swap to a FIFO between the lstat and the open (the open would block); these are
+    // repository files, and std has no portable non-blocking open.
     let link = fs::symlink_metadata(path).map_err(|e| format!("cannot read: {e}"))?;
     if !link.is_file() {
         return Err(not_regular(&link));

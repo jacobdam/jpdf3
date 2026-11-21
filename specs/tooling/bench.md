@@ -87,8 +87,12 @@ Status: implemented
    At end of input, which comes whenever the bench exits (Ctrl-C, SIGTERM, SIGKILL, a
    panic), the watchdog kills the last registered group. Ctrl-C reaches only the
    terminal's foreground group, so the engine (own group) and the watchdog (own group)
-   don't get it; the watchdog is what stops the engine. The windows between spawn and
-   registration, and between the reap and `-`, are microseconds wide and not covered.
+   don't get it; the watchdog is what stops the engine. After a child exits on its own,
+   `-` is written right after the reap and before the group kill, so a bench killed during
+   that kill can't make the watchdog signal a reused id (a background child may then
+   survive: the group kill takes one `/bin/sh` spawn, milliseconds). The windows between
+   spawn and registration, and between the reap and `-`, are microseconds wide and not
+   covered.
    Children that leave the group on purpose are out of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
    per-file times of `ok` measurements (nearest-rank p95; `null` when no file is `ok`).
@@ -182,6 +186,9 @@ short writes to the watchdog.
   run that times out before the wrapper wrote its child's pid proves nothing, so it
   retries at 3, 6, 12 and 24 s and fails only if no attempt got that far (#75);
 - an engine that exits 0 leaving `sleep 30 &` behind: that child is gone within 2 s;
+- the watchdog script alone (unit test) against a `sleep` in its own group: end of input
+  after its id kills it; after `<id>`, `-` it survives; a later id replaces an earlier one;
+  lines other than digits (`-1`, `<id>x`) kill nothing;
 - the bench under Ctrl-C (SIGINT to its process group), SIGTERM and SIGKILL while an engine
   runs: the engine's grandchild (in the engine's group) is gone within 5 s. Without the
   watchdog, or with the watchdog in the bench's group, the INT case fails;

@@ -108,8 +108,10 @@ accepts JSON nested at most 128 deep; IDs must match `e2e.macos.[a-z0-9_]+`, so
   `codesign`, `plutil`); there are no third-party Swift packages. Tool output is read up
   to 16 MiB per pipe (stdout here, stderr on a thread); input for a tool (the entitlements
   plist for `plutil`) is written on its own thread at the same time, so a tool that writes
-  before it has read all its input can't deadlock the pipes. Input the tool didn't read is
-  an error, reported after a failed exit (#83).
+  before it has read all its input can't deadlock the pipes. A failed write (the tool closed
+  its stdin first) is an error, reported after a failed exit (#83). Input that fits the pipe
+  buffer may be accepted even if the tool never reads it; only larger input is certain to
+  fail.
 
 ## Accessibility
 The heading has the header trait; `Open…` stays in the keyboard order with its reason as

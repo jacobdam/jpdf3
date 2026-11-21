@@ -231,3 +231,49 @@ fn template_and_trace_must_be_regular_files() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn ci_linux_installs_with_scripts_off_even_if_the_env_turns_them_on() {
+    // specs/ui-web/app-skeleton.md Behavior 5 step 2 (#83): `npm_config_ignore_scripts=false`
+    // overrides .npmrc, so the install must pass `--ignore-scripts` itself. A stub npm on
+    // PATH records its arguments and fails the install, which ends the web steps there.
+    use std::os::unix::fs::PermissionsExt;
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("xtask-npm-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("apps/web")).unwrap();
+    std::fs::write(root.join("apps/web/package.json"), "{}\n").unwrap();
+    let log = root.join("npm.log");
+    for (name, body) in [
+        ("node", "echo v24.0.0".to_owned()),
+        (
+            "npm",
+            format!(
+                "[ \"$1\" = --version ] && {{ echo 11.0.0; exit 0; }}\necho \"$*\" >> '{}'\nexit 1",
+                log.display()
+            ),
+        ),
+    ] {
+        let p = bin.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["ci", "linux", "--out"])
+        .arg(root.join("out"))
+        .current_dir(&root)
+        .env("PATH", path)
+        .env("npm_config_ignore_scripts", "false")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let logged = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert_eq!(logged, "ci --ignore-scripts\n", "{err}");
+    assert!(err.contains("xtask: web: step `install` failed"), "{err}");
+}
