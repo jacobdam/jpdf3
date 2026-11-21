@@ -136,13 +136,18 @@ const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/g];
  * - a relative or root-absolute path must stay inside `src/`, because files outside it are
  *   not scanned (`../vendor/x.ts` could import a tool package);
  * - a bare specifier must name a package in `deps`;
- * - scheme URLs (`data:`, `https:`) and fragments are left to the CSP and E2E checks.
+ * - scheme URLs (`data:`, `https:`) and, in CSS url() and HTML attributes, `#` fragments are
+ *   left to the CSP and E2E checks; in JS import forms `#x` is a subpath import and refused.
  */
-export function importProblem(file, spec, deps) {
+export function importProblem(file, spec, deps, fragmentsOk = false) {
   if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
     return `${file}: imports ${spec}, a path into node_modules (use the package name)`;
   }
-  if (spec.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(spec)) return null;
+  // `#x` is a fragment in CSS url() and HTML, but a subpath import in JS.
+  if (spec.startsWith("#")) {
+    return fragmentsOk ? null : `${file}: imports ${spec}, a #subpath import (not checked)`;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(spec)) return null;
   if (spec.startsWith(".") || spec.startsWith("/")) {
     const target = spec.startsWith("/")
       ? posix.normalize(spec.slice(1))
@@ -165,9 +170,9 @@ export function checkImports(sources, rootManifest, problems) {
   const deps = new Set(keys(rootManifest.dependencies));
   for (const { file, text } of sources) {
     const res = file.endsWith(".html") ? [...IMPORT_RES, ...HTML_RES] : IMPORT_RES;
-    for (const re of res) {
+    for (const [i, re] of res.entries()) {
       for (const m of text.matchAll(re)) {
-        const problem = importProblem(file, m[1], deps);
+        const problem = importProblem(file, m[1], deps, i > 0);
         if (problem !== null) problems.push(problem);
       }
     }

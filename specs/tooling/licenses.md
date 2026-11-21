@@ -56,21 +56,30 @@ code and has no dependencies.
    - A relative or root-absolute path must resolve inside `src/` (from the importing file's
      directory; `/` is the app directory). Files outside `src/` aren't scanned, so
      `../vendor/x.ts` could import a tool package.
-   - Scheme URLs (`data:`, `https:`) and `#` fragments are skipped. The CSP and the E2E
-     no-third-party-request test cover them.
+   - Scheme URLs (`data:`, `https:`) are skipped, and so are `#` fragments in CSS `url()`
+     and HTML attributes. The CSP and the E2E no-third-party-request test cover them. In
+     JS import forms `#x` is a subpath import and is refused. A root `package.json`
+     `imports` field is refused too.
 5. **Bundle guards.** These change what gets bundled, and the import scan can't follow
    them:
    - Vite copies `public/` verbatim.
    - These config keys: `alias`, `publicDir`, `root`, `input`.
    - Plugin hooks `resolveId`, `load` and `transform`.
    - Another `vite.config.*` file, which Vite loads before `.ts`.
+   - Plugins imported from another module, which hide their hooks.
 
-   None is used. The script fails if `public/` exists, if another `vite.config.*` exists, or
-   if `vite.config.ts` has one of those keys followed by `:` or `(`. This is a text match,
-   so it is advisory until #99 checks Rollup's real module graph; `vite build --config x`
-   bypasses it.
-6. **Source files.** Files under `src/` with a source extension are scanned, following
-   symlinks. A directory with a source-file name (or a symlink to one) is reported.
+   None is used. The script fails in any of these cases:
+   - `public/` exists, or another `vite.config.*` exists;
+   - `vite.config.ts` imports anything but `vite` and `./csp`;
+   - `vite.config.ts` names one of those keys: plain, quoted, computed (`["alias"]:`) or
+     shorthand (`{ alias }`).
+
+   This is a text match, so it is advisory until #99 checks Rollup's real module graph.
+   For example, `vite build --config x` bypasses it.
+6. **Source files.** Files under `src/` with a source extension are scanned. Symlinks
+   anywhere in `src/` are refused, because Vite resolves a symlinked module's imports from
+   its real location. Any file whose real path is outside `src/` is refused too. A
+   directory with a source-file name is reported.
 
 ## Persistence
 Not applicable. Output goes to stderr: `licenses: ok (N packages, P production, I installed,
@@ -106,8 +115,11 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
   - One that allows CC-BY-4.0 by license alone fails the CC-BY tests. These include a
     scoped `@x/caniuse-lite` look-alike and an npm alias.
   - The integration test runs the real script on a fixture app directory. It covers nested
-    `src/` directories, `.cts` files, a symlinked source file, a source-named directory,
-    installed manifests, every bundle-guard key and a stray `vite.config.mjs`.
+    `src/` directories and `.cts` files. It refuses a symlinked file, a symlinked directory
+    (and the files under it), a source-named directory, the `imports` field, foreign
+    imports in `vite.config.ts` and a stray `vite.config.mjs`. It covers installed
+    manifests and every guard key in all four spellings. It also checks for false
+    positives (`transformIndexHtml`, `rooted`).
   - One that skips relative paths fails the outside-`src/` cases. One that drops comment
     gaps fails the `import(/* chunk */ "tool")` case. The alias test checks the lockfile
     `name` and the manifest `name` separately.

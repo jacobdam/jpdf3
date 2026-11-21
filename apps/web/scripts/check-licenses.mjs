@@ -6,8 +6,8 @@
 // integrity-checked tarball, so an edited lockfile can't hide a package). Shipped sources may
 // import only `dependencies` or files inside src/. Never runs package code. Third-party code bundled *inside* a
 // package is not visible here; see docs/adr/0002 item 5.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { check } from "./licenses-lib.mjs";
 
@@ -30,17 +30,28 @@ for (const path of Object.keys(lock.packages ?? {})) {
 // Everything Vite bundles: src/ (recursively) and index.html.
 const sourceProblems = [];
 const sources = [{ file: "index.html", text: readFileSync(new URL("index.html", root), "utf8") }];
+const appDir = fileURLToPath(root);
+const realSrc = realpathSync(join(appDir, "src"));
 for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFileTypes: true })) {
-  if (!/\.([cm]?[jt]sx?|css|html)$/.test(entry.name)) continue;
   const full = join(entry.parentPath, entry.name);
-  // Follows symlinks; a source-named directory (or a symlink to one) is reported.
-  if (!entry.isFile() && !(entry.isSymbolicLink() && statSync(full).isFile())) {
-    if (entry.isDirectory() || entry.isSymbolicLink()) {
-      sourceProblems.push(`${relative(fileURLToPath(root), full)}: not a regular file`);
-    }
+  const rel = relative(appDir, full);
+  // Vite resolves a symlinked module's imports from its real location, which this scan
+  // would get wrong, so symlinks in src/ are refused (and so is anything a symlinked
+  // directory exposes, checked by real path).
+  if (entry.isSymbolicLink()) {
+    sourceProblems.push(`${rel}: symlinks in src/ are not allowed`);
     continue;
   }
-  sources.push({ file: relative(fileURLToPath(root), full), text: readFileSync(full, "utf8") });
+  if (!/\.([cm]?[jt]sx?|css|html)$/.test(entry.name)) continue;
+  if (!entry.isFile()) {
+    if (entry.isDirectory()) sourceProblems.push(`${rel}: not a regular file`);
+    continue;
+  }
+  if (!`${realpathSync(full)}${sep}`.startsWith(`${realSrc}${sep}`)) {
+    sourceProblems.push(`${rel}: real path is outside src/`);
+    continue;
+  }
+  sources.push({ file: rel, text: readFileSync(full, "utf8") });
 }
 
 const { problems, production, installed } = check({ lock, rootManifest, manifests, sources });
@@ -61,12 +72,23 @@ for (const name of readdirSync(root)) {
   }
 }
 const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
+// Plain, quoted, computed (`["alias"]:`) and shorthand (`{ alias }`) keys.
 for (const m of viteConfig.matchAll(
-  /\b(alias|publicDir|root|input|resolveId|load|transform)\s*[:(]/g,
+  /\b(alias|publicDir|root|input|resolveId|load|transform)\b["'\]]{0,2}\s*[:(,}]/g,
 )) {
   problems.push(
     `vite.config.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`,
   );
+}
+// Plugins defined in another module would hide their hooks from the text match above.
+for (const m of viteConfig.matchAll(/\b(?:from|import)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) {
+  if (m[1] !== "vite" && m[1] !== "./csp") {
+    problems.push(`vite.config.ts: imports ${m[1]}; only vite and ./csp are checked`);
+  }
+}
+// The root `imports` field maps `#x` specifiers anywhere, past the import scan.
+if (rootManifest !== null && typeof rootManifest === "object" && "imports" in rootManifest) {
+  problems.push("package.json: the imports field (#subpaths) is not checked");
 }
 if (problems.length > 0) {
   console.error(`licenses: ${problems.length} problem(s) (CONSTITUTION 10):`);

@@ -405,6 +405,8 @@ test("paths into node_modules, template literals and CSS imports are scanned", (
     'import x from /* c */ "tool";',
     'import x from // c\n "tool";',
     "a { background: url(tool/x.png); }",
+    'import x from "#tool";',
+    "const m = await import('#internal/x');",
     'import x from "../node_modules/ui/x.js";',
     "const m = await import(`tool`);",
     '@import "tool/x.css";',
@@ -483,14 +485,49 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     write("elsewhere.ts", 'import "tool";');
     r = run();
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /src\/linked\.ts: imports tool/);
+    assert.match(r.stderr, /src\/linked\.ts: symlinks in src\/ are not allowed/);
     rmSync(join(dir, "src", "linked.ts"));
+    // A symlinked directory is refused too, and nothing under it is scanned as src/.
+    write("other/x.ts", 'import "./vendor.ts";');
+    symlinkSync(join(dir, "other"), join(dir, "src", "lib"));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /src\/lib: symlinks in src\/ are not allowed/);
+    assert.match(r.stderr, /src\/lib\/x\.ts: real path is outside src\//);
+    rmSync(join(dir, "src", "lib"));
 
     mkdirSync(join(dir, "src", "dir.ts"));
     r = run();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /src\/dir\.ts: not a regular file/);
     rmSync(join(dir, "src", "dir.ts"), { recursive: true });
+
+    write("package.json", JSON.stringify({ dependencies: { ui: "1" }, imports: { "#t": "tool" } }));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /package\.json: the imports field/);
+    write(
+      "package.json",
+      JSON.stringify({ dependencies: { ui: "1" }, devDependencies: { tool: "1" } }),
+    );
+
+    write(
+      "vite.config.ts",
+      'import p from "./plugin"; import { defineConfig } from "vite"; import { CSP } from "./csp";',
+    );
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /vite\.config\.ts: imports \.\/plugin;/);
+    assert.equal(r.stderr.match(/vite\.config\.ts: imports/g).length, 1);
+    for (const cfg of ['{ "alias": {} }', '{ ["alias"]: {} }', "{ alias }", "{ alias, x }"]) {
+      write("vite.config.ts", `export default ${cfg};`);
+      r = run();
+      assert.equal(r.status, 1, cfg);
+      assert.match(r.stderr, /uses alias,/, cfg);
+    }
+    write("vite.config.ts", "export default { transformIndexHtml: {}, rooted: 1 };");
+    r = run();
+    assert.equal(r.status, 0, r.stderr);
 
     write("vite.config.mjs", "export default {};");
     r = run();
