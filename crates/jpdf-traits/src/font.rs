@@ -110,6 +110,22 @@ impl Outline {
         }))
     }
 
+    /// Whether every contour starts with `MoveTo` and ends with `Close`, with no segment
+    /// outside a contour.
+    pub fn is_well_formed(&self) -> bool {
+        let mut open = false;
+        for segment in &self.segments {
+            match segment {
+                PathSegment::MoveTo(_) if !open => open = true,
+                PathSegment::LineTo(_) | PathSegment::QuadTo(..) | PathSegment::CurveTo(..)
+                    if open => {}
+                PathSegment::Close if open => open = false,
+                _ => return false,
+            }
+        }
+        !open
+    }
+
     /// Whether every coordinate is finite.
     pub fn is_finite(&self) -> bool {
         self.segments
@@ -161,8 +177,9 @@ pub struct FaceMetrics {
 ///
 /// Every method is total: a damaged glyph gives an error for that glyph, never a panic, and
 /// every number returned is finite. Every [`GlyphId`] returned is below
-/// [`FontFace::glyph_count`].
-pub trait FontFace {
+/// [`FontFace::glyph_count`]. Faces are cached per document and shared across rendering
+/// threads, hence `Send + Sync`.
+pub trait FontFace: Send + Sync {
     /// How the outlines are stored.
     fn outline_format(&self) -> OutlineFormat;
 
@@ -170,7 +187,10 @@ pub trait FontFace {
     fn glyph_count(&self) -> u16;
 
     /// Glyph space to text space: `[1/upem, 0, 0, 1/upem, 0, 0]` for sfnt fonts, the
-    /// `FontMatrix` for Type 1 and CFF. Finite and invertible.
+    /// `FontMatrix` for Type 1 and CFF (the Top DICT's). Finite and invertible. In a
+    /// CID-keyed CFF whose FDArray dictionaries carry their own `FontMatrix`, the adapter
+    /// transforms each glyph's outline and advance into this matrix's glyph space, so one
+    /// matrix serves every glyph.
     fn font_matrix(&self) -> [f32; 6];
 
     /// Face-wide metrics.
@@ -183,8 +203,12 @@ pub trait FontFace {
     /// The glyph outline. A glyph id out of range fails with
     /// [`BackendError::InvalidArgument`]; an outline with more than
     /// `limits.max_outline_points` points ([`Outline::point_count`]) fails with
-    /// [`BackendError::LimitExceeded`] as soon as the count is passed. Composite glyphs and
-    /// subroutine calls are bounded (recursion is an error, never a stack overflow).
+    /// [`BackendError::LimitExceeded`] as soon as the count is passed, and so does one that
+    /// needs more than `limits.max_outline_ops` operations (charstring operators executed
+    /// plus composite components visited), which bounds CPU on programs that loop through
+    /// subroutines or empty components without emitting points. Recursion in composites or
+    /// subroutines is an error, never a stack overflow. The outline is well formed
+    /// ([`Outline::is_well_formed`]).
     fn outline(&self, glyph: GlyphId, limits: &FontLimits) -> Result<Outline, BackendError>;
 
     /// The `cmap` subtables the backend can look up, in file order (empty for non-sfnt
@@ -192,18 +216,19 @@ pub trait FontFace {
     fn cmap_subtables(&self) -> Vec<CmapId>;
 
     /// Looks `code` up in one `cmap` subtable; `None` when the subtable or the code is not
-    /// mapped (glyph 0 counts as unmapped).
+    /// mapped (glyph 0 counts as unmapped, so `Some(GlyphId(0))` is never returned).
     fn cmap_lookup(&self, cmap: CmapId, code: u32) -> Option<GlyphId>;
 
     /// The glyph's PostScript name (`post` table, CFF charset or Type 1 `CharStrings`), if
-    /// the program names it. Not available for CID-keyed CFF.
+    /// the program names it, at most 127 bytes (the PostScript name limit; a longer name is
+    /// damage and gives `None`). Not available for CID-keyed CFF.
     fn glyph_name(&self, glyph: GlyphId) -> Option<String>;
 
     /// The glyph with this PostScript name, if any.
     fn glyph_by_name(&self, name: &str) -> Option<GlyphId>;
 
-    /// CID-keyed CFF only (`CIDFontType0C`): the glyph whose charset entry is `cid`.
-    /// `None` for every other program.
+    /// CID-keyed CFF only (bare `CIDFontType0C`, or a CID-keyed `CFF ` table in an OpenType
+    /// program): the glyph whose charset entry is `cid`. `None` for every other program.
     fn cid_to_glyph(&self, cid: u16) -> Option<GlyphId>;
 
     /// The built-in encoding ([`BuiltinEncoding::None`] for sfnt programs).
@@ -211,7 +236,7 @@ pub trait FontFace {
 }
 
 /// TrueType, CFF and CFF2 parsing (`FontFile2`, `FontFile3`; ISO 32000-2 §9.9).
-pub trait FontEngine {
+pub trait FontEngine: Send + Sync {
     /// Parses a font program. Fails with [`BackendError::LimitExceeded`] when `data` is longer
     /// than `limits.max_font_program_bytes` (before parsing) or the glyph count exceeds
     /// `limits.max_glyphs`. The face may borrow `data`.
@@ -226,7 +251,7 @@ pub trait FontEngine {
 /// Type 1 parsing (`FontFile`, ISO 32000-2 §9.9): the cleartext part, the `eexec`-encrypted
 /// part and the trailer, found by content rather than the stream's `Length1`–`Length3`
 /// (which real files often get wrong; CONSTITUTION 17).
-pub trait Type1Parser {
+pub trait Type1Parser: Send + Sync {
     /// Parses a Type 1 program, with the same limits as [`FontEngine::load`]. The face's
     /// [`FontFace::outline_format`] is [`OutlineFormat::Type1`].
     fn load<'a>(
@@ -260,6 +285,20 @@ mod tests {
         assert!(outline.is_finite());
         assert_eq!(Outline::default().control_box(), None);
         assert_eq!(Outline::default().point_count(), 0);
+    }
+
+    #[test]
+    fn outline_structure() {
+        let m = PathSegment::MoveTo(p(0.0, 0.0));
+        let l = PathSegment::LineTo(p(1.0, 0.0));
+        let z = PathSegment::Close;
+        let of = |segments: Vec<PathSegment>| Outline { segments }.is_well_formed();
+        assert!(of(vec![]));
+        assert!(of(vec![m, l, z, m, l, l, z]));
+        assert!(!of(vec![l, z]), "segment before MoveTo");
+        assert!(!of(vec![m, l]), "unclosed contour");
+        assert!(!of(vec![m, m, z]), "MoveTo inside a contour");
+        assert!(!of(vec![m, z, z]), "Close outside a contour");
     }
 
     #[test]

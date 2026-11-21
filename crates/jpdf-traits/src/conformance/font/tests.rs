@@ -5,7 +5,8 @@ use crate::{FaceMetrics, PathSegment, Point};
 ///
 /// ```text
 /// toyfont <tt|cff|cff2|type1> <units per em>
-/// g <advance> <name or -> [x y ...]    one glyph; points become MoveTo, LineTo…, Close
+/// g <advance> <name or -> [segments]  one glyph: M x y, L x y, Q x y x y, C x y x y x y,
+///                                       Z; or `loop` (an endless subroutine loop)
 /// c <platform> <encoding> <code> <gid> a cmap entry
 /// i <cid> <gid>                         a CID entry
 /// e <standard|expert>                   built-in encoding
@@ -25,14 +26,54 @@ struct Toy {
     cmap_off_by_one: bool,
     panic_on_bad_utf8: bool,
     nan_matrix: bool,
-    /// Type 1: report `StandardEncoding` whatever the program says.
+    /// Report `StandardEncoding` whatever the program says.
     ignore_encoding: bool,
+    /// Give up on `loop` glyphs with an empty outline instead of an ops-limit error.
+    ignore_ops_limit: bool,
+    /// Drop every `Close`.
+    no_close: bool,
+    /// Unmapped cmap codes return glyph 0.
+    cmap_zero: bool,
+    /// Read the units per em as 2048 whatever the program says.
+    fixed_upem: bool,
 }
 
 struct ToyGlyph {
     advance: f32,
     name: Option<String>,
-    points: Vec<Point>,
+    /// `None` for a `loop` glyph.
+    outline: Option<Outline>,
+}
+
+/// Parses `M x y`, `L x y`, `Q …`, `C …`, `Z` tokens into a well-formed outline.
+fn segments<'a>(mut tokens: impl Iterator<Item = &'a str>) -> Result<Outline, BackendError> {
+    let point = |t: &mut dyn Iterator<Item = &'a str>| -> Result<Point, BackendError> {
+        Ok(Point {
+            x: finite(t.next())?,
+            y: finite(t.next())?,
+        })
+    };
+    let mut segments = Vec::new();
+    while let Some(op) = tokens.next() {
+        segments.push(match op {
+            "M" => PathSegment::MoveTo(point(&mut tokens)?),
+            "L" => PathSegment::LineTo(point(&mut tokens)?),
+            "Q" => PathSegment::QuadTo(point(&mut tokens)?, point(&mut tokens)?),
+            "C" => PathSegment::CurveTo(
+                point(&mut tokens)?,
+                point(&mut tokens)?,
+                point(&mut tokens)?,
+            ),
+            "Z" => PathSegment::Close,
+            _ => return Err(BackendError::Malformed("segment")),
+        });
+    }
+    let outline = Outline { segments };
+    if outline.is_well_formed() {
+        Ok(outline)
+    } else {
+        Err(BackendError::Malformed("contour"))
+    }
 }
 
 struct ToyFace {
@@ -95,7 +136,11 @@ impl Toy {
         let mut face = ToyFace {
             toy: *self,
             format,
-            upem: f32::from(upem),
+            upem: if self.fixed_upem {
+                2048.0
+            } else {
+                f32::from(upem)
+            },
             glyphs: Vec::new(),
             cmap: Vec::new(),
             cids: Vec::new(),
@@ -112,20 +157,16 @@ impl Toy {
                         Some(n) => Some(n.to_owned()),
                         None => return Err(BackendError::Malformed("glyph")),
                     };
-                    let coords = f.map(|c| finite(Some(c))).collect::<Result<Vec<_>, _>>()?;
-                    if coords.len() % 2 != 0 {
-                        return Err(BackendError::Malformed("odd coordinates"));
-                    }
-                    let points = coords
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|&[x, y]| Point { x, y })
-                        .collect();
+                    let mut rest = f.peekable();
+                    let outline = if rest.peek() == Some(&"loop") {
+                        None
+                    } else {
+                        Some(segments(rest)?)
+                    };
                     face.glyphs.push(ToyGlyph {
                         advance,
                         name,
-                        points,
+                        outline,
                     });
                     if !self.ignore_glyph_limit
                         && face.glyphs.len() > usize::from(limits.max_glyphs)
@@ -216,26 +257,26 @@ impl FontFace for ToyFace {
     }
 
     fn outline(&self, glyph: GlyphId, limits: &FontLimits) -> Result<Outline, BackendError> {
-        let points = match self.glyph(glyph) {
+        let stored = match self.glyph(glyph) {
             Err(_) if self.toy.accept_bad_glyph => return Ok(Outline::default()),
-            g => &g?.points,
+            g => &g?.outline,
         };
-        let too_many = u32::try_from(points.len()).map_or(true, |n| n > limits.max_outline_points);
-        if too_many && !self.toy.ignore_point_limit {
+        let Some(outline) = stored else {
+            // A `loop` glyph never ends: a real interpreter runs until the ops budget is spent.
+            return if self.toy.ignore_ops_limit {
+                Ok(Outline::default())
+            } else {
+                Err(BackendError::LimitExceeded("outline ops"))
+            };
+        };
+        if outline.point_count() > limits.max_outline_points && !self.toy.ignore_point_limit {
             return Err(BackendError::LimitExceeded("outline points"));
         }
-        let mut segments: Vec<PathSegment> = Vec::new();
-        for (i, p) in points.iter().enumerate() {
-            segments.push(if i == 0 {
-                PathSegment::MoveTo(*p)
-            } else {
-                PathSegment::LineTo(*p)
-            });
+        let mut outline = outline.clone();
+        if self.toy.no_close {
+            outline.segments.retain(|s| *s != PathSegment::Close);
         }
-        if !segments.is_empty() {
-            segments.push(PathSegment::Close);
-        }
-        Ok(Outline { segments })
+        Ok(outline)
     }
 
     fn cmap_subtables(&self) -> Vec<CmapId> {
@@ -257,6 +298,9 @@ impl FontFace for ToyFace {
             .filter(|g| g.0 != 0);
         if found.is_none() && self.toy.cmap_off_by_one {
             return Some(GlyphId(self.count()));
+        }
+        if found.is_none() && self.toy.cmap_zero {
+            return Some(GlyphId(0));
         }
         found
     }
@@ -320,12 +364,13 @@ impl Type1Parser for Toy {
     }
 }
 
-const WIN_UNICODE: CmapId = CmapId {
-    platform_id: 3,
-    encoding_id: 1,
-};
+/// Segments for the toy syntax: `M x y`, `L x y`, `Q …`, `C …`, `Z`.
+fn outline(text: &str) -> Outline {
+    segments(text.split_whitespace()).unwrap_or_default()
+}
 
-/// A fixture with `.notdef` (4 points), `space` (empty) and `A` (5 points, the largest).
+/// A fixture with `.notdef` (a box), `space` (empty) and `A` (a curve of the format's kind;
+/// the largest glyph).
 fn fixture(
     name: &str,
     format: &str,
@@ -333,11 +378,17 @@ fn fixture(
     outline_format: OutlineFormat,
     extra: &str,
 ) -> FontFixture {
+    let notdef = "M 0 0 L 400 0 L 400 700 L 0 700 Z";
+    let a = if outline_format == OutlineFormat::TrueType {
+        "M 0 0 Q 300 700 600 0 L 450 -20 L 150 -20 L 0 0 Z"
+    } else {
+        "M 0 0 C 100 700 500 700 600 0 L 150 -20 Z"
+    };
     let data = format!(
         "toyfont {format} 1000\n\
-         g 500 .notdef 0 0 400 0 400 700 0 700\n\
+         g 500 .notdef {notdef}\n\
          g 250 space\n\
-         g 600 A 0 0 300 700 600 0 450 -20 150 -20\n\
+         g 600 A {a}\n\
          {extra}"
     );
     FontFixture {
@@ -347,24 +398,27 @@ fn fixture(
         outline_format,
         glyph_count: 3,
         font_matrix: [0.001, 0.0, 0.0, 0.001, 0.0, 0.0],
+        metrics: FaceMetrics {
+            bbox: [0.0, 0.0, 1000.0, 1000.0],
+            ascender: None,
+            descender: None,
+        },
         glyphs: vec![
             ExpectedGlyph {
                 glyph: GlyphId(0),
                 advance: 500.0,
-                points: 4,
-                control_box: Some([0.0, 0.0, 400.0, 700.0]),
+                outline: outline(notdef),
             },
             ExpectedGlyph {
                 glyph: GlyphId(1),
                 advance: 250.0,
-                points: 0,
-                control_box: None,
+                outline: Outline::default(),
             },
             ExpectedGlyph {
                 glyph: GlyphId(2),
                 advance: 600.0,
-                points: 5,
-                control_box: Some([0.0, -20.0, 600.0, 700.0]),
+                // The trailing `L 0 0` before `Z` is normalized away.
+                outline: outline(&a.replace(" L 0 0 Z", " Z")),
             },
         ],
         cmap: Vec::new(),
@@ -375,27 +429,36 @@ fn fixture(
     }
 }
 
+fn cmap(platform_id: u16, encoding_id: u16) -> CmapId {
+    CmapId {
+        platform_id,
+        encoding_id,
+    }
+}
+
 fn engine_fixtures() -> Vec<FontFixture> {
     let mut tt = fixture(
         "tt",
         "tt",
         FontProgram::Sfnt,
         OutlineFormat::TrueType,
-        "c 3 1 32 1\nc 3 1 65 2\n",
+        "c 3 1 32 1\nc 3 1 65 2\nc 3 0 61505 2\nc 1 0 65 2\n",
     );
     tt.cmap = vec![
-        (WIN_UNICODE, 0x20, Some(GlyphId(1))),
-        (WIN_UNICODE, 0x41, Some(GlyphId(2))),
-        (WIN_UNICODE, 0x42, None),
+        (cmap(3, 1), 0x20, Some(GlyphId(1))),
+        (cmap(3, 1), 0x41, Some(GlyphId(2))),
+        (cmap(3, 1), 0x42, None),
+        (cmap(3, 0), 0xf041, Some(GlyphId(2))),
+        (cmap(1, 0), 0x41, Some(GlyphId(2))),
     ];
     let mut cff = fixture(
         "cff",
         "cff",
         FontProgram::BareCff,
         OutlineFormat::Cff,
-        "e standard\n",
+        "e 65 A\ne 32 space\n",
     );
-    cff.builtin_encoding = BuiltinEncoding::Standard;
+    cff.builtin_encoding = BuiltinEncoding::Custom(vec![(32, "space".into()), (65, "A".into())]);
     let mut cid = fixture(
         "cid",
         "cff",
@@ -406,6 +469,15 @@ fn engine_fixtures() -> Vec<FontFixture> {
     cid.cids = vec![(7, Some(GlyphId(2))), (8, None)];
     let cff2 = fixture("cff2", "cff2", FontProgram::Sfnt, OutlineFormat::Cff2, "");
     vec![tt, cff, cid, cff2]
+}
+
+fn hostile(format: &str, program: FontProgram) -> Vec<HostileFont> {
+    vec![HostileFont {
+        name: format!("{format}-loop"),
+        data: format!("toyfont {format} 1000\ng 500 .notdef\ng 500 bomb loop\n").into_bytes(),
+        program,
+        glyphs: vec![GlyphId(1)],
+    }]
 }
 
 fn type1_fixtures() -> Vec<FontFixture> {
@@ -429,20 +501,28 @@ fn type1_fixtures() -> Vec<FontFixture> {
 }
 
 fn engine_failures(toy: Toy, fixtures: &[FontFixture]) -> Vec<&'static str> {
-    let report = run_font_engine(&toy, fixtures);
+    let report = run_font_engine(&toy, fixtures, &hostile("tt", FontProgram::Sfnt));
     assert!(report.checks_run > 0);
     report.failed_checks()
 }
 
 #[test]
 fn correct_engine_passes() {
-    let report = run_font_engine(&Toy::default(), &engine_fixtures());
+    let report = run_font_engine(
+        &Toy::default(),
+        &engine_fixtures(),
+        &hostile("tt", FontProgram::Sfnt),
+    );
     assert!(report.passed(), "{report}");
 }
 
 #[test]
 fn correct_type1_parser_passes() {
-    let report = run_type1(&Toy::default(), &type1_fixtures());
+    let report = run_type1(
+        &Toy::default(),
+        &type1_fixtures(),
+        &hostile("type1", FontProgram::Sfnt),
+    );
     assert!(report.passed(), "{report}");
 }
 
@@ -514,7 +594,12 @@ fn accepting_out_of_range_glyphs_is_caught() {
     };
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
-        vec!["font.invalid_glyph", "font.invariants", "font.truncated"]
+        vec![
+            "font.hostile",
+            "font.invalid_glyph",
+            "font.invariants",
+            "font.truncated"
+        ]
     );
 }
 
@@ -538,7 +623,12 @@ fn a_non_finite_font_matrix_is_caught() {
     };
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
-        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+        vec![
+            "font.fixture_loads",
+            "font.hostile",
+            "font.invariants",
+            "font.truncated"
+        ]
     );
 }
 
@@ -550,14 +640,21 @@ fn a_wrong_expected_value_fails_only_the_fixture_check() {
         engine_failures(Toy::default(), &fixtures),
         vec!["font.fixture_loads"]
     );
+    // Same point count and control box, but the contour runs the other way.
     let mut fixtures = engine_fixtures();
-    fixtures[0].glyphs[2].points = 6;
+    fixtures[0].glyphs[0].outline = outline("M 0 0 L 0 700 L 400 700 L 400 0 Z");
     assert_eq!(
         engine_failures(Toy::default(), &fixtures),
-        vec!["font.fixture_loads", "font.outline_points_limit"]
+        vec!["font.fixture_loads"]
     );
     let mut fixtures = engine_fixtures();
-    fixtures[0].glyphs[0].control_box = Some([0.0, 0.0, 400.0, 701.0]);
+    fixtures[0].glyphs[0].outline = outline("M 0 0 L 400 0 L 400 700 L 0 700.5 Z");
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_loads"]
+    );
+    let mut fixtures = engine_fixtures();
+    fixtures[0].metrics.ascender = Some(800.0);
     assert_eq!(
         engine_failures(Toy::default(), &fixtures),
         vec!["font.fixture_loads"]
@@ -578,12 +675,103 @@ fn a_wrong_expected_value_fails_only_the_fixture_check() {
 
 #[test]
 fn an_invalid_fixture_is_reported() {
+    let broken: [fn(&mut FontFixture); 4] = [
+        |f| f.glyphs[0].glyph = GlyphId(3),
+        |f| f.tolerance = 1.5,
+        |f| f.tolerance = f32::NAN,
+        |f| f.glyphs[0].outline.segments.pop().map_or((), |_| ()),
+    ];
+    for (i, breakage) in broken.iter().enumerate() {
+        let mut fixtures = engine_fixtures();
+        breakage(&mut fixtures[0]);
+        assert_eq!(
+            engine_failures(Toy::default(), &fixtures),
+            vec!["font.fixture_valid"],
+            "breakage {i}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_units_per_em_is_caught() {
+    let toy = Toy {
+        fixed_upem: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.fixture_loads"]
+    );
+}
+
+#[test]
+fn ignoring_the_ops_limit_is_caught() {
+    let toy = Toy {
+        ignore_ops_limit: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.hostile"]
+    );
+}
+
+#[test]
+fn unclosed_contours_are_caught() {
+    let toy = Toy {
+        no_close: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+    );
+}
+
+#[test]
+fn cmap_glyph_zero_is_caught() {
+    let toy = Toy {
+        cmap_zero: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+    );
+}
+
+#[test]
+fn hostile_fixtures_are_required() {
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &[]);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+    let report = run_type1(&Toy::default(), &type1_fixtures(), &[]);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+}
+
+#[test]
+fn engine_coverage_needs_each_cmap_and_a_cff_custom_encoding() {
+    for drop in [cmap(3, 0), cmap(1, 0), cmap(3, 1)] {
+        let mut fixtures = engine_fixtures();
+        fixtures[0].cmap.retain(|(id, _, _)| *id != drop);
+        assert_eq!(
+            engine_failures(Toy::default(), &fixtures),
+            vec!["font.fixture_coverage"],
+            "without {drop:?}"
+        );
+    }
     let mut fixtures = engine_fixtures();
-    fixtures[0].glyphs[0].glyph = GlyphId(3);
+    fixtures[1].data = String::from_utf8_lossy(&fixtures[1].data)
+        .replace("e 65 A\ne 32 space\n", "e standard\n")
+        .into_bytes();
+    fixtures[1].builtin_encoding = BuiltinEncoding::Standard;
     assert_eq!(
         engine_failures(Toy::default(), &fixtures),
-        vec!["font.fixture_valid"]
+        vec!["font.fixture_coverage"]
     );
+    // A TrueType fixture without a QuadTo does not cover TrueType.
+    let mut fixtures = engine_fixtures();
+    fixtures[0].glyphs[2].outline = outline("M 0 0 L 600 0 L 150 -20 Z");
+    assert!(engine_failures(Toy::default(), &fixtures).contains(&"font.fixture_coverage"));
 }
 
 #[test]
@@ -614,15 +802,27 @@ fn type1_ignoring_the_encoding_is_caught() {
         ignore_encoding: true,
         ..Toy::default()
     };
-    let report = run_type1(&toy, &type1_fixtures());
+    let report = run_type1(
+        &toy,
+        &type1_fixtures(),
+        &hostile("type1", FontProgram::Sfnt),
+    );
     assert_eq!(report.failed_checks(), vec!["font.fixture_loads"]);
 }
 
 #[test]
 fn type1_requires_a_custom_encoding_fixture() {
     let fixtures: Vec<FontFixture> = type1_fixtures().into_iter().skip(1).collect();
-    let report = run_type1(&Toy::default(), &fixtures);
+    let report = run_type1(
+        &Toy::default(),
+        &fixtures,
+        &hostile("type1", FontProgram::Sfnt),
+    );
     assert_eq!(report.failed_checks(), vec!["font.fixture_coverage"]);
-    let report = run_type1(&Toy::default(), &engine_fixtures());
+    let report = run_type1(
+        &Toy::default(),
+        &engine_fixtures(),
+        &hostile("type1", FontProgram::Sfnt),
+    );
     assert!(report.failed("font.fixture_coverage"));
 }

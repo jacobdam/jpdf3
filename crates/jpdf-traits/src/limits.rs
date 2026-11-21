@@ -48,6 +48,9 @@ pub struct Limits {
     /// Points in one glyph outline, composites expanded (see
     /// [`crate::PathSegment::point_count`]).
     pub max_outline_points: u32,
+    /// Operations in one outline call: charstring operators executed plus composite
+    /// components visited (CPU bound for subroutine and composite loops).
+    pub max_outline_ops: u32,
 }
 
 impl Limits {
@@ -77,6 +80,7 @@ impl Limits {
             max_font_program_bytes: self.max_font_program_bytes,
             max_glyphs: self.max_font_glyphs,
             max_outline_points: self.max_outline_points,
+            max_outline_ops: self.max_outline_ops,
         }
     }
 }
@@ -101,7 +105,8 @@ impl Default for Limits {
             max_image_components: 33,
             max_font_program_bytes: 64 * 1024 * 1024,
             max_font_glyphs: u16::MAX,
-            max_outline_points: 1 << 16,
+            max_outline_points: 1 << 17,
+            max_outline_ops: 1 << 20,
         }
     }
 }
@@ -140,6 +145,9 @@ pub struct FontLimits {
     pub max_glyphs: u16,
     /// Most points in one outline, composites and subroutines expanded.
     pub max_outline_points: u32,
+    /// Most operations in one outline call (charstring operators executed plus composite
+    /// components visited).
+    pub max_outline_ops: u32,
 }
 
 impl Default for FontLimits {
@@ -181,6 +189,7 @@ mod tests {
             max_font_program_bytes: 7,
             max_font_glyphs: 8,
             max_outline_points: 9,
+            max_outline_ops: 10,
             ..Limits::default()
         };
         assert_eq!(
@@ -189,6 +198,7 @@ mod tests {
                 max_font_program_bytes: 7,
                 max_glyphs: 8,
                 max_outline_points: 9,
+                max_outline_ops: 10,
             }
         );
     }

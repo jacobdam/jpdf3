@@ -50,7 +50,8 @@ defaults:
 | `max_image_components` | 33 | ISO 32000-2 Annex C: DeviceN has at most 32 colorants, plus one alpha channel (`SMaskInData`) |
 | `max_font_program_bytes` | 64 MiB | Large CJK fonts are 20–30 MB; checked before parsing |
 | `max_font_glyphs` | 65,535 | Glyph ids are 16-bit in TrueType, CFF and CFF2 |
-| `max_outline_points` | 65,536 | One glyph, composites and subroutines expanded; TrueType `maxp` allows 65,535 points per simple glyph |
+| `max_outline_points` | 131,072 | One glyph, composites and subroutines expanded. Counted per segment (implied TrueType points and 3 per cubic count), so a simple glyph within `maxp`'s 65,535 raw points can exceed 65,536 |
+| `max_outline_ops` | 1,048,576 | One outline call: charstring operators executed plus composite components visited. Bounds CPU for subroutine fan-out and empty-component loops, which emit no points |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
@@ -117,6 +118,8 @@ Its output cap is the smaller of the per-stream limit and what the document has 
 **Traits in part 2 (font programs).** Selecting a glyph for a PDF string (encodings,
 `Differences`, CMaps, the §9.6.5.4 `cmap` rules) stays in `jpdf-fonts`, so swapping a backend
 can't change which glyph a page shows. Backends only answer questions about the program.
+- `FontEngine`, `Type1Parser` and `FontFace` are `Send + Sync`: faces are long-lived, cached
+  per document and shared across rendering threads.
 - `FontEngine::load(data, FontProgram, &FontLimits) -> Box<dyn FontFace + 'a>`.
   `FontProgram::Sfnt` is `FontFile2` or OpenType `FontFile3` (`glyf`, `CFF ` or `CFF2`
   outlines; no collections). `FontProgram::BareCff` is `FontFile3` `Type1C`/`CIDFontType0C`.
@@ -130,17 +133,28 @@ can't change which glyph a page shows. Backends only answer questions about the 
   - `outline_format()`: TrueType, CFF, CFF2 (default instance) or Type 1.
   - `glyph_count()`: at least 1 (`.notdef`), at most `max_glyphs`.
   - `font_matrix()`: `[1/upem, 0, 0, 1/upem, 0, 0]` for sfnt, `FontMatrix` for Type 1 and
-    CFF (§9.2.4). Finite and invertible.
+    CFF (the Top DICT's; §9.2.4). Finite, with a normal (not subnormal) determinant. In a
+    CID-keyed CFF whose FDArray dictionaries have their own `FontMatrix`, the adapter maps
+    each glyph's outline and advance into this matrix's glyph space, so one matrix serves
+    every glyph.
   - `metrics()`: bounding box, plus ascender and descender when the program has them.
   - `advance(glyph)` and `outline(glyph, &FontLimits)`. A glyph id not below `glyph_count`
     gives `InvalidArgument`. An outline over `max_outline_points` gives `LimitExceeded`.
     Points are counted per segment: `MoveTo`/`LineTo` 1, `QuadTo` 2, `CurveTo` 3, `Close` 0.
-    TrueType implied on-curve points become explicit `QuadTo` end points. Recursion in
-    composite glyphs or subroutines is an error, never a stack overflow.
+    TrueType implied on-curve points become explicit `QuadTo` end points. An outline that
+    needs more than `max_outline_ops` operations also gives `LimitExceeded`. Recursion in
+    composite glyphs or subroutines is an error, never a stack overflow. Outlines are well
+    formed: every contour starts with `MoveTo` and ends with `Close`. The returned `Vec` is
+    bounded by the point limit. A caller-supplied sink was considered; it would let the
+    caller count points itself, but the work bound has to live in the interpreter anyway,
+    and the suite checks the count on every outline it sees.
   - `cmap_subtables()` and `cmap_lookup(CmapId, code)`. Glyph 0 counts as unmapped.
-    `jpdf-fonts` needs (3,1), (3,0) and (1,0) for §9.6.5.4.
-  - `glyph_name(glyph)` and `glyph_by_name(name)`, for `Differences` and text extraction.
-  - `cid_to_glyph(cid)`: the CID-keyed CFF charset; `None` for every other program.
+    `Some(GlyphId(0))` is never returned. `jpdf-fonts` needs (3,1), (3,0) and (1,0) for
+    §9.6.5.4.
+  - `glyph_name(glyph)` (at most 127 bytes, the PostScript limit) and `glyph_by_name(name)`,
+    for `Differences` and text extraction.
+  - `cid_to_glyph(cid)`: the charset of a CID-keyed CFF, bare or as an OpenType `CFF `
+    table; `None` for every other program.
   - `builtin_encoding()`: `None` (sfnt, CID-keyed), `Standard`, `Expert`, or `Custom` (code,
     glyph name) pairs sorted by code with unique codes. Names rather than glyph ids, because
     Type 1 encodings are name-based. `jpdf-fonts` owns the Standard and Expert tables.
@@ -200,30 +214,56 @@ failed check by a stable name:
   - Bad key lengths give `InvalidArgument`.
   - Exact output limits for RC4, AES encryption (output) and AES decryption (input).
 
-- `font::run_font_engine(&dyn FontEngine, &fixtures)` and
-  `font::run_type1(&dyn Type1Parser, &fixtures)`:
+- `font::run_font_engine(&dyn FontEngine, &fixtures, &hostile)` and
+  `font::run_type1(&dyn Type1Parser, &fixtures, &hostile)`:
   - Fixtures are fonts **we** generate under a permissive license, with values from a
-    reference tool. Each states the outline format, glyph count, font matrix, built-in
-    encoding, and per-glyph advance, point count and control box. It can also list `cmap`
-    lookups, names (checked both ways) and CID lookups. Advances, matrices and boxes are
-    compared within the fixture's tolerance.
-  - Engine coverage: TrueType, CFF and CFF2 outlines, both containers, a mapped `cmap`
-    lookup, a mapped CID and a built-in encoding other than `None`. Type 1 coverage: every
-    fixture is Type 1, and one has a `Custom` encoding. At least one fixture glyph must have
-    points.
+    reference tool. Each states the outline format, glyph count, font matrix, metrics,
+    built-in encoding, and each listed glyph's advance and full outline. It can also list
+    `cmap` lookups, names (checked both ways) and CID lookups.
+  - Outlines are compared segment by segment within the fixture's tolerance: same segment
+    kinds, same order, same points. So reversed winding, permuted points and swapped control
+    points all fail. A `LineTo` back to the contour start right before `Close` is dropped
+    first (`normalize`), because backends differ on emitting it. The tolerance is in font
+    units, must be finite and between 0 and 1, and also applies to advances and metrics. The
+    font matrix is compared with a relative tolerance of 1e-4, so a wrong units-per-em fails.
+  - Engine coverage:
+    - TrueType, CFF and CFF2 outlines, each with a curve (`QuadTo` for TrueType, `CurveTo`
+      for the others);
+    - both containers;
+    - mapped `cmap` lookups in (3,1), (3,0) and (1,0);
+    - a mapped CID;
+    - a CFF custom encoding.
+
+    Type 1 coverage: every fixture is Type 1, one has a `CurveTo`, and one has a `Custom`
+    encoding. At least one fixture glyph must have points.
+  - Hostile programs (at least one required): self-referencing composites, recursive
+    subroutines, fan-out bombs. Each must fail to load, or fail `outline` for every listed
+    glyph, without a panic and keeping the invariants. Unbounded recursion overflows the
+    stack and aborts the test process, which fails the run without a report entry.
   - Each fixture loads and matches exactly. Glyph id `glyph_count` gives `InvalidArgument`
     from both `advance` and `outline`.
   - `max_font_program_bytes` and `max_glyphs` pass at the fixture's size and give
-    `LimitExceeded` one below. `max_outline_points` passes at the largest fixture glyph's
-    point count and gives `LimitExceeded` one below.
-  - Every strict prefix and every one-byte flip (about 128 positions each): no panic. A face
+    `LimitExceeded` one below. `max_outline_points` passes at the backend's own point count
+    for the largest fixture glyph and gives `LimitExceeded` one below. `max_outline_ops` has
+    no generic boundary test, because operation counts are backend-specific; the hostile
+    programs cover it.
+  - Every strict prefix and every one-byte flip (about 144 positions each): no panic. A face
     that loads must keep the invariants under limits capped at the fixture's size. The
     suite queries the first 64 glyphs, the last one and two out-of-range ids; every `cmap`
     subtable (up to 16) for codes 0–255, U+FFFF, U+10000 and U+10FFFF; names; and CIDs 0–63.
-    The invariants: finite numbers, an invertible matrix, returned glyph ids in range,
-    out-of-range ids rejected, glyph and point counts within the limits, and a sorted custom
-    encoding.
-  - Empty input is an error.
+    The invariants:
+    - finite numbers and a matrix with a normal determinant;
+    - returned glyph ids in range, and no glyph 0 from `cmap`;
+    - out-of-range ids rejected;
+    - glyph and point counts within the limits;
+    - well-formed outlines;
+    - names of at most 127 bytes;
+    - a sorted custom encoding.
+  - Empty input is an error for both containers.
+  - **What the suites can't see.** Byte flips and prefixes are a smoke test, not coverage
+    of charstring interpreters, `seac`, PFB segments or hex `eexec`. Deep coverage comes
+    from per-adapter fuzz targets (#17) and from admission (#16), which must supply hostile
+    programs for each format the adapter parses.
 
 Images have no "a truncated prefix is never `Complete`" rule, unlike Flate. Some JBIG2 and
 CCITT streams have valid end points in the middle, so a prefix can be a complete, smaller
@@ -268,8 +308,9 @@ may record a repair note.
   Limits for what they can't observe).
 - Fuzz targets per trait come with #17. Font adapters add theirs at admission (#16).
 - Font programs are a classic attack surface (charstring interpreters, composite recursion).
-  The face API never hands out raw tables, and every answer is checked by the suite on
-  damaged programs.
+  The face API never hands out raw tables. The suite checks every answer it gets from a
+  damaged program against the invariants, and requires hostile programs; see Conformance
+  suites for what it can't see.
 - Keys passed to `Cipher` are secrets: backends must not log or keep them. Zeroizing them
   needs a dependency and is deferred to admission (#16).
 - MD5 and RC4 exist only because the PDF standard security handler requires them for old
@@ -287,8 +328,8 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
 ## Performance
 - Traits take slices and return owned buffers. Copy-free streaming can be added later as a
   provided method without breaking adapters.
-- The font suites take well under a second against the toy font (about 100 loads per
-  fixture).
+- The font suites take well under a second against the toy font. A fixture costs about 300
+  loads: up to 144 prefixes, up to 144 flips and a few limit loads.
 - A full Flate run takes about 1.5 s for the toy codec in a debug build (generating the
   1 GiB bomb's 6.5 MiB stream and the 16 MiB deflate dominate); the other suites take well
   under a second.
@@ -311,11 +352,20 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
   - `crypto`: table-backed and FNV hashers; real RC4 plus a fake CBC block cipher, with
     variants that ignore the IV, accept bad padding, check only the last padding byte, or
     apply the decryption cap to the plaintext.
-  - `font`: a toy text-format font for every format, with variants that ignore each of the
-    three limits, panic on empty or mutated input, accept out-of-range glyph ids, return an
-    out-of-range glyph from `cmap`, return a NaN font matrix, or ignore a Type 1 custom
-    encoding. Also each wrong expected value (advance, points, box, name, CID), an invalid
-    fixture, and dropping each required fixture.
-- Unit tests for `Outline::point_count`, `control_box`, `is_finite` and `Limits::font_limits`.
+  - `font`: a toy text-format font for every format. Broken variants:
+    - ignore any of the four limits (the ops limit through a hostile `loop` glyph);
+    - panic on empty or mutated input;
+    - accept out-of-range glyph ids;
+    - return an out-of-range glyph or glyph 0 from `cmap`;
+    - return a NaN font matrix or a wrong units-per-em;
+    - drop `Close`;
+    - ignore a custom encoding.
+
+    Also tested: each wrong expected value (advance, reversed contour, moved point, metrics,
+    name, CID); invalid fixtures (glyph out of range, tolerance 1.5 or NaN, malformed
+    outline); dropping each required fixture, `cmap` subtable or CFF custom encoding; a
+    TrueType fixture without a `QuadTo`; and missing hostile programs.
+- Unit tests for `Outline::point_count`, `control_box`, `is_well_formed`, `is_finite` and
+  `Limits::font_limits`.
 - Existing `jpdf-syntax`/`jpdf-engine` tests cover the moved `Limits` unchanged.
 - No E2E IDs (no UI).
