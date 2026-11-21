@@ -33,6 +33,10 @@ is wrong, it writes `ops/proposals/<topic>.md` and keeps following the rule.
    Zcash). Agents never record their own audits or exemptions.
 10. **Licenses:** MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0; OFL-1.1 for fonts only.
     The project is MIT.
+    For test and build tools whose code never ends up in a shipped artifact (web bundle,
+    macOS app, crates), MPL-2.0, BlueOak-1.0.0, CC-BY-4.0 (data only), CC0-1.0, 0BSD and NCSA are
+    also allowed; `apps/web` checks its production dependency tree against the strict list
+    and the full tree against the strict list plus these.
 11. Third-party crates are used only through `jpdf-traits` adapters in `jpdf-backends`. If a
     crate fails admission, write our own implementation behind the trait.
 
