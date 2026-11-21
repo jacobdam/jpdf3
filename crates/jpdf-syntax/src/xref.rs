@@ -645,7 +645,8 @@ mod tests {
     fn retained_cost_counts_every_allocation() {
         let node = size_u64(size_of::<Object>());
         let entry = size_u64(size_of::<(Vec<u8>, Object)>());
-        let base = CACHE_ENTRY_OVERHEAD + node;
+        // A literal, so lowering the per-entry overhead shows up as a test change.
+        let base = 64 + node;
         assert_eq!(retained_cost(&Object::Integer(7)), base);
         assert_eq!(retained_cost(&Object::Null), base);
         let mut s = Vec::with_capacity(100);
