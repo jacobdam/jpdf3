@@ -37,6 +37,13 @@ name = "jpdf-content"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-corpus"
+version = "0.0.0"
+dependencies = [
+ "jpdf-arlington",
+]
+
+[[package]]
 name = "jpdf-cos"
 version = "0.0.0"
 dependencies = [

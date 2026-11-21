@@ -250,7 +250,9 @@ fn git_text(git_dir: &Path, args: &[&str]) -> Result<String, Error> {
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
-fn git_out(git_dir: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
+/// Runs `git --no-replace-objects --git-dir <git_dir> <args>` hardened as described in the
+/// module docs and returns its stdout. Also used by `jpdf-corpus` (specs/tooling/corpus.md).
+pub fn git_out(git_dir: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
     let mut cmd = Command::new("git");
     cmd.arg("--no-replace-objects")
         .arg("--git-dir")
