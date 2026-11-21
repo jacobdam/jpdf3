@@ -1,6 +1,6 @@
 # 6. The Arlington model is fetched by pinned commit and tree id, never committed
 
-Status: accepted (#20)
+Status: superseded by [ADR 0007](0007-arlington-tsvs-vendored-and-checked-against-the-pin.md) (#60); accepted (#20)
 
 ## Context
 PLAN §6.1 wants valid and boundary test objects generated from the Arlington PDF Model.

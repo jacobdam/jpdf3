@@ -16,6 +16,8 @@ pub enum Error {
     Limit(String),
     /// Fetching or verifying the pinned commit failed.
     Fetch(String),
+    /// The vendored copy does not match the pins, or can't be written.
+    Vendor(String),
     Io {
         path: String,
         source: std::io::Error,
@@ -39,6 +41,7 @@ impl fmt::Display for Error {
             }
             Self::Limit(m) => write!(f, "limit exceeded: {m}"),
             Self::Fetch(m) => write!(f, "fetch: {m}"),
+            Self::Vendor(m) => write!(f, "vendored: {m}"),
             Self::Io { path, source } => write!(f, "{path}: {source}"),
         }
     }

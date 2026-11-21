@@ -1,6 +1,6 @@
-//! Fetching the pinned Arlington commit (specs/tooling/arlington.md, "Pinning"; ADR 0006).
+//! Fetching the pinned Arlington commit (specs/tooling/arlington.md, "Pinning"; ADR 0006, ADR 0007).
 //!
-//! The data is never committed. `git` fetches exactly one commit into a bare cache
+//! The data is vendored in `tools/arlington/data` (ADR 0007); this module is the bump path. `git` fetches exactly one commit into a bare cache
 //! repository. Before reading, we run `git fsck --full --strict` (git re-hashes every object,
 //! so a corrupted or swapped object file is caught), check the commit and `tsv/latest` tree
 //! ids against the pins below, check every blob's size, and only then read the blobs. Git
@@ -20,6 +20,10 @@ pub const COMMIT: &str = "cdc485e4238c55bbd6204f6fda31997245d54b71";
 /// Git tree id of `tsv/latest` in [`COMMIT`]; checked so a cache can't swap the files.
 pub const TSV_TREE: &str = "334fcfcac3829007105bcb22ba0eaf495aa89e7d";
 pub const TSV_DIR: &str = "tsv/latest";
+/// Blob ids of upstream's `LICENSE` and `NOTICE.txt` in [`COMMIT`], vendored next to the data
+/// (owner ruling on #60, ADR 0007).
+pub const LICENSE_BLOB: &str = "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64";
+pub const NOTICE_BLOB: &str = "7b4bbf67a64a62a1da099edc9b803e3050282d92";
 /// The ref that keeps the pinned commit alive in the cache (so `gc` never prunes it).
 pub const PIN_REF: &str = "refs/jpdf/pinned";
 
@@ -227,6 +231,43 @@ pub fn load_verified(
     }
     files.sort();
     Ok(files)
+}
+
+/// Reads `<commit>:<path>` from a cache that [`load_verified`] has just checked, after
+/// checking that it is exactly the blob `id` and not over [`MAX_FILE_BYTES`].
+pub fn read_pinned_blob(
+    git_dir: &Path,
+    commit: &str,
+    path: &str,
+    id: &str,
+) -> Result<Vec<u8>, Error> {
+    let got = git_text(
+        git_dir,
+        &["rev-parse", "--verify", &format!("{commit}:{path}")],
+    )?;
+    if got != id {
+        return Err(Error::Fetch(format!("{path} is {got}, pinned {id}")));
+    }
+    let check = git_out(
+        git_dir,
+        &["cat-file", "--batch-check"],
+        Some(format!("{id}\n").into_bytes()),
+    )?;
+    let header = String::from_utf8_lossy(&check);
+    let size = blob_size(header.trim_end(), id)?;
+    if size > MAX_FILE_BYTES {
+        return Err(Error::Limit(format!(
+            "{path} is {size} bytes (max {MAX_FILE_BYTES})"
+        )));
+    }
+    let bytes = git_out(git_dir, &["cat-file", "blob", id], None)?;
+    if bytes.len() != size {
+        return Err(Error::Fetch(format!(
+            "{path}: read {} bytes, expected {size}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
 }
 
 /// Parses `"<id> blob <size>"` for the expected `id`.

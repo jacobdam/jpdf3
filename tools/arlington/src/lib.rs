@@ -1,9 +1,10 @@
-//! Arlington PDF Model ingestion (specs/tooling/arlington.md, issue #20, ADR 0006).
+//! Arlington PDF Model ingestion (specs/tooling/arlington.md, issue #20, ADR 0007).
 //!
-//! Fetches a pinned commit of the PDF Association's Arlington model (machine-readable
-//! ISO 32000-2 object definitions), parses its TSV files into a typed [`Model`], checks it,
-//! and renders Rust tables for tests and fuzz seeds. Development tool only: nothing here
-//! ships, and the data is fetched, never committed.
+//! Loads the PDF Association's Arlington model (machine-readable ISO 32000-2 object
+//! definitions) from its vendored copy in `tools/arlington/data` (checked against the pinned
+//! git ids) or from the pinned commit, parses its TSV files into a typed [`Model`], checks
+//! it, and renders Rust tables for tests and fuzz seeds. Development tool only: nothing here
+//! ships (owner ruling on #60: tests and tools only).
 #![forbid(unsafe_code)]
 
 pub mod check;
@@ -12,6 +13,8 @@ pub mod fetch;
 pub mod generate;
 pub mod model;
 pub mod parse;
+pub mod sha1;
+pub mod vendor;
 
 pub use error::Error;
 pub use model::Model;
@@ -19,7 +22,9 @@ pub use model::Model;
 /// Where a model's files come from.
 #[derive(Debug, Clone)]
 pub enum Source {
-    /// The pinned commit, cached in this directory.
+    /// The vendored copy in this directory, checked against the pins (the default).
+    Vendored(std::path::PathBuf),
+    /// The pinned commit, cached in this directory (fetched if missing).
     Pinned(std::path::PathBuf),
     /// A local directory of `.tsv` files (tests, offline experiments).
     Dir(std::path::PathBuf),
@@ -29,6 +34,7 @@ impl Source {
     /// A one-line description for generated headers and logs.
     pub fn describe(&self) -> String {
         match self {
+            Self::Vendored(_) => format!("commit {} ({}, vendored)", fetch::COMMIT, fetch::TSV_DIR),
             Self::Pinned(_) => format!("commit {} ({})", fetch::COMMIT, fetch::TSV_DIR),
             Self::Dir(d) => format!("local directory {}", d.display()),
         }
@@ -38,6 +44,7 @@ impl Source {
 /// Loads, parses and checks the model.
 pub fn load(source: &Source) -> Result<Model, Error> {
     let files = match source {
+        Source::Vendored(dir) => vendor::load_vendored(dir)?,
         Source::Pinned(cache) => fetch::load_pinned(cache)?,
         Source::Dir(dir) => read_dir(dir)?,
     };
