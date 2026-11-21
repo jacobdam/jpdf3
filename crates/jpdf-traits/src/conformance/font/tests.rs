@@ -307,7 +307,13 @@ impl FontFace for ToyFace {
         // Components are expanded with an explicit stack, so a self-referencing composite
         // runs into the ops limit instead of overflowing the stack.
         let mut pending = vec![glyph.0];
+        let mut visits: u32 = 0;
         while let Some(id) = pending.pop() {
+            // A hard cap, so even `free_components` can't loop forever on an empty cycle.
+            visits = visits.saturating_add(1);
+            if visits > 1 << 20 {
+                return Err(BackendError::LimitExceeded("outline visits"));
+            }
             let g = self.glyph(GlyphId(id))?;
             let Some(outline) = &g.outline else {
                 // A `loop` glyph never ends: a real interpreter runs until the ops budget is
@@ -573,6 +579,7 @@ fn engine_hostile() -> Vec<HostileFont> {
         ("tt", FontProgram::Sfnt, OutlineFormat::TrueType),
         ("cff", FontProgram::BareCff, OutlineFormat::Cff),
         ("cff2", FontProgram::Sfnt, OutlineFormat::Cff2),
+        ("cff", FontProgram::Sfnt, OutlineFormat::Cff),
     ])
 }
 
@@ -1007,6 +1014,22 @@ fn heavy_min_ops_glyphs_are_required_per_format() {
 }
 
 #[test]
+fn coverage_is_per_container_and_outline_pairing() {
+    // Only the sfnt-CFF fixture loses its heavy glyph: bare CFF still has one.
+    let mut fixtures = engine_fixtures();
+    fixtures[4].min_ops.clear();
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_coverage"]
+    );
+    // Only the sfnt-CFF hostile program is missing: bare CFF still has one.
+    let mut hostile = engine_hostile();
+    hostile.remove(3);
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+}
+
+#[test]
 fn an_overstated_min_ops_bound_fails() {
     // The TrueType composite needs exactly HEAVY_OPS operations; claiming one more makes the
     // check expect LimitExceeded where a correct backend succeeds.
@@ -1020,9 +1043,11 @@ fn an_overstated_min_ops_bound_fails() {
 
 #[test]
 fn invalid_min_ops_entries_are_reported() {
-    let broken: [fn(&mut FontFixture); 2] = [
+    let broken: [fn(&mut FontFixture); 3] = [
         |f| f.min_ops[0].0 = GlyphId(f.glyph_count),
         |f| f.min_ops.push((GlyphId(0), 0)),
+        // A bound no default limit can pass is the fixture's error, not the backend's.
+        |f| f.min_ops[0].1 = FontLimits::default().max_outline_ops + 1,
     ];
     for (i, breakage) in broken.iter().enumerate() {
         let mut fixtures = engine_fixtures();

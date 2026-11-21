@@ -306,7 +306,8 @@ failed check by a stable name:
   - Fixtures are fonts **we** generate under a permissive license, with values from a
     reference tool. Each states the outline format, glyph count, font matrix, metrics,
     built-in encoding, and each listed glyph's advance and full outline. It can also list
-    `cmap` lookups, names (checked both ways, for any glyph id and any number of names) and
+    `cmap` lookups, names (checked both ways, for any glyph id; every listed name is looked up,
+    plus up to 128 names the face returns) and
     CID lookups, plus glyphs with a known lower bound on the operations their outline needs
     (`min_ops`).
   - Outlines are compared segment by segment within the fixture's tolerance: same segment
@@ -324,8 +325,9 @@ failed check by a stable name:
       for the others);
     - every container and outline pairing a PDF can embed: sfnt with TrueType, sfnt with
       CFF (OpenType `CFF `), sfnt with CFF2, and bare CFF;
-    - per outline format, a `min_ops` glyph with a bound of at least 100 (for TrueType, a
-      composite: each component visited counts as one operation);
+    - per container and outline pairing, a `min_ops` glyph with a bound of at least 100 (for
+      TrueType, a composite: each component visited counts as one operation; for CFF, CFF2
+      and Type 1, fixture authors should run most operators inside subroutines);
     - mapped `cmap` lookups in (3,1), (3,0) and (1,0);
     - a mapped CID;
     - a CFF custom encoding.
@@ -333,7 +335,8 @@ failed check by a stable name:
     Type 1 coverage: every fixture is Type 1, one has a `CurveTo`, one has a `Custom`
     encoding, and one has a `min_ops` glyph with a bound of at least 100. At least one
     fixture glyph must have points.
-  - Hostile programs (at least one per covered outline format): self-referencing
+  - Hostile programs (at least one per container and outline pairing; Type 1 has one
+    pairing): self-referencing
     composites, recursive subroutines, fan-out bombs.
     - With a control glyph, the program must load. The control glyph must outline (proof
       that the hostile path is reachable), and every listed glyph must fail with
@@ -342,11 +345,13 @@ failed check by a stable name:
     - A program that loads must report the outline format it declares.
     - Listed glyphs must be in range (an out-of-range id fails trivially with
       `InvalidArgument`).
-    - Coverage counts only programs that **prove** their format: a control glyph that
-      outlines, every listed glyph rejected, and the declared format confirmed by the loaded
-      face. A program without a control glyph may still be supplied (it must not panic and
-      must be rejected as above), but junk that fails to load for a dull reason proves
-      nothing, so it never satisfies per-format coverage.
+    - Coverage counts only programs that **prove** their format: at least one listed glyph,
+      the program loads as the declared format, and its control glyph outlines, so the
+      listed glyphs sit on a path the backend reaches. Whether they are rejected is the
+      backend's verdict, reported by `font.hostile`, not part of the proof. A program without
+      a control glyph may still be supplied (it must not panic and must be rejected as
+      above), but junk that fails to load for a dull reason proves nothing, so it never
+      satisfies coverage.
     - No panic, and the invariants hold. Unbounded recursion overflows the
     stack and aborts the test process, which fails the run without a report entry.
   - Each fixture loads and matches exactly. Glyph id `glyph_count` gives `InvalidArgument`
@@ -359,10 +364,10 @@ failed check by a stable name:
     - A Type 1, CFF or CFF2 glyph with points runs at least one operator, so with
       `max_outline_ops` 0 it must give `LimitExceeded`. This catches a backend that ignores
       the caller's value and relies on a built-in budget.
-    - Each `min_ops` glyph (bound `n` ≥ 1) outlines at the default limits and gives
-      `LimitExceeded` with `max_outline_ops` `n - 1`. The required bound of 100 catches a
-      backend that counts too little (one per glyph, subroutine calls only, nothing for
-      TrueType composite components) and so passes the check at 0. The fixture author
+    - Each `min_ops` glyph (bound `n`, from 1 to the default `max_outline_ops`) outlines at
+      the default limits and gives `LimitExceeded` with `max_outline_ops` `n - 1`. The
+      required bound of 100 catches a backend that counts too little (one per glyph, nothing
+      for TrueType composite components) and so passes the check at 0. The fixture author
       states a bound they can justify from the program (operators written, components
       visited); a loose bound is allowed but weakens the check.
     - The hostile programs cover the upper end.
@@ -395,7 +400,11 @@ failed check by a stable name:
     composite components (the TrueType `min_ops` composite proves components are visited,
     not that their points are summed against the limit), and the per-FD `FontMatrix`
     normalisation of CID-keyed CFF. Admission adds a multi-FD fixture whose FD matrices
-    differ from the Top DICT's.
+    differ from the Top DICT's. The ops checks bound the count from below at three points
+    (0, `n - 1`, the default), so a backend that rejects every caller value below some
+    threshold and uses a built-in budget above it still passes. A backend that skips
+    operators inside subroutines passes unless the `min_ops` glyph runs its operators there,
+    and an uncounted fan-out bomb then hangs the run rather than failing a check.
 
 - `raster::run(&dyn Rasterizer)`. It checks pixels only where every correct backend agrees:
   shapes on pixel boundaries, pixel centres with anti-aliasing off, area coverage within ±20
@@ -570,7 +579,9 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     them; and weak hostile programs (an out-of-range glyph, a program that fails to load
     for a dull reason, a failing control glyph, no glyphs listed, a mislabelled format, and
     junk without control glyphs standing in for every format). Dropping the sfnt-CFF
-    fixture or any `min_ops` glyph fails coverage; names on glyphs past 64 and more than
+    fixture, any `min_ops` glyph, or only the sfnt-CFF heavy glyph or hostile program fails
+    coverage; a `min_ops` bound of 0, out of range or above the default limit is an invalid
+    fixture; names on glyphs past 64 and more than
     128 names pass against the correct toy.
   - `raster`: a 4 × 4-supersampling toy with f64 winding numbers and strokes built from
     polygons. It must pass. Each broken variant must fail exactly the expected checks:

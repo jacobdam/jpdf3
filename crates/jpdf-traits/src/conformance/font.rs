@@ -33,7 +33,8 @@ pub struct ExpectedGlyph {
 /// glyph must fail with `LimitExceeded` or `Malformed`. Without one, the load or each listed
 /// glyph must fail that way. A program that loads must report its declared `outline_format`.
 ///
-/// Per-format coverage counts only programs that prove their format: the program loads as
+/// Coverage (per container and outline pairing) counts only programs that prove their
+/// format: the program loads as
 /// its declared format and its control glyph outlines, so the listed glyphs sit on a path
 /// the backend really reaches. A program that fails to load proves nothing (junk fails to
 /// load too).
@@ -88,7 +89,8 @@ pub struct FontFixture {
     /// (charstring operators executed plus composite components visited, as
     /// [`FontFace::outline`] counts them): each outlines at the default limits and fails
     /// with `LimitExceeded` when `max_outline_ops` is `n - 1`. Coverage needs one glyph with
-    /// a bound of at least [`HEAVY_OPS`] per outline format (a composite for TrueType).
+    /// a bound of at least [`HEAVY_OPS`] per container and outline pairing (a composite for
+    /// TrueType). The bound may not exceed the default `max_outline_ops`.
     pub min_ops: Vec<(GlyphId, u32)>,
     /// Largest allowed difference, in font units, for advances, metrics and outline
     /// coordinates (backends may evaluate charstring arithmetic in different precisions).
@@ -97,9 +99,12 @@ pub struct FontFixture {
 }
 
 /// The smallest `min_ops` bound that counts for coverage: high enough that a backend counting
-/// one operation per glyph, or only subroutine calls, or nothing for composite components,
-/// fails the check.
+/// one operation per glyph, or nothing for composite components, fails the check. (Whether
+/// operators inside subroutines are counted depends on the fixture's glyph running them.)
 pub const HEAVY_OPS: u32 = 100;
+
+/// A container and outline format. The container is `None` for Type 1, which has one.
+type Pairing = (Option<FontProgram>, OutlineFormat);
 
 /// Every container and outline pairing a PDF can embed (ISO 32000-2 §9.9, Table 124).
 const ENGINE_PAIRINGS: [(FontProgram, OutlineFormat); 4] = [
@@ -138,14 +143,9 @@ pub fn run_font_engine(
         OutlineFormat::Cff,
         OutlineFormat::Cff2,
     ];
-    let covered = formats
-        .iter()
-        .all(|f| has_curve(fixtures, *f) && has_heavy(fixtures, *f))
-        && ENGINE_PAIRINGS.iter().all(|(p, o)| {
-            fixtures
-                .iter()
-                .any(|x| x.program == *p && x.outline_format == *o)
-        })
+    let pairings: Vec<Pairing> = ENGINE_PAIRINGS.iter().map(|&(p, o)| (Some(p), o)).collect();
+    let covered = formats.iter().all(|f| has_curve(fixtures, *f))
+        && pairings.iter().all(|pair| has_heavy(fixtures, *pair))
         && mapped(3, 1)
         && mapped(3, 0)
         && mapped(1, 0)
@@ -158,8 +158,8 @@ pub fn run_font_engine(
         });
     report.check("font.fixture_coverage", covered, || {
         format!(
-            "fixtures must cover TrueType, CFF and CFF2 outlines with curves and a min_ops \
-             glyph of at least {HEAVY_OPS} each, the pairings {ENGINE_PAIRINGS:?}, mapped cmap \
+            "fixtures must cover TrueType, CFF and CFF2 outlines with curves, a min_ops glyph \
+             of at least {HEAVY_OPS} in each pairing {ENGINE_PAIRINGS:?}, mapped cmap \
              lookups in (3,1), (3,0) and (1,0), a mapped CID and a CFF custom encoding"
         )
     });
@@ -174,18 +174,14 @@ pub fn run_font_engine(
         let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
             guarded(|| exercise_load(engine.load(data, h.program, limits), q))
         };
-        proven.extend(run_hostile(
-            &mut report,
-            h,
-            h.program == FontProgram::Sfnt,
-            &load,
-        ));
+        let proved = run_hostile(&mut report, h, h.program == FontProgram::Sfnt, &load);
+        proven.extend(proved.map(|o| (Some(h.program), o)));
     }
     for program in [FontProgram::Sfnt, FontProgram::BareCff] {
         let empty = guarded(|| engine.load(&[], program, &FontLimits::default()).err());
         empty_input(&mut report, empty);
     }
-    common(&mut report, fixtures, &proven, &formats);
+    common(&mut report, fixtures, &proven, &pairings);
     report
 }
 
@@ -203,7 +199,7 @@ pub fn run_type1(
         .iter()
         .all(|f| f.outline_format == OutlineFormat::Type1)
         && has_curve(fixtures, OutlineFormat::Type1)
-        && has_heavy(fixtures, OutlineFormat::Type1)
+        && has_heavy(fixtures, (None, OutlineFormat::Type1))
         && fixtures
             .iter()
             .any(|f| matches!(f.builtin_encoding, BuiltinEncoding::Custom(_)));
@@ -221,11 +217,17 @@ pub fn run_type1(
     }
     let mut proven = Vec::new();
     for h in hostile {
-        proven.extend(run_hostile(&mut report, h, false, &load));
+        let proved = run_hostile(&mut report, h, false, &load);
+        proven.extend(proved.map(|o| (None, o)));
     }
     let empty = guarded(|| parser.load(&[], &FontLimits::default()).err());
     empty_input(&mut report, empty);
-    common(&mut report, fixtures, &proven, &[OutlineFormat::Type1]);
+    common(
+        &mut report,
+        fixtures,
+        &proven,
+        &[(None, OutlineFormat::Type1)],
+    );
     report
 }
 
@@ -242,11 +244,12 @@ fn has_curve(fixtures: &[FontFixture], format: OutlineFormat) -> bool {
         })
 }
 
-/// Whether a fixture of `format` has a `min_ops` glyph with a bound of at least [`HEAVY_OPS`].
-fn has_heavy(fixtures: &[FontFixture], format: OutlineFormat) -> bool {
+/// Whether a fixture of this pairing has a `min_ops` glyph with a bound of at least
+/// [`HEAVY_OPS`] (the container is not compared for Type 1).
+fn has_heavy(fixtures: &[FontFixture], (program, format): Pairing) -> bool {
     fixtures
         .iter()
-        .filter(|f| f.outline_format == format)
+        .filter(|f| f.outline_format == format && program.is_none_or(|p| p == f.program))
         .any(|f| f.min_ops.iter().any(|(_, n)| *n >= HEAVY_OPS))
 }
 
@@ -609,13 +612,9 @@ fn empty_input(report: &mut Report, empty: Option<Option<BackendError>>) {
 }
 
 /// Fixture-independent checks.
-/// `proven` holds the declared format of every hostile program that proved it.
-fn common(
-    report: &mut Report,
-    fixtures: &[FontFixture],
-    proven: &[OutlineFormat],
-    formats: &[OutlineFormat],
-) {
+/// `proven` holds the pairing of every hostile program that proved its format; `required`
+/// is every pairing that needs one.
+fn common(report: &mut Report, fixtures: &[FontFixture], proven: &[Pairing], required: &[Pairing]) {
     report.check("font.has_fixtures", !fixtures.is_empty(), || {
         "no fixtures supplied; the adapter must provide at least one".into()
     });
@@ -626,11 +625,11 @@ fn common(
             .any(|f| f.glyphs.iter().any(|g| g.outline.point_count() > 0)),
         || "fixtures must expect at least one glyph with points (for the point limit)".into(),
     );
-    let covered = formats.iter().all(|f| proven.contains(f));
+    let covered = required.iter().all(|pair| proven.contains(pair));
     report.check("font.has_hostile_fixtures", covered, || {
         format!(
-            "every outline format in {formats:?} needs a hostile program that loads as that \
-             format with a control glyph that outlines; proven: {proven:?}"
+            "every pairing in {required:?} needs a hostile program in that container that \
+             loads as that format with a control glyph that outlines; proven: {proven:?}"
         )
     });
 }
@@ -733,13 +732,14 @@ fn run_fixture(report: &mut Report, f: &FontFixture, sfnt: bool, load: &LoadFn<'
             .all(|g| g.glyph.0 < f.glyph_count && g.outline.is_well_formed())
         && f.min_ops
             .iter()
-            .all(|(g, n)| g.0 < f.glyph_count && *n >= 1)
+            .all(|(g, n)| g.0 < f.glyph_count && (1..=full.max_outline_ops).contains(n))
         && f.tolerance.is_finite()
         && (0.0..=1.0).contains(&f.tolerance);
     report.check("font.fixture_valid", valid, || {
         format!(
             "{name}: glyph_count is 0, an expected or min_ops glyph is out of range, an \
-             expected outline is malformed, a min_ops bound is 0, or the tolerance is not \
+             expected outline is malformed, a min_ops bound is 0 or above the default \
+             max_outline_ops, or the tolerance is not \
              between 0 and 1"
         )
     });
