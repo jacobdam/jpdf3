@@ -141,6 +141,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Proving "rejected before reading" (size, type) without measuring memory → make the test file mode 0200: an
   implementation that opens first fails with EACCES instead of the limit error. Skip only that half as root.
   FIFO/device inputs need a hang timeout in the test, not a plain `output()` ([journal](journal/2026-11-21.md), PR #104).
+- Writing a "defaults fit the memory budget" check → summing the charged limits to exactly the 2 GiB cap proves
+  nothing: list the uncharged terms (binary, stacks, xref table, one parse's objects, decoder slack) and require a
+  reserve, or say plainly that there is none ([journal](journal/2026-11-21.md), PR #108, #109).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 - The workspace denies `as` casts in tests too → convert floats with a bit-setting helper

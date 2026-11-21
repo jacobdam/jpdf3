@@ -179,7 +179,8 @@ pub struct FaceMetrics {
 /// Every method is total: a damaged glyph gives an error for that glyph, never a panic, and
 /// every number returned is finite. Every [`GlyphId`] returned is below
 /// [`FontFace::glyph_count`]. Faces are cached per document and shared across rendering
-/// threads, hence `Send + Sync`.
+/// threads, hence `Send + Sync`. The face cache (not written yet) must charge each cached face
+/// and the program it borrows to [`crate::Limits::max_retained_bytes_per_document`].
 pub trait FontFace: Send + Sync {
     /// How the outlines are stored.
     fn outline_format(&self) -> OutlineFormat;

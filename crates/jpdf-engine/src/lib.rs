@@ -71,20 +71,37 @@ impl From<CosError> for EngineError {
 #[derive(Debug)]
 pub struct Document {
     page_count: usize,
+    /// The clamped limits from `open`. Later operations on this document use these, so a
+    /// caller can't hand in looser limits after opening (specs/core/limits-ceiling.md).
+    limits: Limits,
 }
 
 impl Document {
     /// Opens a document from its bytes.
+    ///
+    /// `limits` can only tighten the defaults: every field is clamped to
+    /// [`Limits::default`] first, because the value may come from Swift or JS
+    /// (CONSTITUTION 5). A depth of 10^7, for example, would overflow the parser's stack.
     pub fn open(bytes: &[u8], limits: &Limits) -> Result<Self, EngineError> {
+        let limits = limits.clamped_to(&Limits::default());
+        let limits = &limits;
         if bytes.len() > limits.max_file_size {
             return Err(EngineError::LimitExceeded("file size"));
         }
         let xref = XrefDocument::parse(bytes, limits)?;
         let page_count = jpdf_cos::flat_page_count(&xref, limits)?;
-        Ok(Self { page_count })
+        Ok(Self {
+            page_count,
+            limits: limits.clone(),
+        })
     }
 
     pub fn page_count(&self) -> usize {
         self.page_count
+    }
+
+    /// The limits this document enforces: the caller's, clamped to the defaults.
+    pub fn limits(&self) -> &Limits {
+        &self.limits
     }
 }
