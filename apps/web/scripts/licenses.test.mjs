@@ -1,6 +1,10 @@
 // Tests for licenses-lib.mjs (spec: specs/tooling/licenses.md). Run: node --test scripts/
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { bareRoot, check, licenseOk, nameOf, resolve } from "./licenses-lib.mjs";
 
 // A small tree: app depends on `ui`, which depends on `util` and has an optional peer `peer`.
@@ -279,4 +283,186 @@ test("imports from devDependencies of the root are reported with the file name",
   assert.deepEqual(problems({ sources: [{ file: "src/t.tsx", text: 'import "tool"' }] }), [
     "src/t.tsx: imports tool, which is not in package.json dependencies",
   ]);
+});
+
+test("an entry without dev is production even when nothing reaches it (owner rule, #50)", () => {
+  const p = problems({
+    packages: { "node_modules/stray": { license: "MPL-2.0", extraneous: true } },
+  });
+  assert.deepEqual(p, [
+    "node_modules/stray: lockfile says MPL-2.0 (production tree)",
+    "node_modules/stray: package.json says MPL-2.0 (production tree)",
+  ]);
+  assert.equal(check(tree()).production, 2);
+  assert.equal(
+    check(tree({ packages: { "node_modules/stray": { license: "MIT", extraneous: true } } }))
+      .production,
+    3,
+  );
+});
+
+test("resolution walks every level of a deep path", () => {
+  const packages = {
+    "": {},
+    "node_modules/a": {},
+    "node_modules/a/node_modules/b": {},
+    "node_modules/a/node_modules/b/node_modules/c": {},
+    "node_modules/a/node_modules/b/node_modules/e": {},
+    "node_modules/a/node_modules/d": {},
+    "node_modules/d": {},
+  };
+  const from = "node_modules/a/node_modules/b/node_modules/c";
+  assert.equal(resolve(packages, from, "d"), "node_modules/a/node_modules/d");
+  assert.equal(resolve(packages, from, "e"), "node_modules/a/node_modules/b/node_modules/e");
+  assert.equal(resolve(packages, from, "b"), "node_modules/a/node_modules/b");
+  assert.equal(resolve(packages, "node_modules/a/node_modules/b", "c"), from);
+});
+
+test("an optional dependency three levels deep stays in the production tree", () => {
+  const p = problems({
+    packages: {
+      "node_modules/ui": { license: "MIT", dependencies: { util: "1", mid: "1" } },
+      "node_modules/ui/node_modules/mid": {
+        license: "MIT",
+        dev: true,
+        dependencies: { leaf: "1" },
+      },
+      "node_modules/ui/node_modules/mid/node_modules/leaf": {
+        license: "MIT",
+        dev: true,
+        optionalDependencies: { deep: "1" },
+      },
+      "node_modules/ui/node_modules/deep": { license: "NCSA", dev: true },
+    },
+  });
+  assert.equal(p.length, 2, p.join("\n"));
+  assert.match(p[0], /^node_modules\/ui\/node_modules\/deep: .*production tree/);
+});
+
+test("root optionalDependencies are production; they may not be imported", () => {
+  const rootManifest = { dependencies: { ui: "1" }, optionalDependencies: { opt: "1" } };
+  const p = problems({
+    rootManifest,
+    packages: { "node_modules/opt": { license: "0BSD", dev: true } },
+  });
+  assert.equal(p.length, 2);
+  assert.match(p[0], /^node_modules\/opt: .*production tree/);
+  const q = problems({
+    rootManifest: { ...rootManifest, peerDependencies: { peer: "1" } },
+    packages: { "node_modules/opt": { license: "MIT" } },
+    sources: [{ file: "src/a.ts", text: 'import "opt"; import "peer";' }],
+  });
+  assert.equal(q.length, 2, q.join("\n"));
+});
+
+test("edges are the union of the lockfile entry and the installed manifest", () => {
+  // The installed manifest drops ui → extra; the lockfile still declares it.
+  const p = problems({
+    packages: {
+      "node_modules/ui": { license: "MIT", dependencies: { util: "1", extra: "1" } },
+      "node_modules/extra": { license: "MPL-2.0", dev: true },
+    },
+    manifests: { "node_modules/ui": { license: "MIT", dependencies: { util: "1" } } },
+  });
+  assert.equal(p.length, 2);
+  assert.match(p[0], /^node_modules\/extra: .*production tree/);
+});
+
+test("an npm alias doesn't inherit the CC-BY data allowance", () => {
+  const evil = { license: "CC-BY-4.0", dev: true, name: "evil-code" };
+  assert.equal(problems({ packages: { "node_modules/caniuse-lite": evil } }).length, 2);
+  const real = { license: "CC-BY-4.0", dev: true };
+  const p = problems({
+    packages: { "node_modules/caniuse-lite": real },
+    manifests: { "node_modules/caniuse-lite": { ...real, name: "evil-code" } },
+  });
+  assert.equal(p.length, 2);
+  const ok = problems({
+    packages: { "node_modules/caniuse-lite": real },
+    manifests: { "node_modules/caniuse-lite": { ...real, name: "caniuse-lite" } },
+  });
+  assert.deepEqual(ok, []);
+});
+
+test("paths into node_modules, template literals and CSS imports are scanned", () => {
+  const src = (text) => [{ file: "src/a.css", text }];
+  for (const text of [
+    'import x from "../node_modules/tool/index.js";',
+    'import x from "/node_modules/tool/index.js";',
+    'import x from "/@fs/home/u/app/node_modules/ui/x.js";',
+    'import x from "../node_modules/ui/x.js";',
+    "const m = await import(`tool`);",
+    '@import "tool/x.css";',
+    "@import url(tool/x.css);",
+    '@import url("tool/x.css");',
+  ]) {
+    assert.equal(problems({ sources: src(text) }).length, 1, text);
+  }
+  assert.deepEqual(problems({ sources: src('@import url("./local.css");') }), []);
+});
+
+test("a hostile root manifest is reported, not thrown", () => {
+  for (const rootManifest of [null, 7, "x"]) {
+    const p = check({ ...tree(), rootManifest }).problems;
+    assert.equal(p[0], "package.json: not an object", String(rootManifest));
+  }
+});
+
+// Integration: the real script over a fixture app directory.
+test("check-licenses.mjs reads nested sources, manifests and the bundle guards", () => {
+  const scripts = fileURLToPath(new URL(".", import.meta.url));
+  const base = join(scripts, "..", "node_modules", ".cache");
+  mkdirSync(base, { recursive: true });
+  const dir = mkdtempSync(join(base, "licenses-test-"));
+  const run = () =>
+    spawnSync(process.execPath, [join(scripts, "check-licenses.mjs"), dir], { encoding: "utf8" });
+  const write = (rel, text) => {
+    mkdirSync(join(dir, rel, ".."), { recursive: true });
+    writeFileSync(join(dir, rel), text);
+  };
+  try {
+    const lock = {
+      packages: {
+        "": {},
+        "node_modules/ui": { license: "MIT" },
+        "node_modules/tool": { license: "MPL-2.0", dev: true },
+      },
+    };
+    write("package-lock.json", JSON.stringify(lock));
+    write(
+      "package.json",
+      JSON.stringify({ dependencies: { ui: "1" }, devDependencies: { tool: "1" } }),
+    );
+    write("node_modules/ui/package.json", JSON.stringify({ license: "MIT" }));
+    write("node_modules/tool/package.json", JSON.stringify({ license: "MPL-2.0" }));
+    write("index.html", '<script type="module" src="/src/main.tsx"></script>');
+    write("vite.config.ts", "export default {};");
+    write("src/main.tsx", 'import "ui";');
+    write("src/deep/er/x.cts", 'import "ui";');
+    let r = run();
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /2 packages, 1 production, 2 installed, 3 source files/);
+
+    write("src/deep/er/x.cts", 'import "tool";');
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /src\/deep\/er\/x\.cts: imports tool/);
+    write("src/deep/er/x.cts", "");
+
+    write("node_modules/ui/package.json", JSON.stringify({ license: "MPL-2.0" }));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /node_modules\/ui: package\.json says MPL-2\.0 \(production tree\)/);
+    write("node_modules/ui/package.json", JSON.stringify({ license: "MIT" }));
+
+    write("public/x.js", "");
+    write("vite.config.ts", "export default { resolve: { alias: {} }, publicDir: 'p' };");
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /public\/: Vite copies it/);
+    assert.match(r.stderr, /uses alias/);
+    assert.match(r.stderr, /uses publicDir/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

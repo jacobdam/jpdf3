@@ -7,10 +7,13 @@
 // package is not visible here; see docs/adr/0002 item 5.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { check } from "./licenses-lib.mjs";
 
-const root = new URL("../", import.meta.url);
+// The app directory: apps/web, or the first argument (used by the integration test).
+const root = process.argv[2]
+  ? pathToFileURL(`${process.argv[2].replace(/\/$/, "")}/`)
+  : new URL("../", import.meta.url);
 const readJson = (url) => JSON.parse(readFileSync(url, "utf8"));
 
 const lock = readJson(new URL("package-lock.json", root));
@@ -26,12 +29,30 @@ for (const path of Object.keys(lock.packages ?? {})) {
 // Everything Vite bundles: src/ (recursively) and index.html.
 const sources = [{ file: "index.html", text: readFileSync(new URL("index.html", root), "utf8") }];
 for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFileTypes: true })) {
-  if (!entry.isFile() || !/\.(m?[jt]sx?|css|html)$/.test(entry.name)) continue;
+  if (!(entry.isFile() || entry.isSymbolicLink())) continue;
+  if (!/\.([cm]?[jt]sx?|css|html)$/.test(entry.name)) continue;
   const full = join(entry.parentPath, entry.name);
   sources.push({ file: relative(fileURLToPath(root), full), text: readFileSync(full, "utf8") });
 }
 
 const { problems, production, installed } = check({ lock, rootManifest, manifests, sources });
+
+// Ways into the bundle that the import scan can't see: Vite copies `public/` verbatim, and
+// aliases or another public directory remap imports. None is used; refuse them until the
+// check covers them (specs/tooling/licenses.md).
+if (existsSync(new URL("public", root))) {
+  problems.push(
+    "public/: Vite copies it into the bundle unchecked; extend the license check first",
+  );
+}
+const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
+for (const key of ["alias", "publicDir"]) {
+  if (viteConfig.includes(key)) {
+    problems.push(
+      `vite.config.ts: uses ${key}, which the import scan can't follow; extend the check first`,
+    );
+  }
+}
 if (problems.length > 0) {
   console.error(`licenses: ${problems.length} problem(s) (CONSTITUTION 10):`);
   for (const p of problems) console.error(`  ${p}`);

@@ -9,19 +9,23 @@ Status: implemented
 `npm run licenses` in `apps/web` first runs the unit tests (`node --test
 scripts/licenses.test.mjs`), then `scripts/check-licenses.mjs`. That script reads
 `package-lock.json`, `package.json`, every installed `node_modules/<path>/package.json`,
-`index.html` and every `.js/.jsx/.mjs/.ts/.tsx/.mts/.css/.html` file under `src/`. The
+`index.html`, `vite.config.ts` and every `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html`
+file (or symlink) under `src/`, recursively. An optional argument names another app
+directory (used by the integration test). The
 logic is in `scripts/licenses-lib.mjs`, pure functions over that data. It never runs package
 code and has no dependencies.
 
-1. **Production tree.** These are the lockfile paths reachable from the root `package.json`
-   `dependencies` and `optionalDependencies`, following each package's `dependencies`,
-   `optionalDependencies` and `peerDependencies` with Node's resolution rule: the nearest
-   `node_modules/<name>`, walking up from the requiring package. Edges come from the
-   installed `package.json` when there is one, else from the lockfile entry (platform
-   packages that aren't installed on this machine). The lockfile's `dev` flags are **not**
-   used, so an edited flag can't move a package out of the production tree. Installed
-   optional peers count as production, because a package may load them at run time. This is
-   stricter than npm's view.
+1. **Production tree.** It is the union of two sets:
+   - **The owner's rule (#50):** every lockfile entry without `dev: true`.
+   - **Reachable:** every lockfile path reachable from the root `package.json`
+     `dependencies` and `optionalDependencies`, following each package's `dependencies`,
+     `optionalDependencies` and `peerDependencies` with Node's resolution rule (the nearest
+     `node_modules/<name>`, walking up from the requiring package). Edges are the union of
+     the installed `package.json` and the lockfile entry. This set ignores `dev` flags, so an
+     edited flag can't move a reachable package out of the production tree. Installed
+     optional peers count as production, because a package may load them at run time.
+
+   The union is at least as strict as the owner's rule and stricter than npm's view.
 2. **Licenses.** Each lockfile entry's `license` and, if the package is installed, its real
    `package.json` `license` must pass:
    - production tree: the strict list (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, Zlib,
@@ -29,17 +33,29 @@ code and has no dependencies.
    - every other package (test and build tools): the strict list plus MPL-2.0,
      BlueOak-1.0.0, CC0-1.0, 0BSD and NCSA, plus CC-BY-4.0 **only** for package names in
      `CC_BY_DATA` (now `caniuse-lite`). CONSTITUTION 10 allows CC-BY-4.0 for data only, and
-     metadata can't tell data from code, so each name is a reviewed decision.
+     metadata can't tell data from code, so each name is a reviewed decision. The name comes
+     from the lockfile path, and the lockfile's and the manifest's `name` (when present)
+     must agree with it, so an npm alias (`"caniuse-lite": "npm:other@1"`) doesn't inherit
+     the allowance.
    - An expression is a single SPDX id or `A OR B …`, which passes if any option passes for
      that tree. `AND`, `WITH`, parentheses, non-strings and a missing license fail.
      Matching is exact and case-sensitive (`mit` fails).
    - OFL-1.1 (fonts only) is not accepted for npm packages; no font package is used.
 3. **Installed.** A lockfile entry that isn't optional, devOptional, peer or extraneous
    must be installed (`run npm ci first`).
-4. **Shipped imports.** Every bare import specifier in the shipped sources (`import … from
-   "x"`, `export … from "x"`, `import "x"`, `import("x")`) must name a package in the root
-   `dependencies`. Scoped names use two segments. Relative, absolute and URL/scheme
-   specifiers are skipped. So no package that is only in the test/build tree can be bundled.
+4. **Shipped imports.** These forms are scanned in the shipped sources: `import … from "x"`,
+   `export … from "x"`, `import "x"`, `import("x")`, ``import(`x`)``, CSS `@import "x"` and
+   `@import url(x)`.
+   - Every bare specifier must name a package in the root `dependencies`. Root
+     `optionalDependencies` and `peerDependencies` are not enough. Scoped names use two
+     segments.
+   - Any specifier containing `node_modules`, `/@fs/` or `/@id/` is refused: a path into a
+     package bypasses its name.
+   - Other relative, absolute and URL/scheme specifiers are skipped.
+5. **Bundle guards.** Vite copies `public/` verbatim, and `resolve.alias` or `publicDir`
+   remap what gets bundled, so the import scan can't follow them. None is used. The script
+   fails if `public/` exists or if `vite.config.ts` mentions `alias` or `publicDir`, until
+   the check is extended to cover them.
 
 ## Persistence
 Not applicable. Output goes to stderr: `licenses: ok (N packages, P production, I installed,
@@ -50,8 +66,9 @@ and then exit 1.
 Not applicable.
 
 ## Errors
-Every problem is a line; the script exits 1 if there is any. Hostile lockfile shapes (no
-`packages`, a `null` entry, a `null` installed manifest) become problems, not exceptions.
+Every problem is a line; the script exits 1 if there is any. Hostile shapes (a root
+manifest that isn't an object, no `packages`, a `null` entry, a `null` installed manifest)
+become problems, not exceptions.
 An unreadable or non-JSON file throws, which also exits non-zero and fails the CI step.
 
 ## Limits
@@ -62,13 +79,21 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
 ## Security
 - **What broken implementation still passes?**
   - A checker that trusts the lockfile `dev` flag fails the test "a lockfile that marks a
-    production package dev doesn't move it to the tool tree".
+    production package dev doesn't move it to the tool tree". One that uses reachability
+    alone fails "an entry without dev is production even when nothing reaches it".
   - One that reads only the lockfile fails the installed-manifest tests. One that builds
     edges only from the lockfile fails "edges come from the installed manifest".
   - One that ignores peers or optional dependencies fails the peer/optional test.
-  - One that resolves by name only (not nearest `node_modules`) fails both nested tests.
-  - One that allows CC-BY-4.0 by license alone fails the CC-BY tests (including a scoped
-    `@x/caniuse-lite` look-alike).
+  - One that resolves by name only (not nearest `node_modules`) fails the nested tests.
+    One that skips intermediate levels (`indexOf` for `lastIndexOf`) fails the deep-path
+    test.
+  - One that drops root `optionalDependencies` fails the root-optional test.
+  - One that allows CC-BY-4.0 by license alone fails the CC-BY tests. These include a
+    scoped `@x/caniuse-lite` look-alike and an npm alias.
+  - The integration test runs the real script on a fixture app directory. It covers nested
+    `src/` directories, `.cts` files, installed manifests and the bundle guards.
+  - The `AND`/`WITH`/parentheses guard is redundant with the exact `OR` split. Removing it
+    passes the tests and changes nothing.
   - One that applies the tool list everywhere fails "an MPL-2.0 production package fails";
     one that applies the strict list everywhere fails the tool-tree tests.
   - Each license in both lists has its own pass/fail assertion.
@@ -80,11 +105,15 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
     module-preload helper and esbuild's helpers (both MIT, in the strict list). A future
     Vite plugin that injects third-party runtime code must be checked by hand when it is
     added. ADR 0002 item 5 says so.
-  - `vite.config.ts`, `csp.ts` and `e2e/` aren't scanned: they run at build or test time
-    and aren't bundled.
+  - **Phantom dependencies:** a production package that `import`s a hoisted package it
+    doesn't declare. Node and Vite would resolve it, and the code would be bundled without
+    a strict check. The owner's rule has the same gap. A full fix checks Rollup's module
+    graph (every bundled module under a production-tree path); that is #99.
+  - `vite.config.ts`, `csp.ts` and `e2e/` aren't scanned for imports: they run at build or
+    test time and aren't bundled.
   - The import scan is a regular expression. Over-matching (an import-like string in a
-    comment) only adds a false alarm. Under-matching would need syntax Biome and TypeScript
-    reject in `src/` (`require`, computed `import()`).
+    comment) only adds a false alarm. It misses computed specifiers (``import(`${x}`)``,
+    `new URL(x, import.meta.url)`) and `require`. Review has to catch those in `src/`.
 
 ## Accessibility
 Not applicable.
@@ -97,5 +126,7 @@ Node ≥ 22.12 (the `engines` field); uses `node:test`, `fs.readdirSync({ recurs
 About 0.1 s for 186 packages plus about 0.1 s of tests.
 
 ## Tests
-`apps/web/scripts/licenses.test.mjs` (23 tests, `node:test`), run by every `npm run
+`apps/web/scripts/licenses.test.mjs` (32 tests, `node:test`, one of them an integration
+test of `check-licenses.mjs` on a fixture directory under the git-ignored
+`node_modules/.cache/`), run by every `npm run
 licenses`, so on every `cargo xtask ci linux` run.

@@ -33,6 +33,8 @@ export function nameOf(path) {
  * anything that isn't a string are rejected.
  */
 export function licenseOk(expr, name, production) {
+  // The OR split alone would already reject these (an "A AND B" token matches no id); the
+  // guard keeps the rule explicit if the split ever changes.
   if (typeof expr !== "string" || /[()]|\b(AND|WITH)\b/.test(expr)) return false;
   return expr.split(" OR ").some((raw) => {
     const id = raw.trim();
@@ -63,14 +65,16 @@ function keys(obj) {
 }
 
 /**
- * The production tree: every lockfile path reachable from the root manifest's
- * `dependencies` (and `optionalDependencies`) through each package's `dependencies`,
- * `optionalDependencies` and `peerDependencies`. Edges come from the installed manifest when
- * there is one, else from the lockfile entry (platform packages that aren't installed here).
- * The lockfile's own `dev` flags are not used. Installed optional peers count as production
- * (a package may load them at run time), which is stricter than npm's view.
+ * The reachable part of the production tree: every lockfile path reachable from the root
+ * manifest's `dependencies` (and `optionalDependencies`) through each package's
+ * `dependencies`, `optionalDependencies` and `peerDependencies`. Edges are the union of the
+ * installed manifest's and the lockfile entry's. The lockfile's `dev` flags are not used
+ * here, so an edited flag can't hide a reachable package; `check` adds every entry without
+ * `dev` on top. Installed optional peers count as production (a package may load them at run
+ * time).
  */
 export function productionTree(packages, rootManifest, manifests, problems) {
+  const edges = (m, field) => (m !== null && typeof m === "object" ? keys(m[field]) : []);
   const seen = new Set();
   const queue = [];
   const visit = (from, deps, required) => {
@@ -88,11 +92,12 @@ export function productionTree(packages, rootManifest, manifests, problems) {
   visit("", keys(rootManifest.optionalDependencies), false);
   while (queue.length > 0) {
     const path = queue.pop();
-    const m = manifests.get(path) ?? packages[path] ?? {};
-    const optional = new Set([...keys(m.optionalDependencies), ...keys(m.peerDependencies)]);
+    const both = [manifests.get(path), packages[path]];
+    const all = (field) => both.flatMap((m) => edges(m, field));
+    const optional = new Set([...all("optionalDependencies"), ...all("peerDependencies")]);
     visit(
       path,
-      keys(m.dependencies).filter((d) => !optional.has(d)),
+      [...new Set(all("dependencies"))].filter((d) => !optional.has(d)),
       true,
     );
     visit(path, [...optional], false);
@@ -109,9 +114,13 @@ export function bareRoot(spec) {
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
-// Static `import … from "x"`, `export … from "x"`, side-effect `import "x"` and dynamic
-// `import("x")`. Over-matching (an import-like string in a comment) only adds a false alarm.
-const IMPORT_RE = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
+// Static `import … from "x"`, `export … from "x"`, side-effect `import "x"`, dynamic
+// `import("x")` and ``import(`x`)``, and CSS `@import "x"` / `@import url(x)`. Over-matching
+// (an import-like string in a comment) only adds a false alarm.
+const IMPORT_RES = [
+  /\b(?:from|import)\s*\(?\s*["'`]([^"'`]+)["'`]/g,
+  /@import\s+url\(\s*["'`]?([^"'`)\s]+)/g,
+];
 
 /**
  * Every bare import in shipped sources must name a package in the root manifest's
@@ -120,10 +129,20 @@ const IMPORT_RE = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
 export function checkImports(sources, rootManifest, problems) {
   const deps = new Set(keys(rootManifest.dependencies));
   for (const { file, text } of sources) {
-    for (const m of text.matchAll(IMPORT_RE)) {
-      const root = bareRoot(m[1]);
-      if (root !== null && !deps.has(root)) {
-        problems.push(`${file}: imports ${m[1]}, which is not in package.json dependencies`);
+    for (const re of IMPORT_RES) {
+      for (const m of text.matchAll(re)) {
+        const spec = m[1];
+        // A path into node_modules (relative, absolute or Vite's /@fs/) bypasses the name.
+        if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
+          problems.push(
+            `${file}: imports ${spec}, a path into node_modules (use the package name)`,
+          );
+          continue;
+        }
+        const root = bareRoot(spec);
+        if (root !== null && !deps.has(root)) {
+          problems.push(`${file}: imports ${spec}, which is not in package.json dependencies`);
+        }
       }
     }
   }
@@ -133,25 +152,38 @@ export function checkImports(sources, rootManifest, problems) {
  * Checks the whole tree. `manifests` maps lockfile paths to installed `package.json`
  * contents (missing key: not installed). Returns `{ problems, production, installed }`.
  */
-export function check({ lock, rootManifest, manifests, sources }) {
+export function check({ lock, rootManifest: rawRoot, manifests, sources }) {
   const problems = [];
+  let rootManifest = rawRoot;
+  if (rootManifest === null || typeof rootManifest !== "object") {
+    problems.push("package.json: not an object");
+    rootManifest = {};
+  }
   const packages = lock !== null && typeof lock === "object" ? (lock.packages ?? {}) : {};
   if (keys(packages).length === 0) problems.push("package-lock.json: no packages");
   const production = productionTree(packages, rootManifest, manifests, problems);
   let installed = 0;
+  let prodCount = 0;
   for (const [path, pkg] of Object.entries(packages)) {
     if (path === "") continue;
     if (pkg === null || typeof pkg !== "object") {
       problems.push(`${path}: lockfile entry is not an object`);
       continue;
     }
-    const name = nameOf(path);
-    const prod = production.has(path);
+    const manifest = manifests.get(path);
+    // The CC-BY data list matches names, so an npm alias (`"caniuse-lite": "npm:other@1"`)
+    // must not inherit it: the real names have to agree with the path.
+    const pathName = nameOf(path);
+    const realNames = [pkg.name, manifest?.name].filter((n) => n !== undefined);
+    const name = realNames.every((n) => n === pathName) ? pathName : null;
+    // Reachable from `dependencies` (dev flags ignored), or not marked dev in the lockfile
+    // (the owner's rule for #50): either one puts the package under the strict list.
+    const prod = production.has(path) || pkg.dev !== true;
+    if (prod) prodCount += 1;
     const tree = prod ? "production" : "test/build";
     if (!licenseOk(pkg.license, name, prod)) {
       problems.push(`${path}: lockfile says ${pkg.license ?? "no license"} (${tree} tree)`);
     }
-    const manifest = manifests.get(path);
     if (manifest !== undefined) {
       installed += 1;
       const real = manifest?.license;
@@ -164,5 +196,5 @@ export function check({ lock, rootManifest, manifests, sources }) {
     }
   }
   checkImports(sources, rootManifest, problems);
-  return { problems, production: production.size, installed };
+  return { problems, production: prodCount, installed };
 }

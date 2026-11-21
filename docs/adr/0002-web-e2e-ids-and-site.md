@@ -34,21 +34,24 @@ CONSTITUTION 10 has to be enforced by us.
    a shipped artifact may also use MPL-2.0, BlueOak-1.0.0, CC-BY-4.0 (data only), CC0-1.0,
    0BSD and NCSA. `npm run licenses` (specs/tooling/licenses.md) enforces the rule in two
    trees:
-   - The **production tree** is everything reachable from `package.json` `dependencies`. It
-     is computed from installed manifests, not from the lockfile's `dev` flags, and must use
-     the strict list.
+   - The **production tree** must use the strict list. It is every lockfile entry without
+     `dev` (the owner's rule), plus everything reachable from `package.json` `dependencies`
+     through the installed manifests' and lockfile's edges. Reachability ignores `dev`
+     flags, so an edited flag can't hide a reachable package.
    - The **full tree** may also use the tool-only licenses. CC-BY-4.0 passes only for named
      data packages (`caniuse-lite`).
-   - Shipped sources (`src/`, `index.html`) may import only `dependencies`, so no tool-only
-     package can be bundled.
+   - Shipped sources (`src/`, `index.html`) may import only `dependencies`, by name, never
+     by a path into `node_modules`. `public/`, `resolve.alias` and `publicDir` are refused
+     until the check covers them.
 
    The bundled-code gap recorded here before is now covered by the rule. Playwright bundles
    `caniuse-lite` (CC-BY-4.0, data) and `minimatch` (BlueOak-1.0.0); Vite bundles
    `string-hash` (CC0-1.0); Rollup bundles `tslib` (0BSD). All of these are test/build tools
    whose files never reach `dist/`. The check still reads package metadata only, not code
-   bundled inside a package's files. So a **production** dependency that bundles third-party
-   code, or a Vite plugin that injects third-party runtime code into the bundle, must be
-   checked by hand when it is added. Vite 8, ESLint, Babel-based plugins and axe-core are no
+   bundled inside a package's files. So three cases must be checked by hand when they are
+   added: a **production** dependency that bundles third-party code, a Vite plugin that
+   injects third-party runtime code into the bundle, and a production dependency that
+   imports a package it doesn't declare. Vite 8, ESLint, Babel-based plugins and axe-core are no
    longer ruled out by license; adopting any of them is a separate issue (#50 item 3).
 6. Tests run against `vite preview` of the production build, never the dev server (whose HMR
    scripts would need a weaker policy).
