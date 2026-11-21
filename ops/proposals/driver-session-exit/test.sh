@@ -76,21 +76,29 @@ run() {
   printf '%-20s rc=%-3s %4s  %s\n' "$sc${AFTER_RETURN:+ (after)}" "$rc" "$t" "$status"
 }
 run normal              0   0  20 'finished rc=0 session'
-run hang_child          0  30  39 'finished rc=0 stopped=settled'  # stopped right at the grace
+run hang_child          0  30  40 'finished rc=0 stopped=settled'  # stopped right at the grace
 run late_turn           0  25  35 'finished rc=0 session' '!stopped='  # quiet grace-0.5 s survives
 run bg_wait             0  60  70 'finished rc=0 session' '!stopped='  # a running background task
 run slow_turn           0  60  70 'finished rc=0 session' '!stopped='  # a started turn
-run escaped_child       0  30  45 'stopped=settled'                # a setsid'd descendant is stopped too
-run stubborn            0 180 189 'stopped=settled'                # TERM ignored: KILL after 15 s
-run catches_term        0  30  39 'finished rc=0 stopped=settled'  # exits 1 on TERM: rc from the result
-run multi_result        1  30  39 'finished rc=1 stopped=settled'  # the last result decides
-BGMAX=6 run bg_stuck    0  60  69 'stopped=settled-bg'             # stale background list: BG_QUIET_MAX
+run escaped_child       0  30  40 'stopped=settled'                # a setsid'd descendant is stopped too
+run grandchild          0  30  40 'stopped=settled'                # a setsid'd grandchild too
+run orphan              0  30  40 'stopped=settled'                # an in-group orphan (group kill)
+run bg_cleared          0  30  40 'finished rc=0 stopped=settled'  # a finished background task
+run stubborn            0 180 190 'stopped=settled'                # TERM ignored: KILL after 15 s
+run stubborn_escaped    0 180 190 'stopped=settled'                # setsid'd and TERM ignored
+run catches_term        0  30  40 'finished rc=0 stopped=settled'  # exits 1 on TERM: rc from the result
+run multi_result        1  30  40 'finished rc=1 stopped=settled'  # the last result decides
+run self_kill           0  10  20 'finished rc=0 session'          # SIGKILLed after its answer
+BGMAX=6 run bg_stuck    0  60  70 'stopped=settled-bg'             # stale background list: BG_QUIET_MAX
 BGMAX=3 run bg_near     0  25  35 '!stopped='                      # BG_QUIET_MAX-0.5 s survives
 BGMAX=3 run mid_quiet   0  40  50 '!stopped='                      # quiet mid-turn is never settled
-SMAX=4 BGMAX=30 run bg_stuck 143 40 49 'stopped=SESSION_MAX'      # cut off after a result: signal rc
+SMAX=4 BGMAX=30 run bg_stuck 143 40 50 'stopped=SESSION_MAX'      # cut off after a result: signal rc
+SMAX=4 run smax_term  143  40  50 'stopped=SESSION_MAX'           # exits 0 on TERM: still 143
 run limit_result       42   0  20
 run limit_429          42   0  20
 run exit0_limit        42   0  20                                  # error result, exit 0
+run limit_then_boom     1   0  20                                  # the last result decides
+run boom_then_limit    42   0  20
 run words_only          1   0  20                                  # limit words in the transcript only
 run limit_stderr       42   0  20
 run noise_stderr        1   0  20
@@ -100,7 +108,7 @@ run rl_rejected        42   0  20
 run rl_rej_then_ok      1   0  20                                  # the last rate-limit event decides
 run ok_rejected         0   0  20                                  # a successful result is not a limit
 run error_exit          1   0  20
-SMAX=4 run forever    143  40  49 'stopped=SESSION_MAX'           # SESSION_MAX still applies
+SMAX=4 run forever    143  40  50 'stopped=SESSION_MAX'           # SESSION_MAX still applies
 SIG="HUP 20" run hup_driver  130 20 35 'driver signalled'         # closing tmux stops the session
 SIG="TERM 20" run hup_driver 130 20 35 'driver signalled'         # so does a TERM to the driver
 # The trap ends with run_session: a later HUP kills the driver normally (129), stop_group never runs.

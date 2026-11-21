@@ -29,8 +29,9 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   answer). Never use ScheduleWakeup or CronCreate: a session is not a `/loop`, and background
   agents and background Bash calls re-invoke you when they finish, so a fallback timer only
   delays the exit. When your next step needs a reviewer's answer, run it in the foreground
-  (`run_in_background: false`). Never end your turn while a background agent works: the
-  PR #127 session's re-review was interrupted at the moment of its final answer. Before your
+  (`run_in_background: false`). Never end your turn while a background agent works:
+  `claude -p` stops background tasks still running 10 min after the last turn, and session
+  `20261121T180515Z` (PR #127) lost its re-review that way. Before your
   final message, stop every background shell, Monitor and dev server with TaskStop.
 - **Keep the session small.** If the work won't fit comfortably (≈60% of your context), split
   it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =

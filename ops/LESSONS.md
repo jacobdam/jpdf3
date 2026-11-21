@@ -51,6 +51,17 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   an unrelated `biome@0.3.3`). Run `npm ci --ignore-scripts` in the worktree first and call `./node_modules/.bin/<tool>`
   ([journal](journal/2026-11-22.md), PR #121).
 
+- Waiting on a background agent or shell → don't set a ScheduleWakeup/CronCreate "fallback": `claude -p` stays alive
+  until the timer fires (up to 20 min idle after the final answer, #125). And never end the turn to wait: `claude -p`
+  kills background tasks still running 10 min after the last turn (a re-review was lost that way). Run reviewers in
+  the foreground ([journal](journal/2026-11-21.md), PR #127).
+- Timing tests that read file mtimes (`stat -f %m`, 1 s resolution) → an off-by-one at the limit survives; measure
+  below a second (perl `Time::HiRes`) and test "half a second under survives / stops at the limit"
+  ([journal](journal/2026-11-21.md), PR #127).
+- Testing a diff for a protected file → the guard blocks `git apply`/`patch` even in scratch directories; generate
+  the diff from a scratch copy and test that copy, with a harness that refuses to run if the stubbing failed
+  ([journal](journal/2026-11-21.md), PR #127).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).

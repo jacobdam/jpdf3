@@ -52,10 +52,17 @@ Two driver bugs, both in `run_session`:
     when blocked is an **assumption**;
   - the CLI's stderr, only when there is no result line.
 
+**Later finding (session `20261121T180515Z`):** the CLI has its own ceiling for this case. Its
+log ends with "Background tasks still running 10m after the last turn (subagent …); stopping them.
+Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely." So background tasks don't keep
+`claude -p` alive for more than about 10 min after the final answer. That doesn't cover a pending
+ScheduleWakeup (the stuck session waited for its timer), and `BG_QUIET_MAX` stays as a backstop in
+case the ceiling changes or a listed task is stale.
+
 ## Proposed change
 
 The ready-to-apply diff is [`driver-session-exit/driver.diff`](driver-session-exit/driver.diff)
-(about 125 added lines). All changes are in `run_session` and new helpers:
+(about 130 added lines). All changes are in `run_session` and new helpers:
 
 1. **Own process group, plus descendants.** `claude` starts through
    `perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV'`, so pgid = pid. (macOS has no `setsid`
@@ -93,12 +100,14 @@ The ready-to-apply diff is [`driver-session-exit/driver.diff`](driver-session-ex
      list, or a shell or dev server left running. Stop. Logged background tasks ran up to
      27.5 min, and a silent background shell (a long `cargo` run) emits nothing while it runs,
      so the cap is set well above that.
-   - A missing log file skips the tick instead of ending the driver: bash 3.2 treats an
-     arithmetic error as fatal.
+   - A missing log file skips the tick. If perl fails, `secs_since` prints a huge number, so a
+     broken clock stops the session rather than silently skipping `SESSION_MAX` or the 15 s KILL
+     wait (an empty `(( ))` operand would just return false).
 5. **The exit code comes from the last result line** (0, or 1 if `is_error`) when the driver
    stopped a settled session, whatever the CLI does on TERM (it may exit 0 or 1 on its own), and
-   when the owner's signal killed it after it had answered. A `SESSION_MAX` stop keeps the
-   signal's rc (143): the session was cut off, even if an earlier turn had answered.
+   when a signal killed it after it had answered (the owner's kill, or a crash after the answer,
+   which is then logged as the answer's rc). A `SESSION_MAX` stop is always rc 143, even if the
+   CLI exits 0 on TERM or an earlier turn had answered: the session was cut off.
 6. **A usage limit returns 42** when rc ≠ 0 **or** the final result has `is_error` (the CLI's exit
    code for an error result isn't confirmed), **and** one of these holds:
    - the last `rate_limit_event` has `status` `rejected`;
@@ -133,19 +142,25 @@ Settle rule and process handling:
 | scenario | expected |
 |---|---|
 | normal exit | rc 0 |
-| result, then a child keeps the process alive | stopped at 3.0-3.9 s (right at the grace), rc 0, child killed |
+| result, then a child keeps the process alive | stopped at 3.0-4.0 s (right at the grace), rc 0, child killed |
 | result, quiet for grace − 0.5 s, then another turn | not stopped |
 | result while a background agent runs, which notifies 6 s later | not stopped, rc 0 |
 | the agent finishes, then the new turn's first output takes 5 s (more than the grace) | not stopped |
 | result, then a child in its own process group | stopped, child killed |
-| result, then a child that ignores TERM | KILL at 18.0-18.9 s (grace + 15 s), child gone |
+| result, then a setsid'd grandchild under an intermediate shell | stopped, grandchild killed |
+| result, then an in-group process whose parent exited (reparented) | stopped by the group kill |
+| a background task came and went before the result | `stopped=settled` at the grace |
+| result, then a child that ignores TERM | KILL at 18.0-19.0 s (grace + 15 s), child gone |
+| the same, setsid'd | KILL at 18.0-19.0 s, child gone |
+| SIGKILLed right after a good result | rc 0 |
 | result, then the CLI exits 1 on its own when it gets TERM | rc 0 (from the result) |
 | a good result, then a failed turn, then it lingers | rc 1 (the last result decides) |
-| result with a background task listed forever (`BG_QUIET_MAX=6`) | `stopped=settled-bg` at 6.0-6.9 s |
+| result with a background task listed forever (`BG_QUIET_MAX=6`) | `stopped=settled-bg` at 6.0-7.0 s |
 | result with a background task listed, quiet `BG_QUIET_MAX` − 0.5 s, then another turn | not stopped |
 | mid-turn (no result yet) quiet longer than `BG_QUIET_MAX=3` | not stopped |
-| result with a background task listed, `SESSION_MAX=4` | stopped at 4.0-4.9 s, rc 143 (not 0) |
-| no result and no exit (`SESSION_MAX=4`) | stopped at 4.0-4.9 s, rc 143 |
+| result with a background task listed, `SESSION_MAX=4` | stopped at 4.0-5.0 s, rc 143 (not 0) |
+| no result and no exit (`SESSION_MAX=4`) | stopped at 4.0-5.0 s, rc 143 |
+| no result, the CLI exits 0 on TERM (`SESSION_MAX=4`) | rc 143 |
 | HUP, or TERM, to the driver mid-session | rc 130, the setsid'd child is killed |
 | HUP to the driver after `run_session` returned | default death (129), no `driver signalled` |
 
@@ -160,6 +175,8 @@ Usage-limit detection:
 | error result with `api_error_status` 429 | 42 |
 | limit error result, process exits 0 | 42 |
 | limit words in tool output plus an `allowed` event, error result "max turns" | rc 1, **not** 42 |
+| a limit error result, then a later turn's different error | rc 1 (the last result decides) |
+| a different error, then a later limit error result | 42 |
 | no result, stderr names a usage limit | 42 |
 | no result, unrelated stderr | rc 1 |
 | no result, stderr says `rateLimit` (MCP noise) | rc 1 |
@@ -173,7 +190,8 @@ Every scenario also checks that the driver log line carries the right `stopped=`
 that an empty stderr file is removed, and that a non-empty one is kept.
 
 **Results on the Mac mini (2026-11-21):**
-- The patched driver passes 29/29.
+- The patched driver passes 37/37. Stops land 0.1-0.4 s after their limit; the upper bounds
+  leave about 0.6 s, because a `>`-for-`>=` mutant stops about 1 s late (4.1 s against 4.0 s).
 - Round 1: the then-current driver failed 12 of the first 20 scenarios: the four hang scenarios
   (each stalled until the harness's 60 s `SESSION_MAX`, with the child left alive), exit-0 limit,
   five false usage limits, `SESSION_MAX` and HUP.
@@ -186,6 +204,11 @@ that an empty stderr file is removed, and that a non-empty one is kept.
   settled-bg (mid_quiet), the limit check on rc 0 with a successful result (ok_rejected), no rc
   override for a settled stop (catches_term and the stop scenarios), and the override applied to
   `SESSION_MAX` (bg_stuck with `SESSION_MAX=4`).
+- Round 3 mutants, each caught: a sticky background count (bg_cleared), no group kill (orphan),
+  direct children only (grandchild), the first result in the limit check (limit_then_boom,
+  boom_then_limit), no rc override after a signal death (self_kill), no per-pid KILL
+  (stubborn_escaped), no forced 143 on `SESSION_MAX` (smax_term), and `>` at the grace (nine
+  stop scenarios).
 - One mutant passes: dropping the session's own pid from `stop_group`'s list. It matters only if
   `setpgrp` failed or the signal arrived before it ran, which the harness can't produce.
 - I also ran the new state, result-code and usage-limit functions over the 39 finished real logs:
