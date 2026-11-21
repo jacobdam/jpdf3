@@ -100,8 +100,11 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   bound; the reference look-ahead never decodes strings). Exact for every token kind (#113): a
   total of exactly the limit parses, one decoded byte more is refused. Each finished name, hex or
   literal string is checked as a whole, so a name's last byte and an odd hex string's implied
-  trailing 0 count too (they used to slip past the in-loop checks, 1 byte per token). Boundary
-  tests: `string_room_is_exact_for_every_token_kind`, `string_room_is_shared_and_exact_across_tokens`.
+  trailing 0 count too (they used to slip past the in-loop checks, 1 byte per token). The in-loop
+  checks stay: they are the memory bound, stopping a long token mid-scan at most one byte past
+  the room. Boundary tests: `string_room_is_exact_for_every_token_kind`,
+  `string_room_is_shared_and_exact_across_tokens`; `string_room_stops_the_scan_early` shows an
+  over-long string, name or hex string fails after ≤ 16 lexed bytes, not at its end.
 - `max_xref_entries` 10 000 000 across all sections;
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
 - `max_pages` 1 000 000 kids;
@@ -175,7 +178,9 @@ Self-check (#77):
   endless reader). An `i64::MIN` regression fails `integer_range_boundaries`.
   String room (#113): dropping the whole-token check, or making it off by one either way,
   fails the two `string_room_*` tests (each token kind at the limit and one past; the strict
-  version also fails the older room tests). An unbounded generation or `R` look-ahead fails
+  version also fails the older room tests). Dropping the in-loop room checks (keeping only the
+  whole-token one, so a hostile token is decoded in full first) fails
+  `string_room_stops_the_scan_early`. An unbounded generation or `R` look-ahead fails
   `reference_look_ahead_is_bounded` (bytes lexed ≤ input + 68); a generation bound of 63 or 65
   fails `generation_token_length_boundary`, and a scan bound 40 bytes looser than the constant
   also fails the bytes-lexed test. Dropping the skip memo, or keeping only one entry, fails

@@ -144,9 +144,11 @@ impl<'a, 'b> Lexer<'a, 'b> {
     }
 
     /// Charges a finished string or name to the room for this parse. The checks inside the
-    /// decoding loops run before each push, so they miss the last byte (a name's final byte, an
-    /// odd hex string's implied 0); this final check makes the limit exact for every token: a
-    /// total of exactly `max_string_bytes_per_parse` passes, one byte more fails (#113).
+    /// decoding loops (`check_string`) bound memory: they stop a long token mid-scan, at most one
+    /// byte past the room, and must stay. They run before each push, so they miss the last byte
+    /// (a name's final byte, an odd hex string's implied 0); this final check makes the limit
+    /// exact for every token: a total of exactly `max_string_bytes_per_parse` passes, one byte
+    /// more fails (#113).
     fn take_string(&mut self, out: Vec<u8>) -> Result<Vec<u8>, SyntaxError> {
         if out.len() > self.string_room {
             return Err(SyntaxError::LimitExceeded("string bytes in one object"));
@@ -880,6 +882,30 @@ mod tests {
         assert_eq!(parse_with_room(b"()", 0), string(b""));
         for past in [&b"/a"[..], b"<4>", b"<41>", b"(a)"] {
             assert_eq!(parse_with_room(past, 0), STRING_LIMIT, "{past:?}");
+        }
+    }
+
+    /// Issue #113 review: the in-loop checks stop a long token mid-scan (the memory bound), so
+    /// an over-long string, name or hex string fails with the limit error after a few bytes,
+    /// never reaching the unterminated end or decoding the whole token.
+    #[test]
+    fn string_room_stops_the_scan_early() {
+        let tail = 100_000;
+        let cases: [Vec<u8>; 3] = [
+            [&b"(abcde"[..], &vec![b'x'; tail]].concat(),
+            [&b"/abcde"[..], &vec![b'x'; tail]].concat(),
+            [&b"<6162636465"[..], &b"61".repeat(tail)].concat(),
+        ];
+        for src in cases {
+            let limits = Limits {
+                max_string_bytes_per_parse: 4,
+                ..Limits::default()
+            };
+            let budget = LexBudget::new(src.len(), &limits);
+            let r = Parser::new(&src, 0, &limits, &budget).parse_object();
+            assert_eq!(r, STRING_LIMIT, "{:?}", src.get(..6));
+            let used = budget.used.get();
+            assert!(used <= 16, "{:?}: lexed {used} bytes", src.get(..6));
         }
     }
 
