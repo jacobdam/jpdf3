@@ -663,6 +663,18 @@ fn round_trips(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate
             });
             continue;
         };
+        // The reference must be real output (an empty one would make the boundary vacuous).
+        let back = guarded(|| inflate.inflate(&reference, format, &unlimited));
+        report.check(
+            "flate.deflate_output_limit",
+            is_complete(&back, &input),
+            || {
+                format!(
+                    "{format:?}: the reference output does not inflate back: {}",
+                    describe_decoded(&back)
+                )
+            },
+        );
         let name = format!("64 KiB random ({format:?})");
         Boundary {
             check: "flate.deflate_output_limit",
@@ -1074,6 +1086,13 @@ mod tests {
                 .failures()
                 .iter()
                 .all(|f| f.detail.starts_with("dynamic Huffman")),
+            "{report}"
+        );
+        assert!(
+            report
+                .failures()
+                .iter()
+                .any(|f| f.detail.starts_with("dynamic Huffman, mixed")),
             "{report}"
         );
     }

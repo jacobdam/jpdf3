@@ -53,8 +53,9 @@ pub fn run_hasher(hasher: &dyn Hasher) -> Report {
             );
         }
         // Uneven two-part splits: a buffered implementation must carry a partial block
-        // across updates (3 + 997 and 63 + 937 bytes; 63 is one short of a 64-byte block).
-        for split in [3, 63] {
+        // across updates (3 + 997, 63 + 937 and 127 + 873 bytes: one short of a 64-byte
+        // block for MD5/SHA-1/SHA-256 and of a 128-byte block for SHA-384/512).
+        for split in [3, 63, 127] {
             let streamed = guarded(|| -> Result<Vec<u8>, BackendError> {
                 let mut state = hasher.start(algorithm)?;
                 let (head, tail) = data.split_at(split);
@@ -293,24 +294,30 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
             wrong(&[0, 0, 2]),
             wrong(&[1, 2]),
         ] {
-            let sealed = aes(Direction::Encrypt, &key, &iv, &probe, Padding::None);
-            let Some(Ok(sealed)) = sealed else {
-                report.check("crypto.aes_bad_padding", false, || {
-                    format!("encrypting the probe block: {}", describe(&sealed))
-                });
-                continue;
-            };
-            let result = aes(Direction::Decrypt, &key, &iv, &sealed, Padding::Pkcs7);
-            report.check(
-                "crypto.aes_bad_padding",
-                matches!(result, Some(Err(BackendError::Malformed(_)))),
-                || {
-                    format!(
-                        "final block {probe:02x?}: expected Malformed, got {}",
-                        describe(&result)
-                    )
-                },
-            );
+            // Each probe once as a single block and once after a full first block, so a
+            // check that only runs on one-block ciphertexts is caught.
+            for lead in [0usize, 16] {
+                let mut plain = vec![0x41u8; lead];
+                plain.extend_from_slice(&probe);
+                let sealed = aes(Direction::Encrypt, &key, &iv, &plain, Padding::None);
+                let Some(Ok(sealed)) = sealed else {
+                    report.check("crypto.aes_bad_padding", false, || {
+                        format!("encrypting the probe block: {}", describe(&sealed))
+                    });
+                    continue;
+                };
+                let result = aes(Direction::Decrypt, &key, &iv, &sealed, Padding::Pkcs7);
+                report.check(
+                    "crypto.aes_bad_padding",
+                    matches!(result, Some(Err(BackendError::Malformed(_)))),
+                    || {
+                        format!(
+                            "final block {probe:02x?} after {lead} bytes: expected Malformed, got {}",
+                            describe(&result)
+                        )
+                    },
+                );
+            }
         }
 
         // The IV must be used: two IVs give different first blocks.
