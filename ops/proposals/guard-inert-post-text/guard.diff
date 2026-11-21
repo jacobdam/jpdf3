@@ -22,35 +22,60 @@
          raise Block("writing `unsafe` into Rust sources is forbidden (CONSTITUTION 3)")
      for seg in _SEGMENT_SPLIT.split(cmd):
          seg = seg.strip()
-@@ -305,6 +306,17 @@
+@@ -291,11 +292,12 @@
+ 
+ def strip_inert_text(cmd, texts):
+     """Remove one quoted occurrence of each gh title/body that the shell passes through unexpanded:
+-    '...' (any content), or "..." with no $, `, \\ or ". Anything else stays and is checked."""
++    '...' (any content; a ' inside written as '\\''), or "..." with no $, `, \\ or ".
++    Anything else stays and is checked."""
+     for t in texts:
+         if not t:
+             continue
+-        forms = ["'%s'" % t] if "'" not in t else []
++        forms = ["'%s'" % t.replace("'", "'\\''")]
+         if not re.search(r'[$`\\"]', t):
+             forms.append('"%s"' % t)
+         for q in forms:
+@@ -303,6 +305,21 @@
+                 cmd = cmd.replace(q, "''", 1)
+                 break
      return cmd
- 
- 
-+_SINGLE_GH_POST = re.compile(r"gh (issue|pr) (comment|create|edit) [A-Za-z0-9 _./:#=@,+'-]*")
++
++
++_SINGLE_GH_POST = re.compile(
++    r" *gh (issue|pr) (comment|create|edit)( +([A-Za-z0-9_./:#=@,+-]+|''|--[a-z-]+=''))* *")
 +
 +
 +def inert_view(cmd, texts):
 +    """The whitespace-collapsed command with its inert gh titles/bodies removed, but only if what
-+    remains is one plain gh post: no shell metacharacters (; & | < > $ ` \\ " newline), so no
-+    second command can run a stripped copy of the text (bash -c, eval). Otherwise the full text."""
-+    stripped = " ".join(strip_inert_text(cmd, texts).split())
-+    return stripped if _SINGLE_GH_POST.fullmatch(stripped) else " ".join(cmd.split())
-+
-+
++    remains is one plain gh post: spaces between bare words and '' placeholders, nothing else (no
++    newline, tab, quote, metacharacter or non-ASCII), so no second command can run a stripped copy
++    of the text (bash -c, eval). Otherwise the full command, collapsed."""
++    stripped = strip_inert_text(cmd, texts)
++    if _SINGLE_GH_POST.fullmatch(stripped):
++        return " ".join(stripped.split())
++    return " ".join(cmd.split())
+ 
+ 
  def changed_files(cwd):
-     """Staged, unstaged and untracked paths (repo-relative) in the worktree at cwd."""
-     try:
-@@ -452,6 +464,13 @@
+@@ -452,6 +469,19 @@
          ("Bash", {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}, True),
          ("Bash", {"command": "gh issue comment 5 --body 'done'"}, True),
          ("Bash", {"command": "gh issue comment 5 --body '%s done'" % TAG}, False),
 +        ("Bash", {"command": "gh pr comment 5 --body '%s a.rs: n > 1, no unsafe added'" % TAG}, False),
++        ("Bash", {"command": "gh pr comment 5 --body '%s it'\\''s a.rs: n > 1, unsafe; cmux'" % TAG}, False),
++        ("Bash", {"command": "gh pr comment 5 --body='%s a.rs > b, unsafe'" % TAG}, False),
 +        ("Bash", {"command": "gh pr comment 5 --body '%s x'; echo 'unsafe {}' > a.rs" % TAG}, True),
++        ("Bash", {"command": "gh pr comment 5 --body '%s a.rs > b' && echo unsafe > a.rs" % TAG}, True),
 +        ("Bash", {"command": "gh pr comment 5 --body \"%s $(echo unsafe > a.rs)\"" % TAG}, True),
 +        ("Bash", {"command": "bash -c '%s; echo unsafe > a.rs'; gh pr comment 5 --body \"%s; echo un\"\"safe > a.rs\"" % (TAG, TAG)}, True),
 +        ("Bash", {"command": "eval '%s; echo unsafe > a.rs'; gh pr comment 5 --body \"%s; echo un\"\"safe > a.rs\"" % (TAG, TAG)}, True),
 +        ("Bash", {"command": "bash -c '%s; cmux send y'; gh issue comment 5 --body \"%s; cm\"\"ux send y\"" % (TAG, TAG)}, True),
-+        ("Bash", {"command": "gh pr comment 5 --body '%s a.rs > b' && echo unsafe > a.rs" % TAG}, True),
++        ("Bash", {"command": "gh pr edit 5 --title s'ed -i s/x/unsafe/ a.rs' --body '%s x'\nbash -c 'sed -i s/x/unsafe/ a.rs'" % TAG}, True),
++        ("Bash", {"command": "gh pr edit 5 --title cm'ux send y' --body '%s x'\nbash -c 'cmux send y'" % TAG}, True),
++        ("Bash", {"command": "gh pr comment 5 --body '%s x'\ncmux send y" % TAG}, True),
++        ("Bash", {"command": "gh pr comment 5 --body '%s x'\rsed -i s/x/unsafe/ a.rs" % TAG}, True),
          ("Bash", {"command": "gh issue comment 5 --body-file /tmp/b.md"}, True),
          ("Bash", {"command": "gh issue create -t x -b \"%s\nline2; with semicolon\"" % TAG}, False),
          ("Bash", {"command": "gh issue create -t x -l human"}, True),

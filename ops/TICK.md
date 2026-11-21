@@ -144,14 +144,17 @@ stand alone and cite repo-relative paths only: one line per finding,
 `R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
 
 **Post every review on the PR** (owner, #124), so the owner can read it without the session log.
+K = 1 + the number of `AI review, round` comments already on the PR (a resumed PR continues).
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
 2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment:
    `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
+   A second reviewer's report (if one runs) goes right after it, headed `**AI review (second
+   reviewer), round K**`, with finding IDs `S<K>.<n>`.
 3. Fix, commit and **push**.
 4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
-   finding: `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
+   finding (R and S): `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
    round gets one too ("no findings").
 5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
    changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
@@ -160,16 +163,20 @@ Each round K runs in this order:
 Mechanics (the guard wants one simple command with the text inline, no files):
 - Single-quote the body so `$`, backticks and `\` stay literal; write each `'` in the text as
   `'\''` (close, escaped quote, reopen), which keeps it verbatim.
-- Over 60 000 characters → split into comments marked `(part i/n)`.
+- Over 60 000 characters → split into comments; each part starts with the tag and the round
+  header, then `(part i/n)`.
 - Replace any absolute local path with a repo-relative one (or `<local path>`).
 - If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
-  it), and list every such change at the end of the comment. Known triggers: the Rust keyword
-  for unchecked code together with a `.rs` path and `>` (write it `un-safe`), the sealed-corpus
-  manifest name, the local settings file name, the GitHub API host, force-push and `git apply`
-  text, a `>` or arrow before a protected path, and the terminal-multiplexer name in any body that
-  contains a `'` (such a body never counts as inert text). Proposal: `ops/proposals/guard-inert-post-text.md`.
-- A second reviewer's report (if one runs) is posted the same way, headed `**AI review (second
-  reviewer), round K**`, with finding IDs `S<K>.<n>`.
+  it), and list every such change at the end of the comment. Known triggers:
+  - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
+    `sed -i`, `perl -i`): write it `un-safe`;
+  - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
+  - force-push, push-to-main, `-R <other repo>`, `patch` and `git apply` text;
+  - a `>`, an arrow or a `;`/`|` before a protected path;
+  - the terminal-multiplexer name in any body that contains a `'`, because such a body never
+    counts as inert text.
+
+  Proposal: `ops/proposals/guard-inert-post-text.md`.
 
 Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
