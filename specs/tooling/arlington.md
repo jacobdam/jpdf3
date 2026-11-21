@@ -21,13 +21,15 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
      SHA-1 explicitly, since the pins are SHA-1 ids whatever git's default becomes).
    - An existing path is checked before any other git call. It is refused, with an error
      asking to delete it, if it or its `objects` or `refs` is not a real directory (a
-     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if it has `commondir`, `objects/info/alternates` or
+     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if anything below
+     `objects` or `refs` is neither a real directory nor a regular file (git follows a
+     `refs/jpdf` or `objects/pack` symlink too; the walk visits at most 100 000 entries), if
+     it has `commondir`, `objects/info/alternates` or
      `objects/info/http-alternates` (links to another object store or config), if
      `git config --local --name-only --list` (which doesn't follow `include.path`) names any
      key other than `core.repositoryformatversion`, `core.filemode`, `core.bare`,
      `core.ignorecase`, `core.precomposeunicode` and `core.symlinks` (what `git init --bare`
-     writes), if `git --git-dir` does not accept it as a bare repository, or if
-     `git rev-parse --absolute-git-dir` doesn't resolve to the same canonical path.
+     writes), or if `git --git-dir` does not accept it as a bare repository.
    - If the pinned commit is missing it runs `git fetch --depth 1 --no-tags <url> <COMMIT>`
      and keeps it alive with the ref `refs/jpdf/pinned` (once; later runs are offline).
 
@@ -186,7 +188,9 @@ Not applicable (development tool).
 - Checks: `N model problem(s):` then one `<Object>/<Key>: <problem>` per line, exit 1.
 - Pinning: `fetch: <cache> is not a usable cache (…); delete it` (`(it has <link>)`,
   `(its config sets "<key>")` or git's error), `fetch: git <args> timed out after 600 s`,
-  `fetch: git <args>: output did not close` (or `input did not close`), `fetch: git fsck … failed (…): <stderr>`,
+  `fetch: git <args>: output did not close` (or `input did not close`), `fetch: <cache> is not
+  a usable cache (<path> is not a regular file or directory (symlinks are refused)); delete
+  it`, `… (more than 100000 entries) …`, `fetch: git fsck … failed (…): <stderr>`,
   `fetch: commit is X, pinned Y`, `fetch: tsv/latest tree is X, pinned Y`,
   `fetch: tsv/latest/<name> is not a .tsv file`, `fetch: git … failed (…): <stderr>`, exit 1.
 - Vendored copy: `vendored: LICENSE is blob X, pinned Y` (same for `NOTICE.txt`),
@@ -252,8 +256,10 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
     mutations, #82, and the review of #131): the exact `-c` list is asserted in order (so a
     typo in `protocol.https.allow` or the low-speed pair fails), and an HTTPS fetch from a
     closed local port must fail at the connection, not as "not allowed"; a gitfile, a
-    symlinked cache and symlinked `objects`/`refs` are refused and the foreign repository
-    gets no pin ref; a planted `reference-transaction` hook must not fire on `update-ref`,
+    symlinked cache, symlinked `objects`/`refs`, and symlinks at `refs/jpdf` and
+    `objects/pack` are refused and nothing is written through them; the walk budget passes
+    at exactly its count and fails one past it; the "did not close" group kill has its own
+    test; a planted `reference-transaction` hook must not fire on `update-ref`,
     with a control proving plain git runs it; each refused config key and link file, one at
     a time, with a clean cache passing before and after; a local path, `file://` and
     `ext::` URL must fail with git's "not allowed"; the deadline test runs a command whose
@@ -296,11 +302,14 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   `generate` output equal to the library's; git hardening (#82): a planted hook doesn't run
   (with a plain-git control that runs it), each foreign config key and link file is refused,
   local/`file://`/`ext::` fetches fail as "not allowed" and leave no hooks directory;
-  links elsewhere (gitfile, symlinked cache, symlinked `objects`/`refs`) are refused; HTTPS
-  reaches the connection.
+  links elsewhere (gitfile, symlinked cache, symlinked `objects`/`refs`, symlinked
+  `refs/jpdf` and `objects/pack`) are refused; HTTPS reaches the connection ("unable to
+  access", not "not allowed").
 - `tools/arlington/src/fetch.rs` unit tests (unix): the deadline kills a command and its
   background child that holds stdout open (within 2–15 s of a 2 s deadline); output past the
-  pipe buffer, stdin and failures pass through under the deadline; `scrub_env` removes every
+  pipe buffer, stdin and failures pass through under the deadline; a background child that
+  holds stdout after git exits makes the call fail after the 5 s grace and is killed; the
+  cache walk budget is exact and a nested symlink is refused; `scrub_env` removes every
   `GIT_*` name it is given in any case (unknown ones too) and `SSH_ASKPASS`, and nothing
   else; `git_command()` has exactly the `-c` list in order and leaves no inherited `GIT_*`
   variable.

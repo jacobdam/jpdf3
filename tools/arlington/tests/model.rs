@@ -358,15 +358,21 @@ fn a_broken_cache_is_refused_not_discovered_upwards() {
     assert!(!parent.join(".git/shallow").exists());
 }
 
-/// A bare cache made by `ensure_pinned` (whose fetch URL is never reached) holding the
-/// fixture commit, copied in over the local transport that `git_command` itself refuses.
+/// A bare cache, initialized like `ensure_pinned` does, holding the fixture commit, copied
+/// in over the local transport that `git_command` itself refuses.
 #[cfg(test)]
 #[cfg(unix)]
 fn fixture_cache(name: &str) -> (PathBuf, PathBuf, String) {
     let (dir, commit, _) = fixture_repo(name);
     let repo = scratch(&format!("{name}-cache")).join("c.git");
     let st = fetch::git_command()
-        .args(["init", "--bare", "--quiet", "--template="])
+        .args([
+            "init",
+            "--bare",
+            "--quiet",
+            "--template=",
+            "--object-format=sha1",
+        ])
         .arg(&repo)
         .status()
         .unwrap();
@@ -477,9 +483,9 @@ fn caches_with_foreign_config_or_links_are_refused() {
     fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
 }
 
-/// HTTPS is the only transport: a local path, `file://` and `ext::` are refused by git.
 /// The cache itself, or the directories git writes into, can't be links elsewhere: a
-/// gitfile, a symlinked cache, symlinked `objects` or `refs` (review of #131).
+/// gitfile, a symlinked cache, symlinked `objects` or `refs`, or a symlink deeper down
+/// (review of #131).
 #[cfg(unix)]
 #[test]
 fn caches_that_point_elsewhere_are_refused() {
@@ -523,6 +529,25 @@ fn caches_that_point_elsewhere_are_refused() {
             "{sub}: {e}"
         );
     }
+    // Deeper links: git would write the pin ref or the fetched pack through them.
+    for (i, sub) in ["refs/jpdf", "objects/pack"].iter().enumerate() {
+        let (_, repo, _) = fixture_cache(&format!("pin-deep-{i}"));
+        let target = repo.join(sub);
+        let real = repo.with_file_name("deep-real");
+        std::fs::create_dir_all(&real).unwrap();
+        if target.exists() {
+            std::fs::remove_dir_all(&target).unwrap();
+        }
+        std::os::unix::fs::symlink(&real, &target).unwrap();
+        let e = fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("is not a regular file or directory (symlinks are refused)"),
+            "{sub}: {e}"
+        );
+        assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0, "{sub}");
+    }
     // Control: the foreign repository itself is a fine cache.
     fetch::ensure_pinned(&foreign, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
 }
@@ -538,9 +563,10 @@ fn https_reaches_the_network_layer() {
         .unwrap_err()
         .to_string();
     assert!(e.contains("git fetch") && !e.contains("not allowed"), "{e}");
-    assert!(e.contains("127.0.0.1"), "{e}");
+    assert!(e.contains("unable to access"), "{e}");
 }
 
+/// HTTPS is the only transport: a local path, `file://` and `ext::` are refused by git.
 #[cfg(unix)]
 #[test]
 fn only_https_is_fetched() {

@@ -61,6 +61,11 @@ const POLL: Duration = Duration::from_millis(10);
 /// How long [`run`] waits for git's pipes to close after it exited.
 const PIPE_GRACE: Duration = Duration::from_secs(5);
 
+/// Entries [`check_cache`] walks under `objects` and `refs`. A cache holds one shallow
+/// commit, packed: a few dozen entries (loose objects of a stray run: at most 256 fan-out
+/// directories plus their files).
+const MAX_CACHE_ENTRIES: usize = 100_000;
+
 /// Maximum size of the `tsv/latest` tree object (its listing).
 const MAX_TREE_BYTES: u64 = 1 << 20;
 
@@ -79,9 +84,10 @@ pub fn load_pinned(cache_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
 
 /// Makes sure the bare repository `repo` holds `commit`, fetching it once from `url` with
 /// `git fetch --depth 1 --no-tags`, and keeps it alive with `pin_ref`. Creates `repo` (and
-/// its parents) if the path does not exist. An existing path is checked first: it must be a
-/// bare repository whose own config holds only [`CACHE_CONFIG_KEYS`] and which has none of
-/// [`FOREIGN_LINKS`]. Callers verify the content afterwards (`git fsck` plus their pins).
+/// its parents) if the path does not exist. An existing path is checked first: it, its
+/// `objects` and `refs` must be real directories (no symlink, no gitfile) with no symlink or
+/// special file anywhere below `objects` and `refs`; it must be a bare repository whose own
+/// config holds only [`CACHE_CONFIG_KEYS`] and which has none of [`FOREIGN_LINKS`]. Callers verify the content afterwards (`git fsck` plus their pins).
 /// Shared by `jpdf-corpus` (specs/tooling/corpus.md item 5).
 pub fn ensure_pinned(repo: &Path, url: &str, commit: &str, pin_ref: &str) -> Result<(), Error> {
     if !repo.exists() {
@@ -143,6 +149,12 @@ fn check_cache(repo: &Path) -> Result<(), Error> {
             }
         }
     }
+    // git follows symlinks deeper down too (`refs/jpdf -> elsewhere` receives the pin ref,
+    // `objects/pack -> elsewhere` the fetched pack), so nothing under them may be one.
+    let mut budget = MAX_CACHE_ENTRIES;
+    for top in ["objects", "refs"] {
+        check_tree(&repo.join(top), &mut budget).map_err(unusable)?;
+    }
     for name in FOREIGN_LINKS {
         if std::fs::symlink_metadata(repo.join(name)).is_ok() {
             return Err(unusable(format!("it has {name}")));
@@ -166,15 +178,28 @@ fn check_cache(repo: &Path) -> Result<(), Error> {
             repo.display()
         )));
     }
-    // Belt and braces: git must resolve the cache to itself.
-    let want = repo.canonicalize().map_err(|e| unusable(e.to_string()))?;
-    let got = git_text(repo, &["rev-parse", "--absolute-git-dir"])
-        .map_err(|e| unusable(e.to_string()))?;
-    let got = Path::new(&got)
-        .canonicalize()
-        .map_err(|e| unusable(e.to_string()))?;
-    if got != want {
-        return Err(unusable(format!("git resolves it to {}", got.display())));
+    Ok(())
+}
+
+/// Walks `dir` and refuses any entry that is neither a real directory nor a regular file
+/// (symlinks, FIFOs, devices), visiting at most `budget` entries in total.
+fn check_tree(dir: &Path, budget: &mut usize) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+        *budget = budget
+            .checked_sub(1)
+            .ok_or_else(|| format!("more than {MAX_CACHE_ENTRIES} entries"))?;
+        let meta =
+            std::fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if meta.is_dir() {
+            check_tree(&path, budget)?;
+        } else if !meta.is_file() {
+            return Err(format!(
+                "{} is not a regular file or directory (symlinks are refused)",
+                path.display()
+            ));
+        }
     }
     Ok(())
 }
@@ -493,9 +518,7 @@ fn run(
     };
     let Ok(stderr) = stderr.recv_timeout(PIPE_GRACE) else {
         kill_tree(&mut child);
-        return Err(Error::Fetch(format!(
-            "git {what} ({status}): output did not close"
-        )));
+        return Err(Error::Fetch(format!("git {what}: output did not close")));
     };
     // Report git's own failure (and its stderr) before a broken pipe it caused.
     if !status.success() {
@@ -541,7 +564,11 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
 }
 
 /// Kills the child's process group (unix) and the child itself, then reaps the child.
-/// Errors mean the processes are already gone.
+/// Errors mean the processes are already gone. After the child was reaped (the "did not
+/// close" paths) the group id stays reserved while any member lives, which is the case
+/// that brings us there; a member that left the group with `setsid` could in theory leave
+/// it empty and its id reusable within the grace period (background gc and maintenance,
+/// the git helpers that do that, are off).
 fn kill_tree(child: &mut Child) {
     #[cfg(unix)]
     {
@@ -616,6 +643,59 @@ mod tests {
             !alive(pid.trim())
         });
         assert!(gone, "background child {pid} survived");
+    }
+
+    /// git exits but a background child keeps its stdout open: the call fails after the
+    /// grace period and the child is killed too.
+    #[test]
+    fn a_pipe_held_after_exit_is_killed() {
+        let d = scratch("held");
+        let pid_file = d.join("pid");
+        let script = format!(
+            "sleep 30 2>/dev/null & echo $! > '{p}.tmp'; mv '{p}.tmp' '{p}'; exit 0",
+            p = pid_file.display()
+        );
+        let start = Instant::now();
+        let e = run(sh(&script), "held", None, Duration::from_secs(60)).unwrap_err();
+        let took = start.elapsed();
+        assert!(
+            e.to_string().contains("git held: output did not close"),
+            "{e}"
+        );
+        assert!(
+            took >= PIPE_GRACE && took < Duration::from_secs(20),
+            "{took:?}"
+        );
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let gone = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            !alive(pid.trim())
+        });
+        assert!(gone, "background child {pid} survived");
+    }
+
+    /// The walk budget counts every entry (directories too): exactly the budget passes,
+    /// one more fails; a nested symlink fails.
+    #[test]
+    fn the_cache_walk_budget_is_exact() {
+        let d = scratch("walk");
+        std::fs::create_dir_all(d.join("a/b")).unwrap();
+        std::fs::write(d.join("a/b/f"), "x").unwrap();
+        std::fs::write(d.join("g"), "y").unwrap();
+        // Entries: a, a/b, a/b/f, g.
+        let mut budget = 4;
+        assert_eq!(check_tree(&d, &mut budget), Ok(()));
+        assert_eq!(budget, 0);
+        let mut budget = 3;
+        let e = check_tree(&d, &mut budget).unwrap_err();
+        assert!(e.contains("more than 100000 entries"), "{e}");
+        std::os::unix::fs::symlink("/", d.join("a/b/l")).unwrap();
+        let mut budget = 10;
+        let e = check_tree(&d, &mut budget).unwrap_err();
+        assert!(
+            e.contains("a/b/l is not a regular file or directory"),
+            "{e}"
+        );
     }
 
     /// Under the deadline, output and failures come through unchanged.
