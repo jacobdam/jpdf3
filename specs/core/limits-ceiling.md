@@ -35,8 +35,9 @@ and operations budget) and #107 (object resolve cache).
    - `max_decoded_bytes_per_document` (4 GiB) stays. It is a lifetime total (time bound against
      many small bombs), not a memory bound; its doc comment now says so and points here.
    - Budgeted terms (today only the file size is checked; the rest bind future decoding,
-     rendering and caches): the file (512 MiB) + retained (256 MiB) + one stream being decoded
-     (256 MiB) + one render's working memory (1 GiB) = exactly 2 GiB, the judge's
+     rendering and caches): the file (512 MiB) + retained (256 MiB) + one decode's working
+     memory, output included (256 MiB, `max_decode_working_bytes` since #106,
+     specs/core/decode-work-limits.md) + one render's working memory (1 GiB) = exactly 2 GiB, the judge's
      address-space cap. That is a ceiling on these four terms only. The binary, stacks, the
      xref table (up to ~120 MiB), one parse's objects and strings, and decoder slack are not
      charged, so the defaults leave **no headroom**. #109 adds a reserve and lowers a default.

@@ -42,6 +42,9 @@ pub struct JpegFixture {
     pub tolerance: u16,
     /// A cut the decoder must salvage, if any. At least one JPEG fixture needs one.
     pub salvage: Option<Salvage>,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A JPEG 2000 file and the image it decodes to.
@@ -61,6 +64,9 @@ pub struct Jpeg2000Fixture {
     pub tolerance: u16,
     /// A cut the decoder must salvage, if any. At least one JPEG 2000 fixture needs one.
     pub salvage: Option<Salvage>,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A JBIG2 embedded stream and the bitmap it decodes to (exact match).
@@ -75,6 +81,9 @@ pub struct Jbig2Fixture {
     pub globals: Option<Vec<u8>>,
     /// The expected bitmap.
     pub expected: Bitmap,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A CCITT stream and the bitmap it decodes to (exact match).
@@ -92,6 +101,23 @@ pub struct CcittFixture {
     /// `params.rows` must be set (with `Rows` 0 a cut can be a valid end).
     pub salvage: Option<Salvage>,
 }
+
+/// A claim that a fixture's input needs more work than a lighter encoding of the same image
+/// (specs/core/decode-work-limits.md). The suite measures the difference between the two
+/// decodes, so a decoder that charges only per output sample, however many per sample, reports
+/// no difference and fails `image.extra_work`.
+#[derive(Debug, Clone)]
+pub struct ExtraWork {
+    /// The same image with less work (one scan instead of several, one quality layer, no
+    /// overlapping symbol instances). It must decode Complete to the fixture's expected output.
+    pub lighter: Vec<u8>,
+    /// A lower bound on `ops(input) - ops(lighter)`, justified from the two streams.
+    pub min_extra_ops: u64,
+}
+
+/// A heavy-work claim's `min_extra_ops` is at least this many times the output samples.
+/// JPEG, JPEG 2000 and JBIG2 need a valid fixture with one (`image.work_fixture`).
+pub const HEAVY_WORK_FACTOR: u64 = 4;
 
 /// The largest per-sample tolerance a lossy fixture may have: 1 below 8 bits, 2 otherwise.
 /// It does not grow with the sample range, so a 12- or 16-bit decoder that works at lower
@@ -113,6 +139,7 @@ fn implied_transform(components: u16, adobe_app14: Option<u8>) -> bool {
 /// Runs every check against a [`JpegDecoder`]. At least one fixture is required.
 pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
     let mut report = Report::new("jpeg");
+    let mut heavy = false;
     for f in fixtures {
         let decode =
             |input: &[u8], limits: &DecodeLimits| decoder.decode(input, &f.options, limits);
@@ -124,12 +151,15 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
             max_tolerance: max_lossy_tolerance(f.expected.source_bits),
             salvage: f.salvage,
             refused: None,
+            extra_work: f.extra_work.as_ref(),
         };
         let valid = run_fixture(&mut report, &spec, &decode);
+        heavy |= valid && spec.heavy();
         if valid && f.expected.components >= 3 {
             color_transform(&mut report, decoder, f, &spec);
         }
     }
+    work_coverage(&mut report, heavy);
     let has = |pred: &dyn Fn(&JpegFixture) -> bool| fixtures.iter().any(pred);
     // Explicit values must override the implied transform in both directions, or an adapter
     // that reads one explicit value as "the codestream decides" passes.
@@ -224,7 +254,8 @@ fn color_transform(
     if f.options.color_transform.is_none() {
         let result = with(applied);
         let ok = matches!(&result, Some(Ok(d))
-            if d.status == DecodeStatus::Complete && d.value.matches(&f.expected, f.tolerance));
+            if d.status == DecodeStatus::Complete && d.value.matches(&f.expected, f.tolerance))
+            && ok_result_valid(&result, &unlimited);
         report.check("image.option_used", ok, || {
             format!(
                 "{}: no ColorTransform must decode like ColorTransform {applied} (the APP14 \
@@ -279,6 +310,7 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
         fixtures.iter().any(|f| f.expected.source_bits < 8),
         || "fixtures must include an image with source_bits below 8".into(),
     );
+    let mut heavy = false;
     for f in fixtures {
         let spec = FixtureSpec {
             name: &f.name,
@@ -292,9 +324,12 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
             },
             salvage: f.salvage,
             refused: None,
+            extra_work: f.extra_work.as_ref(),
         };
-        run_fixture(&mut report, &spec, &decode);
+        let valid = run_fixture(&mut report, &spec, &decode);
+        heavy |= valid && spec.heavy();
     }
+    work_coverage(&mut report, heavy);
     salvage_coverage(&mut report, fixtures.iter().map(|f| f.salvage));
     let dims: Vec<(u32, u32)> = fixtures
         .iter()
@@ -307,6 +342,7 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
 /// Runs every check against a [`Jbig2Decoder`]. At least one fixture is required.
 pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Report {
     let mut report = Report::new("jbig2");
+    let mut heavy = false;
     for f in fixtures {
         let decode = |input: &[u8], limits: &DecodeLimits| {
             decoder.decode(input, f.globals.as_deref(), limits)
@@ -319,8 +355,10 @@ pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Repor
             max_tolerance: 0,
             salvage: None,
             refused: None,
+            extra_work: f.extra_work.as_ref(),
         };
         let valid = run_fixture(&mut report, &spec, &decode);
+        heavy |= valid && spec.heavy();
         // Damaged globals must be as safe as a damaged page stream.
         if let Some(globals) = &f.globals {
             let unlimited = DecodeLimits::default();
@@ -353,6 +391,7 @@ pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Repor
         fixtures.iter().any(|f| f.globals.is_some()),
         || "fixtures must include a page that uses JBIG2Globals".into(),
     );
+    work_coverage(&mut report, heavy);
     let dims: Vec<(u32, u32)> = fixtures
         .iter()
         .map(|f| (f.expected.width, f.expected.height))
@@ -377,6 +416,7 @@ pub fn run_ccitt(decoder: &dyn CcittDecoder, fixtures: &[CcittFixture]) -> Repor
             salvage: f.salvage,
             refused: (f.salvage.is_some() && f.params.rows == 0)
                 .then_some("a salvage cut needs Rows set (with Rows 0 a cut can be a valid end)"),
+            extra_work: None,
         };
         if !run_fixture(&mut report, &spec, &decode) {
             continue;
@@ -645,7 +685,7 @@ fn salvage_coverage(report: &mut Report, mut salvages: impl Iterator<Item = Opti
 }
 
 /// An option flipped (or left out) must not reproduce the expected output. An error or a
-/// different image passes.
+/// different, valid image passes ([`ok_result_valid`] at the default limits).
 fn check_option_used<R: Raster>(
     report: &mut Report,
     spec: &FixtureSpec<'_, R>,
@@ -653,7 +693,9 @@ fn check_option_used<R: Raster>(
     result: &Outcome<R>,
 ) {
     let same = matches!(result, Some(Ok(d)) if d.value.matches(spec.expected, spec.tolerance));
-    report.check("image.option_used", result.is_some() && !same, || {
+    // Option probes run at the default limits; any Ok must still be valid (usage included).
+    let valid = ok_result_valid(result, &DecodeLimits::default());
+    report.check("image.option_used", valid && !same, || {
         format!(
             "{}: {label}: the result must differ from the expected image (an ignored option), got {}",
             spec.name,
@@ -669,6 +711,12 @@ trait Raster: std::fmt::Debug {
     fn components(&self) -> Option<u16>;
     fn byte_len(&self) -> usize;
     fn expected_len(&self) -> Option<usize>;
+    /// Output samples: width × height × components (bitmaps: one per pixel), saturating.
+    fn samples(&self) -> u64 {
+        u64::from(self.width())
+            .saturating_mul(u64::from(self.height()))
+            .saturating_mul(u64::from(self.components().unwrap_or(1)))
+    }
     /// Every sample is below `2^source_bits` and padding bits are 0.
     fn samples_in_range(&self) -> bool;
     /// The image is not flat: samples span at least half the largest value (images), or both black
@@ -909,6 +957,30 @@ struct FixtureSpec<'a, R> {
     salvage: Option<Salvage>,
     /// A format-specific reason the fixture is refused, if any.
     refused: Option<&'static str>,
+    /// The fixture's extra-work claim, if any.
+    extra_work: Option<&'a ExtraWork>,
+}
+
+impl<R: Raster> FixtureSpec<'_, R> {
+    /// Whether the fixture claims at least [`HEAVY_WORK_FACTOR`] extra operations per output
+    /// sample.
+    fn heavy(&self) -> bool {
+        self.extra_work.is_some_and(|w| {
+            w.min_extra_ops >= self.expected.samples().saturating_mul(HEAVY_WORK_FACTOR)
+        })
+    }
+}
+
+/// At least one valid fixture must need work beyond its output (`heavy`: whether any fixture
+/// is valid and [`FixtureSpec::heavy`]).
+fn work_coverage(report: &mut Report, heavy: bool) {
+    report.check("image.work_fixture", heavy, || {
+        format!(
+            "fixtures must include a valid one with an extra_work claim of at least \
+             {HEAVY_WORK_FACTOR} × its output samples (work that produces no output: scans, \
+             layers, symbol instances)"
+        )
+    });
 }
 
 /// Checks that need no fixture.
@@ -956,6 +1028,27 @@ fn fixture_problem<R: Raster>(spec: &FixtureSpec<'_, R>) -> Option<String> {
     }
     if let Some(reason) = spec.refused {
         return Some(reason.into());
+    }
+    if let Some(w) = spec.extra_work {
+        let max_ops = DecodeLimits::default().max_ops;
+        if w.min_extra_ops > max_ops {
+            return Some(format!(
+                "min_extra_ops {} is above the default max_decode_ops {max_ops}",
+                w.min_extra_ops
+            ));
+        }
+        if w.lighter.as_slice() == spec.input {
+            return Some("the extra_work lighter input is the fixture's own input".into());
+        }
+        // A longer heavy input would let a per-input-byte rate pass as extra work; pad the
+        // lighter stream (JPEG COM segment, JP2 free box, JBIG2 extension segment).
+        if w.lighter.len() < spec.input.len() {
+            return Some(format!(
+                "the extra_work lighter input ({} bytes) is shorter than the input ({} bytes)",
+                w.lighter.len(),
+                spec.input.len()
+            ));
+        }
     }
     if let Some(s) = spec.salvage {
         // A cut at 0 is empty input, which must be an error.
@@ -1046,14 +1139,88 @@ fn run_fixture<R: Raster>(
             }
         }));
     }
+    // Usage never depends on the limits (specs/core/decode-work-limits.md), so every at-limit
+    // success must report what the default-limits decode reported.
+    let reference = match &result {
+        Some(Ok(d)) => Some(d.usage),
+        _ => None,
+    };
+    let same_usage = |d: &Decoded<R>| reference.is_none_or(|u| d.usage == u);
     for (check, at, set) in boundaries {
         Boundary { check, name, at }.probe(
             report,
             set,
             |limits| call(input, limits),
-            complete_match,
+            |d: &Decoded<R>| complete_match(d) && same_usage(d),
             describe_raster,
         );
+    }
+
+    // Working memory and operations (specs/core/decode-work-limits.md): lower bounds on what
+    // the decoder reported, then exact boundaries at it.
+    if let Some(usage) = reference {
+        let samples = expected.samples();
+        let len_u64 = u64::try_from(len).unwrap_or(u64::MAX);
+        // The default-limits decode itself must fit its limits too (an adapter that checks
+        // only non-default limits would otherwise pass).
+        report.check(
+            "image.usage_valid",
+            usage.working_bytes >= len_u64
+                && usage.ops >= samples
+                && ok_result_valid(&result, &unlimited),
+            || {
+                format!(
+                    "{name}: usage {usage:?} must have working_bytes >= the {len_u64} output \
+                     bytes and ops >= the {samples} output samples, and fit the default limits"
+                )
+            },
+        );
+        // The extra-work claim: the lighter encoding decodes to the same image, and the
+        // difference in reported operations is at least the claim.
+        if let Some(w) = spec.extra_work {
+            let lighter = call(&w.lighter, &unlimited);
+            let ok = match &lighter {
+                Some(Ok(l)) => {
+                    complete_match(l)
+                        && ok_result_valid(&lighter, &unlimited)
+                        && usage
+                            .ops
+                            .checked_sub(l.usage.ops)
+                            .is_some_and(|extra| extra >= w.min_extra_ops)
+                }
+                _ => false,
+            };
+            report.check("image.extra_work", ok, || {
+                format!(
+                    "{name}: the lighter input must decode Complete to the expected image with at \
+                     least {} fewer ops than the {} reported for the input, got {}",
+                    w.min_extra_ops,
+                    usage.ops,
+                    describe_raster(&lighter)
+                )
+            });
+        }
+        let work: [(&'static str, u64, SetFn); 2] = [
+            ("image.working_limit", usage.working_bytes, |n| {
+                DecodeLimits {
+                    max_working_bytes: n,
+                    ..DecodeLimits::default()
+                }
+            }),
+            ("image.ops_limit", usage.ops, |n| DecodeLimits {
+                max_ops: n,
+                ..DecodeLimits::default()
+            }),
+        ];
+        for (check, at, set) in work {
+            Boundary { check, name, at }.probe(
+                report,
+                set,
+                |limits| call(input, limits),
+                |d: &Decoded<R>| complete_match(d) && same_usage(d),
+                describe_raster,
+            );
+        }
     }
 
     // The salvage cut must decode what precedes it.
@@ -1109,7 +1276,8 @@ fn run_fixture<R: Raster>(
     true
 }
 
-/// An error, or output whose length matches its header and which stays within `limits`.
+/// An error, or output whose length matches its header, which stays within `limits`, and whose
+/// usage is within `limits` and at least the output's bytes and samples.
 fn ok_result_valid<R: Raster>(result: &Outcome<R>, limits: &DecodeLimits) -> bool {
     match result {
         None => false,
@@ -1117,7 +1285,15 @@ fn ok_result_valid<R: Raster>(result: &Outcome<R>, limits: &DecodeLimits) -> boo
         Some(Ok(d)) => {
             let r = &d.value;
             let pixels = u64::from(r.width()).saturating_mul(u64::from(r.height()));
-            r.expected_len() == Some(r.byte_len())
+            let len = u64::try_from(r.byte_len()).unwrap_or(u64::MAX);
+            // Usage within the limits and above both lower bounds
+            // (specs/core/decode-work-limits.md).
+            let usage_ok = d.usage.working_bytes <= limits.max_working_bytes
+                && d.usage.ops <= limits.max_ops
+                && d.usage.working_bytes >= len
+                && d.usage.ops >= r.samples();
+            usage_ok
+                && r.expected_len() == Some(r.byte_len())
                 && r.samples_in_range()
                 && r.byte_len() <= limits.max_output_bytes
                 && pixels <= limits.max_image_pixels
@@ -1132,11 +1308,13 @@ fn ok_result_valid<R: Raster>(result: &Outcome<R>, limits: &DecodeLimits) -> boo
 fn describe_raster<R: Raster>(result: &Outcome<R>) -> String {
     match result {
         Some(Ok(d)) => format!(
-            "Ok({:?}, {}x{}, {} bytes)",
+            "Ok({:?}, {}x{}, {} bytes, {} working bytes, {} ops)",
             d.status,
             d.value.width(),
             d.value.height(),
-            d.value.byte_len()
+            d.value.byte_len(),
+            d.usage.working_bytes,
+            d.usage.ops
         ),
         other => describe(other),
     }
@@ -1145,6 +1323,7 @@ fn describe_raster<R: Raster>(result: &Outcome<R>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DecodeUsage;
 
     /// A toy codec standing in for every format: `width u16 BE, height u16 BE, flags u8, then
     /// samples`. The suite is format-independent, so this exercises every check.
@@ -1153,6 +1332,11 @@ mod tests {
     /// (0 means 8, 1–8 as is), or an 8-bit image with an "APP14" transform flag: 9 → 0,
     /// 10 → 2, 11 → 1. A "transform" XORs every sample with 0x40; JPEG decodes it when
     /// ColorTransform says so, else when the APP14 flag is 1 or 2.
+    ///
+    /// Usage: working bytes are the output plus 64 ("tables"); operations are one per output
+    /// sample plus [`TOY_OPS_PER_UNIT`] per unit of value in the bytes after the samples (a
+    /// "repeat count" standing in for work that produces no output; it depends on what the
+    /// bytes say, not on how many there are).
     ///
     /// Bitmaps (JBIG2, CCITT) are packed rows after the header. JBIG2 XORs them with the first
     /// globals byte, CCITT with a key from K and EncodedByteAlign ([`ccitt_key`]); padding
@@ -1192,7 +1376,55 @@ mod tests {
         err_on_contradiction: bool,
         /// JPEG: reads a missing ColorTransform as false.
         none_as_false: bool,
+        /// Never checks the working-memory and operations limits.
+        ignore_work_limits: bool,
+        /// Rejects usage equal to a work limit (`>=` instead of `>`).
+        work_limits_inclusive: bool,
+        /// Reports one operation fewer whenever `max_ops` isn't the default (usage that
+        /// depends on the limits).
+        usage_from_limits: bool,
+        /// Leaves the output out of working memory. The toy's 64 table bytes would still cover
+        /// its small outputs, so it reports 0: then the exact boundary (at 0) still passes and
+        /// only the lower bound catches it.
+        working_without_output: bool,
+        /// Counts only output samples, not the trailing-byte work.
+        ops_output_only: bool,
+        /// Charges a flat 100 operations per output sample and nothing for the trailing-byte
+        /// work (a per-sample overcount that covers any absolute bound).
+        flat_ops_per_sample: bool,
+        /// Charges 256 operations per input byte instead of the trailing values (a per-byte
+        /// rate: a longer heavy input would cover any claim).
+        ops_per_input_byte: bool,
+        /// Reports one operation more whenever `max_output_bytes` isn't the default.
+        usage_from_output_limit: bool,
+        /// CCITT: reports 0 working bytes for Group 4 without EncodedByteAlign (a stream only
+        /// the option checks decode).
+        ccitt_option_usage_zero: bool,
+        /// At exactly the default limits, skips the work checks and reports `max_ops + 1`
+        /// operations.
+        default_usage_over_limit: bool,
+        /// Like `default_usage_over_limit`, with `max_working_bytes + 1` working bytes.
+        default_working_over_limit: bool,
+        /// Reports 0 operations when the trailing repeat count is 0 (only the lighter inputs
+        /// of the heavy fixtures end that way).
+        lighter_usage_zero: bool,
+        /// Reports one operation more whenever the pixel, dimension, component or working-bytes
+        /// limit isn't the default.
+        usage_from_other_limits: bool,
+        /// Reports one operation fewer than the output samples (and no trailing work).
+        ops_below_samples: bool,
+        /// JPEG: reports 0 working bytes for an explicit ColorTransform true on a 3-component
+        /// image without APP14 (only the "implied value" probe and one flip decode that way).
+        jpeg_option_usage_zero: bool,
+        /// JBIG2: reports 0 working bytes when the globals are missing or shorter than 4
+        /// bytes (only the "globals left out" probe and truncated globals decode that way).
+        jbig2_globals_usage_zero: bool,
+        /// Reports `max_ops + 1` operations on truncated results.
+        truncated_usage_over_limit: bool,
     }
+
+    /// Toy operations per unit of trailing-byte value.
+    const TOY_OPS_PER_UNIT: u64 = 64;
 
     /// The toy CCITT key for K and EncodedByteAlign.
     fn ccitt_key(params: &CcittParams) -> u8 {
@@ -1276,6 +1508,12 @@ mod tests {
                 return Err(BackendError::LimitExceeded("output"));
             }
             let body = &input[5..];
+            let per_pixel = if packed { 1 } else { u64::from(components) };
+            let samples = u64::from(width)
+                .checked_mul(u64::from(height))
+                .and_then(|p| p.checked_mul(per_pixel))
+                .ok_or(BackendError::LimitExceeded("toy samples"))?;
+            let usage = self.charge(input, len, samples, limits)?;
             let mut samples = body[..body.len().min(len)].to_vec();
             if !packed && samples.iter().any(|&v| u32::from(v) >= 1 << source_bits) {
                 return Err(BackendError::Malformed("sample"));
@@ -1327,7 +1565,16 @@ mod tests {
             } else {
                 DecodeStatus::Complete
             };
+            let usage = if self.truncated_usage_over_limit && status == DecodeStatus::Truncated {
+                DecodeUsage {
+                    ops: limits.max_ops.saturating_add(1),
+                    ..usage
+                }
+            } else {
+                usage
+            };
             Ok(Decoded {
+                usage,
                 value: DecodedImage {
                     width,
                     height,
@@ -1345,6 +1592,97 @@ mod tests {
                 },
                 status,
             })
+        }
+
+        /// Computes and checks the toy's usage before "decoding" (see [`Toy`]).
+        /// `len`: output bytes; `samples`: output samples (bitmaps: pixels).
+        fn charge(
+            &self,
+            input: &[u8],
+            len: usize,
+            samples: u64,
+            limits: &DecodeLimits,
+        ) -> Result<DecodeUsage, BackendError> {
+            let over = BackendError::LimitExceeded("toy usage");
+            let len = u64::try_from(len).map_err(|_| over.clone())?;
+            let start = usize::try_from(len)
+                .map_err(|_| over.clone())?
+                .saturating_add(5);
+            let units: u64 = input
+                .get(start..)
+                .unwrap_or(&[])
+                .iter()
+                .try_fold(0u64, |acc, &b| acc.checked_add(u64::from(b)))
+                .ok_or(over.clone())?;
+            let samples = if self.flat_ops_per_sample {
+                samples.checked_mul(100).ok_or(over.clone())?
+            } else {
+                samples
+            };
+            let extra = if self.ops_output_only || self.flat_ops_per_sample {
+                0
+            } else if self.ops_per_input_byte {
+                u64::try_from(input.len())
+                    .ok()
+                    .and_then(|n| n.checked_mul(256))
+                    .ok_or(over.clone())?
+            } else {
+                units.checked_mul(TOY_OPS_PER_UNIT).ok_or(over.clone())?
+            };
+            let mut usage = DecodeUsage {
+                working_bytes: if self.working_without_output {
+                    0
+                } else {
+                    len.checked_add(64).ok_or(over.clone())?
+                },
+                ops: samples.checked_add(extra).ok_or(over.clone())?,
+            };
+            let exceeds = |used: u64, cap: u64| {
+                if self.work_limits_inclusive {
+                    used >= cap
+                } else {
+                    used > cap
+                }
+            };
+            let at_default = *limits == DecodeLimits::default();
+            if self.default_usage_over_limit && at_default {
+                usage.ops = limits.max_ops.saturating_add(1);
+                return Ok(usage);
+            }
+            if self.default_working_over_limit && at_default {
+                usage.working_bytes = limits.max_working_bytes.saturating_add(1);
+                return Ok(usage);
+            }
+            if self.lighter_usage_zero && input.len() > start && input.last() == Some(&0) {
+                usage.ops = 0;
+            }
+            if !self.ignore_work_limits
+                && (exceeds(usage.working_bytes, limits.max_working_bytes)
+                    || exceeds(usage.ops, limits.max_ops))
+            {
+                return Err(over);
+            }
+            if self.usage_from_limits && limits.max_ops != DecodeLimits::default().max_ops {
+                usage.ops = usage.ops.saturating_sub(1);
+            }
+            if self.ops_below_samples {
+                usage.ops = samples.saturating_sub(1);
+            }
+            let d = DecodeLimits::default();
+            if self.usage_from_other_limits
+                && (limits.max_image_pixels != d.max_image_pixels
+                    || limits.max_image_dimension != d.max_image_dimension
+                    || limits.max_image_components != d.max_image_components
+                    || limits.max_working_bytes != d.max_working_bytes)
+            {
+                usage.ops = usage.ops.saturating_add(1);
+            }
+            if self.usage_from_output_limit
+                && limits.max_output_bytes != DecodeLimits::default().max_output_bytes
+            {
+                usage.ops = usage.ops.saturating_add(1);
+            }
+            Ok(usage)
         }
 
         /// Decodes a bitmap whose packed rows are XORed with `key`.
@@ -1368,6 +1706,7 @@ mod tests {
                     data,
                 },
                 status: d.status,
+                usage: d.usage,
             })
         }
     }
@@ -1379,7 +1718,15 @@ mod tests {
             options: &JpegOptions,
             limits: &DecodeLimits,
         ) -> Result<Decoded<DecodedImage>, BackendError> {
-            self.decode_image(input, limits, false, Some(options.color_transform))
+            let mut d = self.decode_image(input, limits, false, Some(options.color_transform))?;
+            if self.jpeg_option_usage_zero
+                && options.color_transform == Some(true)
+                && d.value.components == 3
+                && d.value.adobe_app14.is_none()
+            {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -1405,7 +1752,11 @@ mod tests {
                 Some(g) => g[0],
                 None => 0,
             };
-            self.decode_bitmap(input, limits, key)
+            let mut d = self.decode_bitmap(input, limits, key)?;
+            if self.jbig2_globals_usage_zero && globals.is_none_or(|g| g.len() < 4) {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -1437,7 +1788,11 @@ mod tests {
             if self.panic_on_extreme_k && params.k == i32::MIN {
                 panic!("K");
             }
-            self.decode_bitmap(input, limits, ccitt_key(params))
+            let mut d = self.decode_bitmap(input, limits, ccitt_key(params))?;
+            if self.ccitt_option_usage_zero && params.k < 0 && !params.encoded_byte_align {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -1499,6 +1854,20 @@ mod tests {
         (input, bitmap)
     }
 
+    /// Makes a fixture need heavy work: a trailing "repeat count" byte of 4, which the toy
+    /// charges 4 × [`TOY_OPS_PER_UNIT`] = 256 for and otherwise ignores. The lighter input has
+    /// the same length with a count of 0, and the claim is the toy's exact difference. Never
+    /// use it on a fixture with a salvage cut (the cut would fall in the trailing byte).
+    fn add_work(input: &mut Vec<u8>) -> Option<ExtraWork> {
+        let mut lighter = input.clone();
+        lighter.push(0);
+        input.push(4);
+        Some(ExtraWork {
+            lighter,
+            min_extra_ops: 4 * TOY_OPS_PER_UNIT,
+        })
+    }
+
     /// The salvage cut every toy fixture uses: the last byte missing, all rows but the last
     /// intact.
     fn last_byte_cut(input: &[u8], height: u32) -> Option<Salvage> {
@@ -1534,31 +1903,34 @@ mod tests {
             options: JpegOptions { color_transform },
             expected,
             tolerance: 0,
+            extra_work: None,
         }
     }
 
     /// - landscape 4×3 RGB, APP14 1, ColorTransform true (salvage cut);
     /// - portrait 2×5 RGB, APP14 1, ColorTransform false (overrides APP14);
     /// - square 3×3 CMYK, APP14 2 (YCCK), no ColorTransform;
-    /// - square 4×4 RGB, no APP14, no ColorTransform (converted by default);
+    /// - square 4×4 RGB, no APP14, no ColorTransform (converted by default; heavy work);
     /// - portrait 2×3 CMYK, no APP14, ColorTransform true (explicit, 4 components, overrides
     ///   the implied "no transform");
     /// - portrait 2×5 RGB, APP14 0, ColorTransform true (overrides APP14);
     /// - portrait 2×5 RGB, no APP14, ColorTransform false (overrides the default conversion).
     fn jpeg_fixtures() -> Vec<JpegFixture> {
+        let mut heavy = jpeg_fixture((4, 4), 0x03, None, false);
+        heavy.extra_work = add_work(&mut heavy.input);
         vec![
             jpeg_fixture((4, 3), 0xb3, Some(true), true),
             jpeg_fixture((2, 5), 0xb3, Some(false), false),
             jpeg_fixture((3, 3), 0xa4, None, false),
-            jpeg_fixture((4, 4), 0x03, None, false),
+            heavy,
             jpeg_fixture((2, 3), 0x04, Some(true), false),
             jpeg_fixture((2, 5), 0x93, Some(true), false),
             jpeg_fixture((2, 5), 0x03, Some(false), false),
         ]
     }
 
-    /// Landscape 4×3 (salvage cut) and portrait 2×5 RGB, plus a 4-bit 5×2 grey image (samples
-    /// 0–15); lossless.
+    /// Landscape 4×3 (salvage cut) and portrait 2×5 RGB (heavy work), plus a 4-bit 5×2 grey
+    /// image (samples 0–15); lossless.
     fn jpx_fixtures() -> Vec<Jpeg2000Fixture> {
         [
             ((4, 3), 0x03, true),
@@ -1579,12 +1951,19 @@ mod tests {
                 expected,
                 lossy: false,
                 tolerance: 0,
+                extra_work: None,
             }
+        })
+        .map(|mut f| {
+            if f.expected.height == 5 {
+                f.extra_work = add_work(&mut f.input);
+            }
+            f
         })
         .collect()
     }
 
-    /// Landscape 12×2 and portrait 3×9 pages that use their globals (first byte 0x80, the
+    /// Landscape 12×2 and portrait 3×9 (heavy work) pages that use their globals (first byte 0x80, the
     /// toy's XOR key). `key` is what the input is stored with: 0x80, or 0 for pages that
     /// don't depend on their globals.
     fn jbig2_fixtures(key: u8) -> Vec<Jbig2Fixture> {
@@ -1592,12 +1971,17 @@ mod tests {
             .into_iter()
             .map(|(w, h)| {
                 let (input, expected) = toy_bitmap(w, h, key);
-                Jbig2Fixture {
+                let mut f = Jbig2Fixture {
                     name: format!("toy {w}x{h}"),
                     input,
                     globals: Some(vec![0x80, 2, 3, 4]),
                     expected,
+                    extra_work: None,
+                };
+                if h == 9 {
+                    f.extra_work = add_work(&mut f.input);
                 }
+                f
             })
             .collect()
     }
@@ -1692,6 +2076,346 @@ mod tests {
         assert!(report.passed(), "{report}");
     }
 
+    /// Every suite's report for `toy`, with the fixture sets a correct decoder passes.
+    fn every_suite(toy: &Toy) -> [Report; 4] {
+        [
+            jpeg(toy),
+            run_jpeg2000(toy, &jpx_fixtures()),
+            run_jbig2(toy, &jbig2_fixtures(0x80)),
+            run_ccitt(toy, &ccitt_fixtures(true)),
+        ]
+    }
+
+    #[test]
+    fn ignoring_or_misreading_the_work_limits_is_caught() {
+        // Ignored: one below and 0 succeed. Inclusive: the limit itself fails.
+        for toy in [
+            Toy {
+                ignore_work_limits: true,
+                ..Toy::default()
+            },
+            Toy {
+                work_limits_inclusive: true,
+                ..Toy::default()
+            },
+        ] {
+            for report in every_suite(&toy) {
+                assert_eq!(
+                    report.failed_checks(),
+                    vec!["image.ops_limit", "image.working_limit"],
+                    "{report}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn usage_that_depends_on_the_limits_is_caught() {
+        let toy = Toy {
+            usage_from_limits: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert_eq!(report.failed_checks(), vec!["image.ops_limit"], "{report}");
+        }
+    }
+
+    #[test]
+    fn working_memory_without_the_output_is_caught() {
+        let toy = Toy {
+            working_without_output: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+            // Every Ok result is checked too, not only the fixture decode.
+            assert!(report.failed("image.truncated"), "{report}");
+            assert!(report.failed("image.mutated"), "{report}");
+        }
+    }
+
+    #[test]
+    fn counting_only_output_samples_is_caught() {
+        // Exactly one per sample, or a flat 100 per sample: either way the lighter input costs
+        // the same, so the difference is 0.
+        for toy in [
+            Toy {
+                ops_output_only: true,
+                ..Toy::default()
+            },
+            Toy {
+                flat_ops_per_sample: true,
+                ..Toy::default()
+            },
+            // Same-length inputs: a per-byte rate gives no difference either.
+            Toy {
+                ops_per_input_byte: true,
+                ..Toy::default()
+            },
+        ] {
+            let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+            for report in [jpeg, jpx, jbig2] {
+                assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+            }
+            // CCITT needs no heavy-work fixture (linear work), so it passes.
+            assert!(ccitt.passed(), "{ccitt}");
+        }
+    }
+
+    #[test]
+    fn over_limit_usage_at_the_default_limits_is_caught() {
+        let toy = Toy {
+            default_usage_over_limit: true,
+            ..Toy::default()
+        };
+        // The fixture decode itself is over its limits (the other checks see it too, through
+        // usage that differs from the at-limit probes, but usage_valid names it).
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+        }
+    }
+
+    #[test]
+    fn over_limit_working_bytes_at_the_default_limits_are_caught() {
+        let toy = Toy {
+            default_working_over_limit: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+        }
+    }
+
+    #[test]
+    fn under_reporting_on_the_lighter_input_is_caught() {
+        // ops 0 on the lighter input would inflate the difference past any claim.
+        let toy = Toy {
+            lighter_usage_zero: true,
+            ..Toy::default()
+        };
+        let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+        for report in [jpeg, jpx, jbig2] {
+            assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        }
+        assert!(ccitt.passed(), "{ccitt}");
+    }
+
+    #[test]
+    fn usage_that_depends_on_the_other_limits_is_caught() {
+        let toy = Toy {
+            usage_from_other_limits: true,
+            ..Toy::default()
+        };
+        let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+        for report in [jpeg, jpx] {
+            assert_eq!(
+                report.failed_checks(),
+                vec![
+                    "image.component_limit",
+                    "image.dimension_limit",
+                    "image.pixel_limit",
+                    "image.working_limit"
+                ],
+                "{report}"
+            );
+        }
+        // Bitmaps have no component probe.
+        for report in [jbig2, ccitt] {
+            assert_eq!(
+                report.failed_checks(),
+                vec![
+                    "image.dimension_limit",
+                    "image.pixel_limit",
+                    "image.working_limit"
+                ],
+                "{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn fewer_ops_than_output_samples_are_caught() {
+        let toy = Toy {
+            ops_below_samples: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+            // Every Ok result is checked too, not only the fixture decode.
+            assert!(report.failed("image.truncated"), "{report}");
+            assert!(report.failed("image.mutated"), "{report}");
+        }
+    }
+
+    #[test]
+    fn invalid_usage_in_a_jpeg_or_jbig2_option_probe_is_caught() {
+        let report = jpeg(&Toy {
+            jpeg_option_usage_zero: true,
+            ..Toy::default()
+        });
+        assert!(!report.failed("image.usage_valid"), "{report}");
+        assert!(!report.failed("image.fixture_decodes"), "{report}");
+        // The implied-value probe of the fixture without ColorTransform has its own message.
+        assert!(
+            report
+                .failures()
+                .iter()
+                .any(|f| f.check == "image.option_used"
+                    && f.detail.contains("no ColorTransform must decode like")),
+            "{report}"
+        );
+        let report = run_jbig2(
+            &Toy {
+                jbig2_globals_usage_zero: true,
+                ..Toy::default()
+            },
+            &jbig2_fixtures(0x80),
+        );
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.option_used", "image.truncated_globals"],
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn usage_that_depends_on_the_output_limit_is_caught() {
+        let toy = Toy {
+            usage_from_output_limit: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert_eq!(
+                report.failed_checks(),
+                vec!["image.output_limit"],
+                "{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_usage_in_an_option_probe_is_caught() {
+        let toy = Toy {
+            ccitt_option_usage_zero: true,
+            ..Toy::default()
+        };
+        // Only the EncodedByteAlign-false probe of the Group 4 fixture decodes that way.
+        let report = run_ccitt(&toy, &ccitt_fixtures(true));
+        assert!(report.failed("image.option_used"), "{report}");
+        assert!(!report.failed("image.usage_valid"), "{report}");
+        assert!(!report.failed("image.fixture_decodes"), "{report}");
+    }
+
+    #[test]
+    fn over_limit_usage_on_truncated_results_is_caught() {
+        let toy = Toy {
+            truncated_usage_over_limit: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.truncated"), "{report}");
+            let failed = report.failed_checks();
+            assert!(
+                failed
+                    .iter()
+                    .all(|c| ["image.truncated", "image.salvage"].contains(c)),
+                "{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_heavy_work_fixture_is_required_at_four_times_the_samples() {
+        let toy = Toy::default();
+        let mut fixtures = jbig2_fixtures(0x80);
+        let heavy = fixtures
+            .iter()
+            .position(|f| f.extra_work.is_some())
+            .unwrap();
+        let samples = fixtures[heavy].expected.samples();
+        // The toy charges 256 for the trailing count, so a claim of 4 × samples is true.
+        assert!(HEAVY_WORK_FACTOR * samples <= 4 * TOY_OPS_PER_UNIT);
+        let set = |fixtures: &mut Vec<Jbig2Fixture>, n: u64| {
+            if let Some(w) = fixtures[heavy].extra_work.as_mut() {
+                w.min_extra_ops = n;
+            }
+        };
+        set(&mut fixtures, HEAVY_WORK_FACTOR * samples);
+        let report = run_jbig2(&toy, &fixtures);
+        assert!(report.passed(), "{report}");
+        set(&mut fixtures, HEAVY_WORK_FACTOR * samples - 1);
+        let report = run_jbig2(&toy, &fixtures);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.work_fixture"],
+            "{report}"
+        );
+        fixtures[heavy].extra_work = None;
+        let report = run_jbig2(&toy, &fixtures);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.work_fixture"],
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn the_extra_work_claim_is_measured_and_validated() {
+        let toy = Toy::default();
+        let fixtures = jpx_fixtures();
+        let heavy = fixtures
+            .iter()
+            .position(|f| f.extra_work.is_some())
+            .unwrap();
+        let with = |change: &dyn Fn(&mut ExtraWork)| {
+            let mut fixtures = fixtures.clone();
+            if let Some(w) = fixtures[heavy].extra_work.as_mut() {
+                change(w);
+            }
+            run_jpeg2000(&toy, &fixtures)
+        };
+        // The claim is the toy's exact difference: at it passes, one more fails.
+        assert!(with(&|_| {}).passed());
+        let report = with(&|w| w.min_extra_ops += 1);
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        // A lighter input that decodes to another image fails.
+        let report = with(&|w| {
+            if let Some(b) = w.lighter.get_mut(5) {
+                *b ^= 1;
+            }
+        });
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        // A lighter input shorter than the input is an invalid fixture.
+        let report = with(&|w| {
+            w.lighter.pop();
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_valid", "image.work_fixture"],
+            "{report}"
+        );
+        // One byte longer (padding) is fine: the toy ignores a second count of 0.
+        assert!(with(&|w| w.lighter.push(0)).passed());
+        // A lighter input equal to the input is an invalid fixture (and then not heavy).
+        let input = fixtures[heavy].input.clone();
+        let report = with(&|w| w.lighter = input.clone());
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_valid", "image.work_fixture"],
+            "{report}"
+        );
+        // At the default max_decode_ops the claim is valid but false; one past is invalid.
+        let max = DecodeLimits::default().max_ops;
+        let report = with(&|w| w.min_extra_ops = max);
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        let report = with(&|w| w.min_extra_ops = max + 1);
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_valid", "image.work_fixture"],
+            "{report}"
+        );
+    }
+
     #[test]
     fn no_fixtures_fails() {
         let report = run_jpeg(&Toy::default(), &[]);
@@ -1701,7 +2425,8 @@ mod tests {
                 "image.fixture_orientations",
                 "image.has_fixtures",
                 "image.option_coverage",
-                "image.salvage_fixture"
+                "image.salvage_fixture",
+                "image.work_fixture"
             ],
             "{report}"
         );
@@ -1914,9 +2639,10 @@ mod tests {
             },
             &fixtures,
         );
+        // Every fixture is invalid, so none counts as the heavy-work fixture either.
         assert_eq!(
             report.failed_checks(),
-            vec!["image.fixture_valid"],
+            vec!["image.fixture_valid", "image.work_fixture"],
             "{report}"
         );
     }
@@ -1933,10 +2659,11 @@ mod tests {
         };
         // The 4-bit fixture's lossy cap is 1.
         assert!(with(true, 1).passed(), "{}", with(true, 1));
+        // Every fixture is invalid, so none counts as the heavy-work fixture either.
         let report = with(false, 1);
         assert_eq!(
             report.failed_checks(),
-            vec!["image.fixture_valid"],
+            vec!["image.fixture_valid", "image.work_fixture"],
             "{report}"
         );
         let report = with(true, 2);
@@ -2135,9 +2862,11 @@ mod tests {
                 "image.component_limit",
                 "image.dimension_limit",
                 "image.fixture_decodes",
+                "image.ops_limit",
                 "image.option_used",
                 "image.output_limit",
-                "image.pixel_limit"
+                "image.pixel_limit",
+                "image.working_limit"
             ],
             "{report}"
         );
@@ -2188,6 +2917,7 @@ mod tests {
             err_on_contradiction: true,
             ..Toy::default()
         });
+        // The work boundaries need a successful decode to probe at, so they don't run here.
         assert_eq!(
             report.failed_checks(),
             vec![
@@ -2245,12 +2975,20 @@ mod tests {
                 "image.component_limit",
                 "image.dimension_limit",
                 "image.fixture_decodes",
+                "image.ops_limit",
                 "image.output_limit",
                 "image.pixel_limit",
+                "image.working_limit",
             ];
             if !blank {
                 // The broken output also shows on truncated and mutated input.
-                expected.extend(["image.mutated", "image.option_used", "image.truncated"]);
+                // The fixture decode's own Ok is invalid too (usage_valid checks it whole).
+                expected.extend([
+                    "image.mutated",
+                    "image.option_used",
+                    "image.truncated",
+                    "image.usage_valid",
+                ]);
                 expected.sort_unstable();
             }
             assert_eq!(report.failed_checks(), expected, "{report}");
@@ -2269,9 +3007,12 @@ mod tests {
             vec![
                 "image.component_limit",
                 "image.dimension_limit",
+                "image.extra_work",
                 "image.fixture_decodes",
+                "image.ops_limit",
                 "image.output_limit",
-                "image.pixel_limit"
+                "image.pixel_limit",
+                "image.working_limit"
             ],
             "{report}"
         );
@@ -2316,7 +3057,11 @@ mod tests {
         ];
         for (rule, replacements) in cases {
             let mut fixtures = jpeg_fixtures();
-            for (index, replacement) in replacements {
+            for (index, mut replacement) in replacements {
+                // Keep the heavy-work fixture heavy, so only the option rule is missing.
+                if fixtures[index].extra_work.is_some() {
+                    replacement.extra_work = add_work(&mut replacement.input);
+                }
                 fixtures[index] = replacement;
             }
             let report = run_jpeg(&toy, &fixtures);
@@ -2520,8 +3265,10 @@ mod tests {
                     "image.component_limit",
                     "image.dimension_limit",
                     "image.fixture_decodes",
+                    "image.ops_limit",
                     "image.output_limit",
-                    "image.pixel_limit"
+                    "image.pixel_limit",
+                    "image.working_limit"
                 ],
                 "{report}"
             );

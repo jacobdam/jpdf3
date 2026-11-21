@@ -52,6 +52,8 @@ defaults:
 | `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Not enforced yet (no cache exists): every cache added must charge it and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
 | `max_image_pixels` | 100,000,000 | Header check before any allocation; binds for 1–2 byte pixels, while the 256 MiB output cap binds first for RGB/CMYK |
 | `max_image_dimension` | 2^20 | Long strips stay legal; the pixel limit does the real bounding |
+| `max_decode_working_bytes` | 256 MiB (`u64`) | Peak memory of one image decode, output included; the decode term of the 2 GiB budget (specs/core/decode-work-limits.md) |
+| `max_decode_ops` | 2^32 (`u64`) | Operations one image decode may perform, work that produces no output included (specs/core/decode-work-limits.md) |
 | `max_image_components` | 33 | ISO 32000-2 Annex C: DeviceN has at most 32 colorants, plus one alpha channel (`SMaskInData`) |
 | `max_font_program_bytes` | 64 MiB | Large CJK fonts are 20–30 MB; checked before parsing |
 | `max_font_glyphs` | 65,535 | Glyph ids are 16-bit in TrueType, CFF and CFF2 |
@@ -610,7 +612,11 @@ may record a repair note.
   allocation.
 - `DecodedImage::expected_len` and `Bitmap::expected_len` use checked arithmetic, so a
   hostile header can't overflow the length.
-- Time is not bounded here. The engine's job budget (PLAN §2.2) and nightly fuzzing cover it.
+- Image decoders also charge their working memory (output included) and operations against
+  `DecodeLimits::max_working_bytes` and `max_ops`, report both in `Decoded::usage`, and the
+  image suite probes both at their exact boundaries (specs/core/decode-work-limits.md).
+  Inflate, Deflate and Cipher don't charge: constant working memory beyond the output, time
+  linear in input plus output. The engine's job budget (PLAN §2.2) bounds total time.
 - **What the suites can and can't see.** They check the returned variant, not allocations.
   "Check before allocating" is enforced indirectly: the 1 GiB bomb makes a decode-then-check
   adapter allocate over 1 GiB (an out-of-memory failure or a very slow test). The fuzz

@@ -4,23 +4,23 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #133 (#83 part 1): subprocess hygiene. Auto-merge is on after ai-review; if it is still open, check its CI
-  (rule c). #83 stays open for #132 (items 3, 4).
+- PR #135 (#106): decoder working memory and operations budget. Auto-merge goes on after ai-review; if it is
+  still open, check its CI (rule c).
 
 ## Last session
-- **#83 1/2** (rule d): the bench starts a `/bin/sh` watchdog in its own process group, which kills the running
-  engine's group when the bench dies (Ctrl-C, TERM, KILL). An engine's group is also killed after it exits normally.
-  Also: `npm ci --ignore-scripts`; check-specs refuses FIFOs and symlinks and caps reads; macos `capture` writes stdin
-  on a thread. 6 review rounds, all posted on the PR. Follow-ups: #132 (cargo-fuzz provenance, nested bundles) and
-  #134 (a per-run group holder to close the pid-reuse windows).
+- **#106** (rule d, trait contracts 2/3): `Limits` gains `max_decode_working_bytes` (256 MiB, now the decode term of
+  the 2 GiB budget) and `max_decode_ops` (2^32); `Decoded` reports `usage`. The image suite probes both at exact
+  boundaries, requires the same usage at every at-limit probe, and measures an `extra_work` claim as a difference
+  between two equal-length inputs with the same output. 6 review rounds, all posted on the PR. Follow-ups: #136
+  (heavy-memory claim), #137 (work caps on damaged-input probes), #109 (filter-chain intermediate not charged).
 
 ## Previous session
-- **#82** (rule d, PR #131 merged): git and curl hardening for jpdf-arlington and jpdf-corpus.
+- **#83 1/2** (rule d, PR #133 merged): bench watchdog, npm --ignore-scripts, bounded spec reads.
 
 ## Next step (suggested order, TICK letters)
-1. d (security) issues, lowest number first: **#106, #107, #109, #113, #114, #116, #117, #122, #132, #134**.
+1. d (security) issues, lowest number first: **#107, #109, #113, #114, #116, #117, #122, #132, #134, #136, #137**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
-   - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).
+   - **Before #16 admits any adapter:** the suites (#116, #117, #122, #136, #137) and #107.
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i), lowest number first: #21, #55, #61, #64, #66, #70, #78, #84–#87, #91,
    #99–#101, #105, #115.
@@ -29,7 +29,7 @@ Phase: bootstrap (pilot)
   - TICK puts d above a due audit, so the audit can starve, and this session deviated (an incident);
   - STATUS "in flight" is stale as soon as its PR merges;
   - the template's `Area:` list lacks `tooling`.
-- **Next audit:** after 10 more merges or by 2026-11-28 (see the carry-overs in docs/audits/0002.md).
+- **Next audit:** due at 10 merges since audit 0002 (9 once #135 merges) or by 2026-11-28 (see the carry-overs in docs/audits/0002.md).
 
 ## Blockers / owner-todo
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console. #52 (Automation Mode without a password) is
