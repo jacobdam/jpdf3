@@ -90,6 +90,12 @@ impl LexBudget {
         Ok(())
     }
 
+    /// Bytes lexed so far (tests: proves whether an object was re-parsed).
+    #[cfg(test)]
+    pub(crate) fn used(&self) -> usize {
+        self.used.get()
+    }
+
     fn charge_one(&self) {
         self.used.set(self.used.get().saturating_add(1));
     }
