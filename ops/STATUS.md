@@ -5,7 +5,8 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #119 (the owner's Codex second-reviewer proposal): reviewed in 6 rounds, all findings fixed in the proposal,
-  ai-review posted, auto-merge on. The owner applies the protected diffs (step 1) and dry-runs Codex (step 2).
+  ai-review posted, auto-merge on. Once merged, the owner applies the protected diffs (step 1) and dry-runs
+  Codex (step 2).
 - This record PR (journal, STATUS, LESSONS).
 
 ## Last session
@@ -36,6 +37,6 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
   checked locally only.
-- Open proposal: ops/proposals/codex-second-reviewer.md (owner applies it). Suggested owner follow-up: a command
+- Open proposal: ops/proposals/codex-second-reviewer.md (on main once #119 merges; the owner applies it). Suggested owner follow-up: a command
   size cap in guard.py and an explicit hook `timeout`; the current guard has quadratic inputs and a timed-out hook allows.
 - 7 merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).
