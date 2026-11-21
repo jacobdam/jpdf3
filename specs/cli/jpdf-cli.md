@@ -83,7 +83,8 @@ No other exit code is ever produced; panics are bugs (no `catch_unwind` that wou
 from the judge).
 
 ## Limits
-`jpdf_syntax::Limits` (re-exported by `jpdf-engine`), defaults:
+`jpdf_syntax::Limits` (re-exported by `jpdf-engine`), defaults. `Document::open` clamps the limits it
+is given to these defaults, so a caller can only tighten them (specs/core/limits-ceiling.md):
 - `max_file_size` 512 MiB (checked by the CLI from `stat` before opening, again on the
   opened file and after reading, and again by the engine). Boundary test: a write-only sparse
   file of exactly 512 MiB passes the size check (the open then fails with "Permission

@@ -75,7 +75,12 @@ pub struct Document {
 
 impl Document {
     /// Opens a document from its bytes.
+    ///
+    /// `limits` can only tighten the defaults: every field is clamped to
+    /// [`Limits::default`] first, because the value may come from Swift or JS
+    /// (CONSTITUTION 5). A depth of 10^7, for example, would overflow the parser's stack.
     pub fn open(bytes: &[u8], limits: &Limits) -> Result<Self, EngineError> {
+        let limits = &limits.clamped_to(&Limits::default());
         if bytes.len() > limits.max_file_size {
             return Err(EngineError::LimitExceeded("file size"));
         }
