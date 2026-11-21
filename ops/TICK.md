@@ -130,12 +130,29 @@ Ask it also, for every checker, suite or validator in the diff: **what broken im
 still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
 past fails)?
 
+Tell it that its report is posted on the (public) PR as is, so it must stand alone: one line per
+finding, `R<round>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
+
+**Post every review on the PR** (owner, #124), so the owner can read it without the session log:
+1. As soon as a round returns, before fixing anything, post its report **verbatim** as one PR
+   comment headed with the round and the commit it reviewed (`git rev-parse --short HEAD`):
+   `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
+2. After fixing, post one **triage** comment: each finding → `fixed in <sha>`, `disputed: <why>`
+   or `deferred: #<issue>`. Every round gets both comments, including a clean last round.
+3. Mechanics (the guard needs one simple command, text inline, no files): single-quote the body,
+   so `$`, backticks and `\` stay literal, and replace each `'` in the text with `’`. Over 60 000
+   characters → split into comments marked `(part i/n)`. The guard also blocks a command with the
+   Rust keyword for unchecked code plus a `.rs` path plus `>`; in the posted copy write that
+   keyword as `un-safe` and say so in the comment (proposal: `ops/proposals/guard-inert-post-text.md`).
+   A second reviewer's report (if one runs) is posted the same way.
+
 Fix what it finds (re-review if you changed much). Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
 --json headRefOid` can lag behind a push):
 ```sh
 gh api repos/jacobdam/jpdf3/statuses/<sha> \
-  -f state=success -f context=ai-review -f description="reviewed: <one line>"
+  -f state=success -f context=ai-review -f description="reviewed: <one line>" \
+  -f target_url=<URL of the last triage comment>
 ```
 (`state=failure` if unresolved findings remain.) `ai-review` is a required check: post it
 **before** enabling auto-merge and writing the journal, so a session that ends early doesn't
