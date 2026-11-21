@@ -115,6 +115,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   ([journal](journal/2026-11-20.md), PR #51).
 
 ## Engine & security
+- Writing a guard/hook rule over untrusted command text (a hook timeout or exception fails open) → use a
+  one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that
+  contain the trigger word so the fast path can't skip them ([journal](journal/2026-11-21.md), PR #119).
 - Parsing hostile input: per-object caps don't bound a document (overlapping objects/xref
   sections re-parse the same bytes quadratically; several capped objects alive at once exceed
   2 GiB) → design it in from the start: charge a per-document lexing budget per byte, keep a per-document object budget, reject overlapping

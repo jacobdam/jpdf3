@@ -4,20 +4,17 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- The audit 0002 PR (#111): docs/audits/0002.md, two doc reconciliations (PLAN §2.2, jpdf-cli spec), journal, STATUS,
-  LESSONS. #111 closes when it merges.
+- PR #119 (the owner's Codex second-reviewer proposal): reviewed in 6 rounds, all findings fixed in the proposal,
+  ai-review posted, auto-merge on. The owner applies the protected diffs (step 1) and dry-runs Codex (step 2).
+- This record PR (journal, STATUS, LESSONS).
 
 ## Last session
-- **Audit 0002** (rule g). Scope: 3b6101b..fa63ae1 (13 merges, PR #71 through #110).
-  - Four reviewers found 0 critical, 5 high, 9 medium and 31 low findings. The five highs:
-    - two web license-checker bypasses that let tool-tree code reach the bundle (#112);
-    - three conformance-suite holes (#116: Huffman codes > 9 bits, CBC resetting every 4 blocks; #117: hostile font
-      glyph that is only junk).
-  - Also: the lexer exceeds the string limit by 1 byte per name or odd hex token (#113); the clamp holds only at
-    `Document::open` (#114); cleanup in #115; comments on #81, #82, #87 and #105.
-  - Mutants on the changed core: 95% of viable mutants caught (164/172).
-  - This session took the audit (g) over ready security issues (d), against TICK's strict order (see audit 0002,
-    "Rule order"). Retro 0002 decides the order.
+- **PR #119 review** (rule a, the owner's comment). 14 major findings fixed in ops/proposals/codex-second-reviewer.md
+  (script confinement, sealed-corpus exposure through git discovery and symlinks, guard-rule fail-opens from
+  regex blow-ups, TICK background-timeout). See the proposal's "Review record".
+
+## Previous session
+- Audit 0002 (rule g): 0 critical, 5 high (#112, #116, #117), filed #112–#117; see docs/audits/0002.md.
 
 ## Next step (suggested order, TICK letters)
 1. d (security) issues, lowest number first: **#81, #82, #83, #106, #107, #109, #112, #113, #114, #116, #117**.
@@ -39,5 +36,6 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
   checked locally only.
-- No open proposals in ops/proposals/.
+- Open proposal: ops/proposals/codex-second-reviewer.md (owner applies it). Suggested owner follow-up: a command
+  size cap in guard.py and an explicit hook `timeout`; the current guard has quadratic inputs and a timed-out hook allows.
 - 7 merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).
