@@ -139,23 +139,38 @@ Ask it also, for every checker, suite or validator in the diff: **what broken im
 still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
 past fails)?
 
-Tell it that its report is posted on the (public) PR as is, so it must stand alone: one line per
-finding, `R<round>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
+Tell it its round number K, and that its report is posted on the (public) PR as is, so it must
+stand alone and cite repo-relative paths only: one line per finding,
+`R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
 
-**Post every review on the PR** (owner, #124), so the owner can read it without the session log:
-1. As soon as a round returns, before fixing anything, post its report **verbatim** as one PR
-   comment headed with the round and the commit it reviewed (`git rev-parse --short HEAD`):
+**Post every review on the PR** (owner, #124), so the owner can read it without the session log.
+Each round K runs in this order:
+1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
+   HEAD`, checked against `git ls-remote origin <branch>`.
+2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment:
    `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
-2. After fixing, post one **triage** comment: each finding → `fixed in <sha>`, `disputed: <why>`
-   or `deferred: #<issue>`. Every round gets both comments, including a clean last round.
-3. Mechanics (the guard needs one simple command, text inline, no files): single-quote the body,
-   so `$`, backticks and `\` stay literal, and replace each `'` in the text with `’`. Over 60 000
-   characters → split into comments marked `(part i/n)`. The guard also blocks a command with the
-   Rust keyword for unchecked code plus a `.rs` path plus `>`; in the posted copy write that
-   keyword as `un-safe` and say so in the comment (proposal: `ops/proposals/guard-inert-post-text.md`).
-   A second reviewer's report (if one runs) is posted the same way.
+3. Fix, commit and **push**.
+4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
+   finding: `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
+   round gets one too ("no findings").
+5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
+   changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
+   set to the URL that `gh pr comment` printed for the last triage comment.
 
-Fix what it finds (re-review if you changed much). Then post the status on the head commit:
+Mechanics (the guard wants one simple command with the text inline, no files):
+- Single-quote the body so `$`, backticks and `\` stay literal; write each `'` in the text as
+  `'\''` (close, escaped quote, reopen), which keeps it verbatim.
+- Over 60 000 characters → split into comments marked `(part i/n)`.
+- Replace any absolute local path with a repo-relative one (or `<local path>`).
+- If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
+  it), and list every such change at the end of the comment. Known triggers: the Rust keyword
+  for unchecked code together with a `.rs` path and `>` (write it `un-safe`), the sealed-corpus
+  manifest name, the local settings file name, the GitHub API host, force-push and `git apply`
+  text, a `>` or arrow before a protected path. Proposal: `ops/proposals/guard-inert-post-text.md`.
+- A second reviewer's report (if one runs) is posted the same way, headed `**AI review (second
+  reviewer), round K**`, with finding IDs `S<K>.<n>`.
+
+Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
 --json headRefOid` can lag behind a push):
 ```sh
@@ -195,7 +210,8 @@ leave the PR blocked.
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
-  the last audit. Findings → issues.
+  the last audit. Findings → issues. Post each report verbatim on the audit PR (draft it early),
+  with §4's mechanics, then a comment mapping each finding to its issue.
 - **Test strength:** `cargo mutants` on changed crates; weak spots → issues.
 - **Completeness:** compare journeys + PLAN §4 with PDFgear's feature inventory and platform
   conventions (Save As, unsaved-changes prompt, file changed on disk, recent files, shortcuts,

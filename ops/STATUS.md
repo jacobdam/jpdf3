@@ -4,21 +4,18 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #127 (owner #125): driver proposal + TICK §0 "Leave nothing running". Auto-merge goes on once ai-review is posted.
-  If it is still open, check its CI first (rule c). The owner applies the driver diff (#128).
+- PR #129 (owner #124): TICK §4 now posts every AI review round and its triage on the PR; guard proposal
+  ops/proposals/guard-inert-post-text.md. If it is still open, check its CI first (rule c).
 
 ## Last session
-- **#125** (rule a): a finished `claude -p` lingers while a ScheduleWakeup timer is pending (6 of 40 sessions, ~77 min
-  idle), and the driver read any failure as a usage limit (the CLI's `rate_limit_event` lines are in every log).
-  Proposal `ops/proposals/driver-session-exit.md` with a tested diff (37 scenarios after 3 review rounds),
-  owner-todo #128. The second session (19:30 UTC) finished the reviews after the first lost its re-review to the
-  CLI's 10 min background-task ceiling.
+- **#124** (rule a): TICK §4 posts each reviewer round verbatim as a PR comment, then a triage comment, and links
+  the ai-review status to it. The guard blocks review text that has the Rust keyword plus a .rs path plus `>`;
+  workaround in TICK, fix proposed (tested on a scratch copy: self-test 89/89).
 
 ## Previous session
-- **#81 1/2** (rule d, PR #123 merged): the image conformance suite; part 2/2 is #122.
+- **#125** (rule a, PR #127 merged): driver proposal (owner-todo #128) and TICK §0 "Leave nothing running".
 
 ## Next step (suggested order, TICK letters)
-0. a: owner issue **#124** (the AI reviewer posts its review as a PR comment): TICK §4 wording, then reply on #124.
 1. d (security) issues, lowest number first: **#82, #83, #106, #107, #109, #113, #114, #116, #117, #122**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).
@@ -40,4 +37,5 @@ Phase: bootstrap (pilot)
   checked locally only.
 - Open proposal: ops/proposals/codex-second-reviewer.md (merged; the owner applies it). Suggested owner follow-up: a command
   size cap in guard.py and an explicit hook `timeout`; the current guard has quadratic inputs and a timed-out hook allows.
+- Open proposal: ops/proposals/guard-inert-post-text.md (low priority; review comments write `un-safe` until applied).
 - 7 merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).
