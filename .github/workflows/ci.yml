@@ -435,7 +435,23 @@ jobs:
           [ -d e2e-linux/site ] && cp -r e2e-linux/site/. site/
           cp -r judge-report/. site/judge/
           [ -f site/index.html ] || echo '<!doctype html><title>jpdf</title><p>jpdf: web app not built yet. <a href="judge/report/summary.md">Judge report</a></p>' > site/index.html
+      # Per-attempt name: artifacts from every attempt of a run stay visible, so a reused name
+      # makes `gh run rerun --failed` fail with "Multiple artifacts named github-pages".
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
-      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+          name: github-pages-${{ github.run_attempt }}
+      # deploy-pages sometimes can't see a just-uploaded artifact yet ("No artifacts named
+      # github-pages were found"); retry once after a delay. The retry has no
+      # continue-on-error, so a real failure still fails the job.
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        continue-on-error: true
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+      - if: steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
