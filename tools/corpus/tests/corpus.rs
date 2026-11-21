@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use jpdf_corpus::fetch::{Options, fetch};
+use jpdf_corpus::fetch::{Options, Report, fetch, select};
 use jpdf_corpus::manifest::{self, Entry};
 use jpdf_corpus::sha1::git_blob_id;
 use jpdf_corpus::{Tier, sources};
@@ -144,7 +144,7 @@ fn wrong_bytes_are_integrity_failures() {
     assert!(
         r.integrity
             .iter()
-            .any(|m| m.contains("size.pdf: size is 3, expected 2")),
+            .any(|m| m.contains("size.pdf: size is more than 2, expected 2")),
         "{r:?}"
     );
     assert!(
@@ -223,6 +223,40 @@ fn committed_regress_manifest_matches_the_pinned_sources() {
         assert!(src.is_some(), "{} is not from a pinned source", e.url);
         assert!(e.size <= sources::MAX_BUILD_FILE, "{}", e.url);
     }
+    // Header source lines follow REGRESS order and their counts add up to the rows.
+    let counts: Vec<(String, usize)> = m
+        .comments
+        .iter()
+        .filter_map(|c| c.strip_prefix("source "))
+        .map(|c| {
+            let name = c.split(' ').next().unwrap().to_string();
+            let n = c
+                .split(" files=")
+                .nth(1)
+                .unwrap()
+                .split(' ')
+                .next()
+                .unwrap();
+            (name, n.parse().unwrap())
+        })
+        .collect();
+    let names: Vec<&str> = counts.iter().map(|(n, _)| n.as_str()).collect();
+    let want: Vec<&str> = sources::REGRESS.iter().map(|s| s.name).collect();
+    assert_eq!(names, want);
+    assert_eq!(
+        counts.iter().map(|(_, n)| n).sum::<usize>(),
+        m.entries.len()
+    );
+    for s in sources::REGRESS {
+        let prefix = format!("{}{}/", s.raw_prefix, s.commit);
+        let rows = m
+            .entries
+            .iter()
+            .filter(|e| e.url.starts_with(&prefix))
+            .count();
+        let header = counts.iter().find(|(n, _)| n == s.name).unwrap().1;
+        assert_eq!(rows, header, "{}", s.name);
+    }
     for s in sources::REGRESS {
         let line = format!("source {} {} {} files=", s.name, s.repo, s.commit);
         assert!(
@@ -263,4 +297,66 @@ fn sources_are_pinned_https_on_allowed_hosts() {
         manifest::check_url(&s.url("x.pdf")).unwrap();
         assert!(s.raw_prefix.ends_with('/'), "{}", s.name);
     }
+}
+
+#[test]
+fn select_sorts_then_limits() {
+    let rows = vec![
+        entry("c.pdf", b"c"),
+        entry("a.pdf", b"a"),
+        entry("b.pdf", b"b"),
+    ];
+    let mut sorted: Vec<String> = rows.iter().map(|e| e.blob.clone()).collect();
+    sorted.sort();
+    let got: Vec<String> = select(rows.clone(), Some(2))
+        .into_iter()
+        .map(|e| e.blob)
+        .collect();
+    assert_eq!(got, sorted[..2]);
+    assert_eq!(select(rows.clone(), None).len(), 3);
+    assert_eq!(select(rows.clone(), Some(0)).len(), 0);
+    assert_eq!(select(rows, Some(9)).len(), 3);
+}
+
+#[test]
+fn exit_codes() {
+    let r = |failed: usize, integrity: usize| Report {
+        total: 200,
+        failed: vec!["x".into(); failed],
+        integrity: vec!["y".into(); integrity],
+        ..Report::default()
+    };
+    assert_eq!(r(0, 0).exit_code(), 0);
+    assert_eq!(r(2, 0).exit_code(), 0, "2 of 200 is within max(1, 2)");
+    assert_eq!(r(3, 0).exit_code(), 75);
+    assert_eq!(r(0, 1).exit_code(), 1);
+    assert_eq!(r(3, 1).exit_code(), 1, "integrity wins over infrastructure");
+}
+
+#[test]
+fn concurrent_fetches_of_one_tier_do_not_clash() {
+    let d = scratch("concurrent");
+    let curl = fake_curl(&d);
+    let mut entries = Vec::new();
+    for i in 0..40 {
+        let name = format!("c{i}.pdf");
+        std::fs::write(d.join("serve").join(&name), name.as_bytes()).unwrap();
+        entries.push(entry(&name, name.as_bytes()));
+    }
+    let out = d.join("out");
+    let reports: Vec<Report> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..3)
+            .map(|_| s.spawn(|| fetch(&entries, &out, &opts(curl.clone()))))
+            .collect();
+        hs.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    for r in &reports {
+        assert!(r.failed.is_empty() && r.integrity.is_empty(), "{r:?}");
+    }
+    let names: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 40, "no .part files left: {names:?}");
+    std::fs::remove_dir_all(&d).unwrap();
 }

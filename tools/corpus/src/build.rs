@@ -1,7 +1,7 @@
 //! `build`: regress manifest from pinned git sources (specs/tooling/corpus.md, items 3 and 5).
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use jpdf_arlington::fetch::git_out;
 
@@ -25,8 +25,13 @@ pub struct TreeFile {
 pub fn select_pdfs(listing: &[u8]) -> Result<Vec<TreeFile>, String> {
     let mut out = Vec::new();
     for raw in listing.split(|b| *b == 0).filter(|e| !e.is_empty()) {
-        let entry =
-            std::str::from_utf8(raw).map_err(|_| "ls-tree entry is not UTF-8".to_string())?;
+        let Ok(entry) = std::str::from_utf8(raw) else {
+            // Only a PDF candidate needs a UTF-8 path (it becomes a URL); others are skipped.
+            if raw.to_ascii_lowercase().ends_with(b".pdf") {
+                return Err("ls-tree entry for a .pdf is not UTF-8".to_string());
+            }
+            continue;
+        };
         let bad = || format!("bad ls-tree entry {entry:?}");
         let (meta, path) = entry.split_once('\t').ok_or_else(bad)?;
         // "<mode> SP <type> SP <id> SP+ <size>" (size is right-aligned, "-" for non-blobs).
@@ -100,16 +105,11 @@ pub fn merge(tier: &str, sources: &[(Source, Vec<TreeFile>)]) -> Result<Manifest
     Ok(Manifest { comments, entries })
 }
 
-/// The cache repository of one source.
-pub fn repo_path(cache: &Path, src: &Source) -> PathBuf {
-    cache.join("git").join(format!("{}.git", src.name))
-}
-
 /// Fetches (once) and verifies a source's pinned commit, then lists its PDFs.
 pub fn list_source(cache: &Path, src: &Source) -> Result<Vec<TreeFile>, Error> {
     let e = |m: String| Error::Build(format!("{}: {m}", src.name));
     let git = |dir: &Path, args: &[&str]| git_out(dir, args, None).map_err(|x| e(x.to_string()));
-    let repo = repo_path(cache, src);
+    let repo = crate::sub_dir(cache, "git")?.join(format!("{}.git", src.name));
     if !repo.exists() {
         std::fs::create_dir_all(&repo).map_err(|source| Error::Io {
             path: repo.display().to_string(),
@@ -155,11 +155,6 @@ pub fn list_source(cache: &Path, src: &Source) -> Result<Vec<TreeFile>, Error> {
             "--no-progress",
         ],
     )?;
-    let got = git(&repo, &["rev-parse", "--verify", &commit_ref])?;
-    let got = String::from_utf8_lossy(&got).trim().to_string();
-    if got != src.commit {
-        return Err(e(format!("commit is {got}, pinned {}", src.commit)));
-    }
     let listing = git(&repo, &["ls-tree", "-r", "-l", "-z", src.commit])?;
     select_pdfs(&listing).map_err(e)
 }
@@ -216,7 +211,10 @@ mod tests {
         ] {
             assert!(select_pdfs(&listing(&[&bad])).is_err(), "{bad:?}");
         }
-        assert!(select_pdfs(b"\xff\0").is_err());
+        assert!(select_pdfs(b"100644 blob x 5\tna\xefme.pdf\0").is_err());
+        let ok = format!("100644 blob {A} 5\tok.pdf\0");
+        let mixed = [b"100644 blob x 5\tna\xffme.txt\0".as_slice(), ok.as_bytes()].concat();
+        assert_eq!(select_pdfs(&mixed).unwrap().len(), 1);
     }
 
     #[test]

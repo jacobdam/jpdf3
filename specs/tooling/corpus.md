@@ -48,8 +48,8 @@ the `wide` shards are the follow-up issue
 5. **`jpdf-corpus build regress [--cache DIR]`** fetches each source's pinned commit with
    `git fetch --depth 1 --no-tags <url> <commit>` into the bare repository
    `<cache>/git/<name>.git` (once; later runs are offline), keeps it with the ref
-   `refs/jpdf/pinned`, runs `git fsck --full --strict --no-dangling`, checks that the commit
-   resolves to exactly the pin, lists `git ls-tree -r -l -z <commit>`, applies item 3, and
+   `refs/jpdf/pinned`, runs `git fsck --full --strict --no-dangling` (git objects are
+   content-addressed, so the full commit id pins the tree), lists `git ls-tree -r -l -z <commit>`, applies item 3, and
    writes the manifest to `<repo>/tools/corpus/manifests/regress.tsv` (via a `.tmp` file and a
    rename). Git runs hardened exactly as in specs/tooling/arlington.md item 2
    (`jpdf_arlington::fetch::git_out`: `--git-dir`, `--no-replace-objects`, scrubbed `GIT_*`
@@ -58,21 +58,30 @@ the `wide` shards are the follow-up issue
    into `<cache>/<tier>/<blob>.pdf` (the judge's naming, so `jpdf-bench --corpus
    <cache>/<tier>` works):
    - parses and validates the whole manifest first (item 2); any error → nothing is fetched;
-   - `--limit N` takes the first N rows in blob-id order (as the judge's `--limit`);
+   - `--limit N` takes the first N rows in blob-id order. Unlike the judge's reader, repeated
+     blob ids are dropped before the limit (item 2), so on the smoke manifest the two can
+     pick different files past the one repeated id;
    - a file that already exists with the right size and blob id is kept (no download);
    - otherwise `curl -q --proto =https --proto-redir =https --fail --silent --show-error
      --location --max-redirs 5 --connect-timeout 30 --max-time 300 --max-filesize <size>
      --output <blob>.part --url <encoded-url>`; `-q` first, so no `.curlrc` is read. Up to 3
      attempts per file, 1 s then 2 s apart. The `.part` file must have exactly `size` bytes and
-     the right blob id; then it is renamed to `<blob>.pdf`. A wrong size or hash deletes the
-     `.part` file and is an **integrity failure** (no retry).
+     the right blob id (streamed through SHA-1 with a 64 KiB buffer, at most `size + 1` bytes
+     read); then it is renamed to `<blob>.pdf`. The `.part` name is
+     `<blob>.<pid>.<seq>.part`, so concurrent runs on one tier don't clash. A wrong size or
+     hash, or curl exit 63 (`--max-filesize` exceeded), deletes the `.part` file and is an
+     **integrity failure** (no retry). An error opening or reading the download is a
+     download failure.
    - `--jobs J` (1–32, default 8) parallel downloads.
    - Prints `fetched X/N (K cached, F failed, I integrity)` on stderr.
    - Files in the tier directory that the manifest doesn't list are left alone.
 7. **Cache dir.** `--cache DIR`, else `$JPDF_CORPUS_CACHE`, else `$HOME/.cache/jpdf-corpus`.
-   It must not be inside the repository (CONSTITUTION 18: PDFs are never committed):
-   both paths are canonicalized (the cache is created first) and a cache equal to or under
-   the repository root is a usage error.
+   It must not be inside the repository or any git working tree (CONSTITUTION 18: PDFs are
+   never committed; a worktree's parent checkout counts). Before anything is created, the
+   nearest existing ancestor is canonicalized and the rest of the path appended; that path
+   must not be under the repository root, and no ancestor may contain `.git`. Otherwise it is
+   a usage error. The tier directory (`<cache>/<tier>`) and `<cache>/git` are created and
+   must canonicalize to themselves (a symlink there is a usage error).
 8. **Repository root** is found at compile time (`CARGO_MANIFEST_DIR/../..`), so the tool
    always reads the manifests of the checkout it was built from.
 
@@ -88,9 +97,9 @@ Not applicable (development tool).
   size, bad URL or host, a blob id with two sizes, too many rows, file too large), exit 1.
 - Fetch: per-file `<url>: <problem>` lines on stderr. Exit codes: 0 when every row is present;
   1 on any integrity failure (wrong size or hash: never an infrastructure problem);
-  75 with the judge's `JUDGE-INFRA-FAILURE` marker when more than 1% of rows (at least 1)
-  could not be downloaded; otherwise 0 with the failures listed.
-- Build: `build: <source>: git … failed (…)`, `build: <source>: commit is X, pinned Y`,
+  75 with the judge's `JUDGE-INFRA-FAILURE` marker when more than `max(1, ⌊N/100⌋)` of the
+  N rows could not be downloaded (the judge's rule); otherwise 0 with the failures listed.
+- Build: `build: <source>: git … failed (…)`, `build: <source>: … is not a bare repository; delete it`,
   `build: <source>: bad ls-tree entry …`, exit 1.
 - Usage (unknown command, tier or flag, missing value, a flag twice, `--jobs` out of range,
   a cache inside the repository): the problem and the usage line, exit 2.
@@ -99,7 +108,7 @@ Not applicable (development tool).
 Manifests are committed but still parsed as outside input: ≤ 32 MiB per manifest file
 (read bounded at the cap + 1 byte), ≤ 200 000 rows, URL ≤ 2048 bytes, size ≤ 64 MiB per row.
 `curl --max-filesize` and the size check bound every download to the manifest size.
-`build`: per-file cap 16 MiB; `ls-tree` output is read from git in one buffer (a pinned
+`fetch` memory is bounded by the 64 KiB buffer per job. `build`: per-file cap 16 MiB; `ls-tree` output is read from git in one buffer (a pinned
 repository listing, a few MB). No panics: no `unwrap`, `expect` or indexing on input-derived
 data (workspace lints).
 
@@ -132,12 +141,14 @@ macOS and Linux (needs `git` and `curl` on `PATH`). Not built for wasm.
 
 ## Performance
 `build regress` from a warm cache: a few seconds (fsck of ~500 MB of packs). `fetch regress`:
-bound by the network; ~5 300 files, ~1.1 GB at the part-1 pins.
+bound by the network; 5 250 files, 438 MB at the part-1 pins (about 4 minutes with
+`--jobs 16` on a home connection).
 
 ## Tests
 Unit tests (`cargo nextest run -p jpdf-corpus`):
-- SHA-1/git blob ids: FIPS 180 vectors, the empty blob, and lengths 55, 56, 63, 64, 65 and
-  1 000 000 (padding and block boundaries) against known git ids;
+- SHA-1: FIPS 180 vectors (including 1 000 000 × `a`), lengths 55, 56, 63, 64 and 65
+  (padding and block boundaries) against `shasum`, split updates; git blob ids of `""` and
+  `"hello\n"`;
 - manifest: a valid file round-trips through `write`; each error in "Errors" with its line
   number; a repeated blob id (dropped with the same size, error with another); host and scheme allowlist; the size and row caps;
 - URL encoding: spaces, `%`, non-ASCII, `#`, `?` against the judge's quoting;
@@ -145,7 +156,13 @@ Unit tests (`cargo nextest run -p jpdf-corpus`):
   listing; malformed entries rejected;
 - the committed `regress.tsv` parses, every row's URL belongs to a pinned source, and the
   header names every source;
-- fetch against a local `file://`-free fake: a shell `curl` stand-in on `PATH` that writes
-  fixed bytes, covering cached files, a hash mismatch (integrity, exit 1, `.part` removed),
-  a size mismatch, a download failure (exit 75 above 1%), and `--limit`;
-- CLI: usage errors (exit 2), unknown tier, cache inside the repository.
+- the committed `regress.tsv`: header source lines in `REGRESS` order, their `files=` counts
+  equal the rows per source and sum to the total;
+- fetch with a shell `curl` stand-in (passed as `Options::curl`): argv starts with `-q`,
+  encoded URLs, retries, cached and corrupted-cache files, a hash mismatch, a size mismatch
+  and curl exit 63 (integrity, no retry, nothing left behind), download failures and the
+  `max(1, N/100)` threshold, a missing curl, three concurrent fetches of one tier;
+- `select` (sort, then `--limit`) and `Report::exit_code` (0, 1 before 75, 75);
+- cache rules: inside the repository (also via `..`, nothing created), inside another git
+  working tree, through a symlinked root, a symlinked tier directory, precedence;
+- CLI parsing: usage errors (exit 2), unknown tier.

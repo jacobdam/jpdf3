@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use jpdf_corpus::{Error, Tier, build, fetch, manifest, repo_root, resolve_cache, sources};
+use jpdf_corpus::{
+    Error, Tier, build, fetch, manifest, repo_root, resolve_cache, sources, sub_dir,
+};
 
 const USAGE: &str = "usage: jpdf-corpus build regress [--cache DIR]\n       \
      jpdf-corpus fetch <smoke|regress> [--cache DIR] [--limit N] [--jobs J]";
@@ -109,16 +111,8 @@ fn run(a: Args) -> Result<ExitCode, Error> {
         return Ok(ExitCode::SUCCESS);
     }
     let m = manifest::load(&a.tier.manifest())?;
-    let mut entries = m.entries;
-    entries.sort_by(|x, y| x.blob.cmp(&y.blob));
-    if let Some(n) = a.limit {
-        entries.truncate(n);
-    }
-    let dir = cache.join(a.tier.name());
-    std::fs::create_dir_all(&dir).map_err(|source| Error::Io {
-        path: dir.display().to_string(),
-        source,
-    })?;
+    let entries = fetch::select(m.entries, a.limit);
+    let dir = sub_dir(&cache, a.tier.name())?;
     let opts = fetch::Options {
         jobs: a.jobs,
         ..fetch::Options::default()
@@ -128,17 +122,14 @@ fn run(a: Args) -> Result<ExitCode, Error> {
         eprintln!("{line}");
     }
     eprintln!("{}: {}", dir.display(), r.summary());
-    Ok(if !r.integrity.is_empty() {
-        ExitCode::FAILURE
-    } else if r.is_infra_failure() {
+    let code = r.exit_code();
+    if code == 75 {
         eprintln!(
             "{INFRA_MARKER}: {} corpus files could not be fetched",
             r.failed.len()
         );
-        ExitCode::from(75)
-    } else {
-        ExitCode::SUCCESS
-    })
+    }
+    Ok(ExitCode::from(code))
 }
 
 fn main() -> ExitCode {

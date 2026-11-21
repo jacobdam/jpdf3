@@ -306,7 +306,6 @@ fn run(mut cmd: Command, what: &str, stdin: Option<Vec<u8>>) -> Result<Vec<u8>, 
     Ok(output.stdout)
 }
 
-/// The platform's null device, for `GIT_CONFIG_GLOBAL`.
-pub fn null_device() -> &'static str {
+fn null_device() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }

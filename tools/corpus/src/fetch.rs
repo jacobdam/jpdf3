@@ -3,12 +3,12 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::manifest::{Entry, encode_url};
-use crate::sha1::git_blob_id;
+use crate::sha1::{Sha1, hex};
 
 /// Attempts per file.
 pub const ATTEMPTS: u32 = 3;
@@ -56,6 +56,18 @@ impl Report {
         self.failed.len() > (self.total / 100).max(1)
     }
 
+    /// The process exit code (spec "Errors"): 1 on any integrity failure (checked first),
+    /// 75 above the infrastructure threshold, else 0.
+    pub fn exit_code(&self) -> u8 {
+        if !self.integrity.is_empty() {
+            1
+        } else if self.is_infra_failure() {
+            75
+        } else {
+            0
+        }
+    }
+
     pub fn summary(&self) -> String {
         format!(
             "fetched {}/{} ({} cached, {} failed, {} integrity)",
@@ -75,6 +87,15 @@ enum Outcome {
     Integrity(String),
 }
 
+/// The rows a fetch covers: blob-id order, then the first `limit` rows.
+pub fn select(mut entries: Vec<Entry>, limit: Option<usize>) -> Vec<Entry> {
+    entries.sort_by(|x, y| x.blob.cmp(&y.blob));
+    if let Some(n) = limit {
+        entries.truncate(n);
+    }
+    entries
+}
+
 /// Downloads `entries` into `dir/<blob>.pdf` (the directory must exist).
 pub fn fetch(entries: &[Entry], dir: &Path, opts: &Options) -> Report {
     let next = AtomicUsize::new(0);
@@ -88,7 +109,7 @@ pub fn fetch(entries: &[Entry], dir: &Path, opts: &Options) -> Report {
             s.spawn(|| {
                 while let Some(e) = entries.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let outcome = fetch_one(e, dir, opts);
-                    let Ok(mut r) = report.lock() else { return };
+                    let mut r = report.lock().unwrap_or_else(PoisonError::into_inner);
                     match outcome {
                         Outcome::Cached => r.cached = r.cached.saturating_add(1),
                         Outcome::Downloaded => r.downloaded = r.downloaded.saturating_add(1),
@@ -99,36 +120,70 @@ pub fn fetch(entries: &[Entry], dir: &Path, opts: &Options) -> Report {
             });
         }
     });
-    let mut r = report.into_inner().unwrap_or_default();
+    let mut r = report.into_inner().unwrap_or_else(PoisonError::into_inner);
     r.failed.sort();
     r.integrity.sort();
     r
 }
 
-/// Reads at most `size + 1` bytes and checks length and blob id.
-fn verify(path: &Path, e: &Entry) -> Result<(), String> {
-    let file = std::fs::File::open(path).map_err(|x| x.to_string())?;
-    let mut bytes = Vec::new();
-    file.take(e.size.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|x| x.to_string())?;
-    let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-    if len != e.size {
-        return Err(format!("size is {len}, expected {}", e.size));
+/// Why a file failed [`verify`].
+enum VerifyError {
+    /// Opening or reading failed (not evidence about the bytes).
+    Io(String),
+    /// Wrong size or blob id.
+    Mismatch(String),
+}
+
+/// Streams the file through SHA-1 (fixed buffer), reading at most `size + 1` bytes, and
+/// checks its length and git blob id.
+fn verify(path: &Path, e: &Entry) -> Result<(), VerifyError> {
+    let io = |x: std::io::Error| VerifyError::Io(x.to_string());
+    let mut file = std::fs::File::open(path)
+        .map_err(io)?
+        .take(e.size.saturating_add(1));
+    let mut h = Sha1::new();
+    h.update(format!("blob {}\0", e.size).as_bytes());
+    let mut buf = [0u8; 64 * 1024];
+    let mut len: u64 = 0;
+    loop {
+        let n = file.read(&mut buf).map_err(io)?;
+        if n == 0 {
+            break;
+        }
+        h.update(buf.get(..n).unwrap_or_default());
+        len = len.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
     }
-    let id = git_blob_id(&bytes);
+    if len != e.size {
+        let got = if len > e.size {
+            format!("more than {}", e.size)
+        } else {
+            len.to_string()
+        };
+        return Err(VerifyError::Mismatch(format!(
+            "size is {got}, expected {}",
+            e.size
+        )));
+    }
+    let id = hex(&h.finish());
     if id != e.blob {
-        return Err(format!("blob id is {id}, expected {}", e.blob));
+        return Err(VerifyError::Mismatch(format!(
+            "blob id is {id}, expected {}",
+            e.blob
+        )));
     }
     Ok(())
 }
+
+/// Distinguishes `.part` files of concurrent runs and of calls within one run.
+static PART_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn fetch_one(e: &Entry, dir: &Path, opts: &Options) -> Outcome {
     let dst = dir.join(format!("{}.pdf", e.blob));
     if verify(&dst, e).is_ok() {
         return Outcome::Cached;
     }
-    let part = dir.join(format!("{}.part", e.blob));
+    let seq = PART_SEQ.fetch_add(1, Ordering::Relaxed);
+    let part = dir.join(format!("{}.{}.{seq}.part", e.blob, std::process::id()));
     let mut delay = opts.retry_delay;
     let mut last = String::new();
     for attempt in 0..ATTEMPTS {
@@ -157,9 +212,13 @@ fn fetch_one(e: &Entry, dir: &Path, opts: &Options) -> Outcome {
                     Outcome::Failed(format!("rename: {x}"))
                 }
             },
-            Err(m) => {
+            Err(VerifyError::Mismatch(m)) => {
                 let _ = std::fs::remove_file(&part);
                 Outcome::Integrity(m)
+            }
+            Err(VerifyError::Io(m)) => {
+                let _ = std::fs::remove_file(&part);
+                Outcome::Failed(format!("reading the download: {m}"))
             }
         };
     }

@@ -101,7 +101,8 @@ pub fn repo_root() -> PathBuf {
 }
 
 /// Resolves the cache directory (item 7): `--cache`, `$JPDF_CORPUS_CACHE`, or
-/// `$HOME/.cache/jpdf-corpus`; creates it and refuses one inside `repo`.
+/// `$HOME/.cache/jpdf-corpus`. Refuses, before creating anything, a cache inside `repo` or
+/// inside any git working tree (a worktree's parent checkout too), then creates it.
 pub fn resolve_cache(
     flag: Option<PathBuf>,
     env_cache: Option<PathBuf>,
@@ -112,24 +113,71 @@ pub fn resolve_cache(
         .or(env_cache)
         .or_else(|| home.map(|h| h.join(".cache/jpdf-corpus")))
         .ok_or_else(|| Error::Usage("no cache dir: pass --cache or set HOME".into()))?;
-    let io = |source| Error::Io {
+    let dir = std::path::absolute(&dir).map_err(|source| Error::Io {
         path: dir.display().to_string(),
         source,
-    };
-    std::fs::create_dir_all(&dir).map_err(io)?;
-    let dir = dir.canonicalize().map_err(io)?;
+    })?;
     let repo = repo.canonicalize().map_err(|source| Error::Io {
         path: repo.display().to_string(),
         source,
     })?;
-    if dir.starts_with(&repo) {
-        return Err(Error::Usage(format!(
-            "cache {} is inside the repository {} (PDFs are never committed)",
+    // The nearest existing ancestor, canonicalized, plus the components still to create.
+    let mut existing = dir.as_path();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+            break;
+        };
+        rest.push(name.to_os_string());
+        existing = parent;
+    }
+    let mut planned = existing.canonicalize().map_err(|source| Error::Io {
+        path: existing.display().to_string(),
+        source,
+    })?;
+    planned.extend(rest.iter().rev());
+    check_outside(&planned, &repo)?;
+    std::fs::create_dir_all(&planned).map_err(|source| Error::Io {
+        path: planned.display().to_string(),
+        source,
+    })?;
+    Ok(planned)
+}
+
+fn check_outside(dir: &Path, repo: &Path) -> Result<(), Error> {
+    let inside = |what: &str, root: &Path| {
+        Err(Error::Usage(format!(
+            "cache {} is inside {what} {} (PDFs are never committed)",
             dir.display(),
-            repo.display()
+            root.display()
+        )))
+    };
+    if dir.starts_with(repo) {
+        return inside("the repository", repo);
+    }
+    if let Some(root) = dir.ancestors().find(|a| a.join(".git").exists()) {
+        return inside("the git working tree", root);
+    }
+    Ok(())
+}
+
+/// Creates `<cache>/<name>` and checks it really is that directory (not a symlink elsewhere).
+pub fn sub_dir(cache: &Path, name: &str) -> Result<PathBuf, Error> {
+    let want = cache.join(name);
+    let io = |source| Error::Io {
+        path: want.display().to_string(),
+        source,
+    };
+    std::fs::create_dir_all(&want).map_err(io)?;
+    let got = want.canonicalize().map_err(io)?;
+    if got != want {
+        return Err(Error::Usage(format!(
+            "{} resolves to {}; remove the link",
+            want.display(),
+            got.display()
         )));
     }
-    Ok(dir)
+    Ok(want)
 }
 
 #[cfg(test)]
@@ -156,7 +204,10 @@ mod tests {
             Err(Error::Usage(m)) => assert!(m.contains("inside the repository"), "{m}"),
             other => panic!("{other:?}"),
         }
-        let _ = std::fs::remove_dir(&inside);
+        assert!(!inside.exists(), "nothing is created before the check");
+        // Relative and dot-dot spellings resolve to the same place.
+        let sneaky = root.join("tools/../target/x/../jpdf-corpus-test-cache");
+        assert!(resolve_cache(Some(sneaky), None, None, &root).is_err());
         match resolve_cache(None, None, None, &root) {
             Err(Error::Usage(m)) => assert!(m.contains("--cache"), "{m}"),
             other => panic!("{other:?}"),
@@ -164,8 +215,36 @@ mod tests {
     }
 
     #[test]
+    fn cache_inside_another_git_tree_or_via_symlink_is_refused() {
+        let base = std::env::temp_dir().join(format!("jpdf-corpus-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("checkout/.git")).unwrap();
+        std::fs::create_dir_all(base.join("elsewhere")).unwrap();
+        let root = repo_root();
+        match resolve_cache(Some(base.join("checkout/scratch/c")), None, None, &root) {
+            Err(Error::Usage(m)) => assert!(m.contains("inside the git working tree"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        // A symlinked cache root resolves to its target, which is then checked.
+        std::os::unix::fs::symlink(base.join("checkout"), base.join("link")).unwrap();
+        assert!(resolve_cache(Some(base.join("link/c")), None, None, &root).is_err());
+        // A tier directory that is a symlink is refused.
+        let cache = resolve_cache(Some(base.join("elsewhere/c")), None, None, &root).unwrap();
+        std::os::unix::fs::symlink(base.join("checkout"), cache.join("regress")).unwrap();
+        match sub_dir(&cache, "regress") {
+            Err(Error::Usage(m)) => assert!(m.contains("remove the link"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sub_dir(&cache, "smoke").unwrap(), cache.join("smoke"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
     fn cache_precedence() {
-        let base = std::env::temp_dir().join(format!("jpdf-corpus-prec-{}", std::process::id()));
+        let base = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("jpdf-corpus-prec-{}", std::process::id()));
         let root = repo_root();
         let (a, b) = (base.join("flag"), base.join("env"));
         let got = resolve_cache(Some(a.clone()), Some(b.clone()), Some(base.clone()), &root);
