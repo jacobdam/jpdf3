@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use jpdf_arlington::fetch::git_out;
+use jpdf_arlington::fetch::{ensure_pinned, git_out};
 
 use crate::Error;
 use crate::manifest::{Entry, Manifest};
@@ -110,41 +110,7 @@ pub fn list_source(cache: &Path, src: &Source) -> Result<Vec<TreeFile>, Error> {
     let e = |m: String| Error::Build(format!("{}: {m}", src.name));
     let git = |dir: &Path, args: &[&str]| git_out(dir, args, None).map_err(|x| e(x.to_string()));
     let repo = crate::sub_dir(cache, "git")?.join(format!("{}.git", src.name));
-    if !repo.exists() {
-        std::fs::create_dir_all(&repo).map_err(|source| Error::Io {
-            path: repo.display().to_string(),
-            source,
-        })?;
-        git(&repo, &["init", "--bare", "--quiet"])?;
-    }
-    let bare = git(&repo, &["rev-parse", "--is-bare-repository"]).map_err(|x| {
-        e(format!(
-            "{} is not a usable cache ({x}); delete it",
-            repo.display()
-        ))
-    })?;
-    if String::from_utf8_lossy(&bare).trim() != "true" {
-        return Err(e(format!(
-            "{} is not a bare repository; delete it",
-            repo.display()
-        )));
-    }
-    let commit_ref = format!("{}^{{commit}}", src.commit);
-    if git(&repo, &["cat-file", "-e", &commit_ref]).is_err() {
-        git(
-            &repo,
-            &[
-                "fetch",
-                "--quiet",
-                "--depth",
-                "1",
-                "--no-tags",
-                src.repo,
-                src.commit,
-            ],
-        )?;
-    }
-    git(&repo, &["update-ref", PIN_REF, src.commit])?;
+    ensure_pinned(&repo, src.repo, src.commit, PIN_REF).map_err(|x| e(x.to_string()))?;
     git(
         &repo,
         &[

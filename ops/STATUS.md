@@ -4,20 +4,18 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #129 (owner #124): TICK §4 now posts every AI review round and its triage on the PR; guard proposal
-  ops/proposals/guard-inert-post-text.md. If it is still open, check its CI first (rule c).
+- PR #131 (#82): tooling fetch hardening. Auto-merge goes on after ai-review; if still open, check its CI (rule c).
 
 ## Last session
-- **#124** (rule a): TICK §4 posts each reviewer round verbatim as a PR comment, then a triage comment, and links
-  the ai-review status to it; §6 posts audit reviews too. Guard proposal ops/proposals/guard-inert-post-text.md
-  (owner-todo #130) lets review text pass verbatim without new bypasses (scratch copy: self-test 135/135, 27/27
-  mutants caught). 5 review rounds.
+- **#82** (rule d): git hardening shared by jpdf-arlington and jpdf-corpus (deadline + group kill, all `GIT_*`
+  scrubbed, no hooks/askpass/gc, HTTPS only, cache must be plain dirs and files with allow-listed config) and
+  bounded corpus downloads (no redirects, size + 1 cap, FIFO-safe). 3 review rounds, all posted on the PR.
 
 ## Previous session
-- **#125** (rule a, PR #127 merged): driver proposal (owner-todo #128) and TICK §0 "Leave nothing running".
+- **#124** (rule a, PR #129 merged): every AI review round and its triage are posted on the PR.
 
 ## Next step (suggested order, TICK letters)
-1. d (security) issues, lowest number first: **#82, #83, #106, #107, #109, #113, #114, #116, #117, #122**.
+1. d (security) issues, lowest number first: **#83, #106, #107, #109, #113, #114, #116, #117, #122**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).
 2. **#76**: harness honesty. The judge relies on it.
