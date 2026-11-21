@@ -14,6 +14,7 @@ pub mod crypto;
 pub mod flate;
 pub mod font;
 pub mod image;
+pub mod raster;
 mod vectors;
 
 use std::fmt;

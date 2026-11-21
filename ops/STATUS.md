@@ -4,19 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #67 (#53, font traits): auto-merge once CI passes; ai-review is posted.
+- PR #71 (#54, Rasterizer trait + suite): auto-merge once CI passes; ai-review is posted.
 
 ## Last session
-- #53: added `FontEngine`, `Type1Parser`, `FontFace` and `FontLimits`, plus
-  `conformance::font::{run_font_engine, run_type1}` (segment-level outlines, hostile fonts
-  per format, exact limit boundaries). Review: 16 + 9 findings, all fixed.
-  TextShaper → #66. Minor suite leftovers → #68.
+- #54: added `Rasterizer` (display list → premultiplied RGBA8), `RasterLimits`, `check_scene`
+  and `conformance::raster::run`, tested against a toy and 11 broken variants. Review:
+  1 blocker (an overflow panic on image size) + 14 others, all fixed; the delta review
+  approved. ColorTransform → #70. Discoveries for `jpdf-render`: #72, #73.
+- The worktree `.claude/worktrees/license-amend` (`t/50-test-only-licenses`) holds
+  uncommitted CONSTITUTION.md edits, apparently the owner's. Agents must not touch it.
 
 ## Next step
-- **An audit is due** (24 merged PRs, no audit yet; TICK §2 i, §6). Consider running it before
-  more feature work.
-- `ready` M0 issues: #54, #55, #61, #64, #66, lowest number first. #14 closes after #55,
-  #20 after #61, #22 after #64.
+- **An audit is overdue** (25+ merged PRs, none yet; TICK §2 i, §6). TICK's strict order
+  (g before i) keeps skipping it, so take the audit next. A retro should also reorder the
+  rules.
+- `ready` M0 issues: #55, #61, #64, #66, #70, lowest number first. #14 closes after #55 and
+  #70, #20 after #61, #22 after #64.
 - #19 (nightly) can start: `jpdf-corpus fetch regress` (exit 75 = infra), then
   `cargo xtask fuzz`, `cargo xtask bench --corpus ~/.cache/jpdf-corpus/regress`, and the 5%
   regression check between reports that share a machine id (PLAN §5).
