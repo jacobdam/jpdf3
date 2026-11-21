@@ -37,29 +37,30 @@
          if not re.search(r'[$`\\"]', t):
              forms.append('"%s"' % t)
          for q in forms:
-@@ -303,6 +305,21 @@
-                 cmd = cmd.replace(q, "''", 1)
-                 break
+@@ -305,6 +307,22 @@
      return cmd
-+
-+
+ 
+ 
 +_SINGLE_GH_POST = re.compile(
-+    r" *gh (issue|pr) (comment|create|edit)( +([A-Za-z0-9_./:#=@,+-]+|''|--[a-z-]+=''))* *")
++    r" *gh (issue|pr) (comment|create|edit)( +([A-Za-z0-9_./:=@,+-]+|''|--[a-z-]+=''))* *")
 +
 +
 +def inert_view(cmd, texts):
 +    """The whitespace-collapsed command with its inert gh titles/bodies removed, but only if what
-+    remains is one plain gh post: spaces between bare words and '' placeholders, nothing else (no
-+    newline, tab, quote, metacharacter or non-ASCII), so no second command can run a stripped copy
-+    of the text (bash -c, eval). Otherwise the full command, collapsed."""
++    remains is one plain gh post: spaces between words the shell reads literally and '' placeholders,
++    nothing else (no newline, tab, quote, `#` comment, metacharacter or non-ASCII), so no second
++    command can run a stripped copy of the text (bash -c, eval, a comment that ends inside a
++    quoted body). Otherwise the full command, collapsed."""
 +    stripped = strip_inert_text(cmd, texts)
 +    if _SINGLE_GH_POST.fullmatch(stripped):
 +        return " ".join(stripped.split())
 +    return " ".join(cmd.split())
- 
- 
++
++
  def changed_files(cwd):
-@@ -452,6 +469,19 @@
+     """Staged, unstaged and untracked paths (repo-relative) in the worktree at cwd."""
+     try:
+@@ -452,6 +470,21 @@
          ("Bash", {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}, True),
          ("Bash", {"command": "gh issue comment 5 --body 'done'"}, True),
          ("Bash", {"command": "gh issue comment 5 --body '%s done'" % TAG}, False),
@@ -74,8 +75,30 @@
 +        ("Bash", {"command": "bash -c '%s; cmux send y'; gh issue comment 5 --body \"%s; cm\"\"ux send y\"" % (TAG, TAG)}, True),
 +        ("Bash", {"command": "gh pr edit 5 --title s'ed -i s/x/unsafe/ a.rs' --body '%s x'\nbash -c 'sed -i s/x/unsafe/ a.rs'" % TAG}, True),
 +        ("Bash", {"command": "gh pr edit 5 --title cm'ux send y' --body '%s x'\nbash -c 'cmux send y'" % TAG}, True),
++        ("Bash", {"command": "gh pr comment 5 # --body '%s x\necho unsafe > a.rs #'" % TAG}, True),
++        ("Bash", {"command": "gh pr edit 5 # --title 'x\ncmux send y #'"}, True),
 +        ("Bash", {"command": "gh pr comment 5 --body '%s x'\ncmux send y" % TAG}, True),
 +        ("Bash", {"command": "gh pr comment 5 --body '%s x'\rsed -i s/x/unsafe/ a.rs" % TAG}, True),
          ("Bash", {"command": "gh issue comment 5 --body-file /tmp/b.md"}, True),
          ("Bash", {"command": "gh issue create -t x -b \"%s\nline2; with semicolon\"" % TAG}, False),
          ("Bash", {"command": "gh issue create -t x -l human"}, True),
+@@ -475,6 +508,19 @@
+         if blocked != should:
+             failures += 1
+             print("FAIL: %s %s -> blocked=%s, expected %s" % (tool, json.dumps(ti)[:100], blocked, should))
++    # inert_view keeps the full view unless the remainder is one plain gh post (each barrier alone).
++    views = [
++        ("gh pr comment 5 --body 'x y'", ["x y"], "gh pr comment 5 --body ''"),
++        ("gh pr comment 5 --body 'x y'\nls", ["x y"], "gh pr comment 5 --body 'x y' ls"),
++        ("gh pr comment 5 a'b' --body 'x y'", ["x y"], "gh pr comment 5 a'b' --body 'x y'"),
++        ("gh pr comment 5 #a --body 'x y'", ["x y"], "gh pr comment 5 #a --body 'x y'"),
++    ]
++    for cmd, texts, want in views:
++        cases.append(("inert_view", {"command": cmd}, want))
++        got = inert_view(cmd, texts)
++        if got != want:
++            failures += 1
++            print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
+     listed = os.path.join(root, "ops/judge/protected.txt")
+     if os.path.isfile(listed):
+         want = sorted(l.strip() for l in open(listed) if l.strip() and not l.startswith("#"))

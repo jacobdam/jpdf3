@@ -10,7 +10,7 @@ Phase: bootstrap (pilot)
 ## Last session
 - **#124** (rule a): TICK §4 posts each reviewer round verbatim as a PR comment, then a triage comment, and links
   the ai-review status to it; §6 posts audit reviews too. Review found an existing guard hole (owner-todo #130);
-  the fix is in ops/proposals/guard-inert-post-text.md (scratch copy: self-test 99/99).
+  the fix is in ops/proposals/guard-inert-post-text.md (scratch copy: self-test 105/105).
 
 ## Previous session
 - **#125** (rule a, PR #127 merged): driver proposal (owner-todo #128) and TICK §0 "Leave nothing running".

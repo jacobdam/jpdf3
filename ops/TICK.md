@@ -144,7 +144,8 @@ stand alone and cite repo-relative paths only: one line per finding,
 `R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
 
 **Post every review on the PR** (owner, #124), so the owner can read it without the session log.
-K = 1 + the number of `AI review, round` comments already on the PR (a resumed PR continues).
+K = 1 + the highest K in an `AI review, round K` header already on the PR, else 1 (a resumed PR
+continues).
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
@@ -165,14 +166,16 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   `'\''` (close, escaped quote, reopen), which keeps it verbatim.
 - Over 60 000 characters → split into comments; each part starts with the tag and the round
   header, then `(part i/n)`.
-- Replace any absolute local path with a repo-relative one (or `<local path>`).
+- Replace any absolute local path with a repo-relative one (or `<local path>`), and list it with
+  the other changes.
 - If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
   it), and list every such change at the end of the comment. Known triggers:
   - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
     `sed -i`, `perl -i`): write it `un-safe`;
   - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
-  - force-push, push-to-main, `-R <other repo>`, `patch` and `git apply` text;
-  - a `>`, an arrow or a `;`/`|` before a protected path;
+  - force-push, push-to-main and `-R <other repo>` text;
+  - a body line that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
+    `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path;
   - the terminal-multiplexer name in any body that contains a `'`, because such a body never
     counts as inert text.
 
@@ -218,8 +221,10 @@ leave the PR blocked.
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
-  the last audit. Findings → issues. Post each report verbatim on the audit PR (draft it early),
-  with §4's mechanics, then a comment mapping each finding to its issue.
+  the last audit. Findings → issues. Post each report verbatim on the audit PR (draft it early)
+  with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
+  (code)**` (no round number, so §4's K is unaffected). Then post `**Audit findings → issues**`,
+  mapping each finding to its issue.
 - **Test strength:** `cargo mutants` on changed crates; weak spots → issues.
 - **Completeness:** compare journeys + PLAN §4 with PDFgear's feature inventory and platform
   conventions (Save As, unsaved-changes prompt, file changed on disk, recent files, shortcuts,
