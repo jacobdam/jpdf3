@@ -6,7 +6,7 @@
 //! and mutated programs, out-of-range glyph ids, every limit at its exact boundary, and
 //! invariants on everything a damaged face returns (finite numbers, glyph ids in range).
 
-use super::{Report, guarded, sample_offsets};
+use super::{Boundary, Report, guarded, narrow, sample_offsets};
 use crate::{
     BackendError, BuiltinEncoding, CmapId, FontEngine, FontFace, FontLimits, FontProgram, GlyphId,
     Outline, OutlineFormat, PathSegment, Point, Type1Parser,
@@ -776,51 +776,36 @@ fn run_fixture(report: &mut Report, f: &FontFixture, sfnt: bool, load: &LoadFn<'
         )
     });
 
-    // Exact limits: at the fixture's size the load succeeds, one below it fails.
+    // Exact limits: at the fixture's size the load succeeds, one below it and at 0 it fails.
     let len = f.data.len();
-    let loads = [
-        (
-            "font.program_bytes_limit",
-            FontLimits {
-                max_font_program_bytes: len,
-                ..full
-            },
-            FontLimits {
-                max_font_program_bytes: len.saturating_sub(1),
-                ..full
-            },
-        ),
-        (
-            "font.glyph_limit",
-            FontLimits {
-                max_glyphs: f.glyph_count,
-                ..full
-            },
-            FontLimits {
-                max_glyphs: f.glyph_count.saturating_sub(1),
-                ..full
-            },
-        ),
-    ];
     let quiet = Questions {
         limits: full,
         ..Questions::default()
     };
-    for (check, at, below) in loads {
-        let result = ask(&f.data, &at, &quiet);
-        report.check(check, matches!(result, Some(Ok(_))), || {
-            format!("{name}: limit equal to the fixture: {}", describe(&result))
-        });
-        let result = ask(&f.data, &below, &quiet);
-        report.check(
-            check,
-            matches!(result, Some(Err(BackendError::LimitExceeded(_)))),
-            || {
-                format!(
-                    "{name}: limit one below the fixture: expected LimitExceeded, got {}",
-                    describe(&result)
-                )
+    type SetFn = fn(u64) -> FontLimits;
+    let loads: [(&'static str, u64, SetFn); 2] = [
+        (
+            "font.program_bytes_limit",
+            u64::try_from(len).unwrap_or(u64::MAX),
+            |n| FontLimits {
+                max_font_program_bytes: narrow(n),
+                ..FontLimits::default()
             },
+        ),
+        ("font.glyph_limit", u64::from(f.glyph_count), |n| {
+            FontLimits {
+                max_glyphs: narrow(n),
+                ..FontLimits::default()
+            }
+        }),
+    ];
+    for (check, at, set) in loads {
+        Boundary { check, name, at }.probe(
+            report,
+            set,
+            |limits| ask(&f.data, limits, &quiet),
+            |_| true,
+            describe,
         );
     }
     // The point limit applies per outline call: the fixture's largest glyph passes at its

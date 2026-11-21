@@ -1,7 +1,7 @@
 //! Conformance suite for [`Inflate`] and [`Deflate`] (ISO 32000-2 §7.4.4; RFC 1950, 1951).
 
 use super::vectors::{FLATE, dynamic_plaintext, hex};
-use super::{Report, describe, guarded, pseudo_random, sample_offsets};
+use super::{Boundary, Report, describe, guarded, narrow, pseudo_random, sample_offsets};
 use crate::{
     BackendError, CompressionLevel, DecodeLimits, DecodeStatus, Decoded, Deflate, FlateFormat,
     Inflate,
@@ -61,6 +61,7 @@ pub fn run(inflate: &dyn Inflate, deflate: &dyn Deflate) -> Report {
             });
         }
     }
+    vectors.extend(generated_vectors());
     run_with(&mut report, inflate, deflate, &vectors);
     report
 }
@@ -92,17 +93,20 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
             for cut in sample_offsets(input.len(), 256) {
                 let prefix = input.get(..cut).unwrap_or(&[]);
                 let result = call(prefix, format, &unlimited);
+                // An empty salvage is `Err(Truncated)`, never `Ok(Truncated)` with no bytes.
                 let ok = match &result {
                     Some(Err(_)) => true,
                     Some(Ok(d)) => {
-                        d.status == DecodeStatus::Truncated && v.plain.starts_with(&d.value)
+                        d.status == DecodeStatus::Truncated
+                            && !d.value.is_empty()
+                            && v.plain.starts_with(&d.value)
                     }
                     None => false,
                 };
                 report.check("flate.truncated", ok, || {
                     format!(
-                        "{} ({format:?}) cut at {cut}/{}: expected an error or a truncated \
-                         prefix of the plaintext, got {}",
+                        "{} ({format:?}) cut at {cut}/{}: expected an error or a non-empty \
+                         truncated prefix of the plaintext, got {}",
                         v.name,
                         input.len(),
                         describe_decoded(&result)
@@ -179,35 +183,21 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
             }
         }
 
-        // Exact output limit: `len` bytes allowed passes, `len - 1` fails with LimitExceeded.
-        if let Some(below) = v.plain.len().checked_sub(1) {
-            let at = DecodeLimits {
-                max_output_bytes: v.plain.len(),
-                ..unlimited
-            };
-            let result = call(&v.zlib, FlateFormat::Zlib, &at);
-            report.check("flate.output_limit", is_complete(&result, &v.plain), || {
-                format!(
-                    "{}: limit equal to the output length: {}",
-                    v.name,
-                    describe_decoded(&result)
-                )
-            });
-            let under = DecodeLimits {
-                max_output_bytes: below,
-                ..unlimited
-            };
-            let result = call(&v.zlib, FlateFormat::Zlib, &under);
-            report.check(
-                "flate.output_limit",
-                matches!(result, Some(Err(BackendError::LimitExceeded(_)))),
-                || {
-                    format!(
-                        "{}: limit one below the output length: expected LimitExceeded, got {}",
-                        v.name,
-                        describe_decoded(&result)
-                    )
-                },
+        // Exact output limit in both formats, and a cap of 0 (which an empty plaintext
+        // must pass).
+        for format in FORMATS {
+            let name = format!("{} ({format:?})", v.name);
+            Boundary {
+                check: "flate.output_limit",
+                name: &name,
+                at: u64::try_from(v.plain.len()).unwrap_or(u64::MAX),
+            }
+            .probe(
+                report,
+                cap,
+                |limits| call(v.encoded(format), format, limits),
+                |d| d.status == DecodeStatus::Complete && d.value == v.plain,
+                describe_decoded,
             );
         }
 
@@ -264,6 +254,315 @@ pub(crate) fn fixed_huffman_zeros(len: usize) -> Vec<u8> {
     bits.finish()
 }
 
+// RFC 1951 §3.2.5 length and distance tables.
+const LEN_BASE: [usize; 29] = [
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
+    163, 195, 227, 258,
+];
+const LEN_EXTRA: [u32; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+];
+const DIST_BASE: [usize; 30] = [
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+];
+const DIST_EXTRA: [u32; 30] = [
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13,
+];
+
+/// The suite's own vectors, built bit by bit so they reach what short compressor output
+/// never does: distances up to 32 768 (codes 22–29), output past 64 KiB (a window that wraps
+/// twice), every length code including 284 with all 5 extra bits set (length 258, which
+/// zlib accepts), overlapping copies, an empty stored block, and stored, fixed and dynamic
+/// blocks in one stream.
+fn generated_vectors() -> Vec<Vector> {
+    vec![long_distances(), mixed_blocks()]
+}
+
+/// Stored, empty stored and fixed-Huffman blocks only (no dynamic tables), more than 64 KiB.
+fn long_distances() -> Vector {
+    let mut s = StreamBuilder::default();
+    s.stored(false, &pseudo_random(40_000, 21));
+    s.stored(false, &[]);
+    s.huffman(false, &Codes::fixed());
+    let lit = |s: &mut StreamBuilder, text: &[u8]| text.iter().for_each(|&b| s.literal(b));
+    lit(&mut s, b"jpdf");
+    // Every distance code at the bottom and the top of its range, each with a different
+    // length code (cycling through all 29, extra bits at their maximum on odd steps).
+    let mut step = 0usize;
+    for (&base, &extra) in DIST_BASE.iter().zip(&DIST_EXTRA) {
+        let top = base.saturating_add((1usize << extra).saturating_sub(1));
+        for dist in [base, top] {
+            let len_code = step % LEN_BASE.len();
+            let len_extra = if step % 2 == 1 {
+                (1u32 << LEN_EXTRA.get(len_code).copied().unwrap_or(0)).saturating_sub(1)
+            } else {
+                0
+            };
+            s.copy_coded(len_code, len_extra, dist);
+            step = step.saturating_add(1);
+        }
+    }
+    // Length 258 as code 284 with extra bits 31 (RFC 1951 §3.2.5 lists 284 for 227–257;
+    // consensus decoders read 31 as 258), then overlapping copies (distance below length).
+    s.copy_coded(27, 31, 1000);
+    s.copy(258, 3);
+    s.copy(100, 1);
+    lit(&mut s, b"wrap");
+    s.end_block();
+    s.stored(false, &pseudo_random(30_000, 22));
+    s.huffman(true, &Codes::fixed());
+    // Past 64 KiB of output: the longest distances again, so a 32 KiB ring buffer has wrapped.
+    for dist in [32_768, 24_577, 32_768, 16_385, 1] {
+        s.copy(258, dist);
+    }
+    s.end_block();
+    s.finish("generated: long distances, > 64 KiB")
+}
+
+/// Stored, fixed and dynamic blocks in one stream, ending with an empty final stored block.
+/// The dynamic block uses its own complete code (not the fixed lengths, which zlib would
+/// reject as an incomplete set).
+fn mixed_blocks() -> Vector {
+    let mut s = StreamBuilder::default();
+    s.stored(false, &pseudo_random(300, 23));
+    s.huffman(false, &Codes::fixed());
+    for &b in b"fixed block; " {
+        s.literal(b);
+    }
+    s.copy(40, 313);
+    s.end_block();
+    // Literal/length: 0–255 at 9 bits, 256–257 at 5, 258–285 at 6 (sum of 2^-len is 1);
+    // distance: codes 0–1 at 4 bits, 2–29 at 5.
+    let mut litlen = vec![9u8; 256];
+    litlen.extend([5, 5]);
+    litlen.extend([6; 28]);
+    let mut dist = vec![4u8, 4];
+    dist.extend([5; 28]);
+    s.dynamic(false, &litlen, &dist);
+    for &b in b"dynamic block \x00\xff; " {
+        s.literal(b);
+    }
+    s.copy(258, 1);
+    s.copy(3, 300);
+    s.copy(17, 2);
+    s.end_block();
+    s.stored(true, &[]);
+    s.finish("dynamic Huffman, mixed with stored and fixed blocks")
+}
+
+/// Huffman codes for one block: per symbol, (code, bit length); length 0 = unused.
+struct Codes {
+    litlen: Vec<(u32, u32)>,
+    dist: Vec<(u32, u32)>,
+}
+
+impl Codes {
+    /// RFC 1951 §3.2.6 fixed codes.
+    fn fixed() -> Self {
+        let mut litlen = vec![8u8; 144];
+        litlen.extend([9; 112]);
+        litlen.extend([7; 24]);
+        litlen.extend([8; 8]);
+        Self {
+            litlen: canonical(&litlen),
+            dist: canonical(&[5; 30]),
+        }
+    }
+}
+
+/// Canonical Huffman codes from bit lengths (RFC 1951 §3.2.2).
+fn canonical(lengths: &[u8]) -> Vec<(u32, u32)> {
+    let mut count = [0u32; 16];
+    for &len in lengths {
+        if let Some(c) = count.get_mut(usize::from(len)) {
+            *c = c.saturating_add(1);
+        }
+    }
+    count[0] = 0;
+    // next[bits] = (next[bits - 1] + count[bits - 1]) << 1, with next[0] = 0.
+    let mut next = [0u32; 16];
+    let mut code = 0u32;
+    for (n, &c) in next.iter_mut().skip(1).zip(&count) {
+        code = code.saturating_add(c) << 1;
+        *n = code;
+    }
+    lengths
+        .iter()
+        .map(|&len| {
+            let len = usize::from(len);
+            match next.get_mut(len) {
+                Some(n) if len > 0 => {
+                    let code = *n;
+                    *n = n.saturating_add(1);
+                    (code, u32::try_from(len).unwrap_or(0))
+                }
+                _ => (0, 0),
+            }
+        })
+        .collect()
+}
+
+/// Writes a raw deflate stream and its plaintext side by side.
+#[derive(Default)]
+struct StreamBuilder {
+    bits: BitWriter,
+    plain: Vec<u8>,
+    codes: Option<Codes>,
+}
+
+impl StreamBuilder {
+    /// A stored block (RFC 1951 §3.2.4): header bits, pad to a byte, LEN, NLEN, the bytes.
+    fn stored(&mut self, last: bool, data: &[u8]) {
+        self.bits.lsb_first(u32::from(last), 1);
+        self.bits.lsb_first(0, 2);
+        self.bits.align();
+        let len = u16::try_from(data.len()).unwrap_or(u16::MAX);
+        self.bits.lsb_first(u32::from(len), 16);
+        self.bits.lsb_first(u32::from(!len), 16);
+        let data = data.get(..usize::from(len)).unwrap_or(&[]);
+        for &b in data {
+            self.bits.lsb_first(u32::from(b), 8);
+        }
+        self.plain.extend_from_slice(data);
+    }
+
+    /// Starts a fixed-Huffman block (BTYPE 01) coded with `codes` (normally
+    /// [`Codes::fixed`]).
+    fn huffman(&mut self, last: bool, codes: &Codes) {
+        self.bits.lsb_first(u32::from(last), 1);
+        self.bits.lsb_first(1, 2);
+        self.codes = Some(Codes {
+            litlen: codes.litlen.clone(),
+            dist: codes.dist.clone(),
+        });
+    }
+
+    /// Starts a dynamic-Huffman block (BTYPE 10, RFC 1951 §3.2.7) with the given complete
+    /// literal/length (286) and distance (30) code lengths, each sent as a code-length
+    /// symbol (no run-length codes 16–18).
+    fn dynamic(&mut self, last: bool, litlen: &[u8], dist: &[u8]) {
+        const ORDER: [usize; 19] = [
+            16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+        ];
+        self.bits.lsb_first(u32::from(last), 1);
+        self.bits.lsb_first(2, 2);
+        self.bits.lsb_first(
+            u32::try_from(litlen.len().saturating_sub(257)).unwrap_or(0),
+            5,
+        );
+        self.bits
+            .lsb_first(u32::try_from(dist.len().saturating_sub(1)).unwrap_or(0), 5);
+        // Code-length code: 2 bits for each length in use (at most 4 distinct, so complete).
+        let mut used: Vec<u8> = litlen.iter().chain(dist).copied().collect();
+        used.sort_unstable();
+        used.dedup();
+        let mut cl_lengths = [0u8; 19];
+        for &len in &used {
+            if let Some(l) = cl_lengths.get_mut(usize::from(len)) {
+                *l = 2;
+            }
+        }
+        let hclen = ORDER
+            .iter()
+            .rposition(|&sym| cl_lengths.get(sym).is_some_and(|&l| l > 0))
+            .map_or(4, |i| i.saturating_add(1).max(4));
+        self.bits
+            .lsb_first(u32::try_from(hclen.saturating_sub(4)).unwrap_or(0), 4);
+        for &sym in ORDER.iter().take(hclen) {
+            self.bits
+                .lsb_first(u32::from(cl_lengths.get(sym).copied().unwrap_or(0)), 3);
+        }
+        let cl_codes = canonical(&cl_lengths);
+        for &len in litlen.iter().chain(dist) {
+            let (code, bits) = cl_codes.get(usize::from(len)).copied().unwrap_or((0, 0));
+            self.bits.code(code, bits);
+        }
+        self.codes = Some(Codes {
+            litlen: canonical(litlen),
+            dist: canonical(dist),
+        });
+    }
+
+    fn symbol(&mut self, sym: usize) {
+        let (code, bits) = self
+            .codes
+            .as_ref()
+            .and_then(|c| c.litlen.get(sym))
+            .copied()
+            .unwrap_or((0, 0));
+        self.bits.code(code, bits);
+    }
+
+    fn literal(&mut self, byte: u8) {
+        self.symbol(usize::from(byte));
+        self.plain.push(byte);
+    }
+
+    /// A copy of `len` bytes from `dist` back, coded the usual way.
+    fn copy(&mut self, len: usize, dist: usize) {
+        let code = if len == 258 {
+            LEN_BASE.len().saturating_sub(1)
+        } else {
+            LEN_BASE.iter().rposition(|&b| b <= len).unwrap_or(0)
+        };
+        let extra = LEN_BASE.get(code).map_or(0, |&b| len.saturating_sub(b));
+        self.copy_coded(code, u32::try_from(extra).unwrap_or(0), dist);
+    }
+
+    /// A copy with an explicit length code (index into [`LEN_BASE`]) and extra-bits value.
+    fn copy_coded(&mut self, len_code: usize, len_extra: u32, dist: usize) {
+        self.symbol(len_code.saturating_add(257));
+        self.bits
+            .lsb_first(len_extra, LEN_EXTRA.get(len_code).copied().unwrap_or(0));
+        let dist_code = DIST_BASE.iter().rposition(|&b| b <= dist).unwrap_or(0);
+        let (code, bits) = self
+            .codes
+            .as_ref()
+            .and_then(|c| c.dist.get(dist_code))
+            .copied()
+            .unwrap_or((0, 0));
+        self.bits.code(code, bits);
+        let dist_extra = DIST_BASE
+            .get(dist_code)
+            .map_or(0, |&b| dist.saturating_sub(b));
+        self.bits.lsb_first(
+            u32::try_from(dist_extra).unwrap_or(0),
+            DIST_EXTRA.get(dist_code).copied().unwrap_or(0),
+        );
+        let len = LEN_BASE.get(len_code).map_or(0, |&b| {
+            b.saturating_add(usize::try_from(len_extra).unwrap_or(0))
+        });
+        for _ in 0..len {
+            let byte = self
+                .plain
+                .len()
+                .checked_sub(dist)
+                .and_then(|i| self.plain.get(i))
+                .copied()
+                .unwrap_or(0);
+            self.plain.push(byte);
+        }
+    }
+
+    fn end_block(&mut self) {
+        self.symbol(256);
+    }
+
+    /// Wraps the raw stream in zlib framing (`78 01`, Adler-32).
+    fn finish(self, name: &'static str) -> Vector {
+        let mut zlib = vec![0x78, 0x01];
+        zlib.extend(self.bits.finish());
+        zlib.extend_from_slice(&adler32(&self.plain).to_be_bytes());
+        Vector {
+            name,
+            plain: self.plain,
+            zlib,
+        }
+    }
+}
+
 /// Packs bits LSB-first into bytes, as RFC 1951 §3.1.1 requires.
 #[derive(Default)]
 struct BitWriter {
@@ -295,6 +594,13 @@ impl BitWriter {
                 .push(self.acc.to_le_bytes().first().copied().unwrap_or(0));
             self.acc = 0;
             self.used = 0;
+        }
+    }
+
+    /// Pads with zero bits to the next byte boundary.
+    fn align(&mut self) {
+        while self.used > 0 {
+            self.bit(0);
         }
     }
 
@@ -344,23 +650,40 @@ fn round_trips(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate
         }
     }
 
+    // Deflate's output limit at its exact boundary: the cap equal to the adapter's own
+    // output length for this input passes (compression must be deterministic), one below and
+    // 0 fail. Random input does not compress, so the output is about 64 KiB.
     let input = pseudo_random(65_536, 11);
-    let tiny = DecodeLimits {
-        max_output_bytes: 100,
-        ..unlimited
-    };
     for format in FORMATS {
-        let result = guarded(|| deflate.deflate(&input, format, CompressionLevel::Default, &tiny));
-        report.check(
-            "flate.deflate_output_limit",
-            matches!(result, Some(Err(BackendError::LimitExceeded(_)))),
-            || {
-                format!(
-                    "{format:?}: expected LimitExceeded, got {}",
-                    describe(&result)
-                )
-            },
+        let level = CompressionLevel::Default;
+        let reference = guarded(|| deflate.deflate(&input, format, level, &unlimited));
+        let Some(Ok(reference)) = reference else {
+            report.check("flate.deflate_output_limit", false, || {
+                format!("{format:?}: deflate {}", describe(&reference))
+            });
+            continue;
+        };
+        let name = format!("64 KiB random ({format:?})");
+        Boundary {
+            check: "flate.deflate_output_limit",
+            name: &name,
+            at: u64::try_from(reference.len()).unwrap_or(u64::MAX),
+        }
+        .probe(
+            report,
+            cap,
+            |limits| guarded(|| deflate.deflate(&input, format, level, limits)),
+            |out| *out == reference,
+            describe,
         );
+    }
+}
+
+/// Generous limits with the output cap at `n`.
+fn cap(n: u64) -> DecodeLimits {
+    DecodeLimits {
+        max_output_bytes: narrow(n),
+        ..DecodeLimits::default()
     }
 }
 
@@ -472,27 +795,16 @@ mod tests {
         complete_on_truncation: bool,
         /// Drops partial output: any truncation is an error.
         strict_truncation: bool,
+        /// Rejects distances over 2048 as Malformed (a decoder with a small window).
+        small_window: bool,
+        /// Treats a cap of 0 as "no limit" in both directions.
+        zero_unlimited: bool,
+        /// Returns `Ok(Truncated)` with no bytes instead of `Err(Truncated)`.
+        empty_truncated_ok: bool,
         deflate_calls: Cell<usize>,
     }
 
     const SAFETY_NET: usize = 32 << 20;
-    // RFC 1951 §3.2.5 length and distance tables.
-    const LEN_BASE: [usize; 29] = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
-        131, 163, 195, 227, 258,
-    ];
-    const LEN_EXTRA: [u32; 29] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
-    ];
-    const DIST_BASE: [usize; 30] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
-        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
-    ];
-    const DIST_EXTRA: [u32; 30] = [
-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
-        13, 13,
-    ];
-
     struct Bits<'a> {
         data: &'a [u8],
         pos: usize,
@@ -529,11 +841,19 @@ mod tests {
     }
 
     impl Mini {
+        fn cap(&self, limits: &DecodeLimits) -> usize {
+            if self.zero_unlimited && limits.max_output_bytes == 0 {
+                usize::MAX
+            } else {
+                limits.max_output_bytes
+            }
+        }
+
         fn over(&self, len: usize, limits: &DecodeLimits) -> bool {
             len > if self.ignore_limit {
                 SAFETY_NET
             } else {
-                limits.max_output_bytes
+                self.cap(limits)
             }
         }
 
@@ -558,7 +878,7 @@ mod tests {
                 })
             } else if self.strict_truncation {
                 Err(BackendError::Malformed("truncated"))
-            } else if out.is_empty() {
+            } else if out.is_empty() && !self.empty_truncated_ok {
                 Err(BackendError::Truncated)
             } else {
                 Ok(Decoded {
@@ -647,7 +967,7 @@ mod tests {
                                     return self.truncated(out);
                                 };
                                 let dist = DIST_BASE[d] + usize::try_from(extra).unwrap();
-                                if dist > out.len() {
+                                if dist > out.len() || (self.small_window && dist > 2048) {
                                     return Err(BackendError::Malformed("distance"));
                                 }
                                 if self.over(out.len() + len, limits) {
@@ -701,18 +1021,21 @@ mod tests {
                 out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(&(!len).to_le_bytes());
                 out.extend_from_slice(chunk);
-                if out.len() > limits.max_output_bytes {
+                if out.len() > self.cap(limits) {
                     return Err(BackendError::LimitExceeded("output"));
                 }
             }
             if format == FlateFormat::Zlib {
                 out.extend_from_slice(&adler32(input).to_be_bytes());
+                if out.len() > self.cap(limits) {
+                    return Err(BackendError::LimitExceeded("output"));
+                }
             }
             Ok(out)
         }
     }
 
-    /// Every built-in vector except the dynamic-Huffman one.
+    /// Every built-in and generated vector without a dynamic-Huffman block.
     fn mini_vectors() -> Vec<Vector> {
         FLATE
             .iter()
@@ -722,6 +1045,7 @@ mod tests {
                 plain: v.plain.map_or_else(dynamic_plaintext, <[u8]>::to_vec),
                 zlib: hex(v.zlib_hex).unwrap(),
             })
+            .chain([long_distances()])
             .collect()
     }
 
@@ -819,6 +1143,104 @@ mod tests {
                 "flate.truncated",
                 "flate.truncated_salvage"
             ],
+            "{report}"
+        );
+    }
+
+    /// The generated vectors were checked against CPython's zlib (`decompressobj` reaches
+    /// `eof` with no unused data and returns the plaintext, in both framings) when written.
+    /// The fingerprints make any change to the generator visible, so it gets re-checked.
+    #[test]
+    fn generated_vectors_are_pinned() {
+        let v = long_distances();
+        assert_eq!((v.zlib.len(), v.plain.len()), (70_205, 75_617));
+        assert!(v.plain.len() > 65_536);
+        assert_eq!(adler32(&v.zlib), 0x0a19_3681);
+        let v = mixed_blocks();
+        assert_eq!((v.zlib.len(), v.plain.len()), (444, 649));
+        assert_eq!(adler32(&v.zlib), 0xc7a5_fa9c);
+        // The stream starts with a non-final stored block (BFINAL 0, BTYPE 00).
+        assert_eq!(v.zlib[2] & 0b111, 0b000);
+    }
+
+    #[test]
+    fn canonical_codes_match_rfc_1951_example() {
+        // RFC 1951 §3.2.2: lengths (3, 3, 3, 3, 3, 2, 4, 4) give these codes.
+        let codes = canonical(&[3, 3, 3, 3, 3, 2, 4, 4]);
+        let want = [
+            (0b010, 3),
+            (0b011, 3),
+            (0b100, 3),
+            (0b101, 3),
+            (0b110, 3),
+            (0b00, 2),
+            (0b1110, 4),
+            (0b1111, 4),
+        ];
+        assert_eq!(codes, want);
+        // Fixed codes (§3.2.6): literal 0 is 00110000, 144 is 110010000, 256 is 0000000,
+        // 280 is 11000000.
+        let fixed = Codes::fixed();
+        assert_eq!(fixed.litlen[0], (0x30, 8));
+        assert_eq!(fixed.litlen[144], (0x190, 9));
+        assert_eq!(fixed.litlen[256], (0, 7));
+        assert_eq!(fixed.litlen[280], (0xc0, 8));
+        assert_eq!(fixed.dist[29], (29, 5));
+    }
+
+    #[test]
+    fn a_small_window_is_caught() {
+        let report = run_mini(&Mini {
+            small_window: true,
+            ..Mini::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec![
+                "flate.decode_vector",
+                "flate.output_limit",
+                "flate.truncated_salvage"
+            ],
+            "{report}"
+        );
+        assert!(
+            report
+                .failures()
+                .iter()
+                .all(|f| f.detail.starts_with("generated: long distances")),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn reading_a_zero_cap_as_unlimited_is_caught() {
+        let report = run_mini(&Mini {
+            zero_unlimited: true,
+            ..Mini::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["flate.deflate_output_limit", "flate.output_limit"],
+            "{report}"
+        );
+        assert!(
+            report
+                .failures()
+                .iter()
+                .all(|f| f.detail.contains("limit 0 (zero)")),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn an_empty_ok_truncated_is_caught() {
+        let report = run_mini(&Mini {
+            empty_truncated_ok: true,
+            ..Mini::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["flate.empty_input", "flate.truncated"],
             "{report}"
         );
     }
