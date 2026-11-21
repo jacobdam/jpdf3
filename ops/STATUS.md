@@ -13,7 +13,7 @@ Phase: bootstrap (pilot)
   TextShaper → #66. Minor suite leftovers → #68.
 
 ## Next step
-- **An audit is due** (25+ merges, none yet; TICK §2 i, §6). Consider running it before
+- **An audit is due** (24 merged PRs, no audit yet; TICK §2 i, §6). Consider running it before
   more feature work.
 - `ready` M0 issues: #54, #55, #61, #64, #66, lowest number first. #14 closes after #55,
   #20 after #61, #22 after #64.
