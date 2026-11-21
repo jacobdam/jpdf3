@@ -464,9 +464,9 @@ mod tests {
 
     #[test]
     fn charged_budgets_do_not_exceed_the_process_budget() {
-        // The four budgets the engine charges (the file held in memory, what a document
+        // The four budgeted terms (the file held in memory, what a document
         // retains, one stream being decoded, one render's working memory) sum to at most the
-        // judge's 2 GiB address-space cap (PLAN §2.2). This is a ceiling on the charged terms
+        // judge's 2 GiB address-space cap (PLAN §2.2). This is a ceiling on the budgeted terms
         // only: the binary, stacks, the xref table and one parse's objects are not charged and
         // have no headroom at these defaults (#109).
         let l = Limits::default();

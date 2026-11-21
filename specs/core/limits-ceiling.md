@@ -34,7 +34,8 @@ and operations budget) and #107 (object resolve cache).
    land before the first cache does.
    - `max_decoded_bytes_per_document` (4 GiB) stays. It is a lifetime total (time bound against
      many small bombs), not a memory bound; its doc comment now says so and points here.
-   - Charged budgets: the file (512 MiB) + retained (256 MiB) + one stream being decoded
+   - Budgeted terms (today only the file size is checked; the rest bind future decoding,
+     rendering and caches): the file (512 MiB) + retained (256 MiB) + one stream being decoded
      (256 MiB) + one render's working memory (1 GiB) = exactly 2 GiB, the judge's
      address-space cap. That is a ceiling on these four terms only. The binary, stacks, the
      xref table (up to ~120 MiB), one parse's objects and strings, and decoder slack are not
@@ -72,7 +73,7 @@ give `LimitExceeded("nesting depth")` even with `max_nesting_depth = 10_000_000`
     (checked by hand).
 - `max_retained_bytes_per_document` has no boundary test yet because nothing charges it; the
   first cache (#107) adds the at-limit / one-past test.
-- `charged_budgets_do_not_exceed_the_process_budget` checks the four charged terms sum to at
+- `charged_budgets_do_not_exceed_the_process_budget` checks the four budgeted terms sum to at
   most 2 GiB; it can't see the uncharged terms (#109).
 
 ## Security

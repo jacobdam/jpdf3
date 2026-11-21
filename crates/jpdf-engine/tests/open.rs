@@ -393,6 +393,9 @@ fn caller_limits_can_tighten_the_defaults() {
         Document::open(&nested_pdf(10), &tight).map(|d| d.page_count()),
         Ok(0)
     );
+    // The document keeps the tighter limits, not the defaults.
+    let kept = Document::open(&nested_pdf(10), &tight).map(|d| d.limits().clone());
+    assert_eq!(kept, Ok(tight.clone()));
     assert_eq!(
         Document::open(&nested_pdf(11), &tight).map(|d| d.page_count()),
         Err(EngineError::LimitExceeded("nesting depth"))
