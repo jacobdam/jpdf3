@@ -4,41 +4,47 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- Audit 0001 PR (#74): docs/audits/0001.md, journal, STATUS, LESSONS.
+- Retro 0001 PR (#90): docs/retros/0001.md, TICK, template, LESSONS, proposal, journal, STATUS.
 
 ## Last session
-- **Audit 0001** (#74; the first one, covering 26 merged PRs up to 3b6101b). There were 0 critical findings. The hostile-input
-  core is sound: no panics, budgets apply everywhere, no unsafe. The high findings:
-  - the conformance suites accept proven-broken adapters (#80, #81, #68)
-  - the E2E harnesses can write `pass` for a failed run (#76)
-  - a flaky bench test (#75)
+- **Retro 0001** (owner request #89), docs/retros/0001.md. Numbers: 27 sessions; 26 agent PRs; 58% of substantive PRs
+  needed more than 1 fix round; 42% went past the 60% context guideline; the first audit came after 26 merges instead of 10.
+- Three action items are applied (retro 0002 judges each keep, revert or extend):
+  1. **TICK §2 reordered:** audit = g and retro = h now come before the ready backlog (i) and the gate check (j). §1
+     prints merges since the last audit and the last retro's date.
+  2. **Sizing rule (TICK §0):** one issue = one PR = at most one trait family, tool or crate plus its suite, and
+     ≤ 1500 added lines. Split before claiming.
+  3. **Spec template self-check (Security/Limits):** checked arithmetic, "what broken implementation still passes?",
+     exact-boundary tests, step caps. The reviewer prompt asks the same questions.
+- LESSONS went from 36 to 31 entries.
+- #21 (fire drill) is now `ready` (no longer depends on #19).
+- New issues: #91 (`cargo xtask metrics`) and digest #92.
+- New proposal: ops/proposals/automation-priority-order.md.
 
-  Mutants on the parsers: 80% caught; no limit has an exact-boundary test (#87). Completeness gaps went to journeys
-  issues #84 (platform conventions) and #85 (PDFgear inventory). The other issues: #77, #79, #78 (M1), #82, #83, #86;
-  nightly no-op → comment on #19.
-- Before that: #54 (Rasterizer trait + suite) merged as PR #71.
-
-## Next step (suggested order)
+## Next step (suggested order, new TICK letters)
 1. **#75 flaky** (rule e; fix within 5 sessions).
-2. **#76**: harness honesty, which the judge relies on.
-3. **#80, #81, #68**: tighten the suites **before** #16 admits any adapter (each lists the proving toy).
-4. **#77, #79**: memory margins and trait-contract budgets (also before #16).
-5. Then the `ready` backlog, lowest number first: #55, #61, #64, #66, #70, then #82, #83, #84–#87.
-   #14 closes after #55 and #70, #20 after #61, #22 after #64.
-- #16 (admission): every adapter passes its `conformance` suite, adds a fuzz target and seeds (fuzz/README.md); font
-  adapters also need hostile programs per format and a multi-FD CID fixture. #15 (dashboard) reads `bench.json`
-  (`jpdf-bench/1`) into `site/metrics/`. #21 waits on #19; #45 is low priority.
-- #19 (nightly): wire `fuzz::run` and `bench::run` first; meanwhile print "not implemented" on stderr.
-- A **retro** is due soon (7 days since bootstrap on 2026-11-27, or earlier on an incident). Agenda item: TICK §2 puts g
-  before i, so audits never come up while ready issues exist.
-- Next audit: after 10 more merges or by 2026-11-28. Its carry-over list is in docs/audits/0001.md (pins, the fuzz lock,
-  mutants on jpdf-traits, tools and xtask).
+2. d (security) issues, lowest number first: **#68, #77, #79, #80, #81, #82, #83**. Tighten the suites (#80, #81, #68)
+   and the contracts (#77, #79) **before** #16 admits any adapter.
+3. **#76**: harness honesty. The judge relies on it.
+4. Then the `ready` backlog (rule i), lowest number first: #21, #55, #61, #64, #66, #70, then #84–#87, #91.
+   - #14 closes after #55 and #70.
+   - #20 closes after #61.
+   - #22 closes after #64.
+   - Split anything over the sizing rule first.
+- #16 (admission): every adapter passes its `conformance` suite and adds a fuzz target with seeds. Font adapters also
+  need hostile programs per format and a multi-FD CID fixture.
+- #19 (nightly): wire `fuzz::run` and `bench::run`.
+- **Next audit (rule g):** at the 10th merge after e82b6a6, or by 2026-11-28.
+- **Next retro (rule h):** by 2026-11-28. It checks the success measures in docs/retros/0001.md, ideally with #91's numbers.
 
 ## Blockers / owner-todo
 - #50: license ruling for test- and build-only tools. A local worktree `t/50-test-only-licenses` holds uncommitted
   CONSTITUTION edits (presumably the owner's); agents leave it alone.
 - #52: `sudo automationmodetool enable-automationmode-without-authentication` on the Mac mini.
 - #60: may the Arlington TSVs (and tables generated from them) be committed?
-- #21: the owner's fire-drill steps.
-- Proposal for the owner: ops/proposals/pages-deploy-retry.md (ci.yml is protected).
-- The stale remote branch `t/2-bootstrap-labels` (PR #3, merged) can't be deleted by agents (the guard blocks remote deletes).
+- #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
+- Proposals for the owner:
+  - ops/proposals/pages-deploy-retry.md
+  - ops/proposals/test-only-licenses.md
+  - ops/proposals/automation-priority-order.md
+- Stale remote `t/*` branches can't be deleted by agents (the guard blocks remote deletes).

@@ -1,17 +1,18 @@
 # Lessons learned (read at the start of every session; curated by retros, ≤ 60 entries)
 
 Format: **situation → what to do** (link to the journal entry or PR). Refine existing entries
-instead of adding near-duplicates.
+instead of adding near-duplicates. Retro 0001 promoted the guard (force push, CLI writes),
+review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lessons into
+ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 ## Tooling & environment
 - Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
   directory, never `/tmp` (owner instruction, #28).
 - Claude Code project settings and hooks apply **live** to running sessions → never write
   `.claude/settings.json` before its hook script exists and passes `--selftest` (bootstrap, 2026-11-20).
-- macOS `/usr/bin/openssl` is LibreSSL and its default PKCS#12 output isn't readable by every
-  tool → always pass `-keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256` (bootstrap).
-- pyHanko `SimpleSigner.load_pkcs12(file, passphrase=...)`: the 2nd positional argument is the
-  CA chain, not the password (bootstrap).
+- PKCS#12 fixtures on macOS: `/usr/bin/openssl` is LibreSSL → always pass `-keypbe AES-256-CBC
+  -certpbe AES-256-CBC -macalg sha256`; pyHanko `SimpleSigner.load_pkcs12(file, passphrase=...)`
+  takes the password by keyword (the 2nd positional argument is the CA chain) (bootstrap).
 - Scripted multi-line replacements (python `str.replace`) after `cargo fmt` → they fail
   because rustfmt reflowed the text. Re-read the formatted lines first, and make the script
   assert every match before writing anything ([journal](journal/2026-11-21.md), PR #67).
@@ -25,25 +26,32 @@ instead of adding near-duplicates.
   (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
   (> 60 s) → reference tools must be called with timeouts (bootstrap).
+- Timing tests with shell-script fake engines → on macOS the first exec of a freshly written
+  script can take ~2 s; give timed assertions a warmup run and generous upper bounds, and
+  test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
+  the session's shell) ([journal](journal/2026-11-21.md), PR #59).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
 - A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
   fails unless every upstream job succeeded (bootstrap).
-
 - main red with `judge-verdict` green, only `pages` failed (deploy-pages "No artifacts named
   github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra, no code
   change. Don't rerun: one rerun worked (#39), another hit "Multiple artifacts named
   github-pages" and could never deploy (#59). The next push to main redeploys. If the upload
   step failed or was skipped, it's a real bug. Durable fix proposed in
   `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63).
-
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27).
+- Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
+  edges from an empty corpus), so give each target a structure template like
+  `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
+  ([journal](journal/2026-11-21.md), PR #58).
 
+## Specs & journeys
 - Writing journeys (append-only gates) → give every step one checkable result and a test
   mechanism Playwright/XCUITest can drive; never use browser-reserved keys (Ctrl+Tab/W/N/T/R,
   F11, Alt+Left); keep timing/fps targets in the bench, not E2E; web file handles go behind a
@@ -53,34 +61,35 @@ instead of adding near-duplicates.
   cover every path that takes pages out of a file (copy, extract, merge/insert source); assert
   a state only after the step that saves it; "remove what we added" needs a private marker
   ([journal](journal/2026-11-20.md), PR #30, PR #32, [PR #39](journal/2026-11-20.md)).
-
 - Asserting with an external tool in a journey (qpdf, mutool, pdftotext, pdfimages, pyHanko) →
   check that the tool really prints that field: `qpdf --show-encryption` has no V or key
   length (use `qpdf --json --json-key=encrypt`); pyHanko decrypts but doesn't extract text
   (pipe its output to `pdftotext`); `qpdf --json` lists AcroForm fields once per widget
   ([journal](journal/2026-11-20.md), PR #43).
-
+- Writing signature or network journeys → give approval signatures a default change policy
+  (shadow attacks are legal edits), keep certificate-derived URLs off loopback/private
+  addresses, check web limits (CORS, mixed content, CSP, `fetch` redirect modes) and macOS ATS
+  before promising a request, and draw the fixture PKI's expiry timeline before writing
+  clock steps ([journal](journal/2026-11-20.md), PR #46).
 - Writing a spec that restates journeys (UI spec, feature spec) → quote the journeys' exact UI
   strings (empty states, option names, page-field format, notice wording) instead of
   paraphrasing, and check new web keys against `specs/ui/shortcuts.md` rule 3 (the
   browser-reserved list) ([journal](journal/2026-11-20.md), PR #40).
+
+## Apps (web, macOS)
 - Drawing wireframes or naming UI components → check each component's real constraints before
   writing sizes or behavior: MUI small fields are 40 px, `Tab` has `minWidth` 90, no focusable
   control inside `role="tab"`, temporary drawers are modal; SwiftUI `.disabled()` drops out of
   Full Keyboard Access, NSDocument autosave writes silently, the macOS split view has no
   overlay sidebar ([journal](journal/2026-11-20.md), PR #44).
-
 - Choosing npm packages (web app, test tools) → run `npm run licenses` in apps/web on the
   candidate tree first: CONSTITUTION 10 has no build-only exemption, and Vite 8, ESLint,
-  Babel-based plugins and axe-core all fail it. Check component facts with a Playwright
-  `toHaveCSS` assertion, not by eye (MUI 9 ignores Typography `color`) ([journal](journal/2026-11-20.md), PR #49).
-
-- Asserting computed styles in Playwright after a pointer or focus action → await
-  `el.getAnimations()` to finish before `toHaveCSS`, or a 250 ms MUI transition makes the
-  result depend on timing. Check a disabled control's hover and focused-hover states: an sx
+  Babel-based plugins and axe-core all fail it ([journal](journal/2026-11-20.md), PR #49).
+- Asserting styles in Playwright → use a `toHaveCSS` assertion, not your eye (MUI 9 ignores
+  Typography `color`); after a pointer or focus action, await `el.getAnimations()` first (MUI
+  transitions take 250 ms). Check a disabled control's hover and focused-hover states: an sx
   `&:hover` override ties with the theme's focus-visible rule and wins, so set only the
   property you mean ([journal](journal/2026-11-20.md), PR #49).
-
 - macOS XCUITest → Automation Mode must work without a password: locally that needs the
   owner's sudo (#52), GitHub runners have it; `project-macos` skips PRs, so verify UI tests
   with `gh workflow run ci.yml --ref <branch>` before merging. Query SwiftUI elements by
@@ -88,35 +97,18 @@ instead of adding near-duplicates.
   failed with count 1), read static text from `value` when `label` is empty; check
   entitlements on Release only (Debug test builds inject read access to `/`)
   ([journal](journal/2026-11-20.md), PR #51).
-- Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
-  edges from an empty corpus), so give each target a structure template like
-  `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
-  ([journal](journal/2026-11-21.md), PR #58).
-
-- Timing tests with shell-script fake engines → on macOS the first exec of a freshly written
-  script can take ~2 s; give timed assertions a warmup run and generous upper bounds, and
-  test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
-  the session's shell) ([journal](journal/2026-11-21.md), PR #59).
 
 ## Engine & security
-- Parsing hostile input: per-object caps don't bound a document. Overlapping objects/xref
-  sections make references re-parse the same bytes (quadratic time); several capped objects
-  alive at once exceed 2 GiB → from the start, use a per-document lexing budget charged per
-  byte, a per-document object budget, overlap rejection by byte span, one parsed object alive
-  at a time, and compact xref entries ([journal](journal/2026-11-20.md), PR #24).
-- Writing signature or network journeys → give approval signatures a default change policy
-  (shadow attacks are legal edits), keep certificate-derived URLs off loopback/private
-  addresses, check web limits (CORS, mixed content, CSP, `fetch` redirect modes) and macOS ATS
-  before promising a request, and draw the fixture PKI's expiry timeline before writing
-  clock steps ([journal](journal/2026-11-20.md), PR #46).
-- Writing a conformance suite or any checker tested only by toys → for each check ask "what
-  broken implementation still passes?": known answers must reach multi-block and padding
-  boundaries (not just `""`/`"abc"`), lenient-read rules need a positive salvage check, every
-  limit needs a per-axis/per-path boundary, and the spec must say what the suite cannot see
-  (allocations). Compare whole results, not summaries (full outline segments, not count +
-  bounding box). Make tolerances relative or capped (an absolute 0.01 accepted any font
-  matrix). Give hostile fixtures a control case proving the attack path was reached, and
-  accept only the specific error kinds ([journal](journal/2026-11-21.md), PR #56, PR #67).
+- Parsing hostile input: per-object caps don't bound a document (overlapping objects/xref
+  sections re-parse the same bytes quadratically; several capped objects alive at once exceed
+  2 GiB) → design it in from the start: charge a per-document lexing budget per byte, keep a per-document object budget, reject overlapping
+  objects by byte span, keep one parsed object alive at a time, and store xref entries
+  compactly ([journal](journal/2026-11-20.md), PR #24).
+- Writing a conformance suite (details beyond the template's self-check) → lenient-read rules
+  need a positive salvage check; every limit needs a per-axis/per-path boundary; compare whole
+  results, not summaries (full outline segments, not count + bounding box); make tolerances
+  relative or capped (an absolute 0.01 accepted any font matrix) ([journal](journal/2026-11-21.md),
+  PR #56, PR #67, audit 0001).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
@@ -127,32 +119,23 @@ instead of adding near-duplicates.
   enclosing `.git`, check before creating directories, and re-check subdirectories for
   symlinks. Write new manifest/data parsers against the judge's real files first (smoke
   lists one blob twice) ([journal](journal/2026-11-21.md), PR #65).
-- Sizes from caller or input values: `u32 × u32` fits a `u64`, but a third factor (× 4
-  bytes per pixel) can overflow, and overflow checks are on in every profile, so the
-  overflow panics → `checked_mul` every product of three or more factors. Also give every
-  geometry loop a step cap, toys included: at 1e30 `pos + len == pos`, so a dash loop
-  never ends ([journal](journal/2026-11-21.md), PR #71).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
+- The workspace denies `as` casts in tests too → convert floats with a bit-setting helper
+  instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
-- The guard blocks a Bash call whose text contains a GitHub CLI write it can't parse, even inside a
-  heredoc or a chained command → write files with Write/Edit and run each CLI write as its own
-  single command ([journal](journal/2026-11-20.md)).
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).
-- Finishing a PR → post the `ai-review` status (it is a required check) before enabling
-  auto-merge and writing the journal; a session that ends early otherwise leaves the PR blocked
-  ([journal](journal/2026-11-20.md), PR #30).
-- Right after a push, `gh pr diff` and `gh pr view --json headRefOid` can return the previous
-  commit for a while → give the reviewer `git diff origin/main...HEAD`, and post `ai-review`
-  on `git rev-parse HEAD` after checking it matches `git ls-remote` ([journal](journal/2026-11-20.md)).
 - Branching from an unmerged PR branch → after it squash-merges, `git merge origin/main`
   gives add/add conflicts on the shared files; if main's tree equals the old PR head (`git
   diff <head> origin/main` empty), resolve with `git checkout --ours` ([journal](journal/2026-11-20.md), PR #32).
-- The guard blocks force pushes → once a branch is pushed, bring in main with `git merge
-  origin/main`, never rebase ([journal](journal/2026-11-20.md)).
+- Finding "the last X" from git (last audit, last retro) → `git log -1 --diff-filter=A` with an
+  exact filename pattern (`[0-9][0-9][0-9][0-9].md`); the plain last-touch commit resets on any
+  typo fix ([journal](journal/2026-11-21.md), PR #90).
+- Writing a record (retro, audit, journal) that claims GitHub side effects (labels, new issues)
+  → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
