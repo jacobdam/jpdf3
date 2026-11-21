@@ -106,8 +106,9 @@ clamps caller limits to the defaults, so front ends can only tighten them
 - `CcittDecoder::decode(input, &CcittParams, &DecodeLimits) -> Decoded<Bitmap>`.
   - `CcittParams` carries the Table 11 keys except `BlackIs1`, with the Table 11 defaults.
   - `columns == 0` fails with `InvalidArgument`.
-  - `columns` or `rows` above `max_image_dimension` fails with `LimitExceeded` before
-    decoding.
+  - `columns` or `rows` above `max_image_dimension`, or (when `rows` is set)
+    `columns × rows` above `max_image_pixels`, fails with `LimitExceeded` before any data
+    is read, even for empty input.
 - `DecodedImage`: rows top to bottom, interleaved components at full resolution, values not
   rescaled. The container is one byte per sample for `source_bits` 1–8 and two bytes
   (big-endian) for 9–16, the §8.9.3 layout without row padding. `expected_len()` computes
@@ -307,14 +308,55 @@ program-byte and glyph limits.
     (CONSTITUTION 18: never corpus files).
   - Each fixture decodes `Complete`, matching its expected header (size, components,
     container, `source_bits`, colour, alpha, `adobe_app14`) exactly and its pixels within the
-    fixture's per-sample tolerance.
-  - Output, pixel, dimension and component limits each pass at the fixture's exact size and
-    give `LimitExceeded` one below it and at 0.
+    fixture's per-sample tolerance, with the mean difference at most half the tolerance.
+  - A fixture is refused (`image.fixture_valid`), not trusted, when:
+    - its output length doesn't match its header, a sample is at or above
+      `2^source_bits`, or a bitmap padding bit is set;
+    - its tolerance is above `max_lossy_tolerance(source_bits)` = `2^(source_bits − 7)`
+      (2 for 8-bit, 32 for 12-bit, 1 below 8 bits) for JPEG and lossy JPEG 2000, or above 0
+      for lossless JPEG 2000 (`lossy: false`), JBIG2 and CCITT;
+    - it is flat: image samples must span at least half the largest value
+      (`max(1, (2^source_bits − 1) / 2)`), and bitmaps need black and white pixels. A
+      constant decoder could otherwise pass a loose tolerance or a blank page;
+    - its salvage cut isn't below the input length, or its rows aren't within 1 and the
+      height, or (CCITT) `Rows` is 0.
+  - Output, pixel, dimension and component limits each pass at the fixture's exact size
+    (decoding `Complete` and matching) and give `LimitExceeded` one below it and at 0.
+  - **Salvage** (CONSTITUTION 17). JPEG, JPEG 2000 and CCITT each need a fixture with a
+    salvage cut (`image.salvage_fixture`): a prefix length where the format says the
+    stream is truncated. Decoding the prefix must give `Ok(Truncated)` with valid output,
+    the fixture's width and header, a height from `rows` to the full height, and the first
+    `rows` rows matching (same tolerance and mean bound). A decoder that errors on every
+    truncated input, salvages a blank image or calls it `Complete` fails.
+  - **Options must matter** (`image.option_coverage`, `image.option_used`):
+    - JPEG: 3- or 4-component fixtures decoded with `color_transform` `Some(true)` and with
+      `Some(false)`, and a CMYK fixture with an Adobe APP14 marker. Each explicit
+      `color_transform` fixture is decoded again with the opposite value, which must not
+      give the expected image.
+    - JBIG2: a fixture with globals. Decoding it without them must not give the expected
+      bitmap.
+    - CCITT: fixtures with K < 0, K = 0 and K > 0, and one with `EncodedByteAlign`. Each is
+      decoded again under another K (0 for K ≠ 0, −1 for K = 0), and the aligned one also
+      without alignment; neither may give the expected bitmap.
+    - "Must not give the expected output" means an error or an output that doesn't match
+      within the tolerance. A fixture where the option happens not to matter fails too:
+      the adapter's author picks fixtures where it does.
+  - **CCITT parameters** (`image.ccitt_param_limits`): with empty data, `Columns` one past
+    `max_image_dimension`, `Rows` one past it (on fixtures taller than wide),
+    `Columns × Rows` one past `max_image_pixels` and `Columns` `u32::MAX` must give
+    `LimitExceeded`; the same sizes exactly at the limits must give anything else (the
+    empty data is the error). `image.ccitt_extreme_params`: K `i32::MIN` and `i32::MAX`,
+    `DamagedRowsBeforeError` `u32::MAX` with `EndOfLine`, and `Rows` at
+    `max_image_dimension` must not panic, and any output must be valid under a cap of
+    twice the fixture.
   - Truncated and mutated inputs never panic, and any output has a length that matches its
     header and stays within the limits.
   - Empty input is an error.
   - JBIG2: truncated globals are checked the same way. CCITT: `Columns` 0 must give
     `InvalidArgument`.
+  - Not yet required (#122): JPEG ICC, 12-bit and progressive fixtures; JPEG 2000
+    alpha, signed and subsampled components, and mixed depths giving `Unsupported`; CCITT
+    `EndOfLine`, `EndOfBlock` and `Rows` coverage.
 - `crypto::run_hasher(&dyn Hasher)`:
   - Known answers for every algorithm: `""`, `"abc"`, the FIPS 180-4 448-bit and 896-bit
     messages (multi-block chaining), and a fixed pattern at lengths 55, 56, 63, 64, 111, 112,
@@ -563,6 +605,13 @@ may record a repair note.
   The face API never hands out raw tables. The suite checks every answer it gets from a
   damaged program against the invariants, and requires hostile programs; see Conformance
   suites for what it can't see.
+- Image suite, what a broken decoder can still do and pass:
+  - be wrong on samples the fixtures don't exercise: options and features without a
+    required fixture (see "Not yet required" above), and pixel errors within the capped
+    tolerance;
+  - ignore an option on input where the fixture author chose a stream that decodes the
+    same either way. The `option_used` checks fail such a fixture, so it can't be used;
+  - salvage only the rows the fixture asks for (rows after `rows` aren't compared).
 - Keys passed to `Cipher` are secrets: backends must not log or keep them. Zeroizing them
   needs a dependency and is deferred to admission (#16).
 - MD5 and RC4 exist only because the PDF standard security handler requires them for old
@@ -601,12 +650,28 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     blocks. The bomb generator is checked to decode to zeros (and was checked against
     CPython's zlib when written); the canonical-code builder is checked against the RFC 1951
     §3.2.2 example and the §3.2.6 fixed codes.
-  - `image`: a toy raster codec for all four decoders; variants that ignore limits, check
-    only the width, rescale 4-bit samples, panic on mutated input, return output shorter than its header, or
-    read an output cap of 0 as unlimited. Also
-    a wrong pixel inside and outside the tolerance, each header field mismatch, a bad
-    fixture (including a sample at or above `2^source_bits`), a single orientation, a JPX
-    fixture set without a sub-8-bit image, and 16-bit tolerance.
+  - `image`: a toy raster codec for all four decoders, with an in-band APP14 flag, a
+    globals key and a K/alignment key. Broken variants, each caught only by its own check:
+    - ignore limits, check only the width, rescale 4-bit samples, panic on mutated input,
+      return output shorter than its header, read an output cap of 0 as unlimited;
+    - report `Truncated` at the exact output limit (`image.output_limit`);
+    - return zeros: passes only with a tolerance of 255, which `image.fixture_valid`
+      refuses;
+    - fail, blank or call `Complete` every truncated input (`image.salvage`, for JPEG, JPEG
+      2000 and CCITT);
+    - ignore ColorTransform (the fixtures' APP14 flags agree with it, so only the flip
+      catches it), JBIG2 globals, K and EncodedByteAlign (`image.option_used`);
+    - CCITT: no parameter checks before decoding, or `Columns` only
+      (`image.ccitt_param_limits`); a panic on K `i32::MIN`
+      (`image.ccitt_extreme_params`).
+
+    Also: a wrong pixel inside and outside the tolerance, the mean bound at exactly half
+    the tolerance and above it, each header field mismatch, bad fixtures (a sample at or
+    above `2^source_bits`, a padding bit, a flat image or bitmap, a tolerance one above the
+    cap, a lossless JPX tolerance of 1, salvage cuts at the input length or with 0 or too
+    many rows, a CCITT salvage without `Rows`), missing coverage of each option and of
+    salvage, a single orientation, a JPX fixture set without a sub-8-bit image, and 16-bit
+    tolerance.
   - `crypto`: table-backed and FNV hashers; real RC4 plus a fake CBC block cipher, with
     variants that ignore the IV, accept bad padding, check only the last padding byte, apply
     the decryption cap to the plaintext, use X.923 padding, read a cap of 0 as unlimited, or
