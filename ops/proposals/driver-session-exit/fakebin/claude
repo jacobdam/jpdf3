@@ -35,7 +35,32 @@ case "$FAKE_SCENARIO" in
   limit_stderr) echo "$asst"; echo "Claude AI usage limit reached" >&2; exit 1 ;;
   noise_stderr) echo "$asst"; echo "network error" >&2; exit 1 ;;
   rl_rejected) echo "$asst"; echo "$rl_rej"; exit 1 ;;
-  forever) echo "$asst"; sleep 1000 & wait ;;
+  forever) echo "$asst"; sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  slow_turn)  # a background agent finishes, the new turn's first output takes 5 s (> grace)
+    echo "$asst"; echo "$bg1"; echo "$ok_result"; sleep 1
+    echo "$bg0"; echo "$init"; sleep 5
+    echo "$asst"; echo "$ok_result"; exit 0 ;;
+  exit0_limit)  # a limit error result, but the process exits 0
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"You have hit your limit","api_error_status":null,'"$sid"'}'
+    exit 0 ;;
+  stderr_with_result)  # stderr names a limit, but the result line says something else
+    echo "$asst"; echo "MCP: usage limit reached on some server" >&2
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    exit 1 ;;
+  stderr_ratelimit)  # no result; stderr mentions rateLimit (MCP noise), not a usage limit
+    echo "$asst"; echo "mcp: rateLimit config loaded" >&2; exit 1 ;;
+  escaped_child)  # result, then a child in its own process group (like the Bash tool's shells)
+    echo "$asst"; echo "$ok_result"
+    perl -e 'setpgrp(0, 0); sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  bg_stuck)  # result while a background task is listed, then nothing ever happens
+    echo "$asst"; echo "$bg1"; echo "$ok_result"
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  hup_driver)  # hangs mid-turn; the test sends HUP to the driver
+    echo "$asst"
+    perl -e 'setpgrp(0, 0); sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
   stubborn)  # result, then a child that ignores TERM
     echo "$asst"; echo "$ok_result"
     perl -e '$SIG{TERM}="IGNORE"; sleep 1000' & echo $! > "$FAKE_DIR/child.pid"

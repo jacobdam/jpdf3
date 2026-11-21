@@ -1,26 +1,30 @@
 diff --git a/ops/driver/driver.sh b/ops/driver/driver.sh
-index fc70e5b..83a5801 100755
+index fc70e5b..7274d26 100755
 --- a/ops/driver/driver.sh
 +++ b/ops/driver/driver.sh
-@@ -10,6 +10,8 @@ OWNER="jacobdam"
+@@ -10,6 +10,9 @@ OWNER="jacobdam"
  GH_REPO="jacobdam/jpdf3"
  PAUSE="${JPDF_PAUSE:-120}"              # seconds between sessions
  SESSION_MAX="${JPDF_SESSION_MAX:-10800}" # hard cap per session (3 h)
 +SETTLE_GRACE="${JPDF_SETTLE_GRACE:-120}" # idle seconds allowed after a session's final result
 +POLL="${JPDF_POLL:-10}"                  # seconds between checks of a running session
++BG_QUIET_MAX="${JPDF_BG_QUIET_MAX:-2700}" # quiet seconds after a result while background tasks are listed
  MIN_FREE_GB="${JPDF_MIN_FREE_GB:-30}"
  MODE="loop"; [[ "${1:-}" == "--pilot" || "${1:-}" == "--once" ]] && MODE="once"
  
-@@ -62,23 +64,98 @@ slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)
+@@ -62,23 +65,133 @@ slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)
    (( $(date +%s) - since > 7*86400 ))
  }
  
-+# Prints "<last> <bg>" for a stream-json session log: <last> is the type of the last turn event
-+# (assistant, user or result; "none" before the first) and <bg> the length of the last
-+# background_tasks_changed list (running background agents and shells). Non-JSON lines are skipped.
++# Prints "<last> <bg>" for a stream-json session log. <last> is the last turn event: assistant,
++# user, result, or start (a turn began: system/init, or a started command_lifecycle such as a
++# wakeup), "none" before the first. <bg> is the length of the last background_tasks_changed list
++# (running background agents and shells, Monitors included). Non-JSON lines are skipped.
 +session_state() {
 +  jq -Rr 'fromjson? | objects
-+    | if .type == "system" and .subtype == "background_tasks_changed" then "bg \(.tasks | length)"
++    | if .type == "system" and .subtype == "background_tasks_changed" then "bg \(.tasks // [] | length)"
++      elif (.type == "system" and .subtype == "init")
++        or (.type == "command_lifecycle" and .state == "started") then "start"
 +      elif .type == "assistant" or .type == "user" or .type == "result" then .type
 +      else empty end' "$1" 2>/dev/null |
 +    awk '$1 == "bg" { bg = $2; next } { last = $1 }
@@ -34,10 +38,12 @@ index fc70e5b..83a5801 100755
 +}
 +
 +# A real usage limit: the last result line is an error that names a limit (or carries HTTP 429),
-+# or the CLI's last rate_limit_event is "rejected"; with no result line at all, the CLI's stderr
-+# names one. Never grep the whole transcript: every log has rate_limit_event lines (status
-+# "allowed"), and tool output can quote any of these words.
++# or the CLI's last rate_limit_event has status "rejected" (assumed shape: every logged event so
++# far says "allowed"; overageStatus is ignored); with no result line at all, stderr names one.
++# Never grep the whole transcript: every log has rate_limit_event lines, and tool output can quote
++# any of these words. stderr also carries MCP server output, so it gets the narrower list.
 +LIMIT_RE='usage limit|rate.?limit|limit reached|hit your limit|resets at|out of (extra )?usage'
++STDERR_LIMIT_RE='usage limit|limit reached|hit your limit|out of (extra )?usage'
 +usage_limited() {
 +  local out=$1 err=$2 v
 +  v=$(jq -Rrn --arg re "$LIMIT_RE" '[inputs | fromjson? | objects] as $e
@@ -50,31 +56,49 @@ index fc70e5b..83a5801 100755
 +      else "no" end' "$out" 2>/dev/null)
 +  case "$v" in
 +    yes) return 0 ;;
-+    none) grep -qiE "$LIMIT_RE" "$err" 2>/dev/null ;;
++    none) grep -qiE "$STDERR_LIMIT_RE" "$err" 2>/dev/null ;;
 +    *) return 1 ;;
 +  esac
 +}
 +
-+# TERM the session's process group (claude, its MCP servers, shells and agents), KILL what is
-+# left after 15 s.
++# All live descendants of pid $1, from one ps snapshot (breadth first).
++descendants() {
++  ps -axo pid=,ppid= | awk -v root="$1" '{ kids[$2] = kids[$2] " " $1 }
++    END { n = split(kids[root], q, " ")
++          for (i = 1; i <= n; i++) { m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) q[++n] = c[j] }
++          for (i = 1; i <= n; i++) print q[i] }'
++}
++
++# Stop a session: TERM its process group and every descendant (the Bash tool's shells and MCP
++# servers call setsid, so the group alone misses them), then KILL what is left after 15 s. The
++# descendant list is taken before signalling, while the tree is still connected.
 +stop_group() {
-+  local pid=$1 _
++  local pid=$1 pids p alive _
++  pids=$(descendants "$pid")
 +  kill -TERM -- "-$pid" 2>/dev/null
-+  for _ in {1..15}; do kill -0 -- "-$pid" 2>/dev/null || return 0; sleep 1; done
++  for p in $pids; do kill -TERM "$p" 2>/dev/null; done
++  for _ in {1..15}; do
++    alive=0
++    kill -0 -- "-$pid" 2>/dev/null && alive=1
++    for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
++    (( alive )) || return 0
++    sleep 1
++  done
 +  kill -KILL -- "-$pid" 2>/dev/null
++  for p in $pids; do kill -KILL "$p" 2>/dev/null; done
 +}
 +
  run_session() {
 -  local ts out start rc sid
 -  ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; start=$(date +%s)
-+  local ts out err start rc res sid pid now idle why=""
++  local ts out err start rc res sid pid now m idle state why=""
 +  ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; err="ops/logs/$ts.stderr"; start=$(date +%s)
    log "session $ts starting"
    # Agent sessions get only the project MCP config (an isolated headless Chrome), never the
    # owner's claude.ai connectors (mail, drive, calendar) or the owner's own browser.
 -  JPDF_SESSION=1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude -p "$(cat ops/TICK.md)" \
-+  # perl puts the session in its own process group (pgid = pid), so stop_group reaches
-+  # everything it spawned; stderr goes to its own file so usage_limited can read it alone.
++  # perl puts the session in its own process group (pgid = pid) for stop_group; stderr goes to
++  # its own file so usage_limited can read it without the transcript.
 +  JPDF_SESSION=1 ENABLE_CLAUDEAI_MCP_SERVERS=false \
 +    perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\n"' -- \
 +      claude -p "$(cat ops/TICK.md)" \
@@ -84,10 +108,13 @@ index fc70e5b..83a5801 100755
 -  ( sleep "$SESSION_MAX"; kill -TERM "$pid" 2>/dev/null ) & local watchdog=$!
 +      --permission-mode auto --output-format stream-json --verbose > "$out" 2> "$err" &
 +  pid=$!
-+  # A finished `claude -p` can stay alive (a pending ScheduleWakeup, a stuck child; #125). Stop it
-+  # once its last turn event is a result, no background task is running, and the log has been
-+  # quiet for SETTLE_GRACE seconds. A background task's notification restarts the turn and the
-+  # log, so waits on agents or shells are not cut short; SESSION_MAX still caps those.
++  # Its own group no longer gets the terminal's HUP/INT (closing tmux, Ctrl-C), so pass them on.
++  trap 'log "driver signalled: stopping session $ts"; stop_group "$pid"; exit 130' HUP INT TERM
++  # A finished `claude -p` can stay alive (a pending ScheduleWakeup; #125). Stop it once its last
++  # turn event is a result, no background task runs, and the log has been quiet for SETTLE_GRACE
++  # seconds. A background task's notification starts a new turn (system/init), so waits on agents
++  # or shells are not cut short. A result with background tasks still listed is stopped only after
++  # BG_QUIET_MAX quiet seconds, and SESSION_MAX caps everything.
 +  while kill -0 "$pid" 2>/dev/null; do
 +    sleep "$POLL"
 +    now=$(date +%s)
@@ -95,18 +122,25 @@ index fc70e5b..83a5801 100755
 +      why="SESSION_MAX"; log "session $ts reached SESSION_MAX (${SESSION_MAX}s): stopping"
 +      stop_group "$pid"; break
 +    fi
-+    [[ "$(session_state "$out")" == "result 0" ]] || continue
-+    idle=$(( now - $(stat -f %m "$out") ))
-+    if (( idle >= SETTLE_GRACE )); then
++    state=$(session_state "$out")
++    [[ "$state" == result\ * ]] || continue
++    m=$(stat -f %m "$out" 2>/dev/null) || continue
++    idle=$(( now - m ))
++    if [[ "$state" == "result 0" ]] && (( idle >= SETTLE_GRACE )); then
 +      why="settled"; log "session $ts idle ${idle}s after its final result, no background tasks: stopping"
++      stop_group "$pid"; break
++    fi
++    if (( idle >= BG_QUIET_MAX )); then
++      why="settled-bg"; log "session $ts idle ${idle}s after its final result, background tasks listed: stopping"
 +      stop_group "$pid"; break
 +    fi
 +  done
    wait "$pid"; rc=$?
 -  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
-+  # Killed by a signal (ours or the owner's) after it had finished: report what the session
++  trap - HUP INT TERM
++  # Killed by a signal (ours or the owner's) after it had answered: report what the session
 +  # itself reported in its final result, not the signal.
-+  if (( rc > 128 )) && [[ "$(session_state "$out")" == "result 0" ]]; then
++  if (( rc > 128 )) && [[ "$(session_state "$out")" == result\ * ]]; then
 +    res=$(result_rc "$out"); rc=${res:-$rc}
 +  fi
 +  [[ -s "$err" ]] || rm -f "$err"
@@ -115,7 +149,9 @@ index fc70e5b..83a5801 100755
 -  log "session $ts finished rc=$rc session=${sid:-?} (resume: claude --resume ${sid:-?})"
 -  if grep -qiE 'usage limit|rate.?limit|limit reached|resets at|out of (extra )?usage' "$out" && (( rc != 0 )); then
 +  log "session $ts finished rc=$rc${why:+ stopped=$why} session=${sid:-?} (resume: claude --resume ${sid:-?})"
-+  if (( rc != 0 )) && usage_limited "$out" "$err"; then
++  # Checked on rc 0 too when the final result is an error: the CLI's exit code for an error
++  # result isn't confirmed.
++  if { (( rc != 0 )) || [[ "$(result_rc "$out")" == 1 ]]; } && usage_limited "$out" "$err"; then
      return 42
    fi
    return "$rc"

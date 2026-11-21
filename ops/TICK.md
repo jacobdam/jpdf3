@@ -24,8 +24,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
-- **Leave nothing running.** `claude -p` stays alive while a timer, background task or child
-  process is pending, and the driver waits for it (#125: sessions idled 2–20 min after their final
+- **Leave nothing running.** `claude -p` stays alive while a ScheduleWakeup timer or a background
+  task is pending, and the driver waits for it (#125: sessions idled 2–20 min after their final
   answer). Never use ScheduleWakeup or CronCreate: a session is not a `/loop`, and background
   agents and background Bash calls re-invoke you when they finish, so a fallback timer only
   delays the exit. When your next step needs a reviewer's answer, run it in the foreground
