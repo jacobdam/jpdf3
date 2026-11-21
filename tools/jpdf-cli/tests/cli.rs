@@ -302,3 +302,104 @@ fn bad_input_files_exit_2_or_3() -> io::Result<()> {
     assert_eq!(code(&o), Some(2));
     Ok(())
 }
+
+/// Default `Limits::max_file_size`, the bound `info` applies before reading.
+fn max_file_size() -> io::Result<u64> {
+    u64::try_from(jpdf_engine::Limits::default().max_file_size).map_err(io::Error::other)
+}
+
+/// A sparse file of `len` bytes that its owner may write but not read.
+#[cfg(unix)]
+fn write_only_sparse(len: u64) -> io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = temp_file(b"")?;
+    let f = std::fs::File::options().write(true).open(&path)?;
+    f.set_len(len)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200))?;
+    Ok(path)
+}
+
+/// Issue #77: the size is checked from `stat` before the file is opened, so an oversized file
+/// is never read. The file is write-only: an implementation that opens (or reads) before
+/// checking reports "Permission denied" instead of the limit. At exactly the limit the size
+/// check passes and the open is what fails.
+#[cfg(unix)]
+#[test]
+fn oversized_file_is_rejected_before_opening() -> io::Result<()> {
+    let max = max_file_size()?;
+    let over = write_only_sparse(max + 1)?;
+    let at = write_only_sparse(max)?;
+    let o = cli(&["info", over.to_str().unwrap()])?;
+    // Running as root, permissions don't stop the open: the ordering proof below needs a
+    // normal user (as root the CLI would read 512 MiB), but the limit message holds either way.
+    let enforced = std::fs::File::open(&at).is_err();
+    let at_o = if enforced {
+        Some(cli(&["info", at.to_str().unwrap()])?)
+    } else {
+        None
+    };
+    std::fs::remove_file(&over)?;
+    std::fs::remove_file(&at)?;
+    assert_eq!(code(&o), Some(2), "{o:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&o.stderr),
+        "jpdf-cli: limit exceeded: file size\n"
+    );
+    assert!(o.stdout.is_empty());
+    if let Some(at_o) = at_o {
+        assert_eq!(code(&at_o), Some(2), "{at_o:?}");
+        let err = String::from_utf8_lossy(&at_o.stderr);
+        assert!(
+            err.starts_with("jpdf-cli: cannot read ") && err.contains("ermission denied"),
+            "{err}"
+        );
+    } else {
+        eprintln!("at-limit ordering check skipped: permissions are not enforced for root");
+    }
+    Ok(())
+}
+
+/// Issue #77: a FIFO with no writer used to block `info` forever in `open`. It must exit 2 at
+/// once, without reading. Character devices are refused the same way (`/dev/zero` never ends).
+/// The `O_NONBLOCK` open behind the `stat` check is tested in `src/main.rs`.
+#[cfg(unix)]
+#[test]
+fn fifo_and_devices_exit_2_without_blocking() -> io::Result<()> {
+    use std::time::{Duration, Instant};
+    let fifo = temp_file(b"")?;
+    std::fs::remove_file(&fifo)?;
+    let made = Command::new("mkfifo").arg(&fifo).status()?;
+    assert!(made.success());
+    let dir = fifo.with_extension("dir");
+    std::fs::create_dir_all(&dir)?;
+    for path in [
+        fifo.to_str().unwrap(),
+        dir.to_str().unwrap(),
+        "/dev/null",
+        "/dev/zero",
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
+            .args(["info", path])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let start = Instant::now();
+        while child.try_wait()?.is_none() {
+            if start.elapsed() > Duration::from_secs(20) {
+                child.kill()?;
+                panic!("jpdf-cli info {path} hung");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let o = child.wait_with_output()?;
+        assert_eq!(code(&o), Some(2), "{path}: {o:?}");
+        assert!(o.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&o.stderr),
+            format!("jpdf-cli: cannot read {path}: not a regular file\n")
+        );
+    }
+    std::fs::remove_file(&fifo)?;
+    std::fs::remove_dir(&dir)?;
+    Ok(())
+}

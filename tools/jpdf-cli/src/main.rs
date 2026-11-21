@@ -3,11 +3,13 @@
 //!
 //! Exit codes: 0 success, 2 clean typed error, 3 not implemented. Nothing else, ever.
 #![forbid(unsafe_code)]
+// Input-derived arithmetic is checked; overflow panics in every profile (#77).
+#![deny(clippy::arithmetic_side_effects)]
 
 use std::ffi::{OsStr, OsString};
-use std::fs::File;
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use jpdf_engine::{Document, EngineError, Limits};
@@ -239,27 +241,181 @@ fn info(inv: &Invocation) -> Result<(), Failure> {
         .map_err(|e| Failure::usage(format!("cannot write output: {e}")))
 }
 
-/// Reads at most `max` bytes; larger files (including endless devices) are rejected without
-/// reading them fully.
-fn read_limited(path: &PathBuf, max: usize) -> Result<Vec<u8>, Failure> {
+/// Linux architectures whose `<fcntl.h>` uses the generic values below (`O_NONBLOCK` 0o4000,
+/// `O_NOCTTY` 0o400). mips, sparc, alpha and parisc differ; there the open falls back to plain
+/// flags, and only the `stat` check guards against FIFOs.
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64",
+        target_arch = "powerpc64",
+        target_arch = "s390x"
+    )
+))]
+const OPEN_FLAGS: Option<i32> = Some(0o4000 | 0o400);
+/// macOS `O_NONBLOCK` (0x0004). An open never acquires a controlling terminal there, so no
+/// `O_NOCTTY` is needed.
+#[cfg(target_os = "macos")]
+const OPEN_FLAGS: Option<i32> = Some(0x0004);
+#[cfg(not(any(
+    target_os = "macos",
+    all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "riscv64",
+            target_arch = "powerpc64",
+            target_arch = "s390x"
+        )
+    )
+)))]
+const OPEN_FLAGS: Option<i32> = None;
+
+/// Opens `path` for reading with `O_NONBLOCK` (and `O_NOCTTY` on Linux) where [`OPEN_FLAGS`]
+/// knows the values: opening a FIFO that has no writer then returns at once instead of
+/// blocking (a hang would be a judge timeout), and a terminal swapped in never becomes the
+/// controlling terminal. Neither flag changes reads from regular files.
+/// `tests::open_never_blocks_on_a_fifo` checks the values; Linux CI runs it, macOS runs it
+/// locally only (the macOS CI job doesn't run the Rust tests).
+fn open_nonblocking(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if let Some(flags) = OPEN_FLAGS {
+        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, flags);
+    }
+    options.open(path)
+}
+
+/// Accepts only a regular file of at most `max` bytes, judged from metadata alone, and
+/// returns its length.
+fn check_metadata(path: &Path, meta: &Metadata, max: usize) -> Result<usize, Failure> {
+    if !meta.is_file() {
+        return Err(Failure::usage(format!(
+            "cannot read {}: not a regular file",
+            path.display()
+        )));
+    }
+    match usize::try_from(meta.len()) {
+        Ok(len) if len <= max => Ok(len),
+        _ => Err(Failure::usage("limit exceeded: file size")),
+    }
+}
+
+/// Reads at most `max` bytes. Non-regular files (FIFOs, devices, directories) and files larger
+/// than `max` are rejected from `stat` before the file is opened, so nothing is read. The open
+/// never blocks; the opened file is checked again (the path may have been swapped), and the
+/// read stops after `max + 1` bytes in case the file grows while we read it.
+fn read_limited(path: &Path, max: usize) -> Result<Vec<u8>, Failure> {
     let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));
-    let file = File::open(path).map_err(cannot)?;
+    check_metadata(path, &fs::metadata(path).map_err(cannot)?, max)?;
+    let file = open_nonblocking(path).map_err(cannot)?;
+    let expected = check_metadata(path, &file.metadata().map_err(cannot)?, max)?;
+    read_capped(file, expected, max).map_err(|e| match e {
+        Capped::Io(e) => cannot(e),
+        Capped::Fail(f) => f,
+    })
+}
+
+#[derive(Debug)]
+enum Capped {
+    Io(io::Error),
+    Fail(Failure),
+}
+
+/// Reads `reader` to the end, but never more than `max + 1` bytes: a source longer than its
+/// metadata said (a growing file) fails with the size limit instead of growing memory.
+/// `expected` is the size from metadata, reserved exactly up front: `read_to_end` doubling
+/// would otherwise reserve up to twice the file size, which matters under the judge's 2 GiB
+/// address-space limit.
+fn read_capped(reader: impl Read, expected: usize, max: usize) -> Result<Vec<u8>, Capped> {
     let cap = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
-    // Reserve the exact size up front: `read_to_end` doubling would otherwise reserve up to
-    // twice the file size, which matters under the judge's 2 GiB address-space limit.
-    let expected = file
-        .metadata()
-        .ok()
-        .and_then(|m| usize::try_from(m.len()).ok())
-        .filter(|len| *len <= max)
-        .unwrap_or(0);
     let mut bytes = Vec::new();
     bytes
-        .try_reserve_exact(expected.saturating_add(1))
-        .map_err(|_| Failure::usage("cannot allocate memory for the file"))?;
-    file.take(cap).read_to_end(&mut bytes).map_err(cannot)?;
+        .try_reserve_exact(expected.min(max).saturating_add(1))
+        .map_err(|_| Capped::Fail(Failure::usage("cannot allocate memory for the file")))?;
+    reader
+        .take(cap)
+        .read_to_end(&mut bytes)
+        .map_err(Capped::Io)?;
     if bytes.len() > max {
-        return Err(Failure::usage("limit exceeded: file size"));
+        return Err(Capped::Fail(Failure::usage("limit exceeded: file size")));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The size cap holds even when the source is longer than its metadata said (a growing
+    /// file): exactly `max` bytes pass, `max + 1` and an endless source fail with the limit.
+    #[test]
+    fn read_stops_one_byte_past_the_limit() {
+        let at = read_capped(&[7u8; 100][..], 0, 100);
+        assert_eq!(at.map(|b| b.len()).ok(), Some(100));
+        for over in [
+            read_capped(&[7u8; 101][..], 0, 100),
+            read_capped(io::repeat(0), 0, 100),
+        ] {
+            match over {
+                Err(Capped::Fail(f)) => assert_eq!(f.message, "limit exceeded: file size"),
+                other => panic!("expected the size limit, got {other:?}"),
+            }
+        }
+    }
+
+    /// The `stat` check refuses FIFOs before opening, but the path can be swapped between the
+    /// two calls; the open itself must then not block, and the check on the opened file must
+    /// refuse it (#77). Opening a FIFO with no writer blocks without `O_NONBLOCK`, so a wrong
+    /// flag value hangs here and fails the timeout.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn open_never_blocks_on_a_fifo() {
+        use std::process::Command;
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("jpdf-cli-unit-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("fifo");
+        let _ = fs::remove_file(&fifo);
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (tx, rx) = mpsc::channel();
+        let path = fifo.clone();
+        std::thread::spawn(move || {
+            let checked = open_nonblocking(&path)
+                .map(|f| f.metadata().map(|m| check_metadata(&path, &m, 1 << 20)));
+            let _ = tx.send(match checked {
+                Ok(Ok(Err(f))) => f.message,
+                other => format!("unexpected: {other:?}"),
+            });
+        });
+        let got = rx.recv_timeout(Duration::from_secs(10));
+        if got.is_err() {
+            // Unblock the stuck thread so the test process can exit.
+            let _ = fs::OpenOptions::new().write(true).open(&fifo);
+        }
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            got,
+            Ok(format!(
+                "cannot read {}: not a regular file",
+                fifo.display()
+            )),
+            "open of a FIFO blocked, failed or was accepted"
+        );
+    }
 }

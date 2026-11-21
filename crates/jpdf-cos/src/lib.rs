@@ -2,6 +2,8 @@
 //!
 //! Document object model. For now: the document catalog and a flat page tree.
 #![forbid(unsafe_code)]
+// Input-derived arithmetic is checked; overflow panics in every profile (#77).
+#![deny(clippy::arithmetic_side_effects)]
 
 use std::collections::HashSet;
 use std::fmt;
