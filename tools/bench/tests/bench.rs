@@ -373,26 +373,33 @@ fn corpus_selection_and_odd_names() {
 fn timeout_kills_the_whole_process_group() {
     let d = temp_dir!();
     let pidfile = d.join("grandchild.pid");
-    // A wrapper without `exec`: its child must not outlive the timeout. `warm` exits at once
+    // specs/tooling/bench.md item 7. A wrapper without `exec` starts a nested shell whose
+    // `sleep` is the wrapper's grandchild: only a process-group kill reaches it (killing the
+    // wrapper and its direct children doesn't). `warm` exits at once
     // (the first exec of a fresh script can take seconds on macOS). The pid goes through a
     // rename, so the file is either absent or complete.
     let s = script!(
         &d,
         "wrapper",
         &format!(
-            "[ \"$1\" = warm ] && exit 0\nsleep 30 &\necho $! > '{p}.tmp'\nmv '{p}.tmp' '{p}'\nwait",
+            "[ \"$1\" = warm ] && exit 0\n/bin/sh -c \"sleep 30 & echo \\$! > '{p}.tmp'; mv '{p}.tmp' '{p}'; wait\" &\nwait",
             p = pidfile.display()
         )
     );
     let (status, _) = run_once(&s, &[os("warm")], Duration::from_secs(60));
     assert_eq!(status, Status::Ok, "warmup run");
-    // Under parallel load the wrapper may not reach `sleep 30 &` before the limit. That run
+    // Under parallel load the wrapper may not write the pid before the limit. That run
     // proves nothing about the group kill, so retry with a longer limit (#75).
     let mut pid = None;
     for secs in [3, 6, 12, 24] {
         let (status, took) = run_once(&s, &[], Duration::from_secs(secs));
         assert_eq!(status, Status::Timeout, "limit {secs} s");
         assert!(took >= Duration::from_secs(secs), "killed early: {took:?}");
+        // Generous slack for load, but a timeout at twice the limit fails.
+        assert!(
+            took < Duration::from_secs(secs + 3),
+            "killed late: {took:?}"
+        );
         if let Ok(text) = std::fs::read_to_string(&pidfile) {
             pid = Some(text.trim().to_string());
             break;

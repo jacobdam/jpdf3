@@ -29,7 +29,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
   (> 60 s) → reference tools must be called with timeouts (bootstrap).
 - Timing tests with shell-script fake engines → on macOS the first exec of a freshly written
-  script can take ~2 s; give timed assertions a warmup run and generous upper bounds, and
+  script can take ~2 s; give timed assertions a warmup run and generous upper bounds; when a
+  test needs the script to reach a point before a deadline, have it signal that point (atomic
+  rename of a marker) and retry with a longer limit if it didn't (#75, PR #103); and
   test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
   the session's shell) ([journal](journal/2026-11-21.md), PR #59).
 

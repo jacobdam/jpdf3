@@ -161,7 +161,8 @@ child every 0.2 ms.
 - argument parsing: defaults, every range boundary, unknown flag → exit 2;
 - exit classification for 0, 2, 3, 1, signals and timeouts (shell-script fake engines in a
   test temp dir under `target/`). A timed-out wrapper script without `exec` must not leave
-  its background child alive (process-group kill). The test warms the script up first; a
+  its grandchild (a nested shell's `sleep`) alive, which only a process-group kill reaches;
+  the timeout fires no earlier than the limit and less than 3 s after it. The test warms the script up first; a
   run that times out before the wrapper wrote its child's pid proves nothing, so it
   retries at 3, 6, 12 and 24 s and fails only if no attempt got that far (#75);
 - ratio direction and unit: fake jpdf (~200 ms) against fake mutool (~50 ms) must give a
