@@ -229,11 +229,11 @@ fn generated_tables_are_deterministic_and_compile() {
 
 #[cfg(test)]
 fn git(dir: &Path, args: &[&str]) -> String {
-    let o = Command::new("git")
+    // The hardened builder: no inherited GIT_DIR or global config can redirect these calls.
+    let o = fetch::git_command()
         .arg("-C")
         .arg(dir)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "t")
         .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
         .env("GIT_COMMITTER_NAME", "t")
@@ -356,6 +356,149 @@ fn a_broken_cache_is_refused_not_discovered_upwards() {
     let e = fetch::load_pinned(&cache).unwrap_err();
     assert!(e.to_string().contains("not a usable cache"), "{e}");
     assert!(!parent.join(".git/shallow").exists());
+}
+
+/// A bare cache made by `ensure_pinned` (whose fetch URL is never reached) holding the
+/// fixture commit, copied in over the local transport that `git_command` itself refuses.
+#[cfg(test)]
+fn fixture_cache(name: &str) -> (PathBuf, PathBuf, String) {
+    let (dir, commit, _) = fixture_repo(name);
+    let repo = scratch(&format!("{name}-cache")).join("c.git");
+    let st = fetch::git_command()
+        .args(["init", "--bare", "--quiet", "--template="])
+        .arg(&repo)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let st = fetch::git_command()
+        .args(["-c", "protocol.file.allow=always", "--git-dir"])
+        .arg(&repo)
+        .args(["fetch", "--quiet"])
+        .arg(&dir)
+        .arg(&commit)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    (dir, repo, commit)
+}
+
+/// Never fetched: the commit is already in every cache these tests use.
+const UNUSED_URL: &str = "https://example.invalid/unused.git";
+
+#[cfg(test)]
+fn plant_hook(repo: &Path, marker: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let hooks = repo.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("reference-transaction");
+    std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A hook planted in the cache never runs (audit 0002 on #82), though plain git runs it.
+#[test]
+fn cache_hooks_never_run() {
+    let (_, repo, commit) = fixture_cache("pin-hook");
+    let marker = repo.with_file_name("hook-ran");
+    plant_hook(&repo, &marker);
+    // `update-ref` fires reference-transaction; the pin ref is new, so it runs.
+    fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
+    let pinned = fetch::git_out(&repo, &["rev-parse", fetch::PIN_REF], None).unwrap();
+    assert_eq!(String::from_utf8_lossy(&pinned).trim(), commit);
+    assert!(!marker.exists(), "the planted hook ran");
+    // Control: the hook is valid, and git without the hardening runs it.
+    let st = Command::new("git")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .arg("--git-dir")
+        .arg(&repo)
+        .args(["update-ref", "refs/control", &commit])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert!(marker.exists(), "control: plain git should run the hook");
+}
+
+/// A cache's own config may hold only what `git init --bare` writes; links to another
+/// object store or common directory are refused too.
+#[test]
+fn caches_with_foreign_config_or_links_are_refused() {
+    let (_, repo, commit) = fixture_cache("pin-config");
+    fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
+    let config = std::fs::read(repo.join("config")).unwrap();
+    for (key, value) in [
+        ("core.hooksPath", "/somewhere"),
+        ("core.HooksPath", "/somewhere"),
+        ("credential.helper", "!touch x"),
+        ("include.path", "/somewhere/config"),
+        ("url.https://evil.example/.insteadOf", "https://github.com/"),
+        ("core.alternateRefsCommand", "touch x"),
+        ("remote.origin.url", "https://example.invalid/x.git"),
+    ] {
+        let st = Command::new("git")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .arg("--git-dir")
+            .arg(&repo)
+            .args(["config", key, value])
+            .status()
+            .unwrap();
+        assert!(st.success(), "{key}");
+        let e = fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("is not a usable cache (its config sets") && e.contains("; delete it"),
+            "{key}: {e}"
+        );
+        std::fs::write(repo.join("config"), &config).unwrap();
+    }
+    fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
+    for link in [
+        "commondir",
+        "objects/info/alternates",
+        "objects/info/http-alternates",
+    ] {
+        let path = repo.join(link);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "/somewhere\n").unwrap();
+        let e = fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(&format!("(it has {link})")), "{link}: {e}");
+        std::fs::remove_file(&path).unwrap();
+    }
+    fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
+}
+
+/// HTTPS is the only transport: a local path, `file://` and `ext::` are refused by git.
+#[test]
+fn only_https_is_fetched() {
+    let (dir, commit, _) = fixture_repo("pin-proto");
+    let cache = scratch("pin-proto-cache");
+    for (i, url) in [
+        dir.display().to_string(),
+        format!("file://{}", dir.display()),
+        format!("ext::sh -c touch% {}/ext-ran", cache.display()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let repo = cache.join(format!("c{i}.git"));
+        let e = fetch::ensure_pinned(&repo, url, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("git fetch") && e.contains("not allowed"),
+            "{url}: {e}"
+        );
+        // The cache was created (with an empty template) and holds nothing.
+        assert!(!repo.join("hooks").exists(), "{url}");
+        assert!(fetch::git_out(&repo, &["cat-file", "-e", &commit], None).is_err());
+    }
+    assert!(!cache.join("ext-ran").exists());
 }
 
 #[test]
@@ -654,9 +797,10 @@ fn vendored_symlinks_are_refused() {
 #[test]
 fn cli_checks_the_vendored_copy_by_default() {
     let exe = env!("CARGO_BIN_EXE_jpdf-arlington");
+    // The default copy is found from any directory, not only the checkout root.
     let ok = Command::new(exe)
         .arg("check")
-        .current_dir(repo_root())
+        .current_dir(scratch("cli-cwd"))
         .output()
         .unwrap();
     assert_eq!(ok.status.code(), Some(0), "{ok:?}");

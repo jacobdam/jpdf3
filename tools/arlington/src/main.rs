@@ -1,7 +1,7 @@
 //! `jpdf-arlington check|generate|vendor` (specs/tooling/arlington.md, "CLI").
 #![forbid(unsafe_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use jpdf_arlington::{Source, generate, load, vendor};
@@ -10,8 +10,20 @@ const USAGE: &str = "usage: jpdf-arlington check [--vendored DIR | --tsv DIR | -
      jpdf-arlington generate --out FILE [--vendored DIR | --tsv DIR | --cache DIR]\n       \
      jpdf-arlington vendor --out DIR [--cache DIR]";
 
-/// Default cache for the pinned commit, relative to the current directory.
-const DEFAULT_CACHE: &str = "target/arlington";
+/// Default cache for the pinned commit: `target/arlington` of the checkout this tool was
+/// built from, whatever the current directory (spec item 6).
+fn default_cache() -> PathBuf {
+    repo_root().join("target/arlington")
+}
+
+/// Default vendored copy: [`vendor::DATA_DIR`] of the checkout this tool was built from.
+fn default_vendored() -> PathBuf {
+    repo_root().join(vendor::DATA_DIR)
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
 
 #[derive(Debug, PartialEq)]
 struct Args {
@@ -49,8 +61,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
         }
     }
     let source = match (cache, tsv, vendored) {
-        (None, None, None) if vendor => CliSource::Cache(PathBuf::from(DEFAULT_CACHE)),
-        (None, None, None) => CliSource::Vendored(PathBuf::from(vendor::DATA_DIR)),
+        (None, None, None) if vendor => CliSource::Cache(default_cache()),
+        (None, None, None) => CliSource::Vendored(default_vendored()),
         (Some(c), None, None) => CliSource::Cache(c),
         (None, Some(t), None) => CliSource::Tsv(t),
         (None, None, Some(v)) => CliSource::Vendored(v),
@@ -141,7 +153,7 @@ mod tests {
     fn arguments() {
         assert_eq!(
             p(&["check"]).map(|a| a.source),
-            Ok(CliSource::Vendored(PathBuf::from(vendor::DATA_DIR)))
+            Ok(CliSource::Vendored(default_vendored()))
         );
         assert_eq!(
             p(&["check", "--cache", "c"]).map(|a| a.source),
@@ -153,10 +165,7 @@ mod tests {
         );
         assert_eq!(
             p(&["vendor", "--out", "o"]).map(|a| (a.source, a.out)),
-            Ok((
-                CliSource::Cache(PathBuf::from(DEFAULT_CACHE)),
-                Some("o".into())
-            ))
+            Ok((CliSource::Cache(default_cache()), Some("o".into())))
         );
         assert_eq!(
             p(&["generate", "--out", "x.rs", "--tsv", "d"]).map(|a| (a.source, a.out)),

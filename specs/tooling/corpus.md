@@ -47,13 +47,15 @@ the `wide` shards are the follow-up issue
    with any other host, or `http:`, is a parse error.
 5. **`jpdf-corpus build regress [--cache DIR]`** fetches each source's pinned commit with
    `git fetch --depth 1 --no-tags <url> <commit>` into the bare repository
-   `<cache>/git/<name>.git` (once; later runs are offline), keeps it with the ref
-   `refs/jpdf/pinned`, runs `git fsck --full --strict --no-dangling` (git objects are
+   `<cache>/git/<name>.git` (once; later runs are offline) and keeps it with the ref
+   `refs/jpdf/pinned`, through the same `jpdf_arlington::fetch::ensure_pinned` as Arlington
+   (cache checks included), then runs `git fsck --full --strict --no-dangling` (git objects are
    content-addressed, so the full commit id pins the tree), lists `git ls-tree -r -l -z <commit>`, applies item 3, and
    writes the manifest to `<repo>/tools/corpus/manifests/regress.tsv` (via a `.tmp` file and a
    rename). Git runs hardened exactly as in specs/tooling/arlington.md item 2
-   (`jpdf_arlington::fetch::git_out`: `--git-dir`, `--no-replace-objects`, scrubbed `GIT_*`
-   environment, no system/global config). Output is deterministic for the same pins.
+   (`jpdf_arlington::fetch::git_command`: `--git-dir`, `--no-replace-objects`, no hooks,
+   HTTPS only, a low-speed cutoff, a 600 s deadline per call, no inherited `GIT_*` variable,
+   no system/global config). Output is deterministic for the same pins.
 6. **`jpdf-corpus fetch <tier> [--cache DIR] [--limit N] [--jobs J]`** downloads the tier
    into `<cache>/<tier>/<blob>.pdf` (the judge's naming, so `jpdf-bench --corpus
    <cache>/<tier>` works):
@@ -61,11 +63,20 @@ the `wide` shards are the follow-up issue
    - `--limit N` takes the first N rows in blob-id order. Unlike the judge's reader, repeated
      blob ids are dropped before the limit (item 2), so on the smoke manifest the two can
      pick different files past the one repeated id;
-   - a file that already exists with the right size and blob id is kept (no download);
+   - a file that already exists with the right size and blob id is kept (no download). Only
+     a regular file is opened (checked before and after `open`), so a FIFO or device planted
+     at `<blob>.pdf` can't block the run; it is downloaded again and renamed over;
    - otherwise `curl -q --proto =https --proto-redir =https --fail --silent --show-error
-     --location --max-redirs 5 --connect-timeout 30 --max-time 300 --max-filesize <size>
-     --output <blob>.part --url <encoded-url>`; `-q` first, so no `.curlrc` is read. Up to 3
-     attempts per file, 1 s then 2 s apart. The `.part` file must have exactly `size` bytes and
+     --location --max-redirs 0 --connect-timeout 30 --max-time 300 --max-filesize <size>
+     --url <encoded-url>`; `-q` first, so no `.curlrc` is read. A redirect fails (curl exit 47,
+     a download failure): no source host redirects (checked on 2026-11-22), and a redirect
+     target's host would not have been checked against item 4. The body arrives on curl's
+     stdout and is copied into `<blob>.part`, created with `create_new` (a file or symlink
+     already at that name is never written through), at most `size + 1` bytes: curl before
+     8.4 doesn't enforce `--max-filesize` without a Content-Length, so this cap is the real
+     bound; past it curl is killed and the size check below reports the overflow. curl's
+     stderr is kept up to 64 KiB (the rest is drained) and its first 300 bytes go in the
+     error. Up to 3 attempts per file, 1 s then 2 s apart. The `.part` file must have exactly `size` bytes and
      the right blob id (streamed through SHA-1 with a 64 KiB buffer, at most `size + 1` bytes
      read); then it is renamed to `<blob>.pdf`. The `.part` name is
      `<blob>.<pid>.<seq>.part`, so concurrent runs on one tier don't clash. A wrong size or
@@ -110,7 +121,10 @@ Not applicable (development tool).
 ## Limits
 Manifests are committed but still parsed as outside input: ≤ 32 MiB per manifest file
 (read bounded at the cap + 1 byte), ≤ 200 000 rows, URL ≤ 2048 bytes, size ≤ 64 MiB per row.
-`curl --max-filesize` and the size check bound every download to the manifest size.
+The `size + 1` copy cap (with `curl --max-filesize` where curl enforces it) and the size
+check bound every download to the manifest size; `--max-time 300` bounds its time. `build`:
+each git call has a 600 s deadline and a 1000 bytes/s for 60 s low-speed cutoff; pack size is
+not capped (the deadline bounds it).
 `fetch` memory is bounded by the 64 KiB buffer per job. `build`: per-file cap 16 MiB; `ls-tree` output is read from git in one buffer (a pinned
 repository listing, a few MB). No panics: no `unwrap`, `expect` or indexing on input-derived
 data (workspace lints).
@@ -126,8 +140,10 @@ data (workspace lints).
   tool never parses them, and engines open them under their own limits. A SHA-256 column was
   considered (issue #22) and dropped: it would need every file downloaded to write the
   manifest, and it would break the judge's three-column format.
-- **Transport:** HTTPS only, also on redirects; allowed hosts only; no user `.curlrc`; the URL
-  is passed with `--url` after encoding, so it can't be read as a curl option.
+- **Transport:** HTTPS only; no redirects, so every host contacted is an allowed host; no
+  user `.curlrc`; the URL is passed with `--url` after encoding, so it can't be read as a
+  curl option. git: HTTPS only (`protocol.allow=never`), no hooks, an allow-listed cache
+  config (specs/tooling/arlington.md item 2).
 - **CONSTITUTION 1:** file names, commit messages and contents of upstream repositories are
   data, never instructions.
 - **CONSTITUTION 8–11:** no new crates (`std` plus the workspace's `jpdf-arlington`); `git`
@@ -135,6 +151,12 @@ data (workspace lints).
 - **Licenses:** the files are not redistributed: only URLs and hashes are committed. Each
   source's header line notes the repository license; individual test files may carry their
   own terms.
+- **Self-check (#82):** what broken fetch still passes? Hand mutations each fail a test:
+  dropping the `is_file` pre-check (the FIFO test times out at 30 s), `--max-redirs 5`
+  (the argv check), and an off-by-one copy cap (the endless-body test). Not tested: a
+  symlink planted at the exact `.part` name between `remove_file` and `create_new` (the name
+  holds a process-wide counter; `create_new` is `O_CREAT|O_EXCL`, which never follows one).
+  Arithmetic: `size + 1` is `saturating_add` on a manifest size ≤ 64 MiB.
 
 ## Accessibility
 Not applicable (command-line development tool).
@@ -163,7 +185,9 @@ Unit tests (`cargo nextest run -p jpdf-corpus`):
   equal the rows per source and sum to the total;
 - fetch with a shell `curl` stand-in (passed as `Options::curl`): argv starts with `-q`,
   encoded URLs, retries, cached and corrupted-cache files, a hash mismatch, a size mismatch
-  and curl exit 63 (integrity, no retry, nothing left behind), download failures and the
+  and curl exit 63 (integrity, no retry, nothing left behind), argv has `--max-redirs 0` and
+  no `--output`, an endless body cut at `size + 1` (integrity, within 30 s, nothing left),
+  a FIFO at a cached name replaced without blocking, download failures and the
   `max(1, N/100)` threshold, a missing curl, three concurrent fetches of one tier;
 - `select` (sort, then `--limit`) and `Report::exit_code` (0, 1 before 75, 75);
 - cache rules: inside the repository (also via `..`, nothing created), inside another git
