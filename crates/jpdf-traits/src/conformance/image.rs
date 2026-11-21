@@ -131,16 +131,23 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
         }
     }
     let has = |pred: &dyn Fn(&JpegFixture) -> bool| fixtures.iter().any(pred);
-    let implied =
-        |f: &JpegFixture| implied_transform(f.expected.components, f.expected.adobe_app14);
     // Explicit values must override the implied transform in both directions, or an adapter
     // that reads one explicit value as "the codestream decides" passes.
     let coverage: [(&str, bool); 5] = [
         (
-            "a 3- or 4-component image with ColorTransform true whose implied transform is false \
-             (APP14 0, or 4 components without APP14)",
+            "a 3- or 4-component image with ColorTransform true and APP14 transform 0",
             has(&|f| {
-                f.expected.components >= 3 && f.options.color_transform == Some(true) && !implied(f)
+                f.expected.components >= 3
+                    && f.options.color_transform == Some(true)
+                    && f.expected.adobe_app14 == Some(0)
+            }),
+        ),
+        (
+            "a 4-component image with ColorTransform true and without APP14",
+            has(&|f| {
+                f.expected.components == 4
+                    && f.options.color_transform == Some(true)
+                    && f.expected.adobe_app14.is_none()
             }),
         ),
         (
@@ -166,10 +173,6 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
                     && f.expected.color == ImageColor::Cmyk
                     && f.expected.adobe_app14 == Some(2)
             }),
-        ),
-        (
-            "a 4-component image with an explicit ColorTransform",
-            has(&|f| f.options.color_transform.is_some() && f.expected.components == 4),
         ),
     ];
     for (what, ok) in coverage {
@@ -1531,7 +1534,8 @@ mod tests {
     /// - square 3×3 CMYK, APP14 2 (YCCK), no ColorTransform;
     /// - square 4×4 RGB, no APP14, no ColorTransform (converted by default);
     /// - portrait 2×3 CMYK, no APP14, ColorTransform true (explicit, 4 components, overrides
-    ///   the implied "no transform").
+    ///   the implied "no transform");
+    /// - portrait 2×5 RGB, APP14 0, ColorTransform true (overrides APP14).
     fn jpeg_fixtures() -> Vec<JpegFixture> {
         vec![
             jpeg_fixture((4, 3), 0xb3, Some(true), true),
@@ -1539,6 +1543,7 @@ mod tests {
             jpeg_fixture((3, 3), 0xa4, None, false),
             jpeg_fixture((4, 4), 0x03, None, false),
             jpeg_fixture((2, 3), 0x04, Some(true), false),
+            jpeg_fixture((2, 5), 0x93, Some(true), false),
         ]
     }
 
@@ -1694,10 +1699,11 @@ mod tests {
 
     #[test]
     fn one_orientation_is_not_enough() {
-        // The portraits (2×5, 2×3) turned landscape, with the same options.
+        // The portraits (2×5, 2×3, 2×5) turned landscape, with the same options.
         let mut fixtures = jpeg_fixtures();
         fixtures[1] = jpeg_fixture((5, 2), 0xb3, Some(false), false);
         fixtures[4] = jpeg_fixture((3, 2), 0x04, Some(true), false);
+        fixtures[5] = jpeg_fixture((5, 2), 0x93, Some(true), false);
         let report = run_jpeg(&Toy::default(), &fixtures);
         assert_eq!(
             report.failed_checks(),
@@ -2127,7 +2133,7 @@ mod tests {
         // With only fixtures whose APP14 agrees with the option, the flips still catch it
         // (and the coverage rules refuse such a set).
         let mut fixtures = jpeg_fixtures();
-        fixtures.remove(4);
+        fixtures.truncate(4);
         fixtures[1] = jpeg_fixture((2, 5), 0x93, Some(false), false);
         let report = run_jpeg(&toy, &fixtures);
         assert_eq!(
@@ -2171,12 +2177,24 @@ mod tests {
             err_on_contradiction: true,
             ..Toy::default()
         });
-        assert!(report.failed("image.fixture_decodes"), "{report}");
+        assert_eq!(
+            report.failed_checks(),
+            vec![
+                "image.component_limit",
+                "image.dimension_limit",
+                "image.fixture_decodes",
+                "image.option_used",
+                "image.output_limit",
+                "image.pixel_limit"
+            ],
+            "{report}"
+        );
         assert!(
             report
                 .failures()
                 .iter()
-                .any(|f| f.check == "image.option_used" && f.detail.contains("must still decode")),
+                .filter(|f| f.check == "image.option_used")
+                .all(|f| f.detail.contains("must still decode")),
             "{report}"
         );
     }
@@ -2212,8 +2230,19 @@ mod tests {
         // `BadFlip(false)`: invalid output, also caught by the flips themselves.
         for blank in [true, false] {
             let report = run_jpeg(&BadFlip(blank), &jpeg_fixtures());
-            assert!(report.failed("image.fixture_decodes"), "{report}");
-            assert_eq!(report.failed("image.option_used"), !blank, "{report}");
+            let mut expected = vec![
+                "image.component_limit",
+                "image.dimension_limit",
+                "image.fixture_decodes",
+                "image.output_limit",
+                "image.pixel_limit",
+            ];
+            if !blank {
+                // The broken output also shows on truncated and mutated input.
+                expected.extend(["image.mutated", "image.option_used", "image.truncated"]);
+                expected.sort_unstable();
+            }
+            assert_eq!(report.failed_checks(), expected, "{report}");
         }
     }
 
@@ -2250,7 +2279,11 @@ mod tests {
         // Each JPEG rule in turn: one fixture swapped so that only that rule fails.
         let cases: [(&str, Vec<(usize, JpegFixture)>); 5] = [
             (
-                "ColorTransform true whose implied transform is false",
+                "ColorTransform true and APP14 transform 0",
+                vec![(5, jpeg_fixture((2, 5), 0xb3, Some(true), false))],
+            ),
+            (
+                "ColorTransform true and without APP14",
                 vec![(4, jpeg_fixture((2, 3), 0xa4, Some(true), false))],
             ),
             (
@@ -2264,10 +2297,6 @@ mod tests {
             (
                 "(YCCK) and without ColorTransform",
                 vec![(2, jpeg_fixture((3, 3), 0xa4, Some(true), false))],
-            ),
-            (
-                "4-component image with an explicit",
-                vec![(4, jpeg_fixture((2, 5), 0x93, Some(true), false))],
             ),
         ];
         for (rule, replacements) in cases {

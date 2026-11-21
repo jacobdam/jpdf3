@@ -314,7 +314,10 @@ program-byte and glyph limits.
       `2^source_bits`, or a bitmap padding bit is set;
     - its tolerance is above `max_lossy_tolerance(source_bits)` for JPEG and lossy JPEG
       2000: 1 below 8 bits, 2 otherwise. The cap doesn't grow with the sample range, so a
-      12- or 16-bit decoder working at lower precision (errors up to 15) fails. Lossless JPEG 2000 (`lossy: false`), JBIG2 and
+      12- or 16-bit decoder working at lower precision (errors up to 15) fails. Different
+      wavelet implementations (fixed-point or float) can differ by more than 2 at 16 bits,
+      so take a lossy fixture's expected pixels from the adapter's own library, checked
+      against a reference decoder within a looser margin when the fixture is made. Lossless JPEG 2000 (`lossy: false`), JBIG2 and
       CCITT need tolerance 0;
     - it is flat: **each colour component's** samples (an alpha channel may be flat) must span at least half the largest value
       (`max(1, (2^source_bits − 1) / 2)`, exactly: 127 passes and 126 fails for 8 bits),
@@ -334,13 +337,13 @@ program-byte and glyph limits.
     `rows` rows matching (same tolerance and mean bound). A decoder that errors on every
     truncated input, salvages a blank image or calls it `Complete` fails.
   - **Options must matter** (`image.option_coverage`, `image.option_used`):
-    - JPEG fixtures (3 or 4 components) must include: `Some(true)` on an image whose
-      implied transform is false (APP14 0, or 4 components without APP14); `Some(false)` on
-      an image with APP14 transform 1 or 2; a 3-component image without APP14 or
-      `color_transform` (converted by default); a CMYK image with APP14 transform 2 (YCCK)
-      and no `color_transform`; and a 4-component image with an explicit value. The first
-      two make the fixture decode itself prove that an explicit value overrides the implied
-      one in both directions.
+    - JPEG fixtures (3 or 4 components) must include: `Some(true)` on an image with APP14
+      transform 0; `Some(true)` on a 4-component image without APP14; `Some(false)` on an
+      image with APP14 transform 1 or 2; a 3-component image without APP14 or
+      `color_transform` (converted by default); and a CMYK image with APP14 transform 2
+      (YCCK) and no `color_transform`. The first three make the fixture decode itself prove
+      that an explicit value overrides the implied one in every direction: the flip below
+      can't catch a decoder that returns a blank (but valid) image for one direction.
     - Each such fixture is decoded again with the opposite of the transform it gets (the
       explicit value, else the implied one: the APP14 flag, else 3 components convert).
       That must give `Ok`, `Complete`, valid output with the fixture's header, and
