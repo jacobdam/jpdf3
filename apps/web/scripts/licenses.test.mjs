@@ -973,6 +973,10 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
       cspOk.replace('"b"', '"b" /* c */'),
       cspOk.replace('join("; ")', "join(x)"),
       cspOk.replace("  // a comment", '  "x", // trailing comment'),
+      `// x\rimport "tool";\n${cspOk}`,
+      `// x\u2028process.exit();\n${cspOk}`,
+      `// x\u2029process.exit();\n${cspOk}`,
+      cspOk.replace(/\n/g, "\r\n"),
     ]) {
       write("csp.ts", text);
       r = run();

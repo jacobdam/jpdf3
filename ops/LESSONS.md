@@ -44,6 +44,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that
   contain the trigger word so the fast path can't skip them ([journal](journal/2026-11-21.md), PR #119).
 
+- `npx <tool>` in apps/web before `npm ci` → npx downloads whatever registry package has that name (it fetched
+  an unrelated `biome@0.3.3`). Run `npm ci --ignore-scripts` in the worktree first and call `./node_modules/.bin/<tool>`
+  ([journal](journal/2026-11-22.md), PR #121).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
@@ -96,7 +100,12 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   Fail closed on all of them up front, and prove the real property on the resolved graph:
   the bundler's module graph (#99), or for Rust `cargo tree --workspace -e normal,build -i
   <crate>` (a manifest grep misses `[dependencies.x]` tables and transitive paths)
-  ([journal](journal/2026-11-21.md), PR #98, PR #102).
+  ([journal](journal/2026-11-21.md), PR #98, PR #102). Every decoding layer is a bypass too:
+  JS escapes and line continuations, HTML entities, `%`, quotes of the other kind, line
+  terminators other than LF (CR, U+2028/9), plus `data:`/`file:` modules and config files the
+  tool loads on its own (tsconfig, PostCSS, up the tree). Allow-list characters and file
+  shapes instead of decoding or deny-listing; the #112 review took 3 rounds
+  ([journal](journal/2026-11-22.md), PR #121).
 - Drawing wireframes or naming UI components → check each component's real constraints before
   writing sizes or behavior: MUI small fields are 40 px, `Tab` has `minWidth` 90, no focusable
   control inside `role="tab"`, temporary drawers are modal; SwiftUI `.disabled()` drops out of

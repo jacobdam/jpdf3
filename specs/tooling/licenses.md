@@ -124,7 +124,9 @@ code and has no dependencies.
      into `src/` after the scan). An identifier denylist is easy to get around
      (`"".constructor.constructor(…)`), so its **shape is fixed**: after dropping whole-line
      `//` comments, it must be exactly `export const CSP = [ "…", … ].join("; ");` with
-     plain double-quoted strings (no `\`, no concatenation, no trailing comments).
+     plain double-quoted strings (no `\`, no concatenation, no trailing comments). Any CR,
+     U+2028 or U+2029 in it is refused (they end a `//` comment in JS, so code after one
+     would hide in a "comment line"; CRLF line endings fail too).
    - `tsconfig.json`: esbuild takes `jsxImportSource` from it (or from what it `extends`).
      It must exist (otherwise a parent directory's applies) and must not contain
      `jsxImportSource`, `extends`, `references` (tsconfck would pick a referenced config
@@ -223,7 +225,8 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
     a Vite-style second URL in a `srcset` descriptor, and the `csp.ts` shape (imports,
     `process`, `"".constructor.constructor`, `\u` escapes, concatenation, template
     strings, inline and trailing comments, another `join` argument, trailing code; plus
-    three accepted shapes).
+    three accepted shapes). The final review added CR, U+2028 and U+2029 inside a
+    `csp.ts` comment line, and CRLF.
   - Each of these mutations was applied by hand and failed the suite.
   - The integration test runs the real script on a fixture app directory. It covers nested
     `src/` directories and `.cts` files. It refuses a symlinked file, a symlinked directory

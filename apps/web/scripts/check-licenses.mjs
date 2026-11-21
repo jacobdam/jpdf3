@@ -148,7 +148,9 @@ const cspCode = cspText
   .split("\n")
   .filter((line) => !/^\s*\/\//.test(line))
   .join("\n");
-if (!CSP_SHAPE.test(cspCode)) {
+// JS ends a `//` comment at CR, U+2028 and U+2029 too, so code after one would hide in a
+// "comment line" above; refuse those characters outright.
+if (/[\r\u2028\u2029]/.test(cspText) || !CSP_SHAPE.test(cspCode)) {
   problems.push(
     'csp.ts: must be only `//` comment lines and `export const CSP = ["…", …].join("; ");`',
   );
