@@ -115,6 +115,8 @@ Linear in the size of `specs/`; well under a second for the expected hundreds of
   `xtask/tests/check_specs.rs`, including the exit code; a temp tree built at test time covers
   symlinks, non-UTF-8, the 1 MiB limit, nested journey files and supersede loops; another
   (unix) has a FIFO `_TEMPLATE.md`, a FIFO `area/hidden.md` and a symlinked `TRACE.md`, which
-  must be reported within a 30 s deadline. A unit test caps the read: exactly the limit passes, one byte more and an
-  endless reader fail.
+  must be reported within a 30 s deadline. A unit test caps the read: exactly the limit passes,
+  one byte more and an endless reader fail. That `read_text` applies the cap after its size
+  check (a file that grows between the fstat and the read) has no end-to-end test, since the
+  growth can't be timed.
 - The real repository passes `cargo xtask check-specs`.

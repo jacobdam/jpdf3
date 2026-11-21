@@ -648,12 +648,14 @@ fn probes_are_bounded_and_versions_filtered() {
 /// `ps`, falls back to `kill -0` (a zombie then counts as alive).
 fn try_pid_alive(pid: &str) -> io::Result<bool> {
     match Command::new("ps").args(["-o", "stat=", "-p", pid]).output() {
-        Ok(o) => {
-            let stat = String::from_utf8_lossy(&o.stdout);
-            let stat = stat.trim();
-            Ok(!stat.is_empty() && !stat.starts_with('Z'))
+        // Empty output counts as gone only with ps's "no such process" exit status; a ps
+        // that can't see processes (sandbox, hidepid) exits 0 or prints nothing, so fall
+        // back to `kill -0` then.
+        Ok(o) if !o.stdout.trim_ascii().is_empty() => {
+            Ok(!String::from_utf8_lossy(&o.stdout).trim().starts_with('Z'))
         }
-        Err(_) => Command::new("kill")
+        Ok(o) if !o.status.success() => Ok(false),
+        _ => Command::new("kill")
             .args(["-0", pid])
             .stderr(std::process::Stdio::null())
             .status()

@@ -285,6 +285,8 @@ fn kill_tree(child: &mut std::process::Child) {
 /// signals the whole group and exists even where no `kill` binary is installed; std has no
 /// safe group-kill API. An error means the group is already gone.
 fn kill_group(group: u32) {
+    #[cfg(test)]
+    tests::record(tests::Event::KillGroup(group));
     #[cfg(unix)]
     {
         let _ = Command::new("/bin/sh")
@@ -412,6 +414,7 @@ mod tests {
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub(super) enum Event {
         Watch(Option<u32>),
+        KillGroup(u32),
         Reap,
     }
 
@@ -439,7 +442,10 @@ mod tests {
         assert_eq!(status, Status::Ok);
         let ev = take_events();
         assert!(
-            matches!(ev.as_slice(), [Event::Watch(Some(g)), Event::Watch(None)] if *g > 1),
+            matches!(
+                ev.as_slice(),
+                [Event::Watch(Some(g)), Event::Watch(None), Event::KillGroup(k)] if *g > 1 && k == g
+            ),
             "{ev:?}"
         );
         let (status, _) = run_once(
@@ -452,7 +458,12 @@ mod tests {
         assert!(
             matches!(
                 ev.as_slice(),
-                [Event::Watch(Some(_)), Event::Watch(None), Event::Reap]
+                [
+                    Event::Watch(Some(g)),
+                    Event::KillGroup(k),
+                    Event::Watch(None),
+                    Event::Reap
+                ] if k == g
             ),
             "{ev:?}"
         );
