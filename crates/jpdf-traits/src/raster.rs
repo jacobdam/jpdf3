@@ -187,7 +187,8 @@ pub struct StrokeStyle {
     /// all zero. An odd-length array repeats, so `[3]` means 3 on, 3 off.
     pub dash: Vec<f32>,
     /// Dash phase, finite. A negative phase or one beyond the period is reduced modulo the
-    /// period (so -2 with `[4 4]` is 6).
+    /// period of the expanded, even-length pattern (twice the sum for an odd-length array:
+    /// `[4]` has period 8). So -2 with `[4 4]` is 6, and 12 with `[4]` is 4.
     pub dash_phase: f32,
 }
 
@@ -377,8 +378,9 @@ pub trait Rasterizer: Send + Sync {
 /// - `LimitExceeded`: canvas pixels, segments in one path, clip or layer depth, or
 ///   [`SceneStats::working_bytes`] above the limit.
 ///
-/// Time is not bounded here: a list of a million full-canvas fills passes. The engine's
-/// job budget bounds it (PLAN §2.2), as for every other backend call.
+/// Time is not bounded here: a list of a million full-canvas fills passes. `render` can't
+/// be cancelled, so `jpdf-render` must keep each call within the job budget (PLAN §2.2),
+/// for example by capping the commands per call (#73).
 pub fn check_scene(
     width: u32,
     height: u32,

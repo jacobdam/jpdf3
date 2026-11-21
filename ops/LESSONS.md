@@ -124,6 +124,11 @@ instead of adding near-duplicates.
   enclosing `.git`, check before creating directories, and re-check subdirectories for
   symlinks. Write new manifest/data parsers against the judge's real files first (smoke
   lists one blob twice) ([journal](journal/2026-11-21.md), PR #65).
+- Sizes from caller or input values: `u32 × u32` fits a `u64`, but a third factor (× 4
+  bytes per pixel) can overflow, and overflow checks are on in every profile, so the
+  overflow panics → `checked_mul` every product of three or more factors. Also give every
+  geometry loop a step cap, toys included: at 1e30 `pos + len == pos`, so a dash loop
+  never ends ([journal](journal/2026-11-21.md), PR #71).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 

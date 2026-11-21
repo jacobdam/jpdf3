@@ -522,6 +522,10 @@ impl Suite<'_> {
             (vec![4.0], 0.0, 0, "dash [4] 0"),
             (vec![4.0, 4.0], 10.0, 2, "dash [4 4] 10"),
             (vec![4.0, 4.0], -2.0, 6, "dash [4 4] -2"),
+            (vec![4.0], 12.0, 4, "dash [4] 12"),
+            // f32 1e30 is a multiple of 2^76, so ±1e30 reduces to phase 0 exactly.
+            (vec![4.0, 4.0], 1e30, 0, "dash phase 1e30"),
+            (vec![4.0, 4.0], -1e30, 0, "dash phase -1e30"),
         ] {
             let style = StrokeStyle {
                 dash,
@@ -556,8 +560,6 @@ impl Suite<'_> {
         // dashes) `LimitExceeded`.
         let across = line(0.0, 8.0, 32.0, 8.0);
         for (dash, phase, must_fail, what) in [
-            (vec![4.0, 4.0], 1e30, false, "dash phase 1e30"),
-            (vec![4.0, 4.0], -1e30, false, "dash phase -1e30"),
             (vec![1e30], 0.0, false, "dash [1e30]"),
             (vec![1e-30, 1e-30], 0.0, true, "dash [1e-30 1e-30]"),
             (vec![f32::MIN_POSITIVE], 0.0, true, "dash [smallest normal]"),

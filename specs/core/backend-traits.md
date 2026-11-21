@@ -59,7 +59,7 @@ defaults:
 | `max_path_segments` | 1,048,576 | Segments in one path, and dashes one dashed stroke may produce (a dash array of tiny lengths otherwise turns one segment into millions) |
 | `max_clip_depth` | 64 | Nested clips; each is one 8-bit mask the size of the canvas |
 | `max_layer_depth` | 32 | Nested transparency groups; each is one RGBA buffer the size of the canvas |
-| `max_raster_working_bytes` | 1 GiB | `pixels × (4 + S) + 4 × I`, half of the 2 GiB process budget. `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
+| `max_raster_working_bytes` | 1 GiB | `pixels × (4 + S) + 4 × I`, half of the 2 GiB process budget. `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Buffers the caller owns (the display list's images) aren't counted, so a maximum-size image plus a deep stack on a full tile needs a smaller tile. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
@@ -195,7 +195,8 @@ backend changes only anti-aliasing and rounding, never what a page shows.
   - `StrokeStyle` (§8.4.3): width ≥ 0 (0 is the thinnest visible line), caps, joins, a miter
     limit ≥ 1 (beyond it a miter bevels, §8.4.3.5), and a dash array (empty is solid;
     non-negative, not all zero; odd length repeats) with a phase. A negative phase, or one
-    beyond the period, is reduced modulo the period. A zero-length dash with round caps is a
+    beyond the period, is reduced modulo the period of the expanded pattern (`[4]` has period
+    8). A zero-length dash with round caps is a
     dot (§8.4.3.6).
   - `Image { image, transform, interpolate, opacity, blend }`. The image is 8-bit RGBA with
     straight alpha, colour and soft mask already applied. As in §8.9.4 the transform maps the
@@ -229,8 +230,12 @@ backend changes only anti-aliasing and rounding, never what a page shows.
   **whole** path, on and off the canvas. The adapter computes it from the path length and
   the dash period before generating any dash, so the bound holds up front.
 - Time isn't bounded by `RasterLimits`: a million full-canvas fills pass `check_scene`. As
-  for every backend call, the engine's job budget (PLAN §2.2) bounds total time. What must
-  be bounded here is the work for **one** command.
+  for every backend call, the engine's job budget (PLAN §2.2) bounds total time. `render`
+  can't be cancelled, so `jpdf-render` must keep each call within the budget, for example by
+  capping the commands per call (#73). What must be bounded here is the work for **one**
+  command. Counting dashes over the whole path means every tile pays for dashing the whole
+  path. Long dashed CAD paths at high zoom can hit the limit even when most of the path is
+  off the tile; that is the accepted cost of a bound known up front.
 - Geometry must stay bounded and exact for any finite input. No error describes a hang;
   the suite's huge-value scenes catch one through the test timeout. Adapter duties:
   - flatten curves after clipping to the canvas, or cap subdivision;
@@ -378,10 +383,10 @@ failed check by a stable name:
     line); a miter over its limit; closed and open subpaths; a pen scaled by the transform; a
     hairline.
   - `raster.dash`:
-    - `[4 4]` at phases 0, 2, 10 (wrapping) and −2;
-    - `[4]`;
+    - `[4 4]` at phases 0, 2, 10 (wrapping), −2 and ±1e30 (exactly 0 mod 8);
+    - `[4]` at phases 0 and 12 (period 8, not 4);
     - `[2 2]` at scale 2 (lengths are in user space);
-    - hazards: phases ±1e30 and `[1e30]` must give `Ok`; `[1e-30 1e-30]` and the smallest
+    - hazards: `[1e30]` must give `Ok`; `[1e-30 1e-30]` and the smallest
       normal `f32` on a 32-unit line must give `LimitExceeded`.
   - `raster.clip`: one clip, a clip with its own transform, nested clips, a pop restoring the
     outer clip, an even-odd clip, and an anti-aliased clip edge.
