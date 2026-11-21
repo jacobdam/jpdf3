@@ -41,6 +41,16 @@ pub struct Limits {
     /// Components (channels, including alpha) per decoded image pixel. ISO 32000-2 Annex C
     /// limits DeviceN to 32 colorants; one more allows an alpha channel (`SMaskInData`).
     pub max_image_components: u16,
+    /// Bytes in one font program handed to a font backend (after stream decoding).
+    pub max_font_program_bytes: usize,
+    /// Glyphs in one font face.
+    pub max_font_glyphs: u16,
+    /// Points in one glyph outline, composites expanded (see
+    /// [`crate::PathSegment::point_count`]).
+    pub max_outline_points: u32,
+    /// Operations in one outline call: charstring operators executed plus composite
+    /// components visited (CPU bound for subroutine and composite loops).
+    pub max_outline_ops: u32,
 }
 
 impl Limits {
@@ -63,6 +73,16 @@ impl Limits {
             max_image_components: self.max_image_components,
         }
     }
+
+    /// The limits for font backend calls.
+    pub fn font_limits(&self) -> FontLimits {
+        FontLimits {
+            max_font_program_bytes: self.max_font_program_bytes,
+            max_glyphs: self.max_font_glyphs,
+            max_outline_points: self.max_outline_points,
+            max_outline_ops: self.max_outline_ops,
+        }
+    }
 }
 
 impl Default for Limits {
@@ -83,6 +103,10 @@ impl Default for Limits {
             max_image_pixels: 100_000_000,
             max_image_dimension: 1 << 20,
             max_image_components: 33,
+            max_font_program_bytes: 64 * 1024 * 1024,
+            max_font_glyphs: u16::MAX,
+            max_outline_points: 1 << 17,
+            max_outline_ops: 1 << 20,
         }
     }
 }
@@ -105,6 +129,30 @@ pub struct DecodeLimits {
 impl Default for DecodeLimits {
     fn default() -> Self {
         Limits::default().decode_limits(u64::MAX)
+    }
+}
+
+/// The limits font backend calls must enforce ([`crate::FontEngine`], [`crate::Type1Parser`],
+/// [`crate::FontFace::outline`]). Font output is structured, so it is bounded by counts
+/// rather than bytes: a face holds at most `max_glyphs` glyphs and one outline at most
+/// `max_outline_points` points. Exceeding a bound fails with
+/// [`crate::BackendError::LimitExceeded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FontLimits {
+    /// Longest accepted font program, checked before parsing.
+    pub max_font_program_bytes: usize,
+    /// Most glyphs in a face, checked at load.
+    pub max_glyphs: u16,
+    /// Most points in one outline, composites and subroutines expanded.
+    pub max_outline_points: u32,
+    /// Most operations in one outline call (charstring operators executed plus composite
+    /// components visited).
+    pub max_outline_ops: u32,
+}
+
+impl Default for FontLimits {
+    fn default() -> Self {
+        Limits::default().font_limits()
     }
 }
 
@@ -132,5 +180,26 @@ mod tests {
         let limits = Limits::default();
         assert!(u32::try_from(limits.max_decoded_bytes_per_stream).is_ok());
         assert!(u32::try_from(limits.max_file_size).is_ok());
+        assert!(u32::try_from(limits.max_font_program_bytes).is_ok());
+    }
+
+    #[test]
+    fn font_limits_copy_the_document_limits() {
+        let limits = Limits {
+            max_font_program_bytes: 7,
+            max_font_glyphs: 8,
+            max_outline_points: 9,
+            max_outline_ops: 10,
+            ..Limits::default()
+        };
+        assert_eq!(
+            limits.font_limits(),
+            FontLimits {
+                max_font_program_bytes: 7,
+                max_glyphs: 8,
+                max_outline_points: 9,
+                max_outline_ops: 10,
+            }
+        );
     }
 }
