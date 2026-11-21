@@ -627,7 +627,7 @@ test("specifiers that decode or resolve past the check are refused (review of #1
       String.raw`const m = import("./".concat("../../node\x5fmodules/tool/", x, ".js"));`,
     ],
     ["src/a.ts", "const m = import(name);"],
-    ["src/a.ts", "const m = import(`./${x}.ts`);"],
+    ["src/a.ts", `const m = import(\`./\${x}.ts\`);`],
     ["index.html", '<script type="module">import("./" + x + ".js")</script>'],
   ];
   for (const [file, text] of bad) {
