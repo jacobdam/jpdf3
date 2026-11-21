@@ -34,6 +34,5 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - A local worktree `t/50-test-only-licenses` (`.claude/worktrees/license-amend`) predates PR #95, which merged the
   CONSTITUTION change. Agents leave it alone; the owner may delete it.
-- Proposals for the owner: ops/proposals/pages-deploy-retry.md, ops/proposals/automation-priority-order.md (check
-  whether #96/#97 made them obsolete).
+- No open proposals in ops/proposals/.
 - Stale remote `t/*` branches can't be deleted by agents (the guard blocks remote deletes).
