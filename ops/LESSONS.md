@@ -24,6 +24,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - macOS: no `timeout` binary (exit 127), system `python3` lacks `tomllib` → use
   `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`, so put
   files for containers there, not in `/tmp` ([journal](journal/2026-11-20.md)).
+- Hand-checking that a specific test kills a mutant → run `cargo nextest run --no-fail-fast`; fail-fast stops at
+  the first failing test, so the targeted test may never run and a "caught" claim can be false
+  ([journal](journal/2026-11-21.md), PR #140).
 - Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
   `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests).
   Use `--in-diff <range diff>`, set `TMPDIR=$PWD/target/scratch/…` (it is unset), and for jpdf-traits (about 26 s per
@@ -199,6 +202,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Proving "rejected before reading" (size, type) without measuring memory → make the test file mode 0200: an
   implementation that opens first fails with EACCES instead of the limit error. Skip only that half as root.
   FIFO/device inputs need a hang timeout in the test, not a plain `output()` ([journal](journal/2026-11-21.md), PR #104).
+- Making a limit exact with a final whole-token check → the in-loop checks that stop a hostile token early (the
+  memory bound) now look redundant and no result-based test notices their removal. Test the early stop: an
+  over-long token with no terminator must fail with the limit error after a few lexed bytes
+  ([journal](journal/2026-11-21.md), PR #140).
 - Writing a "defaults fit the memory budget" check → summing the charged limits to exactly the 2 GiB cap proves
   nothing: list the uncharged terms (binary, stacks, xref table, one parse's objects, decoder slack) and require a
   reserve, or say plainly that there is none ([journal](journal/2026-11-21.md), PR #108, #109).

@@ -4,19 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #139 (#107): object resolve cache. Auto-merge is on after ai-review; if it is still open, check its CI (rule c).
+- PR #140 (#113): lexer string room and look-ahead. ai-review is posted and auto-merge is on; if it is still open,
+  check its CI (rule c).
 
 ## Last session
-- **#107** (rule d, trait contracts 3/3): `XrefDocument::resolve` returns `Arc<Object>` from a per-document cache
-  charged to `max_retained_bytes_per_document` (no eviction; what doesn't fit is re-parsed and charged to the lexing
-  budget). 3 review rounds, all posted on the PR. Follow-up: #138 (one retained-bytes counter shared by every cache).
+- **#113** (rule d): `max_string_bytes_per_parse` is exact for every token kind (whole-token check; the in-loop
+  checks stay as the memory bound). The `num gen R` look-ahead is bounded (64-byte generation, exact `R`), and a
+  two-entry memo stops the re-scan of whitespace and comments. A 534 MB integer token went from 5.9 s to 2.4 s.
+  3 review rounds (minor or nit), all posted on the PR.
 
 ## Previous session
-- **#106** (rule d, PR #135 merged): decoder working memory and operations budget in `DecodeLimits`.
+- **#107** (rule d, PR #139 merged): object resolve cache charged to retained bytes. Follow-up: #138.
 
 ## Next step (suggested order, TICK letters)
-0. **AUDIT is due (rule g) once #139 merges: that makes 10 merges since audit 0002.**
-1. d (security) issues, lowest number first: **#109, #113, #114, #116, #117, #122, #132, #134, #136, #137**.
+0. **The audit is due (rule g): #139 made 10 merges since audit 0002 (11 with #140).** TICK still puts d above g.
+   The retro input below says the audit can starve that way, so weigh it.
+1. d (security) issues, lowest number first: **#109, #114, #116, #117, #122, #132, #134, #136, #137**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#116, #117, #122, #136, #137).
 2. **#76**: harness honesty. The judge relies on it.
@@ -27,7 +30,7 @@ Phase: bootstrap (pilot)
   - TICK puts d above a due audit, so the audit can starve, and this session deviated (an incident);
   - STATUS "in flight" is stale as soon as its PR merges;
   - the template's `Area:` list lacks `tooling`.
-- **Next audit:** due now, at 10 merges since audit 0002 (once #139 merges), or by 2026-11-28 (see the carry-overs in docs/audits/0002.md).
+- **Next audit:** due now (10 merges since audit 0002), or by 2026-11-28 at the latest (see the carry-overs in docs/audits/0002.md).
 
 ## Blockers / owner-todo
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console. #52 (Automation Mode without a password) is
