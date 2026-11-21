@@ -404,7 +404,11 @@ failed check by a stable name:
     (0, `n - 1`, the default), so a backend that rejects every caller value below some
     threshold and uses a built-in budget above it still passes. A backend that skips
     operators inside subroutines passes unless the `min_ops` glyph runs its operators there,
-    and an uncounted fan-out bomb then hangs the run rather than failing a check.
+    and an uncounted fan-out bomb then hangs the run rather than failing a check. A
+    fixture's or hostile program's container is the one it declares: a backend that sniffs
+    the format and ignores the `program` argument could run a bare CFF program labelled sfnt
+    through its bare-CFF path, so fixture authors must build each pairing's programs in that
+    container.
 
 - `raster::run(&dyn Rasterizer)`. It checks pixels only where every correct backend agrees:
   shapes on pixel boundaries, pixel centres with anti-aliasing off, area coverage within ±20

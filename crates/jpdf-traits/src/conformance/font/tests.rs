@@ -561,7 +561,7 @@ fn hostile_for(formats: &[(&str, FontProgram, OutlineFormat)]) -> Vec<HostileFon
     formats
         .iter()
         .map(|&(format, program, outline_format)| HostileFont {
-            name: format!("{format}-loop"),
+            name: format!("{format}-{program:?}-loop"),
             data: format!(
                 "toyfont {format} 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\ng 500 bomb loop\n"
             )
