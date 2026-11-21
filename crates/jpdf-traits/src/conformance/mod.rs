@@ -106,6 +106,84 @@ impl fmt::Display for Report {
     }
 }
 
+/// One limit probed at its exact boundary. The call must be accepted with the limit set to
+/// `at` (exactly what the input needs), and fail with [`crate::BackendError::LimitExceeded`]
+/// with the limit one below and with the limit 0. Zero matters on its own:
+/// `Limits::decode_limits` returns a cap of 0 once a document's budget is spent, and an
+/// adapter that maps 0 to its library's "unlimited" passes every other probe. With `at` 0
+/// (empty output) only the at-limit probe runs: a cap of 0 must accept it.
+struct Boundary<'a> {
+    /// Check name for the report.
+    check: &'static str,
+    /// What is being probed (vector or fixture name), for failure messages.
+    name: &'a str,
+    /// The limit value the input needs.
+    at: u64,
+}
+
+impl Boundary<'_> {
+    /// `set(n)` builds the limits with the probed field at `n` (the others generous), `call`
+    /// runs the implementation (already guarded), `accepted` judges an at-limit success and
+    /// `show` describes a result for failure messages.
+    fn probe<L, T>(
+        &self,
+        report: &mut Report,
+        set: impl Fn(u64) -> L,
+        call: impl Fn(&L) -> Option<Result<T, crate::BackendError>>,
+        accepted: impl Fn(&T) -> bool,
+        show: impl Fn(&Option<Result<T, crate::BackendError>>) -> String,
+    ) {
+        let mut probes = vec![(self.at, "equal to what the input needs")];
+        if let Some(below) = self.at.checked_sub(1) {
+            probes.push((below, "one below what the input needs"));
+            if below > 0 {
+                probes.push((0, "zero"));
+            }
+        }
+        for (limit, label) in probes {
+            let result = call(&set(limit));
+            let want_ok = limit == self.at;
+            let ok = match &result {
+                Some(Ok(value)) => want_ok && accepted(value),
+                Some(Err(crate::BackendError::LimitExceeded(_))) => !want_ok,
+                _ => false,
+            };
+            report.check(self.check, ok, || {
+                format!(
+                    "{}: limit {limit} ({label}): expected {}, got {}",
+                    self.name,
+                    if want_ok { "success" } else { "LimitExceeded" },
+                    show(&result)
+                )
+            });
+        }
+    }
+}
+
+/// Saturating conversion for [`Boundary::probe`] setters whose limit field is narrower than
+/// `u64` (the probed values always come from that field's own type, so this never clamps in
+/// practice).
+fn narrow<T: TryFrom<u64> + Bounded>(n: u64) -> T {
+    T::try_from(n).unwrap_or(T::MAX)
+}
+
+/// Types with a maximum, for [`narrow`].
+trait Bounded {
+    const MAX: Self;
+}
+
+impl Bounded for u16 {
+    const MAX: Self = u16::MAX;
+}
+
+impl Bounded for u32 {
+    const MAX: Self = u32::MAX;
+}
+
+impl Bounded for usize {
+    const MAX: Self = usize::MAX;
+}
+
 /// Runs `call`, turning a panic into `None`.
 fn guarded<T>(call: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(call)).ok()
@@ -173,6 +251,72 @@ mod tests {
             report.to_string(),
             "x: 2 of 3 checks failed\n  x.b: broke\n  x.b: again\n"
         );
+    }
+
+    /// A call producing `need` units under limit `n`: Ok when `n >= need` (or, broken, when
+    /// `n == 0`), else LimitExceeded.
+    fn probe(need: u64, zero_unlimited: bool) -> (Report, Vec<u64>) {
+        let mut report = Report::new("x");
+        let seen = std::cell::RefCell::new(Vec::new());
+        Boundary {
+            check: "x.limit",
+            name: "thing",
+            at: need,
+        }
+        .probe(
+            &mut report,
+            |n| n,
+            |&n| {
+                seen.borrow_mut().push(n);
+                Some(if n >= need || (zero_unlimited && n == 0) {
+                    Ok(n)
+                } else {
+                    Err(crate::BackendError::LimitExceeded("x"))
+                })
+            },
+            |_| true,
+            describe,
+        );
+        (report, seen.into_inner())
+    }
+
+    #[test]
+    fn boundary_probes_at_below_and_zero() {
+        let (report, seen) = probe(5, false);
+        assert!(report.passed(), "{report}");
+        assert_eq!(seen, vec![5, 4, 0]);
+        // With `at` 1, one below is already 0; with `at` 0, only the at-limit probe runs.
+        assert_eq!(probe(1, false).1, vec![1, 0]);
+        assert_eq!(probe(0, false).1, vec![0]);
+        assert!(probe(0, false).0.passed());
+
+        let (report, _) = probe(5, true);
+        assert_eq!(report.failures().len(), 1, "{report}");
+        assert_eq!(
+            report.failures()[0].detail,
+            "thing: limit 0 (zero): expected LimitExceeded, got Ok"
+        );
+        // Accepting at the limit is required, and `accepted` judges the value.
+        let mut report = Report::new("x");
+        Boundary {
+            check: "x.limit",
+            name: "thing",
+            at: 3,
+        }
+        .probe(
+            &mut report,
+            |n| n,
+            |&n| Some(Ok::<u64, crate::BackendError>(n)),
+            |&v| v == 99,
+            describe,
+        );
+        assert_eq!(report.failures().len(), 3, "{report}");
+    }
+
+    #[test]
+    fn narrow_saturates() {
+        assert_eq!(narrow::<u16>(70_000), u16::MAX);
+        assert_eq!(narrow::<u32>(7), 7u32);
     }
 
     #[test]

@@ -493,6 +493,41 @@ pub(crate) const RC4: [(&[u8], &[u8], &str); 5] = [
     (b"Secret", b"Attack at dawn", "45a01f645fc35b383552544b9bf5"),
 ];
 
+/// An RC4 key and (offset, 16 bytes of keystream hex) pairs.
+pub(crate) type Rc4Long = (&'static [u8], [(usize, &'static str); 8]);
+
+/// RFC 6229 keystream offsets past the first 16 bytes, for the 40-bit key `01 02 03 04 05`
+/// and the 128-bit key `01 02 … 10` (the key lengths PDF uses): key, then (offset, 16 bytes
+/// of keystream) pairs. They catch a keystream that restarts or drifts after its first block.
+pub(crate) const RC4_LONG: [Rc4Long; 2] = [
+    (
+        &[1, 2, 3, 4, 5],
+        [
+            (240, "28cb1132c96ce286421dcaadb8b69eae"),
+            (496, "42b7d0cdd918a8a33dd51781c81f4041"),
+            (752, "ec10327bde2beefd18f9277680457e22"),
+            (1008, "45129048e6a0ed0b56b490338f078da5"),
+            (1520, "3294f744d8f9790507e70f62e5bbceea"),
+            (2032, "1eb14a0c13b3bf47fa2a0ba93ad45b8b"),
+            (3056, "f2e30f9bd102ecbf75aaade9bc35c43c"),
+            (4080, "068326a2118416d21f9d04b2cd1ca050"),
+        ],
+    ),
+    (
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        [
+            (240, "065902e4b620f6cc36c8589f66432f2b"),
+            (496, "b6d1e6c4a5e4771cad79538df295fb11"),
+            (752, "c5ecf88de897fd57fed301701b82a259"),
+            (1008, "e7a72574f8782ae26aabcf9ebcd66065"),
+            (1520, "b40110c4190b5622a96116b0017ed297"),
+            (2032, "d03d1bc03cd33d70dff9fa5d71963ebd"),
+            (3056, "fabeb76028ade2d0e48722e46c4615a3"),
+            (4080, "ff38265c1642c1abe8d3c2fe5e572bf8"),
+        ],
+    ),
+];
+
 /// SP 800-38A F.2 plaintext (four blocks) and IV.
 pub(crate) const AES_PLAIN: &str = concat!(
     "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
@@ -543,6 +578,11 @@ mod tests {
         assert_eq!(hex(SHA256_MILLION_A).map(|d| d.len()), Some(32));
         for (_, plain, cipher) in &RC4 {
             assert_eq!(hex(cipher).map(|c| c.len()), Some(plain.len()));
+        }
+        for (_, offsets) in &RC4_LONG {
+            for (_, keystream) in offsets {
+                assert_eq!(hex(keystream).map(|k| k.len()), Some(16));
+            }
         }
         assert_eq!(hex(AES_PLAIN).map(|p| p.len()), Some(64));
         for (key, cipher) in &AES_CBC {

@@ -19,6 +19,8 @@ use crate::{FaceMetrics, PathSegment, Point};
 #[derive(Default, Clone, Copy)]
 struct Toy {
     ignore_byte_limit: bool,
+    /// Reads `max_font_program_bytes` 0 as "no limit".
+    zero_unlimited_bytes: bool,
     ignore_glyph_limit: bool,
     ignore_point_limit: bool,
     panic_on_empty: bool,
@@ -122,7 +124,12 @@ impl Toy {
         if self.panic_on_empty && data.is_empty() {
             panic!("empty font");
         }
-        if !self.ignore_byte_limit && data.len() > limits.max_font_program_bytes {
+        let max = if self.zero_unlimited_bytes && limits.max_font_program_bytes == 0 {
+            usize::MAX
+        } else {
+            limits.max_font_program_bytes
+        };
+        if !self.ignore_byte_limit && data.len() > max {
             return Err(BackendError::LimitExceeded("font program bytes"));
         }
         let text = match std::str::from_utf8(data) {
@@ -634,6 +641,27 @@ fn ignoring_the_byte_limit_is_caught() {
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
         vec!["font.program_bytes_limit"]
+    );
+}
+
+#[test]
+fn reading_a_zero_byte_limit_as_unlimited_is_caught() {
+    let toy = Toy {
+        zero_unlimited_bytes: true,
+        ..Toy::default()
+    };
+    let report = run_font_engine(&toy, &engine_fixtures(), &engine_hostile());
+    assert_eq!(
+        report.failed_checks(),
+        vec!["font.program_bytes_limit"],
+        "{report}"
+    );
+    assert!(
+        report
+            .failures()
+            .iter()
+            .all(|f| f.detail.contains("limit 0 (zero)")),
+        "{report}"
     );
 }
 

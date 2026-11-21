@@ -5,7 +5,7 @@
 //! reference decoder produced. The suite adds format-independent checks on top: empty and
 //! truncated input, mutated bytes, and every limit at its exact boundary.
 
-use super::{Report, describe, guarded, sample_offsets};
+use super::{Boundary, Report, describe, guarded, narrow, sample_offsets};
 use crate::{
     BackendError, Bitmap, CcittDecoder, CcittParams, DecodeLimits, DecodeStatus, Decoded,
     DecodedImage, Jbig2Decoder, Jpeg2000Decoder, JpegDecoder, JpegOptions,
@@ -346,79 +346,44 @@ fn run_fixture<R: Raster>(
         )
     });
 
-    // Exact limits: each at the fixture's size passes, one below fails with LimitExceeded.
+    // Exact limits: each at the fixture's size passes, one below and 0 fail with
+    // LimitExceeded.
     let pixels = u64::from(expected.width()).saturating_mul(u64::from(expected.height()));
     let side = expected.width().max(expected.height());
-    let mut boundaries: Vec<(&'static str, DecodeLimits, DecodeLimits)> = vec![
+    type SetFn = fn(u64) -> DecodeLimits;
+    let mut boundaries: Vec<(&'static str, u64, SetFn)> = vec![
         (
             "image.output_limit",
-            DecodeLimits {
-                max_output_bytes: len,
-                ..unlimited
-            },
-            DecodeLimits {
-                max_output_bytes: len.saturating_sub(1),
-                ..unlimited
+            u64::try_from(len).unwrap_or(u64::MAX),
+            |n| DecodeLimits {
+                max_output_bytes: narrow(n),
+                ..DecodeLimits::default()
             },
         ),
-        (
-            "image.pixel_limit",
-            DecodeLimits {
-                max_image_pixels: pixels,
-                ..unlimited
-            },
-            DecodeLimits {
-                max_image_pixels: pixels.saturating_sub(1),
-                ..unlimited
-            },
-        ),
-        (
-            "image.dimension_limit",
-            DecodeLimits {
-                max_image_dimension: side,
-                ..unlimited
-            },
-            DecodeLimits {
-                max_image_dimension: side.saturating_sub(1),
-                ..unlimited
-            },
-        ),
+        ("image.pixel_limit", pixels, |n| DecodeLimits {
+            max_image_pixels: n,
+            ..DecodeLimits::default()
+        }),
+        ("image.dimension_limit", u64::from(side), |n| DecodeLimits {
+            max_image_dimension: narrow(n),
+            ..DecodeLimits::default()
+        }),
     ];
     if let Some(components) = expected.components() {
-        boundaries.push((
-            "image.component_limit",
+        boundaries.push(("image.component_limit", u64::from(components), |n| {
             DecodeLimits {
-                max_image_components: components,
-                ..unlimited
-            },
-            DecodeLimits {
-                max_image_components: components.saturating_sub(1),
-                ..unlimited
-            },
-        ));
+                max_image_components: narrow(n),
+                ..DecodeLimits::default()
+            }
+        }));
     }
-    for (check, at, below) in boundaries {
-        let result = call(input, &at);
-        report.check(
-            check,
-            matches!(&result, Some(Ok(d)) if d.value.matches(expected, tolerance)),
-            || {
-                format!(
-                    "{name}: limit equal to the fixture: {}",
-                    describe_raster(&result)
-                )
-            },
-        );
-        let result = call(input, &below);
-        report.check(
-            check,
-            matches!(result, Some(Err(BackendError::LimitExceeded(_)))),
-            || {
-                format!(
-                    "{name}: limit one below the fixture: expected LimitExceeded, got {}",
-                    describe_raster(&result)
-                )
-            },
+    for (check, at, set) in boundaries {
+        Boundary { check, name, at }.probe(
+            report,
+            set,
+            |limits| call(input, limits),
+            |d| d.value.matches(expected, tolerance),
+            describe_raster,
         );
     }
 
@@ -499,6 +464,8 @@ mod tests {
         scale_low_depth: bool,
         panic_on_mutation: bool,
         lie_about_length: bool,
+        /// Reads `max_output_bytes` 0 as "no limit".
+        zero_unlimited_output: bool,
     }
 
     impl Toy {
@@ -541,7 +508,12 @@ mod tests {
             } else {
                 usize::try_from(width * height).unwrap() * usize::from(components)
             };
-            if !self.ignore_limits && len > limits.max_output_bytes {
+            let max_output = if self.zero_unlimited_output && limits.max_output_bytes == 0 {
+                usize::MAX
+            } else {
+                limits.max_output_bytes
+            };
+            if !self.ignore_limits && len > max_output {
                 return Err(BackendError::LimitExceeded("output"));
             }
             let body = &input[5..];
@@ -864,6 +836,26 @@ mod tests {
                 "image.output_limit",
                 "image.pixel_limit",
             ],
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn reading_a_zero_output_cap_as_unlimited_is_caught() {
+        let report = jpeg(&Toy {
+            zero_unlimited_output: true,
+            ..Toy::default()
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.output_limit"],
+            "{report}"
+        );
+        assert!(
+            report
+                .failures()
+                .iter()
+                .all(|f| f.detail.contains("limit 0 (zero)")),
             "{report}"
         );
     }

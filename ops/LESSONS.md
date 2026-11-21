@@ -128,6 +128,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   coverage); check promised empty answers (`None`, empty lists) too; and keep toy
   implementations linear (an O(n) count inside a growth loop turned one test into 91 s)
   ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, audit 0001).
+- Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
+  so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
+  checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,

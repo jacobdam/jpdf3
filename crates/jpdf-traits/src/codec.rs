@@ -71,7 +71,9 @@ pub trait Inflate {
 /// correct Adler-32 trailer.
 pub trait Deflate {
     /// Compresses `input`. Output longer than `limits.max_output_bytes` fails with
-    /// [`BackendError::LimitExceeded`].
+    /// [`BackendError::LimitExceeded`]. For a given input, format and level the output is
+    /// deterministic and does not depend on `limits` when the cap is not hit (the
+    /// conformance suite probes the cap at the exact output length).
     fn deflate(
         &self,
         input: &[u8],
