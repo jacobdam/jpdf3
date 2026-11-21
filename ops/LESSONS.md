@@ -40,6 +40,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   write such files with Write/Edit. Never `cat > file` without a heredoc (it waits on stdin until the 2 min
   timeout) ([journal](journal/2026-11-21.md), PR #104).
 
+- Writing a guard/hook rule over untrusted command text (a hook timeout or exception fails open) → use a
+  one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that
+  contain the trigger word so the fast path can't skip them ([journal](journal/2026-11-21.md), PR #119).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
