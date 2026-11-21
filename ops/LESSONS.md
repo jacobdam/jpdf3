@@ -30,7 +30,8 @@ instead of adding near-duplicates.
   github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra: `gh run
   rerun --failed <id>`, no code change. If the upload step failed or was skipped, it's a real bug
   ([journal](journal/2026-11-20.md)). If the rerun then fails with "Multiple artifacts named
-  github-pages", don't rerun again: the next push to main redeploys ([journal](journal/2026-11-21.md), PR #62).
+  github-pages", don't rerun again: the next push to main redeploys ([journal](journal/2026-11-21.md), PR #62). Durable fix
+  proposed in `ops/proposals/pages-deploy-retry.md`.
 
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
