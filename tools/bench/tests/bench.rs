@@ -644,26 +644,25 @@ fn probes_are_bounded_and_versions_filtered() {
 }
 
 /// True while process `pid` exists (a zombie counts until its parent reaps it).
-fn pid_alive(pid: &str) -> bool {
+fn try_pid_alive(pid: &str) -> io::Result<bool> {
     Command::new("kill")
         .args(["-0", pid])
         .stderr(std::process::Stdio::null())
         .status()
-        .unwrap()
-        .success()
+        .map(|s| s.success())
 }
 
 /// Waits up to `limit` for `pid` to be gone; on failure kills it so it can't leak.
-fn gone_within(pid: &str, limit: Duration) -> bool {
+fn try_gone_within(pid: &str, limit: Duration) -> io::Result<bool> {
     let start = std::time::Instant::now();
     while start.elapsed() < limit {
-        if !pid_alive(pid) {
-            return true;
+        if !try_pid_alive(pid)? {
+            return Ok(true);
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     let _ = Command::new("kill").args(["-9", pid]).status();
-    false
+    Ok(false)
 }
 
 /// Polls for a pid file written through a rename (absent or complete) for up to `limit`.
@@ -701,7 +700,7 @@ fn normal_exit_kills_background_children() {
     assert_eq!(status, Status::Ok);
     let pid = read_pid(&pidfile, Duration::from_secs(1)).expect("the script wrote no pid");
     assert!(
-        gone_within(&pid, Duration::from_secs(2)),
+        try_gone_within(&pid, Duration::from_secs(2)).unwrap(),
         "background child {pid} outlived its engine"
     );
 }
@@ -753,7 +752,7 @@ fn a_killed_bench_takes_its_engine_down() {
         let st = bench.wait().unwrap();
         assert!(!st.success(), "{sig}: the bench finished normally");
         assert!(
-            gone_within(&pid, Duration::from_secs(5)),
+            try_gone_within(&pid, Duration::from_secs(5)).unwrap(),
             "{sig}: engine child {pid} outlived the bench"
         );
     }

@@ -41,7 +41,9 @@ It has no backend and makes no network requests other than loading its own files
 5. **`cargo xtask ci linux --out DIR`** (CONTRACT §2), run from the repository root, in order;
    it stops at the first failing step:
    1. checks that `apps/web/package.json`, `node` and `npm` exist (a clear message otherwise);
-   2. `npm ci` (lockfile only; `.npmrc` sets `ignore-scripts`, so no dependency script runs);
+   2. `npm ci --ignore-scripts` (lockfile only; no dependency script runs). `.npmrc` sets
+      `ignore-scripts` too, but an inherited `npm_config_ignore_scripts=false` overrides the
+      file, and only the command-line flag overrides that (#83);
    3. `npm run licenses` (specs/tooling/licenses.md): the production tree (reached from
       `dependencies`) uses the strict CONSTITUTION 10 list, and test/build tools may also use
       the tool-only licenses. Both the lockfile and each installed `package.json` are checked,
@@ -124,5 +126,5 @@ tests:
   skipped is skip), worst status wins per ID, foreign and malformed tags ignored.
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
 lines), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
-tree copy. `xtask/tests/check_specs.rs`: `ci linux` outside a
+tree copy, the install arguments (`--ignore-scripts`). `xtask/tests/check_specs.rs`: `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs.
