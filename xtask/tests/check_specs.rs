@@ -82,7 +82,7 @@ fn ci_linux_runs_the_check_after_writing_e2e() {
         "{err}"
     );
     // The short fuzz run and then the Arlington check come last; the fixture has neither
-    // fuzz/ nor tools/arlington, so both fail fast (before installing or fetching anything)
+    // fuzz/ nor tools/arlington, so both fail fast (before installing or writing anything)
     // and the exit code stays 1.
     assert!(
         err.ends_with(

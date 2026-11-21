@@ -1,17 +1,17 @@
-//! `cargo xtask arlington`. Spec: specs/tooling/arlington.md, ADR 0006.
+//! `cargo xtask arlington`. Spec: specs/tooling/arlington.md, ADR 0007.
 //!
-//! Fetches the pinned Arlington commit into `target/arlington/` (once; later runs reuse the
-//! cache), parses and checks every TSV file, writes `target/arlington/tables.rs` and makes
-//! sure it compiles. Nothing it writes is committed.
+//! Offline: loads the vendored Arlington data in `tools/arlington/data`, checks its git ids
+//! against the pins, parses and checks every TSV file, writes `target/arlington/tables.rs`
+//! and makes sure it compiles. The generated tables are not committed.
 
 use std::path::Path;
 use std::process::Command;
 
-use jpdf_arlington::{Source, generate, load};
+use jpdf_arlington::{Source, generate, load, vendor};
 
 /// Returns a one-line summary on success.
 pub fn run(root: &Path) -> Result<String, String> {
-    // Fail fast outside the repository, so a stray run neither fetches nor writes.
+    // Fail fast outside the repository, so a stray run writes nothing.
     let manifest = root.join("tools").join("arlington").join("Cargo.toml");
     if !manifest.is_file() {
         return Err(format!(
@@ -20,7 +20,8 @@ pub fn run(root: &Path) -> Result<String, String> {
         ));
     }
     let cache = root.join("target").join("arlington");
-    let source = Source::Pinned(cache.clone());
+    std::fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
+    let source = Source::Vendored(root.join(vendor::DATA_DIR));
     let model = load(&source).map_err(|e| e.to_string())?;
     let out = cache.join("tables.rs");
     std::fs::write(&out, generate::render(&model, &source.describe()))

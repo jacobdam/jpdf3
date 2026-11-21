@@ -82,8 +82,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a check that "nothing from set X reaches the artifact" (licenses, imports) → a text
   scan leaks through every indirection: paths into node_modules, `../` out of the scanned
   directory, symlinks (resolved from their real path), `#` subpath imports, bundler aliases.
-  Fail closed on all of them up front, and prove the real property on the bundler's module
-  graph (#99) ([journal](journal/2026-11-21.md), PR #98).
+  Fail closed on all of them up front, and prove the real property on the resolved graph:
+  the bundler's module graph (#99), or for Rust `cargo tree --workspace -e normal,build -i
+  <crate>` (a manifest grep misses `[dependencies.x]` tables and transitive paths)
+  ([journal](journal/2026-11-21.md), PR #98, PR #102).
 - Drawing wireframes or naming UI components → check each component's real constraints before
   writing sizes or behavior: MUI small fields are 40 px, `Tab` has `minWidth` 90, no focusable
   control inside `role="tab"`, temporary drawers are modal; SwiftUI `.disabled()` drops out of

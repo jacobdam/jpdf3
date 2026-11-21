@@ -54,7 +54,7 @@ fn main() -> ExitCode {
                     ExitCode::from(1)
                 }
             };
-            // specs/tooling/arlington.md: the pinned model still parses, checks and compiles.
+            // specs/tooling/arlington.md: the vendored model still matches the pins, parses, checks and compiles (offline).
             let arl = arlington_cmd(Path::new("."));
             [web, specs, fuzz, arl]
                 .into_iter()

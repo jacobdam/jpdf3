@@ -1,5 +1,5 @@
 //! specs/tooling/arlington.md "Tests": parsing, checks, generation and pinning on our own
-//! invented fixtures (no Arlington data is committed).
+//! invented fixtures, and the vendored Arlington data in `tools/arlington/data` (ADR 0007).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7,7 +7,7 @@ use std::process::Command;
 use jpdf_arlington::model::{
     Gate, Indirect, KeyName, Model, Required, Since, TypeAlt, ValueType, Version,
 };
-use jpdf_arlington::{Error, Source, check, fetch, generate, load, parse};
+use jpdf_arlington::{Error, Source, check, fetch, generate, load, parse, sha1, vendor};
 
 fn v(major: u8, minor: u8) -> Version {
     Version { major, minor }
@@ -181,6 +181,16 @@ fn generated_tables_are_deterministic_and_compile() {
     let a = generate::render(&m, "fixtures");
     assert_eq!(a, generate::render(&good(), "fixtures"));
     assert!(a.starts_with("// @generated"));
+    // Owner condition on #60: the header names the copyright, the license and the commit.
+    let real = generate::render(&m, &Source::Vendored(PathBuf::new()).describe());
+    let header: String = real.lines().take(3).collect::<Vec<_>>().join("\n");
+    for want in [
+        "Copyright PDF Association, Inc.",
+        "Apache License 2.0",
+        fetch::COMMIT,
+    ] {
+        assert!(header.contains(want), "{want}: {header}");
+    }
     assert!(a.contains("pub const OBJECT_COUNT: usize = 3;"));
     assert!(a.contains("pub const KEY_COUNT: usize = 8;"));
     assert!(a.contains(
@@ -245,6 +255,8 @@ fn fixture_repo(name: &str) -> (PathBuf, String, String) {
         std::fs::write(tsv.join(n), bytes).unwrap();
     }
     std::fs::write(dir.join("README.md"), "outside tsv/latest\n").unwrap();
+    std::fs::write(dir.join("LICENSE"), "fixture license\n").unwrap();
+    std::fs::write(dir.join("NOTICE.txt"), "fixture notice\n").unwrap();
     git(&dir, &["add", "-A"]);
     git(&dir, &["commit", "-q", "--no-gpg-sign", "-m", "fixtures"]);
     let commit = git(&dir, &["rev-parse", "HEAD"]);
@@ -348,7 +360,12 @@ fn a_broken_cache_is_refused_not_discovered_upwards() {
 
 #[test]
 fn the_pin_is_a_full_commit_and_tree_id() {
-    for id in [fetch::COMMIT, fetch::TSV_TREE] {
+    for id in [
+        fetch::COMMIT,
+        fetch::TSV_TREE,
+        fetch::LICENSE_BLOB,
+        fetch::NOTICE_BLOB,
+    ] {
         assert_eq!(id.len(), 40);
         assert!(
             id.bytes()
@@ -384,4 +401,538 @@ fn cli_exit_codes() {
     );
     assert_eq!(run(&["generate", "--tsv", f]).status.code(), Some(2));
     assert_eq!(run(&[]).status.code(), Some(2));
+}
+
+/// The repository root (two levels above this crate).
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The real vendored data matches the pins and loads offline (owner ruling on #60).
+#[test]
+fn vendored_data_matches_the_pins_and_loads() {
+    let data = repo_root().join(vendor::DATA_DIR);
+    let m = load(&Source::Vendored(data.clone())).unwrap();
+    assert_eq!(m.objects.len(), 613);
+    assert_eq!(m.key_count(), 3985);
+    assert!(m.objects.contains_key("Catalog"));
+    // The same files through the unchecked reader give the same model.
+    assert_eq!(m, load(&Source::Dir(data.join("tsv"))).unwrap());
+    assert_eq!(
+        Source::Vendored(data).describe(),
+        format!("commit {} (tsv/latest, vendored)", fetch::COMMIT)
+    );
+}
+
+/// Our SHA-1 and git ids agree with git itself, across the padding boundaries.
+#[test]
+fn git_ids_agree_with_git() {
+    let dir = scratch("hash-object");
+    let mut inputs: Vec<Vec<u8>> = (0..=130u8).map(|n| vec![n; usize::from(n)]).collect();
+    inputs.push(b"line\r\nwith CR\r\n".to_vec());
+    for data in inputs {
+        let f = dir.join("blob");
+        std::fs::write(&f, &data).unwrap();
+        let want = git(&dir, &["hash-object", "--no-filters", f.to_str().unwrap()]);
+        assert_eq!(
+            sha1::hex(&sha1::object_id("blob", &data)),
+            want,
+            "len {}",
+            data.len()
+        );
+    }
+    let (_, _, tree) = fixture_repo("hash-tree");
+    let files = jpdf_arlington::read_dir(&fixtures()).unwrap();
+    assert_eq!(sha1::hex(&sha1::tree_id(&files)), tree);
+}
+
+/// A vendored copy of the fixtures, written by `vendor_from` from the fixture repository,
+/// and the pins it must match.
+#[cfg(test)]
+fn fixture_vendored(name: &str) -> (PathBuf, String, String, String) {
+    let (repo, commit, tree) = fixture_repo(&format!("{name}-repo"));
+    let license = git(&repo, &["rev-parse", "HEAD:LICENSE"]);
+    let notice = git(&repo, &["rev-parse", "HEAD:NOTICE.txt"]);
+    let out = scratch(name).join("data");
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    assert_eq!(
+        vendor::vendor_from(&repo.join(".git"), &commit, pins, &out).unwrap(),
+        3
+    );
+    (out, tree, license, notice)
+}
+
+#[test]
+fn vendoring_writes_the_pinned_files_and_notices() {
+    let (out, tree, license, notice) = fixture_vendored("vend-ok");
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let files = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT).unwrap();
+    assert_eq!(files, jpdf_arlington::read_dir(&fixtures()).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(out.join("LICENSE")).unwrap(),
+        "fixture license\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("NOTICE.txt")).unwrap(),
+        "fixture notice\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join(".gitattributes")).unwrap(),
+        vendor::GITATTRIBUTES
+    );
+    // The committed copy carries the same attributes file.
+    assert_eq!(
+        std::fs::read_to_string(repo_root().join(vendor::DATA_DIR).join(".gitattributes")).unwrap(),
+        vendor::GITATTRIBUTES
+    );
+    // An existing target is never overwritten, and wrong pins write nothing.
+    let (repo, commit, _) = fixture_repo("vend-again");
+    let e = vendor::vendor_from(&repo.join(".git"), &commit, pins, &out).unwrap_err();
+    assert!(e.to_string().contains("exists; delete it first"), "{e}");
+    let fresh = scratch("vend-wrong").join("data");
+    let wrong = vendor::Pins {
+        license: &notice,
+        ..pins
+    };
+    let e = vendor::vendor_from(&repo.join(".git"), &commit, wrong, &fresh).unwrap_err();
+    assert!(e.to_string().contains("LICENSE is"), "{e}");
+    assert!(!fresh.exists());
+    // No staging directory is left behind, after success or failure.
+    for parent in [out.parent().unwrap(), fresh.parent().unwrap()] {
+        let names: Vec<_> = std::fs::read_dir(parent)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| !n.to_string_lossy().contains(".staging-")),
+            "{names:?}"
+        );
+    }
+}
+
+/// Every way a vendored copy can drift from the pins is refused.
+#[test]
+fn vendored_copies_that_drift_are_refused() {
+    type Edit = fn(&Path);
+    let cases: [(&str, Edit); 12] = [
+        ("tsv is tree", |d| {
+            let f = d.join("tsv/Leaf.tsv");
+            let mut b = std::fs::read(&f).unwrap();
+            b.push(b'\n');
+            std::fs::write(f, b).unwrap();
+        }),
+        ("tsv is tree", |d| {
+            std::fs::remove_file(d.join("tsv/Leaf.tsv")).unwrap()
+        }),
+        ("tsv is tree", |d| {
+            std::fs::copy(d.join("tsv/Leaf.tsv"), d.join("tsv/Extra.tsv")).unwrap();
+        }),
+        ("tsv/notes.md is not a regular .tsv file", |d| {
+            std::fs::write(d.join("tsv/notes.md"), "x").unwrap();
+        }),
+        ("tsv/sub.tsv is not a regular .tsv file", |d| {
+            std::fs::create_dir(d.join("tsv/sub.tsv")).unwrap();
+        }),
+        ("LICENSE is blob", |d| {
+            std::fs::write(d.join("LICENSE"), "other\n").unwrap()
+        }),
+        ("NOTICE.txt: No such file", |d| {
+            std::fs::remove_file(d.join("NOTICE.txt")).unwrap()
+        }),
+        ("NOTICE.txt is blob", |d| {
+            std::fs::write(d.join("NOTICE.txt"), "fixture notice, edited\n").unwrap()
+        }),
+        (".gitattributes differs", |d| {
+            std::fs::write(d.join(".gitattributes"), "* text=auto\n").unwrap()
+        }),
+        ("unexpected entry \"README.md\"", |d| {
+            std::fs::write(d.join("README.md"), "x").unwrap()
+        }),
+        (
+            "tsv/.DS_Store is not a regular .tsv file (re-vendor or remove stray files)",
+            |d| std::fs::write(d.join("tsv/.DS_Store"), "x").unwrap(),
+        ),
+        ("limit exceeded: Big.tsv is over 1048576 bytes", |d| {
+            let f = std::fs::File::create(d.join("tsv/Big.tsv")).unwrap();
+            f.set_len(parse::MAX_FILE_BYTES as u64 + 1).unwrap();
+        }),
+    ];
+    for (i, (want, edit)) in cases.into_iter().enumerate() {
+        let (out, tree, license, notice) = fixture_vendored(&format!("vend-drift-{i}"));
+        let pins = vendor::Pins {
+            tree: &tree,
+            license: &license,
+            notice: &notice,
+        };
+        edit(&out);
+        let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(want), "case {i}: {e}");
+    }
+}
+
+/// A TSV of exactly the size cap is read (and then fails only the tree check).
+#[test]
+fn vendored_file_size_cap_is_inclusive() {
+    let (out, tree, license, notice) = fixture_vendored("vend-cap");
+    let f = std::fs::File::create(out.join("tsv/Big.tsv")).unwrap();
+    f.set_len(parse::MAX_FILE_BYTES as u64).unwrap();
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+        .unwrap_err()
+        .to_string();
+    assert!(e.starts_with("vendored: tsv is tree"), "{e}");
+}
+
+#[cfg(unix)]
+#[test]
+fn vendored_symlinks_are_refused() {
+    let (out, tree, license, notice) = fixture_vendored("vend-link");
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let leaf = out.join("tsv/Leaf.tsv");
+    let moved = out.parent().unwrap().join("Leaf.real");
+    std::fs::rename(&leaf, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &leaf).unwrap();
+    let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("tsv/Leaf.tsv is not a regular .tsv file"), "{e}");
+
+    let (out, ..) = fixture_vendored("vend-link-notice");
+    let lic = out.join("LICENSE");
+    let moved = out.parent().unwrap().join("LICENSE.real");
+    std::fs::rename(&lic, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &lic).unwrap();
+    let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("LICENSE is not a regular file"), "{e}");
+
+    let (out, ..) = fixture_vendored("vend-link-notice2");
+    let n = out.join("NOTICE.txt");
+    let moved = out.parent().unwrap().join("NOTICE.real");
+    std::fs::rename(&n, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &n).unwrap();
+    let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("NOTICE.txt is not a regular file"), "{e}");
+
+    // A symlinked tsv/ directory is refused even though its files are fine.
+    let (out, ..) = fixture_vendored("vend-link-dir");
+    let real = out.parent().unwrap().join("tsv-real");
+    std::fs::rename(out.join("tsv"), &real).unwrap();
+    std::os::unix::fs::symlink(&real, out.join("tsv")).unwrap();
+    let e = vendor::load_checked(&out, pins, vendor::Caps::DEFAULT)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("is not a directory (symlinks are refused)"),
+        "{e}"
+    );
+}
+
+#[test]
+fn cli_checks_the_vendored_copy_by_default() {
+    let exe = env!("CARGO_BIN_EXE_jpdf-arlington");
+    let ok = Command::new(exe)
+        .arg("check")
+        .current_dir(repo_root())
+        .output()
+        .unwrap();
+    assert_eq!(ok.status.code(), Some(0), "{ok:?}");
+    assert!(
+        String::from_utf8_lossy(&ok.stderr)
+            .contains("vendored): 613 objects, 3985 keys, checks pass")
+    );
+    let (out, ..) = fixture_vendored("cli-vend");
+    let bad = Command::new(exe)
+        .args(["check", "--vendored"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1), "{bad:?}");
+    // The fixture copy fails the real pins on its first check, the LICENSE blob id.
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("vendored: LICENSE is blob"),
+        "{bad:?}"
+    );
+    // `vendor` refuses an existing target before touching the cache.
+    let cache = scratch("cli-vend-cache").join("cache");
+    let again = Command::new(exe)
+        .args(["vendor", "--out"])
+        .arg(&out)
+        .arg("--cache")
+        .arg(&cache)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
+    assert!(!cache.exists());
+}
+
+/// Owner ruling on #60: the data is for tests and tools only.
+/// 1. Through the resolved dependency graph (`cargo tree`, normal and build edges, so
+///    transitive paths and any manifest syntax count): no package under `crates/` or
+///    `bindings/` depends on `jpdf-arlington`. Dev-dependencies are allowed.
+/// 2. No shipped source names Arlington at all (case-insensitive): every file under
+///    `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web/src` and `apps/macos`
+///    (except their `tests`/`Tests` and `node_modules` directories).
+#[test]
+fn no_shipped_crate_uses_the_arlington_data() {
+    let out = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--workspace",
+            "--target",
+            "all",
+            "--all-features",
+            "--locked",
+            "--offline",
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "-i",
+            "jpdf-arlington",
+        ])
+        .current_dir(repo_root())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let tree = String::from_utf8(out.stdout).unwrap();
+    assert!(tree.contains("/tools/arlington)"), "{tree}");
+    let root = repo_root().canonicalize().unwrap();
+    let shipped: Vec<String> = ["crates", "bindings"]
+        .iter()
+        .map(|d| format!("{}/", root.join(d).display()))
+        .collect();
+    // Positive control: a known dependent shows up with the same path prefix.
+    assert!(
+        tree.contains(&format!("({})", root.join("xtask").display())),
+        "{tree}"
+    );
+    for line in tree.lines() {
+        assert!(
+            !shipped.iter().any(|d| line.contains(d.as_str())),
+            "shipped package depends on jpdf-arlington: {line}"
+        );
+    }
+
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            let ft = e.file_type().unwrap();
+            let skip = [
+                "tests",
+                "Tests",
+                "JPDFUITests",
+                "e2e",
+                "scripts",
+                "node_modules",
+                "dist",
+                "target",
+            ];
+            if ft.is_dir() && !skip.iter().any(|n| name == *n) {
+                walk(&p, out);
+            } else if ft.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for c in std::fs::read_dir(repo_root().join("crates"))
+        .unwrap()
+        .flatten()
+    {
+        walk(&c.path().join("src"), &mut files);
+        files.push(c.path().join("build.rs"));
+    }
+    for d in ["bindings", "apps/web", "apps/macos"] {
+        let dir = repo_root().join(d);
+        assert!(d == "bindings" || dir.is_dir(), "{d} is missing");
+        walk(&dir, &mut files);
+    }
+    for want in ["lib.rs", "vite.config.ts", "index.html"] {
+        assert!(
+            files.iter().any(|f| f.ends_with(want)),
+            "{want} not scanned"
+        );
+    }
+    let hits: Vec<_> = files
+        .iter()
+        .filter(|f| {
+            std::fs::read(f)
+                .map(|b| {
+                    String::from_utf8_lossy(&b)
+                        .to_lowercase()
+                        .contains("arlington")
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    assert!(hits.is_empty(), "{hits:#?}");
+}
+
+/// Every cap of the vendored loader at its exact boundary: at the cap the files load, one
+/// below fails with the limit (small caps over the 3-file fixtures).
+#[test]
+fn vendored_caps_have_exact_boundaries() {
+    let (out, tree, license, notice) = fixture_vendored("vend-caps");
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let files = jpdf_arlington::read_dir(&fixtures()).unwrap();
+    let total: usize = files.iter().map(|(_, b)| b.len()).sum();
+    let biggest = files.iter().map(|(_, b)| b.len()).max().unwrap();
+    // The notice files and .gitattributes share the per-file cap.
+    let biggest = biggest
+        .max("fixture license\n".len())
+        .max(vendor::GITATTRIBUTES.len());
+    let at = vendor::Caps {
+        files: 3,
+        file_bytes: biggest,
+        total_bytes: total,
+    };
+    assert_eq!(vendor::load_checked(&out, pins, at).unwrap(), files);
+    let over = |caps: vendor::Caps| match vendor::load_checked(&out, pins, caps) {
+        Err(Error::Limit(m)) => m,
+        other => panic!("{caps:?}: {other:?}"),
+    };
+    assert_eq!(over(vendor::Caps { files: 2, ..at }), "more than 2 files");
+    assert_eq!(
+        over(vendor::Caps {
+            total_bytes: total - 1,
+            ..at
+        }),
+        format!("more than {} bytes in all files", total - 1)
+    );
+    assert!(
+        over(vendor::Caps {
+            file_bytes: biggest - 1,
+            ..at
+        })
+        .ends_with(&format!(" is over {} bytes", biggest - 1))
+    );
+    // A notice file over the cap: LICENSE is read first.
+    assert_eq!(
+        over(vendor::Caps {
+            file_bytes: "fixture license\n".len() - 1,
+            ..at
+        }),
+        "LICENSE is over 15 bytes"
+    );
+}
+
+/// Upstream entries must be plain files (mode 100644): the vendored tree id assumes it.
+#[cfg(unix)]
+#[test]
+fn pinned_loading_rejects_other_modes() {
+    let (dir, _, _) = fixture_repo("pin-mode");
+    use std::os::unix::fs::PermissionsExt as _;
+    let leaf = dir.join(fetch::TSV_DIR).join("Leaf.tsv");
+    std::fs::set_permissions(&leaf, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "--no-gpg-sign", "-m", "exec"]);
+    let commit = git(&dir, &["rev-parse", "HEAD"]);
+    let tree = git(&dir, &["rev-parse", "HEAD:tsv/latest"]);
+    let e = fetch::load_verified(&dir.join(".git"), &commit, &tree).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("Leaf.tsv has mode 100755, expected 100644"),
+        "{e}"
+    );
+}
+
+/// Bad names are refused before anything is created.
+#[test]
+fn write_dir_checks_names_first() {
+    let base = scratch("write-names");
+    for bad in [
+        "",
+        "../x.tsv",
+        "a/b.tsv",
+        "a\\b.tsv",
+        ".hidden.tsv",
+        "notes.md",
+    ] {
+        let out = base.join("data");
+        let files = vec![(bad.to_string(), b"x".to_vec())];
+        let e = vendor::write_dir(&out, &files, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("bad file name"), "{bad:?}: {e}");
+        assert!(!out.exists(), "{bad:?}");
+    }
+    let out = base.join("data");
+    let e = vendor::write_dir(&out, &[], &[("README", b"x".to_vec())])
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("bad notice name"), "{e}");
+    assert!(!out.exists());
+}
+
+/// The staging directory: removed after a failed load-back, and an existing one (another
+/// run's) is refused and left alone.
+#[test]
+fn vendoring_cleans_up_only_its_own_staging() {
+    let files = jpdf_arlington::read_dir(&fixtures()).unwrap();
+    let (_, tree, license, notice) = fixture_vendored("stage-pins");
+    let notices = vec![
+        ("LICENSE", b"fixture license\n".to_vec()),
+        ("NOTICE.txt", b"fixture notice\n".to_vec()),
+    ];
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let base = scratch("stage");
+    let out = base.join("data");
+    let staged = base.join(format!("data.staging-{}", std::process::id()));
+    // Load-back fails (wrong tree pin) after the staging directory was written.
+    let wrong = vendor::Pins {
+        tree: &license,
+        ..pins
+    };
+    let e = vendor::vendor_files(&files, &notices, wrong, &out).unwrap_err();
+    assert!(e.to_string().contains("tsv is tree"), "{e}");
+    assert!(!out.exists() && !staged.exists());
+    // Someone else's staging directory is refused and kept.
+    std::fs::create_dir(&staged).unwrap();
+    std::fs::write(staged.join("marker"), "keep").unwrap();
+    let e = vendor::vendor_files(&files, &notices, pins, &out).unwrap_err();
+    assert!(e.to_string().contains("exists; delete it first"), "{e}");
+    assert!(staged.join("marker").is_file() && !out.exists());
+    // Control: with the path free, the same call succeeds and leaves no staging behind.
+    std::fs::remove_dir_all(&staged).unwrap();
+    assert_eq!(
+        vendor::vendor_files(&files, &notices, pins, &out).unwrap(),
+        3
+    );
+    assert!(out.join("tsv/Leaf.tsv").is_file() && !staged.exists());
 }
