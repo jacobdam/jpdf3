@@ -65,8 +65,23 @@ case "$FAKE_SCENARIO" in
     echo "$asst"; echo "$ok_result"
     perl -e '$SIG{TERM}="IGNORE"; sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
     wait ;;
-  late_turn)  # a quiet gap shorter than the grace, then another turn (a wakeup) and the end
-    echo "$asst"; echo "$ok_result"; sleep 2
+  late_turn)  # a quiet gap half a second shorter than the grace, then another turn (a wakeup)
+    echo "$asst"; echo "$ok_result"; sleep 2.5
     echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  bg_near)  # a background task listed after the result, quiet half a second under BG_QUIET_MAX
+    echo "$asst"; echo "$bg1"; echo "$ok_result"; sleep 2.5
+    echo "$bg0"; echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  mid_quiet)  # a quiet mid-turn stretch longer than BG_QUIET_MAX (no result yet) is not cut off
+    echo "$asst"; echo "$bg1"; sleep 4
+    echo "$bg0"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  multi_result)  # the first turn succeeded, the last one failed; then the process lingers
+    echo "$asst"; echo "$ok_result"; echo "$init"; echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  catches_term)  # lingers after a good result and exits 1 on its own when it gets TERM
+    echo "$asst"; echo "$ok_result"
+    trap 'exit 1' TERM; while :; do sleep 0.2; done 2>/dev/null ;;
+  rl_rej_then_ok) echo "$asst"; echo "$rl_rej"; echo "$rl_ok"; exit 1 ;;  # the last event decides
+  ok_rejected) echo "$asst"; echo "$rl_rej"; echo "$ok_result"; exit 0 ;;   # success wins over a rejection
   error_exit) echo "$asst"; echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'; exit 1 ;;
 esac

@@ -1,5 +1,5 @@
 diff --git a/ops/driver/driver.sh b/ops/driver/driver.sh
-index fc70e5b..7274d26 100755
+index fc70e5b..9829f8a 100755
 --- a/ops/driver/driver.sh
 +++ b/ops/driver/driver.sh
 @@ -10,6 +10,9 @@ OWNER="jacobdam"
@@ -8,11 +8,11 @@ index fc70e5b..7274d26 100755
  SESSION_MAX="${JPDF_SESSION_MAX:-10800}" # hard cap per session (3 h)
 +SETTLE_GRACE="${JPDF_SETTLE_GRACE:-120}" # idle seconds allowed after a session's final result
 +POLL="${JPDF_POLL:-10}"                  # seconds between checks of a running session
-+BG_QUIET_MAX="${JPDF_BG_QUIET_MAX:-2700}" # quiet seconds after a result while background tasks are listed
++BG_QUIET_MAX="${JPDF_BG_QUIET_MAX:-5400}" # quiet seconds after a result while background tasks are listed
  MIN_FREE_GB="${JPDF_MIN_FREE_GB:-30}"
  MODE="loop"; [[ "${1:-}" == "--pilot" || "${1:-}" == "--once" ]] && MODE="once"
  
-@@ -62,23 +65,133 @@ slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)
+@@ -62,23 +65,142 @@ slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)
    (( $(date +%s) - since > 7*86400 ))
  }
  
@@ -61,6 +61,11 @@ index fc70e5b..7274d26 100755
 +  esac
 +}
 +
++# Whole seconds since epoch time $1 (fractional), or since file $1 was last modified; sub-second
++# clocks so the grace is exact (stat's 1 s mtime made it anywhere in [grace-1, grace]).
++secs_since() { perl -MTime::HiRes=time -e 'printf "%d\n", time - $ARGV[0]' "$1"; }
++idle_secs() { perl -MTime::HiRes=time,stat -e '@s = stat $ARGV[0] or exit 1; printf "%d\n", time - $s[9]' "$1"; }
++
 +# All live descendants of pid $1, from one ps snapshot (breadth first).
 +descendants() {
 +  ps -axo pid=,ppid= | awk -v root="$1" '{ kids[$2] = kids[$2] " " $1 }
@@ -69,20 +74,22 @@ index fc70e5b..7274d26 100755
 +          for (i = 1; i <= n; i++) print q[i] }'
 +}
 +
-+# Stop a session: TERM its process group and every descendant (the Bash tool's shells and MCP
++# Stop a session: TERM it, its process group and every descendant (the Bash tool's shells and MCP
 +# servers call setsid, so the group alone misses them), then KILL what is left after 15 s. The
 +# descendant list is taken before signalling, while the tree is still connected.
 +stop_group() {
-+  local pid=$1 pids p alive _
-+  pids=$(descendants "$pid")
++  local pid=$1 pids p alive t
++  # Not started, or already gone (reaped: the pid may belong to someone else by now).
++  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 0
++  pids="$pid $(descendants "$pid")"; t=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
 +  kill -TERM -- "-$pid" 2>/dev/null
 +  for p in $pids; do kill -TERM "$p" 2>/dev/null; done
-+  for _ in {1..15}; do
++  while (( $(secs_since "$t") < 15 )); do
 +    alive=0
 +    kill -0 -- "-$pid" 2>/dev/null && alive=1
 +    for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
 +    (( alive )) || return 0
-+    sleep 1
++    sleep 0.2
 +  done
 +  kill -KILL -- "-$pid" 2>/dev/null
 +  for p in $pids; do kill -KILL "$p" 2>/dev/null; done
@@ -91,9 +98,13 @@ index fc70e5b..7274d26 100755
  run_session() {
 -  local ts out start rc sid
 -  ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; start=$(date +%s)
-+  local ts out err start rc res sid pid now m idle state why=""
++  local ts out err start t0 rc res sid pid="" idle state why=""
 +  ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; err="ops/logs/$ts.stderr"; start=$(date +%s)
++  t0=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
    log "session $ts starting"
++  # Its own group no longer gets the terminal's HUP/INT (closing tmux, Ctrl-C), so pass them on.
++  # Set before the launch so no signal falls in between; stop_group ignores an empty pid.
++  trap 'log "driver signalled: stopping session $ts"; stop_group "$pid"; exit 130' HUP INT TERM
    # Agent sessions get only the project MCP config (an isolated headless Chrome), never the
    # owner's claude.ai connectors (mail, drive, calendar) or the owner's own browser.
 -  JPDF_SESSION=1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude -p "$(cat ops/TICK.md)" \
@@ -108,8 +119,6 @@ index fc70e5b..7274d26 100755
 -  ( sleep "$SESSION_MAX"; kill -TERM "$pid" 2>/dev/null ) & local watchdog=$!
 +      --permission-mode auto --output-format stream-json --verbose > "$out" 2> "$err" &
 +  pid=$!
-+  # Its own group no longer gets the terminal's HUP/INT (closing tmux, Ctrl-C), so pass them on.
-+  trap 'log "driver signalled: stopping session $ts"; stop_group "$pid"; exit 130' HUP INT TERM
 +  # A finished `claude -p` can stay alive (a pending ScheduleWakeup; #125). Stop it once its last
 +  # turn event is a result, no background task runs, and the log has been quiet for SETTLE_GRACE
 +  # seconds. A background task's notification starts a new turn (system/init), so waits on agents
@@ -117,15 +126,13 @@ index fc70e5b..7274d26 100755
 +  # BG_QUIET_MAX quiet seconds, and SESSION_MAX caps everything.
 +  while kill -0 "$pid" 2>/dev/null; do
 +    sleep "$POLL"
-+    now=$(date +%s)
-+    if (( now - start >= SESSION_MAX )); then
++    if (( $(secs_since "$t0") >= SESSION_MAX )); then
 +      why="SESSION_MAX"; log "session $ts reached SESSION_MAX (${SESSION_MAX}s): stopping"
 +      stop_group "$pid"; break
 +    fi
 +    state=$(session_state "$out")
 +    [[ "$state" == result\ * ]] || continue
-+    m=$(stat -f %m "$out" 2>/dev/null) || continue
-+    idle=$(( now - m ))
++    idle=$(idle_secs "$out" 2>/dev/null) || continue
 +    if [[ "$state" == "result 0" ]] && (( idle >= SETTLE_GRACE )); then
 +      why="settled"; log "session $ts idle ${idle}s after its final result, no background tasks: stopping"
 +      stop_group "$pid"; break
@@ -138,9 +145,11 @@ index fc70e5b..7274d26 100755
    wait "$pid"; rc=$?
 -  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
 +  trap - HUP INT TERM
-+  # Killed by a signal (ours or the owner's) after it had answered: report what the session
-+  # itself reported in its final result, not the signal.
-+  if (( rc > 128 )) && [[ "$(session_state "$out")" == result\ * ]]; then
++  # Stopped by us after its final result (however the CLI exits on TERM), or killed by the
++  # owner's signal after it had answered: report what the session itself reported in its final
++  # result. A SESSION_MAX stop keeps the signal's rc: the session was cut off.
++  if [[ "$why" == settled* ]] || { [[ -z "$why" ]] && (( rc > 128 )) &&
++       [[ "$(session_state "$out")" == result\ * ]]; }; then
 +    res=$(result_rc "$out"); rc=${res:-$rc}
 +  fi
 +  [[ -s "$err" ]] || rm -f "$err"
