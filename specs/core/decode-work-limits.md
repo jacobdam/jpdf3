@@ -182,6 +182,8 @@ by about the time of six decodes per fixture, seven for a fixture with an extra-
 ## Tests
 - `jpdf-traits` unit tests (limits): `decode_limits_copy_the_work_budgets`, the clamping
   tests, the budget test.
+- `jpdf-traits` flate suite self-test: `an_inflate_that_reports_usage_is_caught` (an Inflate
+  that reports usage fails `flate.no_usage`).
 - `jpdf-traits` image suite self-tests: a correct toy passes every suite; toys that ignore
   the work limits, reject at the limit, report limit-dependent usage, leave the output out of
   working memory, count only output samples, a flat rate per sample or a flat rate per input byte, report over-limit usage

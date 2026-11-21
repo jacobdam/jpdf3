@@ -127,6 +127,12 @@ pub struct JpegOptions {
 }
 
 /// Baseline and progressive JPEG decoding (DCTDecode, ISO 32000-2 §7.4.8).
+///
+/// Every image decoder also charges its working memory (output included) and operations
+/// before the allocation or work they cover, fails with [`BackendError::LimitExceeded`] (never a
+/// `Truncated` result) when a budget would be exceeded, and reports the totals in
+/// [`Decoded::usage`](crate::Decoded::usage), independent of the limits
+/// (specs/core/decode-work-limits.md).
 pub trait JpegDecoder {
     /// Decodes one JPEG codestream. Fails with [`BackendError::LimitExceeded`] when the frame
     /// header exceeds a [`DecodeLimits`] value, before allocating the image.
@@ -139,6 +145,12 @@ pub trait JpegDecoder {
 }
 
 /// JPEG 2000 decoding (JPXDecode, ISO 32000-2 §7.4.9): a JP2 file or a raw codestream.
+///
+/// Every image decoder also charges its working memory (output included) and operations
+/// before the allocation or work they cover, fails with [`BackendError::LimitExceeded`] (never a
+/// `Truncated` result) when a budget would be exceeded, and reports the totals in
+/// [`Decoded::usage`](crate::Decoded::usage), independent of the limits
+/// (specs/core/decode-work-limits.md).
 pub trait Jpeg2000Decoder {
     /// Decodes the full-resolution image, unscaled (see [`DecodedImage`]).
     /// - Components with different bit depths fail with [`BackendError::Unsupported`].
@@ -153,6 +165,12 @@ pub trait Jpeg2000Decoder {
 
 /// JBIG2 decoding (JBIG2Decode, ISO 32000-2 §7.4.7). The input is the embedded stream
 /// format: segments without the JBIG2 file header, for a single page.
+///
+/// Every image decoder also charges its working memory (output included) and operations
+/// before the allocation or work they cover, fails with [`BackendError::LimitExceeded`] (never a
+/// `Truncated` result) when a budget would be exceeded, and reports the totals in
+/// [`Decoded::usage`](crate::Decoded::usage), independent of the limits
+/// (specs/core/decode-work-limits.md).
 pub trait Jbig2Decoder {
     /// Decodes the page. `globals` is the decoded `/JBIG2Globals` stream, if any.
     fn decode(
@@ -201,6 +219,12 @@ impl Default for CcittParams {
 }
 
 /// CCITT Group 3/4 fax decoding (CCITTFaxDecode, ISO 32000-2 §7.4.6).
+///
+/// Every image decoder also charges its working memory (output included) and operations
+/// before the allocation or work they cover, fails with [`BackendError::LimitExceeded`] (never a
+/// `Truncated` result) when a budget would be exceeded, and reports the totals in
+/// [`Decoded::usage`](crate::Decoded::usage), independent of the limits
+/// (specs/core/decode-work-limits.md).
 pub trait CcittDecoder {
     /// Decodes the image. `columns == 0` fails with [`BackendError::InvalidArgument`].
     /// `columns` or `rows` above `limits.max_image_dimension`, or (when `rows` is set)
