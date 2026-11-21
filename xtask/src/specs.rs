@@ -156,7 +156,8 @@ pub fn check(root: &Path) -> Vec<Problem> {
     }
 
     out.sort();
-    // A file read by name that the walk also flags (a FIFO `_TEMPLATE.md`) is reported once.
+    // Identical lines are merged, so a file read by name that the walk also flags (a FIFO
+    // `_TEMPLATE.md`) is reported once; a repeated identical problem adds nothing either.
     out.dedup();
     out
 }
