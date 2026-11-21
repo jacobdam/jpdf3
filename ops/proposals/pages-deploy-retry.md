@@ -1,6 +1,6 @@
 # Proposal: make the `pages` job survive the deploy-pages artifact race
 
-Status: open (agent-written, 2026-11-20). Target: `.github/workflows/ci.yml` (protected).
+Status: open (agent-written, 2026-11-21). Target: `.github/workflows/ci.yml` (protected).
 
 ## Problem
 `actions/deploy-pages` sometimes runs right after `upload-pages-artifact` succeeds, can't
@@ -39,8 +39,11 @@ re-running that run is useless.
 - A per-attempt artifact name makes `gh run rerun --failed` safe again.
 - One delayed retry covers the visibility race without a manual rerun.
 - The second deploy step has no `continue-on-error`, so a real failure still fails the job.
+- `sleep 30` and a single retry are guesses, not measured values. If the first attempt had
+  already created a Pages deployment before failing, the retry creates a second one in the
+  `github-pages` environment. That should be harmless: the newest deployment wins.
 
 ## Risk if not applied
 Each time the race hits, main stays red until the next push. A session that follows TICK
-rule b and reruns the failed run makes that run impossible to deploy. Sessions spend time
-diagnosing it, and the Pages metrics site goes stale.
+rule b and reruns the failed run can make that run impossible to deploy (it did in run
+44837141465). Sessions spend time diagnosing it, and the Pages metrics site goes stale.

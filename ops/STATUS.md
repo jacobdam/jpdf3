@@ -7,8 +7,8 @@ Phase: bootstrap (pilot)
 - Nothing. #62 (#20 part 1, Arlington ingestion) merged; part 2 is #61 (`ready`).
 
 ## Last session
-- Main went red after #59: the `pages` deploy flake hit twice, and its rerun failed on
-  duplicate artifacts. #62's push run 44840300299 is green.
+- Main went red after #59 when the `pages` deploy flake hit (it first hit after #39). The
+  rerun of #59's run then failed on duplicate artifacts. #62's push run 44840300299 is green.
 - Wrote ops/proposals/pages-deploy-retry.md (per-attempt artifact name + one deploy retry).
   When this flake hits again, don't rerun; the next push to main redeploys.
 

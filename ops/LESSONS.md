@@ -27,11 +27,11 @@ instead of adding near-duplicates.
   fails unless every upstream job succeeded (bootstrap).
 
 - main red with `judge-verdict` green, only `pages` failed (deploy-pages "No artifacts named
-  github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra: `gh run
-  rerun --failed <id>`, no code change. If the upload step failed or was skipped, it's a real bug
-  ([journal](journal/2026-11-20.md)). If the rerun then fails with "Multiple artifacts named
-  github-pages", don't rerun again: the next push to main redeploys ([journal](journal/2026-11-21.md), PR #62). Durable fix
-  proposed in `ops/proposals/pages-deploy-retry.md`.
+  github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra, no code
+  change. Don't rerun: one rerun worked (#39), another hit "Multiple artifacts named
+  github-pages" and could never deploy (#59). The next push to main redeploys. If the upload
+  step failed or was skipped, it's a real bug. Durable fix proposed in
+  `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63).
 
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
