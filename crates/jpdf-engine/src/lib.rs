@@ -3,6 +3,8 @@
 //! The facade every front end (CLI, bindings) goes through. The engine never touches the file
 //! system: callers hand in bytes.
 #![forbid(unsafe_code)]
+// Input-derived arithmetic is checked; overflow panics in every profile (#77).
+#![deny(clippy::arithmetic_side_effects)]
 
 use std::fmt;
 

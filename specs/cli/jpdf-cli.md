@@ -32,8 +32,7 @@ Argument validation (all failures exit **2** with one line on stderr, nothing on
 
 After validation every command except `info` exits **3** (not implemented) without reading FILE.
 
-`info`: the CLI reads FILE (size checked against `Limits::max_file_size` before reading) and
-hands the bytes to `jpdf_engine::Document::open(bytes, &Limits)`. On success it prints
+`info`: the CLI reads FILE and hands the bytes to `jpdf_engine::Document::open(bytes, &Limits)`. On success it prints
 `{"pages": N}` and a newline and exits 0. The engine currently understands only:
 - a classic cross-reference table found through the last `startxref` in the final 64 KiB
   (§7.5.5; trailing junk is tolerated), with `/Prev` chains (§7.5.6);
@@ -43,6 +42,16 @@ hands the bytes to `jpdf_engine::Document::open(bytes, &Limits)`. On success it 
   kids found wins; a missing or non-integer `/Count` is ignored the same way.
 
 `--password` is accepted and ignored for unencrypted files.
+
+Reading FILE (#77), in order:
+1. `stat` the path (following symlinks). Anything but a regular file (FIFO, socket, character
+   or block device, directory) is refused: `cannot read FILE: not a regular file`. A size above
+   `Limits::max_file_size` is refused: `limit exceeded: file size`. Neither case opens the file.
+2. Open it with `O_NONBLOCK` (Linux `0o4000`, macOS `0x0004`), so if the path was swapped for
+   a FIFO after step 1 the open still returns at once. Step 1's checks run again on the opened
+   file (`fstat`).
+3. Reserve exactly the file size and read at most `max_file_size + 1` bytes (a file growing
+   while it is read hits the limit instead of growing memory).
 
 The engine never touches the file system; only the CLI does.
 
@@ -57,6 +66,8 @@ Not applicable (read-only).
 |---|---|---|
 | bad arguments | 2 | `jpdf-cli: <reason>` |
 | FILE missing/unreadable | 2 | `jpdf-cli: cannot read FILE: <io error>` |
+| FILE not a regular file (FIFO, device, directory, socket) | 2 | `jpdf-cli: cannot read FILE: not a regular file` |
+| FILE larger than `max_file_size` | 2 | `jpdf-cli: limit exceeded: file size` |
 | malformed file (no `startxref`, bad xref, object header mismatch, overlapping objects, bad page tree, …) | 2 | `jpdf-cli: malformed PDF: <what>[ at byte <offset>]` (offset when the lexer knows it) |
 | a limit exceeded | 2 | `jpdf-cli: limit exceeded: <which>` |
 | unsupported structure (xref stream, hybrid `/XRefStm`, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
@@ -67,7 +78,10 @@ from the judge).
 
 ## Limits
 `jpdf_syntax::Limits` (re-exported by `jpdf-engine`), defaults:
-- `max_file_size` 512 MiB (checked by the CLI before reading and again by the engine);
+- `max_file_size` 512 MiB (checked by the CLI from `stat` before opening, again on the
+  opened file and after reading, and again by the engine). Boundary test: a write-only sparse
+  file of exactly 512 MiB passes the size check (the open then fails with "Permission
+  denied"); 512 MiB + 1 is refused with the limit error without being opened;
 - `max_nesting_depth` 256 for arrays/dictionaries (stack-overflow guard);
 - `max_objects_per_parse` 2 000 000 objects produced while parsing one indirect object
   (memory bound for huge arrays/dictionaries);
@@ -108,10 +122,35 @@ exit 0 or 2 in ≤ 3.4 s (1 000 `/Prev` sections over one 2 M-name trailer: 36 s
 section spans were checked; 127 dense non-overlapping kids: 9.9 s before the per-document
 object budget). macOS peak footprint for the worst one: 1.31 GB.
 
-All input-derived arithmetic is checked; numbers that overflow `i64` are malformed input.
+All input-derived arithmetic is checked, and `clippy::arithmetic_side_effects` is denied in
+`jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and `jpdf-cli` (#77), so an unchecked `+`/`-`/`*` on
+any value fails the build. Integers are exactly `i64::MIN..=i64::MAX` (§7.3.3 leaves the range
+to the implementation; Annex C recommends at least 32 bits); one past either end is malformed
+(boundary test `integer_range_boundaries`). Number tokens are never copied: reals are parsed
+in place from the input slice, so a 290 M-digit real costs no memory beyond the file (it
+used to allocate a copy the size of the token, outside every budget). Its bytes are charged
+to the lexing budget like any other token. Malformed `/Prev` values (§7.5.5) are matched by
+reference and rejected without cloning (a huge `/Prev` array used to be deep-copied first).
 Work is linear in file size: the lexing budget bounds total lexing to 4× the file.
 
 ## Security
+Self-check (#77):
+- Arithmetic: the lint above makes every unchecked operation a build error in the four crates;
+  integer accumulation uses `checked_mul`/`checked_add`/`checked_sub`, octal escapes are at
+  most three digits (≤ 0o777, saturating ops that never saturate).
+- What broken implementation still passes? A CLI that opens before checking the size fails
+  `oversized_file_is_rejected_before_opening` (write-only file: "Permission denied" instead of
+  the limit), unless the tests run as root, where it skips. A CLI that blocks on FIFOs fails
+  `fifo_and_devices_exit_2_without_blocking` (20 s timeout); a wrong `O_NONBLOCK` value fails
+  `open_never_blocks_on_a_fifo`, which calls the open directly. An `i64::MIN` regression
+  fails `integer_range_boundaries`.
+- What the tests can't see: allocations. Nothing asserts that reals and `/Prev` are not
+  copied (a counting global allocator is banned by CONSTITUTION 3); review covers it, and the
+  adversarial memory harness (#25) is the long-term check. The 4 GiB sparse-file case is
+  covered by the ordering test above instead of an RSS measurement.
+- Residual: once opened, the descriptor is fixed, so a swap after the `fstat` changes nothing;
+  a swap between `stat` and `open` opens non-blocking and the `fstat` check refuses it.
+
 Input is hostile. No `unwrap`/`expect`/panicking index on input-derived data; recursion depth is
 bounded; offsets from the file are bounds-checked; `/Prev` loops are detected. No PDF content is
 executed. The CLI prints only the page count, never file content.
@@ -129,7 +168,12 @@ resolves only the catalog, the page-tree root and its kids.
 ## Tests
 - `tools/jpdf-cli/tests/cli.rs`: every contract command with valid flags exits 3; argument errors
   exit 2 with empty stdout; `info` on generated minimal PDFs prints the right count; empty,
-  garbage and truncated files exit 2 or 3.
+  garbage and truncated files exit 2 or 3; an oversized (sparse, write-only) file is refused
+  before opening, with the exact-boundary case; a FIFO, `/dev/null` and `/dev/zero` exit 2
+  at once with "not a regular file".
+- `tools/jpdf-cli/src/main.rs` unit test: the non-blocking open returns at once on a FIFO.
+- `crates/jpdf-syntax/src/lexer.rs` unit tests: `i64` range boundaries, every real shape
+  (`5.`, `.5`, `+.5`, `-3.`, `-0.`), 1 MB-digit reals, non-numbers, octal and hex escapes.
 - `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3/50 pages, `/Prev` updates, `/Prev`
   loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
   page limits, objects nested in strings and kids sharing one body (overlap rejection),

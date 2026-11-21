@@ -23,11 +23,19 @@ fn is_regular(b: u8) -> bool {
     !is_whitespace(b) && !is_delimiter(b)
 }
 
+/// Value of an ASCII octal digit; callers match `b'0'..=b'7'` first.
+fn octal_value(b: u8) -> u16 {
+    char::from(b)
+        .to_digit(8)
+        .and_then(|d| u16::try_from(d).ok())
+        .unwrap_or_default()
+}
+
 fn hex_value(b: u8) -> Option<u8> {
     match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => char::from(b)
+            .to_digit(16)
+            .and_then(|d| u8::try_from(d).ok()),
         _ => None,
     }
 }
@@ -361,12 +369,13 @@ impl<'a, 'b> Lexer<'a, 'b> {
             b'b' => out.push(0x08),
             b'f' => out.push(0x0C),
             b'0'..=b'7' => {
-                let mut v = u16::from(c - b'0');
+                let mut v = octal_value(c);
                 for _ in 0..2 {
                     match self.peek() {
                         Some(d @ b'0'..=b'7') => {
                             self.bump();
-                            v = v * 8 + u16::from(d - b'0');
+                            // At most three octal digits: v ≤ 0o777, so this never saturates.
+                            v = v.saturating_mul(8).saturating_add(octal_value(d));
                         }
                         _ => break,
                     }
@@ -401,26 +410,30 @@ fn classify_regular(word: &[u8], offset: usize) -> Result<Token<'_>, SyntaxError
         return Ok(Token::Keyword(word));
     }
     if dots == 0 {
+        // Accumulate with the token's sign so that `i64::MIN` is representable.
         let mut v: i64 = 0;
         for d in body {
+            let digit = i64::from(char::from(*d).to_digit(10).unwrap_or_default());
             v = v
                 .checked_mul(10)
-                .and_then(|v| v.checked_add(i64::from(d - b'0')))
+                .and_then(|v| {
+                    if negative {
+                        v.checked_sub(digit)
+                    } else {
+                        v.checked_add(digit)
+                    }
+                })
                 .ok_or_else(|| malformed("integer out of range", offset))?;
         }
-        return Ok(Token::Integer(if negative { -v } else { v }));
+        return Ok(Token::Integer(v));
     }
-    // Reals: normalise to a form `f64::from_str` always accepts ("0<int>.<frac>0").
-    let mut text = String::with_capacity(body.len().saturating_add(3));
-    if negative {
-        text.push('-');
-    }
-    text.push('0');
-    text.extend(body.iter().map(|b| char::from(*b)));
-    text.push('0');
-    let v: f64 = text
-        .parse()
-        .map_err(|_| malformed("invalid real number", offset))?;
+    // Reals: the token is parsed in place, without a copy (a copy of a huge digit run was an
+    // uncharged allocation the size of the token). It is `[+-]? digits? . digits?` with at least
+    // one digit, which `f64::from_str` accepts as is ("5.", ".5", "+.5", "-3.").
+    let v: f64 = std::str::from_utf8(word)
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| malformed("invalid real number", offset))?;
     if !v.is_finite() {
         return Err(malformed("real number out of range", offset));
     }
@@ -626,6 +639,84 @@ mod tests {
         assert_eq!(
             parse(&deep),
             Err(SyntaxError::LimitExceeded("nesting depth"))
+        );
+    }
+
+    /// Issue #77: integers span exactly `i64::MIN..=i64::MAX`; one past either end is malformed.
+    #[test]
+    fn integer_range_boundaries() {
+        assert_eq!(parse(b"9223372036854775807"), Ok(Object::Integer(i64::MAX)));
+        assert_eq!(
+            parse(b"+9223372036854775807"),
+            Ok(Object::Integer(i64::MAX))
+        );
+        assert_eq!(
+            parse(b"-9223372036854775808"),
+            Ok(Object::Integer(i64::MIN))
+        );
+        assert_eq!(parse(b"-0"), Ok(Object::Integer(0)));
+        assert_eq!(parse(b"007"), Ok(Object::Integer(7)));
+        for past in [&b"9223372036854775808"[..], b"-9223372036854775809"] {
+            assert!(
+                matches!(parse(past), Err(SyntaxError::Malformed { .. })),
+                "{past:?}"
+            );
+        }
+    }
+
+    /// Issue #77: reals are parsed in place (no copy of the token). Every accepted shape still
+    /// parses to the same value, and a very long real is read correctly.
+    #[test]
+    fn reals_parse_in_place() {
+        let cases: &[(&[u8], f64)] = &[
+            (b"5.", 5.0),
+            (b".5", 0.5),
+            (b"-.5", -0.5),
+            (b"+.5", 0.5),
+            (b"-3.", -3.0),
+            (b"+3.25", 3.25),
+            (b"0.0", 0.0),
+            (b"-0.", -0.0),
+            (b"123.456", 123.456),
+        ];
+        for (src, want) in cases {
+            assert_eq!(parse(src), Ok(Object::Real(*want)), "{src:?}");
+        }
+        assert_eq!(
+            parse(b"-0.").map(|o| matches!(o, Object::Real(r) if r.is_sign_negative())),
+            Ok(true)
+        );
+        // 1 MB of digits: 1.000…0001 rounds to 1.0, 0.000…1 underflows to 0.0.
+        let mut long = b"1.".to_vec();
+        long.extend(std::iter::repeat_n(b'0', 1_000_000));
+        long.push(b'1');
+        assert_eq!(parse(&long), Ok(Object::Real(1.0)));
+        let mut tiny = b"-.".to_vec();
+        tiny.extend(std::iter::repeat_n(b'0', 1_000_000));
+        tiny.push(b'7');
+        assert_eq!(parse(&tiny), Ok(Object::Real(-0.0)));
+        // A huge integer part overflows f64: out of range, not infinity.
+        let mut huge = vec![b'9'; 400];
+        huge.push(b'.');
+        assert!(matches!(parse(&huge), Err(SyntaxError::Malformed { .. })));
+        // Not numbers: keywords, so a lone object is malformed.
+        for src in [&b"."[..], b"-.", b"1.2.3", b"+-1", b"1e5", b"inf", b"NaN"] {
+            assert!(parse(src).is_err(), "{src:?}");
+        }
+    }
+
+    /// Octal escapes take at most three digits; high-order overflow is ignored (§7.3.4.2).
+    #[test]
+    fn octal_escape_bounds() {
+        assert_eq!(parse(b"(\\0)"), Ok(Object::String(vec![0])));
+        assert_eq!(parse(b"(\\7)"), Ok(Object::String(vec![7])));
+        assert_eq!(parse(b"(\\377)"), Ok(Object::String(vec![0xFF])));
+        assert_eq!(parse(b"(\\400)"), Ok(Object::String(vec![0])));
+        assert_eq!(parse(b"(\\1234)"), Ok(Object::String(b"S4".to_vec())));
+        assert_eq!(parse(b"(\\18)"), Ok(Object::String(vec![1, b'8'])));
+        assert_eq!(
+            parse(b"<0a1B fF>"),
+            Ok(Object::String(vec![0x0A, 0x1B, 0xFF]))
         );
     }
 

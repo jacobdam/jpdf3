@@ -83,17 +83,21 @@ impl<'a> XrefDocument<'a> {
             if section_trailer.get(b"Encrypt").is_some() {
                 return Err(SyntaxError::Unsupported("encrypted documents"));
             }
-            let prev = section_trailer.get(b"Prev").cloned();
+            // Match by reference: cloning first would deep-copy a hostile /Prev (a huge array)
+            // only to reject it.
+            let prev = match section_trailer.get(b"Prev") {
+                None => None,
+                Some(Object::Integer(p)) => Some(
+                    usize::try_from(*p).map_err(|_| malformed("negative /Prev offset", offset))?,
+                ),
+                Some(_) => return Err(malformed("/Prev is not an integer", offset)),
+            };
             if trailer.is_none() {
                 trailer = Some(trim_trailer(section_trailer));
             }
             match prev {
                 None => break,
-                Some(Object::Integer(p)) => {
-                    offset = usize::try_from(p)
-                        .map_err(|_| malformed("negative /Prev offset", offset))?;
-                }
-                Some(_) => return Err(malformed("/Prev is not an integer", offset)),
+                Some(p) => offset = p,
             }
         }
         let trailer = trailer.ok_or_else(|| malformed("no trailer", data.len()))?;
