@@ -25,7 +25,15 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
 - **Keep the session small.** If the work won't fit comfortably (≈60% of your context), split
-  it into issues and do only the first part.
+  it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
+  at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
+  **≤ 1500 added lines** (generated data and lockfiles excluded). Size it before claiming; if
+  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1. When you
+  write new issues, give each one this size.
+- **The guard blocks**, so don't try: force pushes and rebases of pushed branches (use `git
+  merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
+  can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
+  single command.
 
 ## 1. Orient (keep it short)
 ```sh
@@ -34,9 +42,18 @@ ops/driver/owner-issues.sh
 gh run list --branch main --limit 5
 gh pr list --author @me --state open
 gh issue list --state open --limit 50 --json number,title,labels,milestone
+# audit due? (merges since the last audit record; due at >= 10 or 7 days)
+git log -1 --format='%h %cs' origin/main -- 'docs/audits/[0-9]*.md'
+git rev-list --count --first-parent "$(git log -1 --format=%H origin/main -- 'docs/audits/[0-9]*.md')"..origin/main
+# retro due? (date of the last retro record; due after 7 days; empty = none yet)
+git log -1 --format='%h %cs' origin/main -- 'docs/retros/[0-9]*.md'
 ```
 
 ## 2. Pick exactly one thing (strict priority)
+**Due audits and retros preempt the backlog** (retro 0001): if §1 shows an audit (i) or a
+retro (j) is due, take it right after a–f, before g and h. If both are due, take the audit
+first. Otherwise a non-empty backlog starves both forever.
+
 a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled).
    They override ADRs. Reply on the issue with what you did.
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
@@ -77,7 +94,9 @@ one per session:
 1. **Claim:** `gh issue edit N --add-label in-progress --add-assignee @me` + comment
    `claimed by session <time>`. Re-read the issue to confirm nobody else claimed it.
 2. **Spec first** (`specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`, with every checklist
-   section), then **failing tests**, then **code**.
+   section), then **failing tests**, then **code**. Answer the template's Security
+   self-check and Limits boundary list in the spec **before** the review; they are the
+   reviewers' most frequent findings (retro 0001).
 3. **Local checks:**
    - `cargo fmt --all`
    - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -88,7 +107,8 @@ one per session:
 
 ## 4. Independent review (required)
 Spawn a **fresh reviewer subagent**. Give it ONLY:
-- the PR diff (`gh pr diff N`)
+- the PR diff: `git diff origin/main...HEAD` from your worktree (right after a push,
+  `gh pr diff` can still return the previous commit)
 - the linked spec
 - CONSTITUTION.md
 
@@ -102,12 +122,20 @@ Not your reasoning. Ask it to review adversarially for:
 - code resembling a known PDF engine
 - security issues
 
-Fix what it finds (re-review if you changed much). Then post the status on the PR's head commit:
+Ask it also, for every checker, suite or validator in the diff: **what broken implementation
+still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
+past fails)?
+
+Fix what it finds (re-review if you changed much). Then post the status on the head commit:
+`git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
+--json headRefOid` can lag behind a push):
 ```sh
-gh api repos/jacobdam/jpdf3/statuses/$(gh pr view N --json headRefOid -q .headRefOid) \
+gh api repos/jacobdam/jpdf3/statuses/<sha> \
   -f state=success -f context=ai-review -f description="reviewed: <one line>"
 ```
-(`state=failure` if unresolved findings remain.)
+(`state=failure` if unresolved findings remain.) `ai-review` is a required check: post it
+**before** enabling auto-merge and writing the journal, so a session that ends early doesn't
+leave the PR blocked.
 
 ## 5. Merge and record
 - **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
