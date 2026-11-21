@@ -49,7 +49,7 @@ defaults:
 |---|---|---|
 | `max_decoded_bytes_per_stream` | 256 MiB | One backend call's output; fits a 32-bit `usize` (wasm32) |
 | `max_decoded_bytes_per_document` | 4 GiB (`u64`) | Lifetime total charged by the engine; time bound against many small bombs |
-| `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Not enforced yet (no cache exists): every cache added must charge it and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
+| `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Charged by the object resolve cache (specs/core/resolve-cache.md); every other cache added must charge it too, through one shared counter (#138), and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
 | `max_image_pixels` | 100,000,000 | Header check before any allocation; binds for 1–2 byte pixels, while the 256 MiB output cap binds first for RGB/CMYK |
 | `max_image_dimension` | 2^20 | Long strips stay legal; the pixel limit does the real bounding |
 | `max_image_components` | 33 | ISO 32000-2 Annex C: DeviceN has at most 32 colorants, plus one alpha channel (`SMaskInData`) |
