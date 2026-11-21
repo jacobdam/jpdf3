@@ -105,7 +105,14 @@ accepts JSON nested at most 128 deep; IDs must match `e2e.macos.[a-z0-9_]+`, so
   engine moves in, every message is validated by the core (PLAN §2, CONSTITUTION 5).
 - No network, no JavaScript, no web views. The app accepts no drops.
 - xtask runs only Apple tools from Xcode and the system (`xcodebuild`, `xcrun`,
-  `codesign`, `plutil`); there are no third-party Swift packages.
+  `codesign`, `plutil`); there are no third-party Swift packages. Tool output is read up
+  to 16 MiB per pipe (stdout here, stderr on a thread); input for a tool (the entitlements
+  plist for `plutil`) is written on its own thread at the same time, so a tool that writes
+  before it has read all its input can't deadlock the pipes. A failed write (the tool closed
+  its stdin first) is an error, reported after a failed exit (#83). Input that fits the pipe
+  buffer may be accepted even if the tool never reads it; only larger input is certain to
+  fail. Not covered: a tool that exits but leaves a child holding its stdin open without
+  reading would block `capture` (the Apple tools used here don't).
 
 ## Accessibility
 The heading has the header trait; `Open…` stays in the keyboard order with its reason as
@@ -141,5 +148,7 @@ XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
   check couldn't fail) and the ⌘O shortcut.
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
 per ID, unmapped and unknown results are errors, passes downgraded, entitlement check incl. extra
-`get-task-allow` and testing exceptions, hardened runtime flag parsing);
+`get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
+`/bin/sh` tool that writes 300 000 bytes before reading 300 000 bytes of input finishes
+within 30 s, unread input is an error, a failed exit wins over it);
 `xtask/src/json.rs` (values, escapes and surrogates, 27 malformed inputs, depth bound).

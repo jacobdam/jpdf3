@@ -171,15 +171,16 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot run {program}: {e}"))?;
-    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        // The input (an entitlements plist, at most MAX_TOOL_OUTPUT) is read whole by plutil
-        // before it writes; the pipe is closed when `pipe` drops.
-        if let Err(e) = pipe.write_all(input) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{program}: write stdin: {e}"));
+    // The input goes in on its own thread while the pipes are read below: a tool that
+    // writes a pipe's worth of output before it reads all its input would otherwise block
+    // on its stdout while we block on its stdin. The pipe closes when the thread ends.
+    let writer = match (stdin, child.stdin.take()) {
+        (Some(input), Some(mut pipe)) => {
+            let input = input.to_vec();
+            Some(std::thread::spawn(move || pipe.write_all(&input)))
         }
-    }
+        _ => None,
+    };
     // Read at most MAX_TOOL_OUTPUT + 1 bytes from each pipe (stderr on a thread so neither
     // pipe can fill up and block the tool), so a runaway tool never fills memory.
     let limit = u64::try_from(MAX_TOOL_OUTPUT)
@@ -218,6 +219,14 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
         ));
     }
     let status = child.wait().map_err(|e| format!("{program}: {e}"))?;
+    // The tool has exited, so its stdin is closed (unless it left a child holding it) and a
+    // blocked write has failed. A write error means the tool didn't get all its input; a
+    // failed exit is reported first, because its stderr says more.
+    let written = match writer.map(std::thread::JoinHandle::join) {
+        None | Some(Ok(Ok(()))) => Ok(()),
+        Some(Ok(Err(e))) => Err(format!("{program}: write stdin: {e}")),
+        Some(Err(_)) => Err(format!("{program}: write stdin: writer thread panicked")),
+    };
     let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| format!("{program}: not UTF-8"));
     let (stdout, stderr) = (text(stdout)?, text(stderr)?);
     if !status.success() {
@@ -228,6 +237,7 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
             stderr.trim()
         ));
     }
+    written?;
     Ok((stdout, stderr))
 }
 
@@ -403,6 +413,49 @@ fn check_release(repo: &Path, derived: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs `capture` on a thread with a deadline, so a pipe deadlock fails the test.
+    fn capture_within(
+        args: &'static [&'static str],
+        input: Vec<u8>,
+    ) -> Result<(String, String), String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(capture("/bin/sh", args, Some(&input)));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(30))
+            .expect("capture deadlocked")
+    }
+
+    #[test]
+    fn capture_feeds_stdin_while_reading_output() {
+        // specs/ui-macos/app-skeleton.md Security (#83 item 6).
+        // 300 000 bytes each way is well over a pipe buffer (64 KiB on macOS and Linux). The
+        // tool writes all its output before it reads any input: writing stdin first, then
+        // reading, deadlocks here.
+        let script: &'static [&'static str] = &[
+            "-c",
+            "head -c 300000 /dev/zero | tr '\\0' a; wc -c | tr -d ' '",
+        ];
+        let (out, _) = capture_within(script, vec![b'b'; 300_000]).unwrap();
+        assert_eq!(out.len(), 300_000 + "300000\n".len());
+        assert!(
+            out.ends_with("a300000\n"),
+            "{:?}",
+            out.get(out.len() - 20..)
+        );
+    }
+
+    #[test]
+    fn capture_reports_unread_input_and_failures() {
+        // specs/ui-macos/app-skeleton.md Security (#83 item 6).
+        // A tool that exits 0 without reading 300 000 bytes of input didn't get its input.
+        let e = capture_within(&["-c", "exit 0"], vec![b'b'; 300_000]).unwrap_err();
+        assert!(e.starts_with("/bin/sh: write stdin: "), "{e}");
+        // A failing tool is reported by its exit, not by the unread input.
+        let e = capture_within(&["-c", "echo no >&2; exit 4"], vec![b'b'; 300_000]).unwrap_err();
+        assert!(e.contains("failed (") && e.ends_with(": no"), "{e}");
+    }
 
     #[test]
     fn maps_test_names() {

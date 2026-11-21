@@ -1,10 +1,10 @@
 //! Engines, operations and timed runs of external programs (spec items 4–7).
 
 use std::ffi::OsString;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::process::{ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -191,8 +191,11 @@ pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Dura
 /// stderr (0 = stderr to the null device). `None` when the program could not be started at
 /// all, so callers can tell "absent" from "exited with an error".
 ///
-/// The child runs in its own process group, and a timeout kills the whole group, so a
-/// wrapper script's children can't outlive it and skew later runs. Captured stderr goes
+/// The child runs in its own process group. When it exits, and at a timeout, the whole
+/// group is killed, so a wrapper script's children can't outlive it and skew later runs.
+/// While it runs, the watchdog holds its group id, so a bench killed by a signal doesn't
+/// leave it running either (spec item 7). The watchdog holds one group, so runs must not
+/// overlap (the bench runs them one at a time). Captured stderr goes
 /// through a pipe read on a helper thread that stops reading at the cap (later writes get
 /// EPIPE), so a flooding program costs neither memory nor disk.
 pub fn probe(
@@ -217,6 +220,9 @@ pub fn probe(
     }
     let start = Instant::now();
     let mut child = cmd.spawn().ok()?;
+    // The group id is the child's pid (`process_group(0)`).
+    let group = child.id();
+    watch(Some(group));
     let (tx, rx) = mpsc::channel();
     if let Some(pipe) = child.stderr.take() {
         // A thread that can't be created means nothing is captured (the pipe is dropped,
@@ -232,7 +238,19 @@ pub fn probe(
     }
     let (status, took) = loop {
         match child.try_wait() {
-            Ok(Some(st)) => break (classify_exit(st), start.elapsed()),
+            Ok(Some(st)) => {
+                let took = start.elapsed();
+                // The leader is already reaped here (std has no wait-without-reap), so
+                // the watchdog lets go of the group id first: a bench killed from now on
+                // must not make it signal an id that may be reused.
+                watch(None);
+                // Background children the engine left behind die with their group. The
+                // id stays reserved only while such a child is alive; if none is, the
+                // kill finds no group (ESRCH), unless the id was reused within the few
+                // milliseconds the `/bin/sh` kill takes to start.
+                kill_group(group);
+                break (classify_exit(st), took);
+            }
             Ok(None) if start.elapsed() >= limit => {
                 let took = start.elapsed();
                 kill_tree(&mut child);
@@ -250,24 +268,97 @@ pub fn probe(
     Some((status, took, captured))
 }
 
-/// Kills the child's process group (unix) and the child itself, then reaps the child.
-/// Errors mean the processes are already gone.
+/// Kills the child's process group (unix) and the child itself, unregisters the group
+/// from the watchdog, then reaps the child. The unreaped leader keeps the group id reserved
+/// until both the group kill and the unregistering are done, so the watchdog never holds a
+/// free id. Errors mean the processes are already gone.
 fn kill_tree(child: &mut std::process::Child) {
+    kill_group(child.id());
+    let _ = child.kill();
+    watch(None);
+    #[cfg(test)]
+    tests::record(tests::Event::Reap);
+    let _ = child.wait();
+}
+
+/// Sends SIGKILL to every process in group `group` (unix). The shell builtin `kill`
+/// signals the whole group and exists even where no `kill` binary is installed; std has no
+/// safe group-kill API. An error means the group is already gone.
+fn kill_group(group: u32) {
+    #[cfg(test)]
+    tests::record(tests::Event::KillGroup(group));
     #[cfg(unix)]
     {
-        // The group id is the child's pid (`process_group(0)`). The shell builtin `kill`
-        // signals every process in the group and exists even where no `kill` binary is
-        // installed. std has no safe group-kill API.
         let _ = Command::new("/bin/sh")
             .args(["-c", "kill -s KILL -- \"-$1\"", "sh"])
-            .arg(child.id().to_string())
+            .arg(group.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    #[cfg(not(unix))]
+    let _ = group;
+}
+
+/// The watchdog's script (spec item 7). It reads one line per event from the bench: a
+/// process-group id when an engine starts, `-` when that engine's group is gone. At end of
+/// input, which comes when the bench exits for any reason (a signal, SIGKILL, a panic), it
+/// kills the last group still registered. It runs in its own process group, so a Ctrl-C
+/// that stops the bench (SIGINT to the terminal's foreground group) doesn't reach it.
+/// Only `2`..`9999999` without leading zeros kill (Linux `pid_max` is at most 4194304,
+/// macOS pids stay below 100000): `kill -- -0` is the watchdog's own group, and `-1`
+/// (also written `-01`) is every process of the user; neither can be an engine's group.
+const WATCHDOG_SCRIPT: &str = "g=-; while IFS= read -r l; do g=$l; done; \
+case $g in ''|*[!0-9]*|0*|1) ;; *) [ ${#g} -le 7 ] && kill -s KILL -- \"-$g\" ;; esac";
+
+/// The write end of the watchdog's input; `None` when it could not be started.
+static WATCHDOG: OnceLock<Option<Mutex<ChildStdin>>> = OnceLock::new();
+
+/// Starts the watchdog once per process. Err when it can't be started; the bench then
+/// refuses to run (an I/O error), because a stuck engine could outlive it.
+pub fn start_watchdog() -> Result<(), String> {
+    match watchdog() {
+        Some(_) => Ok(()),
+        None => Err("cannot start the engine watchdog (/bin/sh)".to_string()),
+    }
+}
+
+fn watchdog() -> Option<&'static Mutex<ChildStdin>> {
+    WATCHDOG
+        .get_or_init(|| {
+            let mut cmd = Command::new("/bin/sh");
+            cmd.args(["-c", WATCHDOG_SCRIPT, "jpdf-bench-watchdog"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            // The child handle is dropped without waiting: the watchdog outlives the
+            // bench by design and exits at end of input. Our end of the pipe is
+            // close-on-exec, so engines never hold it open.
+            let mut child = cmd.spawn().ok()?;
+            child.stdin.take().map(Mutex::new)
+        })
+        .as_ref()
+}
+
+/// Tells the watchdog which group to kill if the bench dies now (`None`: no group). A
+/// failed write (the watchdog is gone) leaves the run unprotected but still correct.
+/// Only [`start_watchdog`] starts it: a bench that forgot to call it fails its tests
+/// instead of starting one lazily (or running unprotected if it can't start).
+fn watch(group: Option<u32>) {
+    #[cfg(test)]
+    tests::record(tests::Event::Watch(group));
+    if let Some(Some(w)) = WATCHDOG.get() {
+        let line = group.map_or_else(|| "-\n".to_string(), |g| format!("{g}\n"));
+        // A poisoned lock only means another thread panicked mid-write; the pipe is fine.
+        let mut pipe = w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = pipe.write_all(line.as_bytes()).and_then(|()| pipe.flush());
+    }
 }
 
 /// One measurement: its status and, only when every run was `ok`, the median time in µs.
@@ -317,6 +408,164 @@ pub fn measure_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    /// What `probe` told the watchdog, and when it reaped a killed child (this thread only).
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub(super) enum Event {
+        Watch(Option<u32>),
+        KillGroup(u32),
+        Reap,
+    }
+
+    thread_local! {
+        static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(e: Event) {
+        EVENTS.with(|v| v.borrow_mut().push(e));
+    }
+
+    fn take_events() -> Vec<Event> {
+        EVENTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_watchdog_lets_go_of_every_group() {
+        // spec item 7: each run registers its group and unregisters it, so the watchdog
+        // never holds an id after its run; after a timeout, before the reap (the zombie
+        // leader still reserves the id). Normal exit, then timeout.
+        let sh = Path::new("/bin/sh");
+        let _ = take_events();
+        let (status, _) = run_once(sh, &["-c".into(), "exit 0".into()], Duration::from_secs(20));
+        assert_eq!(status, Status::Ok);
+        let ev = take_events();
+        assert!(
+            matches!(
+                ev.as_slice(),
+                [Event::Watch(Some(g)), Event::Watch(None), Event::KillGroup(k)] if *g > 1 && k == g
+            ),
+            "{ev:?}"
+        );
+        let (status, _) = run_once(
+            sh,
+            &["-c".into(), "exec sleep 10".into()],
+            Duration::from_millis(100),
+        );
+        assert_eq!(status, Status::Timeout);
+        let ev = take_events();
+        assert!(
+            matches!(
+                ev.as_slice(),
+                [
+                    Event::Watch(Some(g)),
+                    Event::KillGroup(k),
+                    Event::Watch(None),
+                    Event::Reap
+                ] if k == g
+            ),
+            "{ev:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watchdog_kills_only_plain_group_ids() {
+        // spec item 7. `kill` is replaced by `echo` in the script under test, so no signal
+        // is ever sent here, whatever the guard does with `1` or `01`.
+        assert_eq!(WATCHDOG_SCRIPT.matches("kill -s KILL").count(), 1);
+        let script = WATCHDOG_SCRIPT.replace("kill -s KILL", "echo");
+        let run = |input: &str| {
+            let mut dog = Command::new("/bin/sh")
+                .args(["-c", &script, "watchdog"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut pipe = dog.stdin.take().unwrap();
+            pipe.write_all(input.as_bytes()).unwrap();
+            drop(pipe);
+            let out = dog.wait_with_output().unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert_eq!(run("12345\n"), "-- -12345\n");
+        assert_eq!(run("2\n"), "-- -2\n");
+        assert_eq!(run("9999999\n"), "-- -9999999\n");
+        for spare in [
+            "",
+            "-\n",
+            "0\n",
+            "1\n",
+            "00\n",
+            "01\n",
+            "012345\n",
+            "10000000\n",
+            "4294967297\n",
+            "12x\n",
+            "-12\n",
+            " 12\n",
+            "12345\n-\n",
+        ] {
+            assert_eq!(run(spare), "", "{spare:?}");
+        }
+    }
+
+    /// Runs the watchdog script on `input` (then end of input) against two `sleep`s, each in
+    /// its own group (`{g}` and `{h}` in `input`); returns whether each survived.
+    #[cfg(unix)]
+    fn sleepers_survive(input: &str) -> (bool, bool) {
+        use std::os::unix::process::CommandExt;
+        let sleeper = || {
+            Command::new("sleep")
+                .arg("30")
+                .process_group(0)
+                .spawn()
+                .unwrap()
+        };
+        let (mut g, mut h) = (sleeper(), sleeper());
+        let mut dog = Command::new("/bin/sh")
+            .args(["-c", WATCHDOG_SCRIPT, "watchdog"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let text = input
+            .replace("{g}", &g.id().to_string())
+            .replace("{h}", &h.id().to_string());
+        let mut pipe = dog.stdin.take().unwrap();
+        pipe.write_all(text.as_bytes()).unwrap();
+        drop(pipe);
+        assert!(dog.wait().unwrap().success());
+        // A killed sleeper is reaped by us, so try_wait sees it exit.
+        let start = Instant::now();
+        let mut dead = (false, false);
+        while start.elapsed() < Duration::from_secs(2) && !(dead.0 && dead.1) {
+            dead.0 = dead.0 || g.try_wait().unwrap().is_some();
+            dead.1 = dead.1 || h.try_wait().unwrap().is_some();
+            thread::sleep(Duration::from_millis(20));
+        }
+        for c in [&mut g, &mut h] {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        (!dead.0, !dead.1)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watchdog_kills_only_the_group_still_registered() {
+        // spec item 7: end of input kills the last registered group, `-` unregisters it,
+        // and a later registration replaces an earlier one. Only ids of our own sleepers
+        // are ever written: a broken script must not get a chance at `kill -- -1`.
+        assert_eq!(sleepers_survive("{g}\n"), (false, true));
+        assert_eq!(sleepers_survive("{g}\n-\n"), (true, true));
+        assert_eq!(sleepers_survive(""), (true, true));
+        assert_eq!(sleepers_survive("{h}\n-\n{g}\n"), (false, true));
+        assert_eq!(sleepers_survive("{h}\n{g}\n"), (false, true));
+        // Anything but digits kills nothing (not even `kill -- -` forms).
+        assert_eq!(sleepers_survive("{g}\n-{h}\n"), (true, true));
+        assert_eq!(sleepers_survive("{g}\n{g}x\n"), (true, true));
+    }
 
     #[test]
     fn exit_codes() {

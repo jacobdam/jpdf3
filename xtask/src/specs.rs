@@ -156,6 +156,9 @@ pub fn check(root: &Path) -> Vec<Problem> {
     }
 
     out.sort();
+    // Identical lines are merged, so a file read by name that the walk also flags (a FIFO
+    // `_TEMPLATE.md`) is reported once; a repeated identical problem adds nothing either.
+    out.dedup();
     out
 }
 
@@ -233,6 +236,12 @@ fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect();
             files.push(parts.join("/"));
+        } else if !ft.is_file() && entry.file_name().to_string_lossy().ends_with(".md") {
+            // A FIFO, socket or device: the judge's glob matches it and would block or fail.
+            out.push(problem(
+                &rel_display(root, &path),
+                "cannot read: not a regular file",
+            ));
         }
     }
 }
@@ -245,15 +254,54 @@ fn rel_display(root: &Path, p: &Path) -> String {
 }
 
 fn read_text(path: &Path) -> Result<String, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("cannot read: {e}"))?;
+    // Only a regular file is opened: a symlink isn't followed (like the walk), and a FIFO or
+    // device would block the open or never end. The open file is checked again (fstat), and
+    // the read is capped, so a file grown after the check can't flood us. Not covered: a
+    // swap to a FIFO between the lstat and the open (the open would block); these are
+    // repository files. Closing it needs `O_NONBLOCK` through `custom_flags`, with
+    // per-target flag values; not done. Likewise a swap to a symlink in that window is
+    // followed (the fstat then sees whatever it points to).
+    let link = fs::symlink_metadata(path).map_err(|e| format!("cannot read: {e}"))?;
+    if !link.is_file() {
+        return Err(not_regular(&link));
+    }
+    let file = fs::File::open(path).map_err(|e| format!("cannot read: {e}"))?;
+    let meta = file.metadata().map_err(|e| format!("cannot read: {e}"))?;
+    if !meta.is_file() {
+        return Err(not_regular(&meta));
+    }
     if meta.len() > MAX_FILE_BYTES {
         return Err(format!(
             "file is {} bytes, above the {MAX_FILE_BYTES}-byte limit",
             meta.len()
         ));
     }
-    let bytes = fs::read(path).map_err(|e| format!("cannot read: {e}"))?;
+    let bytes = read_bounded(file, MAX_FILE_BYTES)?;
     String::from_utf8(bytes).map_err(|_| "not valid UTF-8".to_owned())
+}
+
+fn not_regular(meta: &fs::Metadata) -> String {
+    let kind = if meta.file_type().is_symlink() {
+        "a symlink (not followed)"
+    } else {
+        "not a regular file"
+    };
+    format!("cannot read: {kind}")
+}
+
+/// Reads at most `limit` bytes; more is an error (the file grew after its size was checked).
+fn read_bounded(r: impl std::io::Read, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    r.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read: {e}"))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Err(format!(
+            "file grew above the {limit}-byte limit while being read"
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Splits a line outside code fences into visible text, tracking `<!-- -->` comments across
@@ -800,6 +848,18 @@ pub fn check_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_are_capped_at_the_limit() {
+        // An endless reader stands in for a file that grows after its size was checked.
+        assert_eq!(read_bounded(&[b'x'; 8][..], 8).unwrap().len(), 8);
+        assert_eq!(
+            read_bounded(&[b'x'; 9][..], 8).unwrap_err(),
+            "file grew above the 8-byte limit while being read"
+        );
+        assert!(read_bounded(std::io::repeat(b'x'), 1 << 20).is_err());
+        assert_eq!(read_bounded(&b""[..], 0).unwrap().len(), 0);
+    }
 
     fn req() -> Vec<String> {
         CHECKLIST.iter().map(|s| (*s).to_owned()).collect()

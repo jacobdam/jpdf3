@@ -178,3 +178,106 @@ fn filesystem_and_supersede_edge_cases() {
     want.push(&n);
     assert_eq!(err.lines().collect::<Vec<_>>(), want);
 }
+
+#[cfg(unix)]
+#[test]
+fn template_and_trace_must_be_regular_files() {
+    // A FIFO would block the open forever and a symlink could point anywhere: both are
+    // refused before opening (specs/tooling/check-specs.md, Limits). The run has a
+    // deadline, so the old blocking behavior fails instead of hanging the suite.
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("xtask-special-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let specs = root.join("specs");
+    std::fs::create_dir_all(specs.join("area")).unwrap();
+    let good = format!("{}/specs", fixture("good"));
+    std::fs::copy(format!("{good}/area/feat.md"), specs.join("area/feat.md")).unwrap();
+    std::fs::copy(format!("{good}/TRACE.md"), root.join("trace-target.md")).unwrap();
+    std::os::unix::fs::symlink(root.join("trace-target.md"), specs.join("TRACE.md")).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(specs.join("_TEMPLATE.md"))
+        .arg(specs.join("area/hidden.md"))
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo failed");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["check-specs", "--root"])
+        .arg(&root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_dir_all(&root);
+            panic!("check-specs blocked on a FIFO");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let o = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    // Exact list: the FIFO template is reported once (the walk and the by-name read agree),
+    // the symlinked TRACE.md twice (the link itself, and the file that wasn't read).
+    assert_eq!(
+        err.lines().collect::<Vec<_>>(),
+        [
+            "specs/TRACE.md: cannot read: a symlink (not followed)",
+            "specs/TRACE.md: symlink not followed; specs must be regular files",
+            "specs/_TEMPLATE.md: cannot read: not a regular file",
+            "specs/area/hidden.md: cannot read: not a regular file",
+            "check-specs: 4 problem(s)",
+        ],
+        "{err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_linux_installs_with_scripts_off_even_if_the_env_turns_them_on() {
+    // specs/ui-web/app-skeleton.md Behavior 5 step 2 (#83): `npm_config_ignore_scripts=false`
+    // overrides .npmrc, so the install must pass `--ignore-scripts` itself. A stub npm on
+    // PATH records its arguments and fails the install, which ends the web steps there.
+    use std::os::unix::fs::PermissionsExt;
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("xtask-npm-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("apps/web")).unwrap();
+    std::fs::write(root.join("apps/web/package.json"), "{}\n").unwrap();
+    let log = root.join("npm.log");
+    for (name, body) in [
+        ("node", "echo v24.0.0".to_owned()),
+        (
+            "npm",
+            format!(
+                "[ \"$1\" = --version ] && {{ echo 11.0.0; exit 0; }}\necho \"$*\" >> '{}'\nexit 1",
+                log.display()
+            ),
+        ),
+    ] {
+        let p = bin.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["ci", "linux", "--out"])
+        .arg(root.join("out"))
+        .current_dir(&root)
+        .env("PATH", path)
+        .env("npm_config_ignore_scripts", "false")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let logged = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert_eq!(logged, "ci --ignore-scripts\n", "{err}");
+    assert!(err.contains("xtask: web: step `install` failed"), "{err}");
+}
