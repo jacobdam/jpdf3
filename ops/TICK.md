@@ -149,7 +149,8 @@ continues).
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
-2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment:
+2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment (split only as the
+   mechanics below say):
    `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
    A second reviewer's report (if one runs) goes right after it, headed `**AI review (second
    reviewer), round K**`, with finding IDs `S<K>.<n>`.
@@ -162,6 +163,7 @@ Each round K runs in this order:
    set to the URL that `gh pr comment` printed for the last triage comment.
 
 Mechanics (the guard wants one simple command with the text inline, no files):
+- One post per Bash command, nothing chained before or after it.
 - Single-quote the body so `$`, backticks and `\` stay literal; write each `'` in the text as
   `'\''` (close, escaped quote, reopen), which keeps it verbatim.
 - Over 60 000 characters → split into comments; each part starts with the tag and the round
@@ -169,15 +171,17 @@ Mechanics (the guard wants one simple command with the text inline, no files):
 - Replace any absolute local path with a repo-relative one (or `<local path>`), and list it with
   the other changes.
 - If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
-  it), and list every such change at the end of the comment. Known triggers:
+  it), and list every such change at the end of the comment. Triggers seen so far, for example:
   - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
-    `sed -i`, `perl -i`): write it `un-safe`;
+    `sed -i`, `perl -i`): write it `un-safe` (until owner-todo #130 is applied);
+  - the terminal-multiplexer name in any body that contains a `'` (such a body never counts as
+    inert text) (until owner-todo #130 is applied);
   - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
-  - force-push, push-to-main and `-R <other repo>` text;
+  - git push text with force or delete flags, a `+` word, or main; `-R <other repo>`;
+  - gh api writes to issue or comment endpoints, gh repo management, an admin merge, gh auth
+    commands;
   - a body line that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
-    `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path;
-  - the terminal-multiplexer name in any body that contains a `'`, because such a body never
-    counts as inert text.
+    `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
 
   Proposal: `ops/proposals/guard-inert-post-text.md`.
 
@@ -221,8 +225,9 @@ leave the PR blocked.
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
-  the last audit. Findings → issues. Post each report verbatim on the audit PR (draft it early)
-  with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
+  the last audit. Findings → issues. Tell each reviewer what §4 tells its reviewer (public,
+  repo-relative paths, one line per finding), with IDs `AS.<n>` (security) or `AC.<n>` (code).
+  Post each report verbatim on the audit PR (draft it early) with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
   (code)**` (no round number, so §4's K is unaffected). Then post `**Audit findings → issues**`,
   mapping each finding to its issue.
 - **Test strength:** `cargo mutants` on changed crates; weak spots → issues.

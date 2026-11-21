@@ -37,12 +37,14 @@
          if not re.search(r'[$`\\"]', t):
              forms.append('"%s"' % t)
          for q in forms:
-@@ -305,6 +307,22 @@
+@@ -303,6 +305,22 @@
+                 cmd = cmd.replace(q, "''", 1)
+                 break
      return cmd
- 
- 
++
++
 +_SINGLE_GH_POST = re.compile(
-+    r" *gh (issue|pr) (comment|create|edit)( +([A-Za-z0-9_./:=@,+-]+|''|--[a-z-]+=''))* *")
++    r" *gh (issue|pr) (comment|create|edit)( +(?!=)([A-Za-z0-9_./:=@,+-]+|''|--[a-z-]+=''))* *")
 +
 +
 +def inert_view(cmd, texts):
@@ -55,11 +57,9 @@
 +    if _SINGLE_GH_POST.fullmatch(stripped):
 +        return " ".join(stripped.split())
 +    return " ".join(cmd.split())
-+
-+
+ 
+ 
  def changed_files(cwd):
-     """Staged, unstaged and untracked paths (repo-relative) in the worktree at cwd."""
-     try:
 @@ -452,6 +470,21 @@
          ("Bash", {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}, True),
          ("Bash", {"command": "gh issue comment 5 --body 'done'"}, True),
@@ -82,7 +82,7 @@
          ("Bash", {"command": "gh issue comment 5 --body-file /tmp/b.md"}, True),
          ("Bash", {"command": "gh issue create -t x -b \"%s\nline2; with semicolon\"" % TAG}, False),
          ("Bash", {"command": "gh issue create -t x -l human"}, True),
-@@ -475,6 +508,19 @@
+@@ -475,6 +508,34 @@
          if blocked != should:
              failures += 1
              print("FAIL: %s %s -> blocked=%s, expected %s" % (tool, json.dumps(ti)[:100], blocked, should))
@@ -93,6 +93,21 @@
 +        ("gh pr comment 5 a'b' --body 'x y'", ["x y"], "gh pr comment 5 a'b' --body 'x y'"),
 +        ("gh pr comment 5 #a --body 'x y'", ["x y"], "gh pr comment 5 #a --body 'x y'"),
 +    ]
++    # every character outside the word class, a glued placeholder, a widened --flag='', a word
++    # starting with = (zsh EQUALS expansion), another verb, and text before gh: all keep the full view
++    for bad in [";", "|", "&", "`", "$", ">", "<", "(", ")", "\\", "~", "*", "?", "{", "}", "[", "!",
++                "\t", "\n", "\r", '"', "%", "^"]:
++        views.append(("gh pr comment 5 a%sb --body 'x y'" % bad, ["x y"], None))
++    views += [
++        ("gh pr comment 5 a'x y'", ["x y"], None),
++        ("gh pr edit 5 --x=a\n--y='x y'", ["x y"], None),
++        ("gh pr edit 5 --x;y='x y'", ["x y"], None),
++        ("gh pr comment 5 =ls --body 'x y'", ["x y"], None),
++        ("gh pr merge 5 --body 'x y'", ["x y"], None),
++        ("echo gh pr comment 5 --body 'x y'", ["x y"], None),
++        ("gh issue create --title 'x y' --body=''", ["x y", ""], "gh issue create --title '' --body=''"),
++    ]
++    views = [(c, t, " ".join(c.split()) if w is None else w) for c, t, w in views]
 +    for cmd, texts, want in views:
 +        cases.append(("inert_view", {"command": cmd}, want))
 +        got = inert_view(cmd, texts)

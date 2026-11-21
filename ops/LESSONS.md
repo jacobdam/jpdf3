@@ -42,6 +42,14 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, even in a heredoc writing markdown →
   write such files with Write/Edit. Never `cat > file` without a heredoc (it waits on stdin until the 2 min
   timeout) ([journal](journal/2026-11-21.md), PR #104).
+- Posting review text with `gh pr comment` (TICK §4) → the guard scans the whole command, so the terminal-multiplexer
+  name in a commit message or a python one-liner, a push command naming main, or `gh repo`/admin-merge text in a body
+  all block. Use Write/Edit for scripts, reword the token, and disclose it. A body with an apostrophe (`'\''`) is never
+  treated as inert ([journal](journal/2026-11-21.md), PR #129).
+- Proposing a guard/hook change that "skips quoted text" → shlex is not the shell: `#` comments, zsh `=word`, newlines
+  inside quoted text and duplicated copies elsewhere in the command all differ. Allowlist the remainder word by word,
+  pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH).
+  It took 4 review rounds ([journal](journal/2026-11-21.md), PR #129).
 
 - Writing a guard/hook rule over untrusted command text (a hook timeout or exception fails open) → use a
   one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that

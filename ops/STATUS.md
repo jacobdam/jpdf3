@@ -9,8 +9,9 @@ Phase: bootstrap (pilot)
 
 ## Last session
 - **#124** (rule a): TICK §4 posts each reviewer round verbatim as a PR comment, then a triage comment, and links
-  the ai-review status to it; §6 posts audit reviews too. Review found an existing guard hole (owner-todo #130);
-  the fix is in ops/proposals/guard-inert-post-text.md (scratch copy: self-test 105/105).
+  the ai-review status to it; §6 posts audit reviews too. Guard proposal ops/proposals/guard-inert-post-text.md
+  (owner-todo #130) lets review text pass verbatim without new bypasses (scratch copy: self-test 135/135, 27/27
+  mutants caught). 4 review rounds.
 
 ## Previous session
 - **#125** (rule a, PR #127 merged): driver proposal (owner-todo #128) and TICK §0 "Leave nothing running".
@@ -37,6 +38,7 @@ Phase: bootstrap (pilot)
   checked locally only.
 - Open proposal: ops/proposals/codex-second-reviewer.md (merged; the owner applies it). Suggested owner follow-up: a command
   size cap in guard.py and an explicit hook `timeout`; the current guard has quadratic inputs and a timed-out hook allows.
-- Open proposal: ops/proposals/guard-inert-post-text.md, owner-todo #130 (closes a guard bypass; until applied, review
-  comments reword guard-trigger words).
+- Open proposal: ops/proposals/guard-inert-post-text.md, owner-todo #130. Until it is applied, review comments reword
+  guard-trigger words. Also in #130: the guard cmux and keyword rules are text matches, which any agent can dodge
+  (`c''mux`). A real barrier (cmux socket auth, a permission deny rule) is an owner decision.
 - 7 merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).
