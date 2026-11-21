@@ -143,9 +143,13 @@ export function bareRoot(spec) {
 // Whitespace and comments allowed between the keyword and the specifier. The comment body
 // can't run past `*/` (a lazy `[\s\S]*?` backtracks exponentially over many comments).
 const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*\n)*`;
-// A quoted string, each quote kind closed by its own kind (`"a'b"` is one string).
-const QSTR = String.raw`(?:"([^"\n]*)"|'([^'\n]*)'|` + "`([^`]*)`)";
-const UNQUOTED_URL = String.raw`([^)"'\`]*)`;
+// A quoted string, each quote kind closed by its own kind (`"a'b"` is one string). Newlines
+// are allowed inside, so a line continuation (`"./a\<newline>/../x"`) is still captured
+// (and then refused for its `\`).
+const QSTR = String.raw`(?:"([^"]*)"|'([^']*)'|` + "`([^`]*)`)";
+// url(…): a quoted string, or an unquoted run trimmed in code. One alternative each, so
+// whitespace isn't shared between quantifiers (no polynomial backtracking).
+const URL_ARG = String.raw`(?:\s*${QSTR}\s*|([^)"'\`]*))\)`;
 // Static `import … from "x"`, `export … from "x"`, side-effect `import "x"`, dynamic
 // `import("x")` and ``import(`x`)`` (comments allowed in the gaps), CSS `@import "x"` and
 // `@import url(x)`: these load code, so they are "import" specifiers. CSS `url(x)`,
@@ -155,9 +159,14 @@ const UNQUOTED_URL = String.raw`([^)"'\`]*)`;
 // attribute names are); in JS it is not, so `new URL(x)` isn't read as CSS `url(x)`.
 const sourceRes = (flags) => [
   ["import", new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${QSTR}`, flags)],
-  ["import", new RegExp(String.raw`@import${GAP}url\(\s*(?:${QSTR}|${UNQUOTED_URL})\s*\)`, flags)],
-  ["asset", new RegExp(String.raw`\burl\(\s*(?:${QSTR}|${UNQUOTED_URL})\s*\)`, flags)],
+  ["import", new RegExp(String.raw`@import${GAP}url\(${URL_ARG}`, flags)],
+  ["asset", new RegExp(String.raw`\burl\(${URL_ARG}`, flags)],
 ];
+// Vite turns `import("./" + x + ".ts")` and `import("./".concat(x))` into globs over the
+// joined literals, which the scan would check only the first of. So every JS `import(` must
+// hold exactly one string literal, followed by `)` or `,` (import attributes).
+const DYNAMIC_IMPORT_RE = new RegExp(String.raw`\bimport${GAP}\(`, "g");
+const SINGLE_LITERAL_RE = new RegExp(String.raw`^${GAP}${QSTR}${GAP}[),]`);
 const JS_RES = sourceRes("g");
 const MARKUP_RES = sourceRes("gi");
 // HTML attributes Vite rewrites: `src`, `href`, `srcset` (comma-separated `url size`),
@@ -185,7 +194,7 @@ const JSX_PRAGMA_RE = /@jsx/i;
 const SPEC_CHARS_RE = /^[A-Za-z0-9@._/~?=#+-]+$/;
 // Scheme URLs left to the CSP and the E2E no-third-party-request test, in asset positions
 // only. Vite bundles `data:` and `file:` modules, so import positions refuse every scheme.
-const ASSET_SCHEMES_RE = /^(?:data|https?):/i;
+const ASSET_SCHEMES_RE = /^(?:data|https?|mailto):/i;
 
 /**
  * One problem string for a specifier in shipped source `file` (a path relative to the app
@@ -202,6 +211,9 @@ const ASSET_SCHEMES_RE = /^(?:data|https?):/i;
  * - a bare specifier must name a package in `deps` and have no `.` or `..` segment.
  */
 export function importProblem(file, spec, deps, kind = "import") {
+  if (kind === "dynamic") {
+    return `${file}: has an import(…) that isn't one string literal (Vite globs + and .concat)`;
+  }
   const asset = kind === "asset";
   if (PACKAGE_PATH_RE.test(spec)) {
     return `${file}: imports ${spec}, a path into node_modules (use the package name)`;
@@ -235,16 +247,38 @@ export function importProblem(file, spec, deps, kind = "import") {
 
 const captured = (m, from = 1) => m.slice(from).find((g) => g !== undefined) ?? "";
 
+/**
+ * The URLs in a `srcset` value, as the HTML parser reads them: a URL runs to whitespace
+ * (trailing commas stripped), then a descriptor runs to the next comma. So
+ * `data:image/png;base64,AA== 1x` is one URL and `a.png 1x,b.png 2x` two.
+ */
+export function srcsetUrls(value) {
+  const urls = [];
+  let i = 0;
+  while (i < value.length) {
+    while (i < value.length && /[\s,]/.test(value.charAt(i))) i += 1;
+    if (i >= value.length) break;
+    let j = i;
+    while (j < value.length && !/\s/.test(value.charAt(j))) j += 1;
+    let url = value.slice(i, j);
+    if (/,$/.test(url)) {
+      url = url.replace(/,+$/, "");
+    } else {
+      while (j < value.length && value.charAt(j) !== ",") j += 1;
+    }
+    urls.push(url);
+    i = j;
+  }
+  return urls;
+}
+
 /** The asset specifiers in one HTML attribute. */
 function attrSpecs(name, value) {
   const attr = name.toLowerCase();
-  if (attr === "srcset") {
-    return value
-      .split(",")
-      .map((c) => c.trim().split(/\s+/)[0] ?? "")
-      .filter((c) => c !== "");
-  }
-  if (attr === "content") return /^[./]/.test(value) ? [value] : [];
+  if (attr === "srcset") return srcsetUrls(value);
+  // `content` is also plain text (`width=device-width, initial-scale=1`, `light dark`);
+  // check it when it looks like a path (`/` or a leading `.`, no whitespace).
+  if (attr === "content") return /^\S*$/.test(value) && /\/|^\./.test(value) ? [value] : [];
   return [value];
 }
 
@@ -263,6 +297,12 @@ export function checkImports(sources, rootManifest, problems) {
         const spec = captured(m);
         // An unquoted CSS url() may carry surrounding whitespace; inner whitespace stays.
         specs.push([m[4] !== undefined ? spec.trim() : spec, kind]);
+      }
+    }
+    if (!css) {
+      for (const m of text.matchAll(DYNAMIC_IMPORT_RE)) {
+        const rest = text.slice((m.index ?? 0) + m[0].length);
+        if (!SINGLE_LITERAL_RE.test(rest)) specs.push(["", "dynamic"]);
       }
     }
     if (html) {

@@ -13,6 +13,7 @@ import {
   registryTarball,
   resolve,
   sourceExtensionOk,
+  srcsetUrls,
 } from "./licenses-lib.mjs";
 
 // A small tree: app depends on `ui`, which depends on `util` and has an optional peer `peer`.
@@ -615,6 +616,19 @@ test("specifiers that decode or resolve past the check are refused (review of #1
     ["index.html", '<img srcset="/src/a.png 1x, /e2e/x.png 2x">'],
     ["index.html", '<video poster="/e2e/x.png"></video>'],
     ["index.html", '<meta property="og:image" content="/e2e/x.png">'],
+    ["index.html", '<meta property="og:image" content="e2e/x.png">'],
+    ["index.html", '<img srcset="/src/a.png 1x,/e2e/x.png 2x">'],
+    // Delta review: a line continuation inside the string.
+    ["src/a.ts", 'import "./a\\\n/../../e2e/x.ts";'],
+    // Vite globs `+` and `.concat` dynamic imports over every literal.
+    ["src/a.ts", 'const m = import("./" + "../../e2e/" + x + ".ts");'],
+    [
+      "src/a.ts",
+      String.raw`const m = import("./".concat("../../node\x5fmodules/tool/", x, ".js"));`,
+    ],
+    ["src/a.ts", "const m = import(name);"],
+    ["src/a.ts", "const m = import(`./${x}.ts`);"],
+    ["index.html", '<script type="module">import("./" + x + ".js")</script>'],
   ];
   for (const [file, text] of bad) {
     const p = problems({ sources: [{ file, text }] });
@@ -627,6 +641,11 @@ test("specifiers that decode or resolve past the check are refused (review of #1
     ["index.html", '<img src="https://example.org/x.png" srcset="/src/a.png 1x, /src/b.png 2x">'],
     ["index.html", '<meta name="viewport" content="width=device-width, initial-scale=1" />'],
     ["src/a.ts", 'import x from "./b.ts?raw"; import "ui/x.js"; import y from "@s/z";'],
+    ["src/a.ts", 'const m = await import("./b.ts"); const n = import(/* c */ "ui", { with: {} });'],
+    ["src/a.ts", 'type T = typeof import("./b.ts");'],
+    ["index.html", '<img srcset="data:image/png;base64,AA== 1x, /src/a.png 2x">'],
+    ["index.html", '<a href="mailto:a@example.org">mail</a>'],
+    ["index.html", '<meta name="color-scheme" content="light dark" />'],
   ];
   for (const [file, text] of ok) {
     const r = check({ ...tree({ sources: [{ file, text }] }), rootManifest: deps });
@@ -637,6 +656,23 @@ test("specifiers that decode or resolve past the check are refused (review of #1
       `${file}: ${text}`,
     );
   }
+});
+
+test("srcset URLs are split the way the HTML parser splits them", () => {
+  assert.deepEqual(srcsetUrls("a.png 1x, b.png 2x"), ["a.png", "b.png"]);
+  assert.deepEqual(srcsetUrls("a.png 1x,b.png 2x"), ["a.png", "b.png"]);
+  assert.deepEqual(srcsetUrls("a.png, b.png"), ["a.png", "b.png"]);
+  assert.deepEqual(srcsetUrls("data:image/png;base64,AA== 1x"), ["data:image/png;base64,AA=="]);
+  assert.deepEqual(srcsetUrls(" ,, a.png  100w ,"), ["a.png"]);
+  assert.deepEqual(srcsetUrls(""), []);
+});
+
+test("unquoted url() with long whitespace runs stays fast", () => {
+  const start = performance.now();
+  for (const file of ["src/a.css", "src/a.ts"]) {
+    problems({ sources: [{ file, text: `url(${" ".repeat(20000)}x` }] });
+  }
+  assert.ok(performance.now() - start < 2000, "url() scan took too long");
 });
 
 test("comment gaps don't backtrack exponentially", () => {
@@ -917,6 +953,20 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
       assert.equal(r.status, 1, text);
       assert.match(r.stderr, /csp\.ts: imports something/, text);
     }
+    for (const text of [
+      'process.getBuiltinModule("fs").writeFileSync("src/gen.ts", "x");',
+      'globalThis["proc" + "ess"];',
+      'eval("x");',
+      'new Function("x")();',
+    ]) {
+      write("csp.ts", text);
+      r = run();
+      assert.equal(r.status, 1, text);
+      assert.match(r.stderr, /csp\.ts: uses \w+; it must stay a plain constant/, text);
+    }
+    write("csp.ts", "export const CSP = \"script-src 'self' 'wasm-unsafe-eval'\";");
+    r = run();
+    assert.equal(r.status, 0, r.stderr);
     write("csp.ts", "export default { transform(c) { return c; } };");
     r = run();
     assert.equal(r.status, 1);
@@ -927,11 +977,13 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     for (const text of [
       '{ "compilerOptions": { "jsxImportSource": "tool" } }',
       '{ "extends": "./base.json" }',
+      '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }',
+      '{ "compilerOptions": { "jsx\\u0049mportSource": "tool" } }',
     ]) {
       write("tsconfig.json", text);
       r = run();
       assert.equal(r.status, 1, text);
-      assert.match(r.stderr, /tsconfig\.json: uses (jsxImportSource|extends)/, text);
+      assert.match(r.stderr, /tsconfig\.json: uses (jsxImportSource|extends|references|\\u)/, text);
     }
     rmSync(join(dir, "tsconfig.json"));
     r = run();

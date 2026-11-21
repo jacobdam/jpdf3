@@ -49,15 +49,18 @@ code and has no dependencies.
 3. **Installed.** A lockfile entry that isn't optional, devOptional, peer or extraneous
    must be installed (`run npm ci first`).
 4. **Shipped imports.** These forms are scanned in the shipped sources. Strings are
-   matched with each quote closed by its own kind (`"./'/../x"` is one specifier):
+   matched with each quote closed by its own kind (`"./'/../x"` is one specifier), and may
+   span lines (a line continuation is captured, then refused for its `\`):
    - **import positions** (code): `import … from "x"`, `export … from "x"`, `import "x"`,
      `import("x")` and ``import(`x`)``, with comments allowed between the keyword and the
      specifier; CSS `@import "x"` and `@import url(x)`;
    - **asset positions**: any CSS `url(x)`, every quoted string inside CSS `image-set(…)`
      except `type("…")` MIME types, and in HTML files the `src`, `href`, `poster` and
-     `srcset` (each comma-separated candidate) attributes, plus `content` when its value
-     starts with `.` or `/` (`<meta property="og:image">`; otherwise it is plain text);
-     quoted or unquoted.
+     `srcset` attributes, plus `content` when its value has no whitespace and contains
+     `/` or starts with `.` (`<meta property="og:image">`; otherwise it is plain text such
+     as `light dark`); quoted or unquoted. `srcset` is split the way the HTML parser does
+     it: a URL runs to whitespace (trailing commas stripped), then a descriptor runs to the
+     next comma, so `data:image/png;base64,AA== 1x` is one URL and `a.png 1x,b.png 2x` two.
    - In `.css` and `.html` files the forms match case-insensitively (`URL(x)`, `@IMPORT`,
      `SRC=`), because CSS and HTML are; in JS they match case-sensitively, so `new URL(x)`
      is not read as a CSS `url(x)`. HTML files get the JS and CSS forms too (inline
@@ -68,8 +71,8 @@ code and has no dependencies.
      path into a package bypasses its name.
    - **Scheme URLs.** In import positions every scheme is refused: Vite's build bundles
      `data:text/javascript,…` modules and resolves `file:` URLs. In asset positions only
-     `data:`, `http:` and `https:` are skipped; the CSP and the E2E no-third-party-request
-     test cover them. Any other scheme (`file:`, `javascript:`) is refused.
+     `data:`, `http:`, `https:` and `mailto:` are skipped; the CSP and the E2E
+     no-third-party-request test cover them. Any other scheme (`file:`, `javascript:`) is refused.
    - **`#x`** is a fragment in asset positions (skipped) and a subpath import in import
      positions (refused). A root `package.json` `imports` field is refused too.
    - **Characters.** Only `A–Z a–z 0–9 @ . _ / ~ ? = # + -` are allowed. Anything else
@@ -92,6 +95,10 @@ code and has no dependencies.
      Vite turns `import.meta.glob(…)` and `new URL(…, import.meta.url)` into imports the
      scan can't follow (#112). This also refuses the `new Worker(new URL("./w.ts",
      import.meta.url))` pattern; use a `?worker` import, or land #99 first;
+   - in JS and HTML, any `import(` that doesn't hold exactly one string literal followed
+     by `)` or `,` (import attributes). Vite turns `import("./" + x + ".ts")` and
+     `import("./".concat(…))` into globs over every joined literal, and a computed
+     specifier can't be checked;
    - any `@jsx` pragma (`@jsxImportSource`, `@jsx`, `@jsxFrag`, `@jsxRuntime`): an import
      source makes esbuild inject `import "<source>/jsx-runtime"`.
 5. **Bundle guards.** These change what gets bundled, and the import scan can't follow
@@ -110,10 +117,14 @@ code and has no dependencies.
    - Another `vite.config.*` file, which Vite loads before `.ts`.
    - Plugins imported from another module, which hide their hooks. `./csp` is the one
      allowed module, so `csp.ts` must import nothing (no `import`, `export … from` or
-     `require(`) and carries none of the keys above.
+     `require(`), carries none of the keys above, and names none of `process`,
+     `globalThis`, `global`, `getBuiltinModule`, `eval`, `Function`, `Reflect`, `module`,
+     `exports` (it runs at config load, so it could otherwise write a file into `src/`
+     after the scan). Hyphenated CSP words (`'wasm-unsafe-eval'`) don't count.
    - `tsconfig.json`: esbuild takes `jsxImportSource` from it (or from what it `extends`).
      It must exist (otherwise a parent directory's applies) and must not contain
-     `jsxImportSource` or `extends`.
+     `jsxImportSource`, `extends`, `references` (tsconfck would pick a referenced config
+     for a file) or a `\u` escape (JSON decodes it, so it could spell a key).
    - A PostCSS config, which Vite loads automatically and whose plugins can inject CSS and
      imports: `.postcssrc*`, `postcss.config.*` or `.config/postcssrc*` in the app
      directory **or any parent directory**, or a `postcss` field in a `package.json` there
@@ -130,8 +141,9 @@ code and has no dependencies.
    It can't see, for example: `vite build --config x`; a key built at run time
    (`{ [k]: v }` with `k = "al" + "ias"`); `transformIndexHtml` (allowed, our CSP plugin
    uses it) returning a `<script src>` tag; plugin code that reads a file itself
-   (`fs.readFileSync` into a string); environment-specific config (`environments.*`) and
-   hooks not listed above.
+   (`fs.readFileSync` into a string) or **writes one into `src/` after this scan** (any
+   code in `vite.config.ts` can; `csp.ts` is held to the identifier list above);
+   environment-specific config (`environments.*`) and hooks not listed above.
 6. **Source files.** Every regular file under `src/` must have a lower-case
    `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` extension, and all of them are
    scanned. Any other file is refused (fail closed, #112): Vite parses `./a.mod` or
@@ -198,13 +210,18 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
     `jsxImportSource` or `extends` in `tsconfig.json` and a missing one, PostCSS configs
     in the app directory, its `.config/` and its parent, and `postcss` fields (app and
     parent `package.json`, and an unreadable one). The comment-gap pattern is checked
-    for exponential backtracking with 60 comments.
+    for exponential backtracking with 60 comments, and unquoted `url(` with a 20 000-space
+    run (the earlier pattern took minutes). The delta review added: a line continuation
+    in a string, `+`/`.concat`/variable/template dynamic imports, `srcset` without spaces
+    after commas and with a `data:` URL, `mailto:`, `content` without a leading slash,
+    `csp.ts` identifiers, `references` and `\u` in `tsconfig.json`.
   - Each of these mutations was applied by hand and failed the suite.
   - The integration test runs the real script on a fixture app directory. It covers nested
     `src/` directories and `.cts` files. It refuses a symlinked file, a symlinked directory
     (and the files under it), a source-named directory, the `imports` field, foreign
     imports in `vite.config.ts` and a stray `vite.config.mjs`. It covers installed
-    manifests and every guard key in all four spellings. It also checks for false
+    manifests and every guard key in four spellings (six for the keys added in #112). It
+    also checks for false
     positives (`transformIndexHtml`, `rooted`).
   - One that skips relative paths fails the outside-`src/` cases. One that drops comment
     gaps fails the `import(/* chunk */ "tool")` case. The alias test checks the lockfile
@@ -231,10 +248,9 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
   - `e2e/` isn't scanned for imports: it runs at test time, and `src/` can't import it.
     `vite.config.ts` and `csp.ts` get only the text guards of item 5.
   - The import scan is a regular expression. Over-matching (an import-like string in a
-    comment) only adds a false alarm. Computed specifiers (``import(`${x}`)``) are
-    refused by the character rule. It misses `require` (Vite doesn't bundle it in ESM)
-    and import specifiers built without a string literal (`import(a + b)`, which Vite
-    leaves to run time). Review has to catch the rest in `src/` until #99.
+    comment) only adds a false alarm. Every `import(` that isn't one string literal is
+    refused. It misses `require` (Vite doesn't bundle it in ESM). Review has to catch the
+    rest in `src/` until #99.
 
 ## Accessibility
 Not applicable.
@@ -247,7 +263,7 @@ Node ≥ 22.12 (the `engines` field); uses `node:test`, `fs.readdirSync({ recurs
 About 0.1 s for 186 packages plus about 0.1 s of tests.
 
 ## Tests
-`apps/web/scripts/licenses.test.mjs` (39 tests, `node:test`, one of them an integration
+`apps/web/scripts/licenses.test.mjs` (41 tests, `node:test`, one of them an integration
 test of `check-licenses.mjs` on a fixture directory under the git-ignored
 `node_modules/.cache/`), run by every `npm run
 licenses`, so on every `cargo xtask ci linux` run.

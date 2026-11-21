@@ -145,6 +145,13 @@ if (
 ) {
   problems.push("csp.ts: imports something; it must stay self-contained");
 }
+// It runs at config load, so it could also write a file into src/ after this scan; refuse
+// the ways to reach fs or code generation.
+for (const m of cspText.matchAll(
+  /(?<![\w$-])(process|globalThis|global|getBuiltinModule|eval|Function|Reflect|module|exports)(?![\w$-])/g,
+)) {
+  problems.push(`csp.ts: uses ${m[1]}; it must stay a plain constant`);
+}
 for (const m of cspText.matchAll(guardRe)) {
   problems.push(`csp.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`);
 }
@@ -153,7 +160,9 @@ for (const m of cspText.matchAll(guardRe)) {
 // parent directory's apply.
 if (existsSync(new URL("tsconfig.json", root))) {
   const tsconfig = readFileSync(new URL("tsconfig.json", root), "utf8");
-  for (const key of ["jsxImportSource", "extends"]) {
+  // `references` makes tsconfck pick another config for a file; `\u` escapes would hide
+  // a key from this text match (the file is read as JSON).
+  for (const key of ["jsxImportSource", "extends", "references", "\\u"]) {
     if (tsconfig.includes(key)) problems.push(`tsconfig.json: uses ${key}; not checked`);
   }
 } else {
