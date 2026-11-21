@@ -195,7 +195,7 @@ pub struct RasterLimits {
     pub max_clip_depth: u16,
     /// Deepest layer nesting.
     pub max_layer_depth: u16,
-    /// Most nominal working bytes, `pixels × (4 × (1 + layer depth) + clip depth)`.
+    /// Most nominal working bytes (see [`crate::SceneStats::working_bytes`]).
     pub max_working_bytes: u64,
 }
 

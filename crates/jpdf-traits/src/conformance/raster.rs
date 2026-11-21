@@ -434,33 +434,37 @@ impl Suite<'_> {
             ((30, 8), 0.0),
             ((16, 6), 255.0),
             ((16, 10), 0.0),
+            // Corners a square cap would cover: centre (2.5, 6.5) is 2.12 from (4, 8).
+            ((2, 6), 0.0),
+            ((29, 6), 0.0),
         ] {
             self.expect_alpha(c, "round cap", out.as_ref(), at, alpha, 0.0);
         }
-        // A right-angle corner at (20, 4): the miter tip covers pixel (21, 2); bevel and
-        // round joins don't. Miter limit 1 is below √2, so it bevels.
+        // A right-angle corner at (20, 4) with an 8-wide pen. The miter square reaches
+        // (24, 0), so pixel (23, 0) (centre 4.95 from the vertex, beyond the bevel line
+        // x − y = 20) is covered by the miter only. Pixel (22, 1) (centre 3.54 from the
+        // vertex, x − y = 21) is inside the round join and the miter but outside the bevel.
+        // Miter limit 1 is below √2, so that miter bevels.
         let corner = [
             PathSegment::MoveTo(pt(4.0, 4.0)),
             PathSegment::LineTo(pt(20.0, 4.0)),
             PathSegment::LineTo(pt(20.0, 20.0)),
         ];
-        for (join, limit, tip, what) in [
-            (LineJoin::Miter, 10.0, 255.0, "miter join"),
-            (LineJoin::Miter, 1.0, 0.0, "miter join over its limit"),
-            (LineJoin::Bevel, 10.0, 0.0, "bevel join"),
-            (LineJoin::Round, 10.0, 0.0, "round join"),
+        for (join, limit, tip, arc, what) in [
+            (LineJoin::Miter, 10.0, 255.0, 255.0, "miter join"),
+            (LineJoin::Miter, 1.0, 0.0, 0.0, "miter join over its limit"),
+            (LineJoin::Bevel, 10.0, 0.0, 0.0, "bevel join"),
+            (LineJoin::Round, 10.0, 0.0, 255.0, "round join"),
         ] {
             let style = StrokeStyle {
                 join,
                 miter_limit: limit,
-                ..StrokeStyle::solid(4.0)
+                ..StrokeStyle::solid(8.0)
             };
             let out = self.draw(c, what, &[stroke(&corner, &style)]);
-            self.expect_alpha(c, what, out.as_ref(), (21, 2), tip, 0.0);
+            self.expect_alpha(c, what, out.as_ref(), (23, 0), tip, 0.0);
+            self.expect_alpha(c, what, out.as_ref(), (22, 1), arc, 0.0);
             self.expect_alpha(c, what, out.as_ref(), (19, 3), 255.0, 0.0);
-            if join == LineJoin::Round {
-                self.expect_alpha(c, what, out.as_ref(), (21, 3), 255.0, 0.0);
-            }
         }
         // A closed square joins at its start; the same path left open gets butt caps there.
         let open = [
@@ -517,6 +521,7 @@ impl Suite<'_> {
             (vec![4.0, 4.0], 2.0, 2, "dash [4 4] 2"),
             (vec![4.0], 0.0, 0, "dash [4] 0"),
             (vec![4.0, 4.0], 10.0, 2, "dash [4 4] 10"),
+            (vec![4.0, 4.0], -2.0, 6, "dash [4 4] -2"),
         ] {
             let style = StrokeStyle {
                 dash,
@@ -528,6 +533,54 @@ impl Suite<'_> {
                 (7..9).contains(&y) && (x + offset) % 8 < 4
             });
         }
+        // Dash lengths are in user space: [2 2] at scale 2 has an 8-pixel period.
+        let half = line(0.0, 4.0, 16.0, 4.0);
+        let style = StrokeStyle {
+            dash: vec![2.0, 2.0],
+            ..StrokeStyle::solid(1.0)
+        };
+        let scale = Transform::new(2.0, 0.0, 0.0, 2.0, 0.0, 0.0);
+        let out = self.draw(
+            c,
+            "dash under a transform",
+            &[stroke_with(&half, &style, scale, false)],
+        );
+        self.expect_region(
+            c,
+            "dash under a transform",
+            out.as_ref(),
+            OPAQUE_RED,
+            |x, y| (7..9).contains(&y) && x % 8 < 4,
+        );
+        // Hazards for naive dash loops: each must end quickly with `Ok` or (for 1.6e31
+        // dashes) `LimitExceeded`.
+        let across = line(0.0, 8.0, 32.0, 8.0);
+        for (dash, phase, must_fail, what) in [
+            (vec![4.0, 4.0], 1e30, false, "dash phase 1e30"),
+            (vec![4.0, 4.0], -1e30, false, "dash phase -1e30"),
+            (vec![1e30], 0.0, false, "dash [1e30]"),
+            (vec![1e-30, 1e-30], 0.0, true, "dash [1e-30 1e-30]"),
+            (vec![f32::MIN_POSITIVE], 0.0, true, "dash [smallest normal]"),
+        ] {
+            let style = StrokeStyle {
+                dash,
+                dash_phase: phase,
+                ..StrokeStyle::solid(2.0)
+            };
+            let out = self.render_with(
+                SIZE,
+                SIZE,
+                &[stroke(&across, &style)],
+                &RasterLimits::default(),
+            );
+            let ok = if must_fail {
+                matches!(out, Some(Err(BackendError::LimitExceeded(_))))
+            } else {
+                matches!(out, Some(Ok(_)))
+            };
+            self.report
+                .check(c, ok, || format!("{what}: {}", super::describe(&out)));
+        }
     }
 
     fn clips(&mut self) {
@@ -536,6 +589,23 @@ impl Suite<'_> {
         let a = rect(8.0, 8.0, 16.0, 16.0);
         let b = rect(12.0, 0.0, 32.0, 32.0);
         let in_a = |x: u32, y: u32| (8..16).contains(&x) && (8..16).contains(&y);
+        // The clip's own transform: (0,0)–(4,4) at scale 2, offset 8 is the same square.
+        let small = rect(0.0, 0.0, 4.0, 4.0);
+        let out = self.draw(
+            c,
+            "clip transform",
+            &[
+                DrawCommand::PushClip {
+                    path: &small,
+                    rule: FillRule::NonZero,
+                    transform: Transform::new(2.0, 0.0, 0.0, 2.0, 8.0, 8.0),
+                    anti_alias: false,
+                },
+                fill(&canvas, RED, false),
+                DrawCommand::PopClip,
+            ],
+        );
+        self.expect_region(c, "clip transform", out.as_ref(), OPAQUE_RED, in_a);
         for aa in [true, false] {
             let what = format!("one clip (aa {aa})");
             let out = self.draw(
@@ -926,6 +996,28 @@ impl Suite<'_> {
                     ..StrokeStyle::solid(1.0)
                 },
             ),
+            ("infinite width", StrokeStyle::solid(f32::INFINITY)),
+            (
+                "NaN miter limit",
+                StrokeStyle {
+                    miter_limit: f32::NAN,
+                    ..StrokeStyle::solid(1.0)
+                },
+            ),
+            (
+                "infinite miter limit",
+                StrokeStyle {
+                    miter_limit: f32::INFINITY,
+                    ..StrokeStyle::solid(1.0)
+                },
+            ),
+            (
+                "infinite dash",
+                StrokeStyle {
+                    dash: vec![2.0, f32::INFINITY],
+                    ..StrokeStyle::solid(1.0)
+                },
+            ),
         ];
         let pixels = [0u8; 4 * 4];
         let image = |width, height, data| DrawCommand::Image {
@@ -1043,10 +1135,44 @@ impl Suite<'_> {
                 }],
             ),
             (
+                "negative image opacity".into(),
+                SIZE,
+                SIZE,
+                vec![DrawCommand::Image {
+                    image: RgbaImage {
+                        width: 2,
+                        height: 2,
+                        data: &pixels,
+                    },
+                    transform: Transform::IDENTITY,
+                    interpolate: false,
+                    opacity: -0.5,
+                    blend: BlendMode::Normal,
+                }],
+            ),
+            (
                 "layer opacity above 1".into(),
                 SIZE,
                 SIZE,
                 vec![layer(1.5, BlendMode::Normal), DrawCommand::PopLayer],
+            ),
+            (
+                "NaN layer opacity".into(),
+                SIZE,
+                SIZE,
+                vec![layer(f32::NAN, BlendMode::Normal), DrawCommand::PopLayer],
+            ),
+            (
+                "image with zero height".into(),
+                SIZE,
+                SIZE,
+                vec![image(4, 0, &[])],
+            ),
+            (
+                "image of u32::MAX × u32::MAX".into(),
+                SIZE,
+                SIZE,
+                vec![image(u32::MAX, u32::MAX, &[])],
             ),
             (
                 "mask of the wrong size".into(),
@@ -1194,7 +1320,10 @@ impl Suite<'_> {
             cap: LineCap::Round,
             ..StrokeStyle::solid(2.0)
         };
-        self.draw(c, "zero-length dashes", &[stroke(&across, &dots)]);
+        // §8.4.3.6: a zero-length dash with round caps is a dot (radius 1 at x = 0, 4, 8, …).
+        let out = self.draw(c, "zero-length dashes", &[stroke(&across, &dots)]);
+        self.expect_alpha(c, "zero-length dashes", out.as_ref(), (8, 16), 255.0, 0.0);
+        self.expect_alpha(c, "zero-length dashes", out.as_ref(), (10, 16), 0.0, 0.0);
         let out = self.render_with(1, 1, &[fill(&canvas, RED, true)], &RasterLimits::default());
         let ok = matches!(&out, Some(Ok(p)) if p.pixel(0, 0) == Some([255, 0, 0, 255]));
         self.report
@@ -1485,12 +1614,11 @@ impl Suite<'_> {
                 cap: LineCap::Round,
                 join: LineJoin::Miter,
                 miter_limit: 4.0,
-                dash: if seed % 2 == 0 {
-                    vec![]
-                } else {
-                    vec![3.0, 1.0]
+                dash: match (seed % 2, value().abs(), value().abs()) {
+                    (1, on, off) if on > 0.0 || off > 0.0 => vec![on, off],
+                    _ => vec![],
                 },
-                dash_phase: 0.0,
+                dash_phase: value(),
             };
             let [a, b, c, d] =
                 [0usize, 1, 2, 3].map(|i| paths.get(i).map_or(&[][..], Vec::as_slice));

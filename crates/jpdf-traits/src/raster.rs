@@ -186,7 +186,8 @@ pub struct StrokeStyle {
     /// Dash array (§8.4.3.6): empty for a solid line; otherwise finite, non-negative and not
     /// all zero. An odd-length array repeats, so `[3]` means 3 on, 3 off.
     pub dash: Vec<f32>,
-    /// Dash phase, finite.
+    /// Dash phase, finite. A negative phase or one beyond the period is reduced modulo the
+    /// period (so -2 with `[4 4]` is 6).
     pub dash_phase: f32,
 }
 
@@ -251,7 +252,10 @@ pub enum DrawCommand<'a> {
         image: RgbaImage<'a>,
         /// Unit square to device space.
         transform: Transform,
-        /// Smooth when scaling (`/Interpolate`); nearest neighbour when false.
+        /// Smooth when scaling (`/Interpolate`); nearest neighbour when false. Either way a
+        /// 1:1, pixel-aligned draw reproduces the source pixels, so the smoothing filter
+        /// must interpolate (bilinear, or an interpolating bicubic such as Catmull-Rom; not
+        /// a blurring one such as Mitchell).
         interpolate: bool,
         /// Multiplies the image's alpha; finite, in `0.0..=1.0`.
         opacity: f32,
@@ -320,8 +324,10 @@ pub struct SceneStats {
     pub clip_depth: u16,
     /// Deepest layer nesting.
     pub layer_depth: u16,
-    /// Nominal working memory: `pixels × (4 × (1 + layer_depth) + clip_depth)`, one RGBA
-    /// buffer for the canvas and each layer plus one 8-bit mask per clip.
+    /// Nominal working memory: `pixels × (4 + S) + 4 × I`. `S` is the most bytes per pixel
+    /// the clip/layer stack holds at any point: 1 per clip (an 8-bit mask), 4 per layer (an
+    /// RGBA buffer), 5 per layer with a soft mask (plus the adapter's copy of the mask). `I`
+    /// is the largest image's pixel count (the adapter's premultiplied copy).
     pub working_bytes: u64,
 }
 
@@ -337,8 +343,21 @@ pub trait Rasterizer: Send + Sync {
     /// ([`check_scene`] does both). Invalid input gives
     /// [`BackendError::InvalidArgument`]; a limit gives [`BackendError::LimitExceeded`],
     /// including a dashed stroke that would produce more than `max_path_segments` dashes.
-    /// Curve flattening must stay bounded for any finite coordinates (clip to the canvas
-    /// first); a hang is a failure even though no error type describes it.
+    /// That count covers the **whole** path, on and off the canvas: compute it from the
+    /// path length and the dash period before generating dashes, so it is known up front.
+    ///
+    /// Geometry must stay bounded and exact for any finite input, a hang being a failure
+    /// even though no error type describes it:
+    /// - flatten curves after clipping to the canvas, or with a capped subdivision;
+    /// - clip fills and clips geometrically before a backend with a coordinate range
+    ///   (tiny-skia skips paths beyond about ±2^29) sees them, so a ±1e30 rect still
+    ///   covers the canvas;
+    /// - a stroke wider than the canvas diagonal still paints its full outline (fill the
+    ///   clipped outline instead of handing the backend the width);
+    /// - device coordinates can overflow to infinity after transforming even though the
+    ///   list is finite: treat such a draw as empty or as `LimitExceeded`, never as a panic.
+    ///
+    /// Stroke adjustment (§10.7.5) is out of scope: `jpdf-render` snaps hairlines itself.
     fn render(
         &self,
         width: u32,
@@ -357,6 +376,9 @@ pub trait Rasterizer: Send + Sync {
 ///   path; a pop that doesn't match the innermost push; a push left open at the end.
 /// - `LimitExceeded`: canvas pixels, segments in one path, clip or layer depth, or
 ///   [`SceneStats::working_bytes`] above the limit.
+///
+/// Time is not bounded here: a list of a million full-canvas fills passes. The engine's
+/// job budget bounds it (PLAN §2.2), as for every other backend call.
 pub fn check_scene(
     width: u32,
     height: u32,
@@ -388,10 +410,12 @@ pub fn check_scene(
         }
     };
     let unit = |v: f32| (0.0..=1.0).contains(&v);
-    // true = clip, false = layer.
-    let mut stack: Vec<bool> = Vec::new();
+    // (true = clip / false = layer, bytes per canvas pixel it holds).
+    let mut stack: Vec<(bool, u64)> = Vec::new();
     let (mut clips, mut layers) = (0u16, 0u16);
     let (mut max_clips, mut max_layers) = (0u16, 0u16);
+    let (mut stack_bytes, mut max_stack_bytes) = (0u64, 0u64);
+    let mut max_image_pixels = 0u64;
     for command in commands {
         match command {
             DrawCommand::Fill {
@@ -429,25 +453,30 @@ pub fn check_scene(
                 if !unit(*opacity) {
                     return Err(InvalidArgument("opacity out of range"));
                 }
-                let expected = u64::from(image.width) * u64::from(image.height) * 4;
-                if image.width == 0
-                    || image.height == 0
-                    || u64::try_from(image.data.len()).ok() != Some(expected)
+                // u32 × u32 fits a u64; × 4 may not (checked).
+                let image_pixels = u64::from(image.width) * u64::from(image.height);
+                let expected = image_pixels.checked_mul(4);
+                if image_pixels == 0
+                    || expected.is_none()
+                    || u64::try_from(image.data.len()).ok() != expected
                 {
                     return Err(InvalidArgument("image size"));
                 }
+                max_image_pixels = max_image_pixels.max(image_pixels);
             }
             DrawCommand::PushClip {
                 path, transform, ..
             } => {
                 check_path(path)?;
                 check_transform(transform)?;
-                clips = clips.saturating_add(1);
-                if clips > limits.max_clip_depth {
-                    return Err(LimitExceeded("clip depth"));
-                }
+                clips = clips
+                    .checked_add(1)
+                    .filter(|d| *d <= limits.max_clip_depth)
+                    .ok_or(LimitExceeded("clip depth"))?;
                 max_clips = max_clips.max(clips);
-                stack.push(true);
+                stack.push((true, 1));
+                stack_bytes = stack_bytes.saturating_add(1);
+                max_stack_bytes = max_stack_bytes.max(stack_bytes);
             }
             DrawCommand::PushLayer { opacity, mask, .. } => {
                 if !unit(*opacity) {
@@ -458,32 +487,41 @@ pub fn check_scene(
                 {
                     return Err(InvalidArgument("mask size"));
                 }
-                layers = layers.saturating_add(1);
-                if layers > limits.max_layer_depth {
-                    return Err(LimitExceeded("layer depth"));
-                }
+                layers = layers
+                    .checked_add(1)
+                    .filter(|d| *d <= limits.max_layer_depth)
+                    .ok_or(LimitExceeded("layer depth"))?;
                 max_layers = max_layers.max(layers);
-                stack.push(false);
+                // An RGBA buffer, plus the adapter's copy of the mask.
+                let cost = if mask.is_some() { 5 } else { 4 };
+                stack.push((false, cost));
+                stack_bytes = stack_bytes.saturating_add(cost);
+                max_stack_bytes = max_stack_bytes.max(stack_bytes);
             }
             DrawCommand::PopClip => {
-                if stack.pop() != Some(true) {
+                let Some((true, cost)) = stack.pop() else {
                     return Err(InvalidArgument("unmatched PopClip"));
-                }
+                };
                 clips = clips.saturating_sub(1);
+                stack_bytes = stack_bytes.saturating_sub(cost);
             }
             DrawCommand::PopLayer => {
-                if stack.pop() != Some(false) {
+                let Some((false, cost)) = stack.pop() else {
                     return Err(InvalidArgument("unmatched PopLayer"));
-                }
+                };
                 layers = layers.saturating_sub(1);
+                stack_bytes = stack_bytes.saturating_sub(cost);
             }
         }
     }
     if !stack.is_empty() {
         return Err(InvalidArgument("unclosed clip or layer"));
     }
-    let per_pixel = 4 * (1 + u64::from(max_layers)) + u64::from(max_clips);
-    let working_bytes = pixels.saturating_mul(per_pixel);
+    let working_bytes = max_stack_bytes
+        .checked_add(4)
+        .and_then(|per_pixel| pixels.checked_mul(per_pixel))
+        .and_then(|canvas| canvas.checked_add(max_image_pixels.checked_mul(4)?))
+        .unwrap_or(u64::MAX);
     if working_bytes > limits.max_working_bytes {
         return Err(LimitExceeded("working bytes"));
     }
@@ -595,7 +633,7 @@ mod tests {
             Ok(SceneStats {
                 clip_depth: 2,
                 layer_depth: 1,
-                working_bytes: 30 * (4 * 2 + 2),
+                working_bytes: 30 * (4 + 4 + 2),
             })
         );
         let tight = RasterLimits {
@@ -605,6 +643,82 @@ mod tests {
         assert_eq!(
             check_scene(10, 3, &commands, &tight),
             Err(BackendError::LimitExceeded("working bytes"))
+        );
+    }
+
+    #[test]
+    fn masks_and_images_count_towards_working_bytes() {
+        let mask = [0u8; 30];
+        let pixels = [0u8; 4 * 7];
+        let commands = [
+            DrawCommand::PushLayer {
+                opacity: 1.0,
+                blend: BlendMode::Normal,
+                mask: Some(&mask),
+            },
+            DrawCommand::PopLayer,
+            // Sequential layers don't add up: the stack peaks at one masked layer.
+            DrawCommand::PushLayer {
+                opacity: 1.0,
+                blend: BlendMode::Normal,
+                mask: None,
+            },
+            DrawCommand::PopLayer,
+            DrawCommand::Image {
+                image: RgbaImage {
+                    width: 7,
+                    height: 1,
+                    data: &pixels,
+                },
+                transform: Transform::IDENTITY,
+                interpolate: false,
+                opacity: 1.0,
+                blend: BlendMode::Normal,
+            },
+        ];
+        let stats = check_scene(10, 3, &commands, &RasterLimits::default());
+        assert_eq!(stats.map(|s| s.working_bytes), Ok(30 * (4 + 5) + 4 * 7));
+    }
+
+    #[test]
+    fn huge_image_dimensions_are_invalid_not_a_panic() {
+        for (width, height) in [(u32::MAX, u32::MAX), (1 << 31, 1 << 31), (u32::MAX, 0)] {
+            let commands = [DrawCommand::Image {
+                image: RgbaImage {
+                    width,
+                    height,
+                    data: &[],
+                },
+                transform: Transform::IDENTITY,
+                interpolate: false,
+                opacity: 1.0,
+                blend: BlendMode::Normal,
+            }];
+            assert_eq!(
+                check_scene(4, 4, &commands, &RasterLimits::default()),
+                Err(BackendError::InvalidArgument("image size"))
+            );
+        }
+    }
+
+    #[test]
+    fn depth_counters_never_saturate_silently() {
+        let path = [PathSegment::MoveTo(p(0.0, 0.0))];
+        let clip = DrawCommand::PushClip {
+            path: &path,
+            rule: FillRule::NonZero,
+            transform: Transform::IDENTITY,
+            anti_alias: false,
+        };
+        let open = RasterLimits {
+            max_clip_depth: u16::MAX,
+            max_working_bytes: u64::MAX,
+            ..RasterLimits::default()
+        };
+        let deep = vec![clip; usize::from(u16::MAX) + 1];
+        assert_eq!(
+            check_scene(1, 1, &deep, &open),
+            Err(BackendError::LimitExceeded("clip depth"))
         );
     }
 

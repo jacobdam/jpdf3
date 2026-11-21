@@ -59,7 +59,7 @@ defaults:
 | `max_path_segments` | 1,048,576 | Segments in one path, and dashes one dashed stroke may produce (a dash array of tiny lengths otherwise turns one segment into millions) |
 | `max_clip_depth` | 64 | Nested clips; each is one 8-bit mask the size of the canvas |
 | `max_layer_depth` | 32 | Nested transparency groups; each is one RGBA buffer the size of the canvas |
-| `max_raster_working_bytes` | 1 GiB | `pixels × (4 × (1 + layer depth) + clip depth)`, half of the 2 GiB process budget. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
+| `max_raster_working_bytes` | 1 GiB | `pixels × (4 + S) + 4 × I`, half of the 2 GiB process budget. `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
@@ -194,10 +194,14 @@ backend changes only anti-aliasing and rounding, never what a page shows.
     anti-aliasing a pixel's coverage is its covered area; without, its centre decides.
   - `StrokeStyle` (§8.4.3): width ≥ 0 (0 is the thinnest visible line), caps, joins, a miter
     limit ≥ 1 (beyond it a miter bevels, §8.4.3.5), and a dash array (empty is solid;
-    non-negative, not all zero; odd length repeats) with a phase.
+    non-negative, not all zero; odd length repeats) with a phase. A negative phase, or one
+    beyond the period, is reduced modulo the period. A zero-length dash with round caps is a
+    dot (§8.4.3.6).
   - `Image { image, transform, interpolate, opacity, blend }`. The image is 8-bit RGBA with
     straight alpha, colour and soft mask already applied. As in §8.9.4 the transform maps the
-    unit square, and the first row maps to `v = 1`.
+    unit square, and the first row maps to `v = 1`. A 1:1, pixel-aligned draw reproduces the
+    source with either `interpolate` value. So the smoothing filter must interpolate
+    (bilinear, or an interpolating bicubic such as Catmull-Rom), not blur (Mitchell).
   - `PushClip { path, rule, transform, anti_alias }` / `PopClip`: clips intersect.
   - `PushLayer { opacity, blend, mask }` / `PopLayer`: an isolated, non-knockout group
     (§11.4.7). Content draws into a transparent buffer, which then composites onto the
@@ -221,11 +225,24 @@ backend changes only anti-aliasing and rounding, never what a page shows.
     open;
   - `LimitExceeded` for canvas pixels, segments in one path, clip or layer depth, or working
     bytes over the limit.
-  The dash count depends on geometry, so the adapter enforces it while dashing.
-- Curve flattening and dashing must stay bounded for any finite coordinates. A backend clips
-  to the canvas first or caps subdivision. At lengths near 1e30, adding a dash length to a
-  position no longer changes it, so a naive dash loop never ends. No error describes a hang;
-  the suite's huge-coordinate scenes catch one through the test timeout.
+  The dash count depends on geometry, so the adapter enforces it. The count covers the
+  **whole** path, on and off the canvas. The adapter computes it from the path length and
+  the dash period before generating any dash, so the bound holds up front.
+- Time isn't bounded by `RasterLimits`: a million full-canvas fills pass `check_scene`. As
+  for every backend call, the engine's job budget (PLAN §2.2) bounds total time. What must
+  be bounded here is the work for **one** command.
+- Geometry must stay bounded and exact for any finite input. No error describes a hang;
+  the suite's huge-value scenes catch one through the test timeout. Adapter duties:
+  - flatten curves after clipping to the canvas, or cap subdivision;
+  - clip fills and clips geometrically before a backend with a coordinate range sees them
+    (tiny-skia skips paths beyond about ±2^29), so a ±1e30 rect still covers the canvas;
+  - a stroke wider than the canvas diagonal still paints its outline (fill the clipped
+    outline instead);
+  - device coordinates can overflow to infinity after transforming even though the list is
+    finite: treat such a draw as empty or `LimitExceeded`, never panic;
+  - dash loops: at lengths near 1e30, adding a dash length to a position no longer changes
+    it, so a naive loop never ends; a phase of 1e30 hangs a subtract-the-period loop.
+- Stroke adjustment (§10.7.5) is out of scope: `jpdf-render` snaps hairlines itself.
 
 **Conformance suites** (`jpdf_traits::conformance`). Each returns a `Report` listing every
 failed check by a stable name:
@@ -348,18 +365,26 @@ failed check by a stable name:
 
 - `raster::run(&dyn Rasterizer)`. It checks pixels only where every correct backend agrees:
   shapes on pixel boundaries, pixel centres with anti-aliasing off, area coverage within ±20
-  of 255 with it on, and the §11.3 formulas within ±2 per channel. Every scene runs on a 32 ×
-  32 canvas, and every output is checked for size and premultiplied alpha (`raster.output`).
+  of 255 with it on, and the §11.3 formulas within ±2 per channel. Scenes run on a 32 × 32
+  canvas, except the canvas-limit checks (64 × 16, 16 × 64) and a 1 × 1 case. Every output is
+  checked for size and premultiplied alpha (`raster.output`).
   - `raster.fill`: axis-aligned rects (exact, with and without anti-aliasing), scaled and
     rotated transforms, half alpha, a cubic circle, and a quadratic arch (a backend that
     treats `QuadTo` as a line fails).
   - `raster.fill_rule`: nested rects with the same and opposite winding under both rules.
   - `raster.anti_alias`: 3/4- and 1/4-covered pixels with and without anti-aliasing.
-  - `raster.stroke`: butt, square and round caps; miter, bevel and round joins; a miter over
-    its limit; closed and open subpaths; a pen scaled by the transform; a hairline.
-  - `raster.dash`: `[4 4]` at phases 0, 2 and 10 (wrapping), and `[4]`.
-  - `raster.clip`: one clip, nested clips, a pop restoring the outer clip, an even-odd clip,
-    and an anti-aliased clip edge.
+  - `raster.stroke`: butt, square and round caps (with corner probes, so a square cap fails
+    the round check); miter, bevel and round joins with an 8-wide pen (probes off the bevel
+    line); a miter over its limit; closed and open subpaths; a pen scaled by the transform; a
+    hairline.
+  - `raster.dash`:
+    - `[4 4]` at phases 0, 2, 10 (wrapping) and −2;
+    - `[4]`;
+    - `[2 2]` at scale 2 (lengths are in user space);
+    - hazards: phases ±1e30 and `[1e30]` must give `Ok`; `[1e-30 1e-30]` and the smallest
+      normal `f32` on a 32-unit line must give `LimitExceeded`.
+  - `raster.clip`: one clip, a clip with its own transform, nested clips, a pop restoring the
+    outer clip, an even-odd clip, and an anti-aliased clip edge.
   - `raster.layer`: layer opacity; group opacity applied once (blue over red inside a 50%
     group gives half-transparent blue); nested opacity; a soft mask with values 255, 128 and
     0.
@@ -369,11 +394,13 @@ failed check by a stable name:
   - `raster.image`: a 3 × 2 image with a half-transparent and a clear pixel at 1:1 (both
     `interpolate` values; first row on top), at 4× nearest, with opacity, and with a blend
     mode.
-  - `raster.invalid`: 30 invalid lists, each of which must give `InvalidArgument`.
+  - `raster.invalid`: 38 invalid lists, each of which must give `InvalidArgument`. They
+    include an image of `u32::MAX × u32::MAX` with no data, whose byte length overflows
+    `u64`.
   - `raster.degenerate`: an empty list or path, zero area, a lone `MoveTo`, a singular
     transform, an empty clip, a ±1e30 rect (must cover the canvas, with and without
-    anti-aliasing), curves with 1e30 control points, a 1e30-wide stroke, zero-length dashes, a
-    1 × 1 canvas.
+    anti-aliasing), curves with 1e30 control points, a 1e30-wide stroke, zero-length dashes
+    with round caps (dots), a 1 × 1 canvas.
   - `raster.limits.*`: each limit passes at the scene's exact value and gives `LimitExceeded`
     one below:
     - canvas pixels (square, landscape and portrait);
@@ -383,10 +410,13 @@ failed check by a stable name:
     - working bytes for 2 layers and 3 clips.
 
     Dashes get a lower-bound check (1000 dashes pass with limit 2000 and fail with 100),
-    because backends may count a dash on a boundary differently.
+    because backends may count a dash on a boundary differently. Most of that line is off
+    the canvas, so an adapter that counts only visible dashes fails, as the count rule
+    requires.
   - `raster.hostile`: 48 pseudo-random valid lists built from extreme values (±1e30, 1e-30,
-    the smallest normal `f32`, and values on pixel edges), each with transforms, clips,
-    layers and dashed strokes. Each list must give `Ok` or `LimitExceeded`, never panic.
+    the smallest normal `f32`, and values on pixel edges). Each has transforms, clips, layers
+    and strokes; in half of them the dash entries and phase are drawn from the same values.
+    Each list must give `Ok` or `LimitExceeded`, never panic.
   - **What the suite can't see.** It checks the rounding where backends agree, not the
     anti-aliasing quality. It can't see allocations (the working-bytes formula is a nominal
     bound), or a hang except through the test timeout. Gradients don't cross this boundary.
@@ -435,9 +465,10 @@ may record a repair note.
   Limits for what they can't observe).
 - Fuzz targets per trait come with #17. Font adapters add theirs at admission (#16).
 - Display lists come from the engine, but their numbers derive from hostile content streams.
-  `check_scene` rejects every non-finite or out-of-range value, and the limits bound memory
-  before any buffer is allocated. A dash array of tiny lengths, or coordinates near 1e30,
-  must not turn into unbounded work.
+  `check_scene` rejects every non-finite or out-of-range value, with checked arithmetic on
+  every caller-supplied size. The limits bound nominal memory before any buffer is
+  allocated. A dash array of tiny lengths, or coordinates near 1e30, must not turn one
+  command into unbounded work. Total time is the engine's job budget.
 - Font programs are a classic attack surface (charstring interpreters, composite recursion).
   The face API never hands out raw tables. The suite checks every answer it gets from a
   damaged program against the invariants, and requires hostile programs; see Conformance
@@ -514,7 +545,9 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
 
     A panicking rasterizer is reported, not propagated. The blend formulas are checked
     against values computed by hand.
-  - `check_scene`: path validity, the working-bytes formula, pixel reads bounds-checked.
+  - `check_scene`: path validity, the working-bytes formula (stack peak, masks, images),
+    huge image dimensions giving `InvalidArgument` instead of an overflow panic, depth
+    counters that never saturate silently, pixel reads bounds-checked.
 - Unit tests for `Outline::point_count`, `control_box`, `is_well_formed`, `is_finite` and
   `Limits::font_limits`.
 - Existing `jpdf-syntax`/`jpdf-engine` tests cover the moved `Limits` unchanged.

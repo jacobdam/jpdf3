@@ -201,7 +201,7 @@ fn dash_polyline(
     let period: f64 = pattern.iter().sum();
     let mut index = 0;
     let mut left = pattern[0];
-    let mut skip = f64::from(phase) % period;
+    let mut skip = f64::from(phase).rem_euclid(period);
     while skip > 0.0 {
         if skip >= left {
             skip -= left;
