@@ -642,3 +642,119 @@ fn probes_are_bounded_and_versions_filtered() {
     );
     assert!(took < Duration::from_secs(15), "{took:?}");
 }
+
+/// True while process `pid` exists (a zombie counts until its parent reaps it).
+fn pid_alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// Waits up to `limit` for `pid` to be gone; on failure kills it so it can't leak.
+fn gone_within(pid: &str, limit: Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < limit {
+        if !pid_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = Command::new("kill").args(["-9", pid]).status();
+    false
+}
+
+/// Polls for a pid file written through a rename (absent or complete) for up to `limit`.
+fn read_pid(file: &Path, limit: Duration) -> Option<String> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < limit {
+        if let Ok(text) = std::fs::read_to_string(file) {
+            let pid = text.trim().to_string();
+            assert!(
+                !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()),
+                "bad pid {pid:?}"
+            );
+            return Some(pid);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    None
+}
+
+#[test]
+fn normal_exit_kills_background_children() {
+    // specs/tooling/bench.md item 7: an engine that exits 0 but leaves a background child
+    // behind must not leave it running (it would skew later runs).
+    let d = temp_dir!();
+    let pidfile = d.join("bg.pid");
+    let s = script!(
+        &d,
+        "leaver",
+        &format!(
+            "sleep 30 &\necho $! > '{p}.tmp'; mv '{p}.tmp' '{p}'\nexit 0",
+            p = pidfile.display()
+        )
+    );
+    let (status, _) = run_once(&s, &[], Duration::from_secs(20));
+    assert_eq!(status, Status::Ok);
+    let pid = read_pid(&pidfile, Duration::from_secs(1)).expect("the script wrote no pid");
+    assert!(
+        gone_within(&pid, Duration::from_secs(2)),
+        "background child {pid} outlived its engine"
+    );
+}
+
+#[test]
+fn a_killed_bench_takes_its_engine_down() {
+    // specs/tooling/bench.md item 7: Ctrl-C (SIGINT to the bench's process group), SIGTERM
+    // and SIGKILL to the bench must not leave a running engine behind. The engine's
+    // grandchild (`sleep`, in the engine's own group) is only reached by the watchdog.
+    let d = temp_dir!();
+    let pidfile = d.join("engine.pid");
+    let cli = script!(
+        &d,
+        "cli",
+        &format!(
+            "case \"$1\" in info) /bin/sh -c \"sleep 30 & echo \\$! > '{p}.tmp'; mv '{p}.tmp' '{p}'; wait\" & wait ;; *) exit 3 ;; esac",
+            p = pidfile.display()
+        )
+    );
+    // INT goes to the bench's whole group, as a terminal sends it; TERM and KILL to the
+    // bench alone (KILL proves no signal handler is involved).
+    for (sig, to_group) in [("INT", true), ("TERM", false), ("KILL", false)] {
+        let _ = std::fs::remove_file(&pidfile);
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jpdf-bench"));
+        cmd.args([os("--cli"), os(&cli), os("--out")])
+            .arg(d.join(format!("{sig}.json")))
+            .args(["--mutool", "none", "--pdfium", "none"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // Its own group, so the INT below can't reach the test runner.
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut bench = cmd.spawn().unwrap();
+        let Some(pid) = read_pid(&pidfile, Duration::from_secs(30)) else {
+            let _ = bench.kill();
+            let _ = bench.wait();
+            panic!("{sig}: the engine never started its child");
+        };
+        let target = if to_group {
+            format!("-{}", bench.id())
+        } else {
+            bench.id().to_string()
+        };
+        let sent = Command::new("/bin/sh")
+            .args(["-c", "kill -s \"$1\" -- \"$2\"", "sh", sig, &target])
+            .status()
+            .unwrap();
+        assert!(sent.success(), "{sig}: kill failed");
+        let st = bench.wait().unwrap();
+        assert!(!st.success(), "{sig}: the bench finished normally");
+        assert!(
+            gone_within(&pid, Duration::from_secs(5)),
+            "{sig}: engine child {pid} outlived the bench"
+        );
+    }
+}

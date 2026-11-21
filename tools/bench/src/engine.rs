@@ -1,10 +1,10 @@
 //! Engines, operations and timed runs of external programs (spec items 4–7).
 
 use std::ffi::OsString;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::process::{ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -191,8 +191,10 @@ pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Dura
 /// stderr (0 = stderr to the null device). `None` when the program could not be started at
 /// all, so callers can tell "absent" from "exited with an error".
 ///
-/// The child runs in its own process group, and a timeout kills the whole group, so a
-/// wrapper script's children can't outlive it and skew later runs. Captured stderr goes
+/// The child runs in its own process group. When it exits, and at a timeout, the whole
+/// group is killed, so a wrapper script's children can't outlive it and skew later runs.
+/// While it runs, the watchdog holds its group id, so a bench killed by a signal doesn't
+/// leave it running either (spec item 7). Captured stderr goes
 /// through a pipe read on a helper thread that stops reading at the cap (later writes get
 /// EPIPE), so a flooding program costs neither memory nor disk.
 pub fn probe(
@@ -217,6 +219,9 @@ pub fn probe(
     }
     let start = Instant::now();
     let mut child = cmd.spawn().ok()?;
+    // The group id is the child's pid (`process_group(0)`).
+    let group = child.id();
+    watch(Some(group));
     let (tx, rx) = mpsc::channel();
     if let Some(pipe) = child.stderr.take() {
         // A thread that can't be created means nothing is captured (the pipe is dropped,
@@ -232,7 +237,16 @@ pub fn probe(
     }
     let (status, took) = loop {
         match child.try_wait() {
-            Ok(Some(st)) => break (classify_exit(st), start.elapsed()),
+            Ok(Some(st)) => {
+                let took = start.elapsed();
+                // Background children the engine left behind die with their group.
+                // The leader is already reaped here (std has no wait-without-reap), so
+                // the group id stays reserved only while such a child is alive; if none
+                // is, the kill finds no group (ESRCH), unless the id was reused within
+                // these microseconds.
+                kill_group(group);
+                break (classify_exit(st), took);
+            }
             Ok(None) if start.elapsed() >= limit => {
                 let took = start.elapsed();
                 kill_tree(&mut child);
@@ -245,29 +259,90 @@ pub fn probe(
             }
         }
     };
+    watch(None);
     // A grandchild may hold the pipe open; don't wait for it longer than a moment.
     let captured = rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
     Some((status, took, captured))
 }
 
 /// Kills the child's process group (unix) and the child itself, then reaps the child.
+/// The unreaped leader keeps the group id reserved until the group kill is done.
 /// Errors mean the processes are already gone.
 fn kill_tree(child: &mut std::process::Child) {
+    kill_group(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Sends SIGKILL to every process in group `group` (unix). The shell builtin `kill`
+/// signals the whole group and exists even where no `kill` binary is installed; std has no
+/// safe group-kill API. An error means the group is already gone.
+fn kill_group(group: u32) {
     #[cfg(unix)]
     {
-        // The group id is the child's pid (`process_group(0)`). The shell builtin `kill`
-        // signals every process in the group and exists even where no `kill` binary is
-        // installed. std has no safe group-kill API.
         let _ = Command::new("/bin/sh")
             .args(["-c", "kill -s KILL -- \"-$1\"", "sh"])
-            .arg(child.id().to_string())
+            .arg(group.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    #[cfg(not(unix))]
+    let _ = group;
+}
+
+/// The watchdog's script (spec item 7). It reads one line per event from the bench: a
+/// process-group id when an engine starts, `-` when that engine's group is gone. At end of
+/// input, which comes when the bench exits for any reason (a signal, SIGKILL, a panic), it
+/// kills the last group still registered. Terminal signals are ignored, so a Ctrl-C that
+/// stops the bench can't stop its watchdog first; it runs in its own process group anyway.
+const WATCHDOG_SCRIPT: &str = "trap '' HUP INT; g=-; while IFS= read -r l; do g=$l; done; \
+case $g in ''|*[!0-9]*) ;; *) kill -s KILL -- \"-$g\" ;; esac";
+
+/// The write end of the watchdog's input; `None` when it could not be started.
+static WATCHDOG: OnceLock<Option<Mutex<ChildStdin>>> = OnceLock::new();
+
+/// Starts the watchdog once per process. Err when it can't be started; the bench then
+/// refuses to run (an I/O error), because a stuck engine could outlive it.
+pub fn start_watchdog() -> Result<(), String> {
+    match watchdog() {
+        Some(_) => Ok(()),
+        None => Err("cannot start the engine watchdog (/bin/sh)".to_string()),
+    }
+}
+
+fn watchdog() -> Option<&'static Mutex<ChildStdin>> {
+    WATCHDOG
+        .get_or_init(|| {
+            let mut cmd = Command::new("/bin/sh");
+            cmd.args(["-c", WATCHDOG_SCRIPT, "jpdf-bench-watchdog"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            // The child handle is dropped without waiting: the watchdog outlives the
+            // bench by design and exits at end of input. Our end of the pipe is
+            // close-on-exec, so engines never hold it open.
+            let mut child = cmd.spawn().ok()?;
+            child.stdin.take().map(Mutex::new)
+        })
+        .as_ref()
+}
+
+/// Tells the watchdog which group to kill if the bench dies now (`None`: no group). A
+/// failed write (the watchdog is gone) leaves the run unprotected but still correct.
+fn watch(group: Option<u32>) {
+    if let Some(w) = watchdog() {
+        let line = group.map_or_else(|| "-\n".to_string(), |g| format!("{g}\n"));
+        // A poisoned lock only means another thread panicked mid-write; the pipe is fine.
+        let mut pipe = w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = pipe.write_all(line.as_bytes()).and_then(|()| pipe.flush());
+    }
 }
 
 /// One measurement: its status and, only when every run was `ok`, the median time in µs.

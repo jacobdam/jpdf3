@@ -71,6 +71,8 @@ pub fn run(opts: &Options) -> Result<Report, BenchError> {
         None => default_work(&opts.out),
     })?;
     let corpus = opts.corpus.as_deref().map(abs).transpose()?;
+    // Before any engine runs: no engine may outlive the bench (spec item 7).
+    engine::start_watchdog().map_err(BenchError::Io)?;
     if !cli.is_file() {
         return Err(BenchError::Io(format!(
             "--cli {} is not a file",
