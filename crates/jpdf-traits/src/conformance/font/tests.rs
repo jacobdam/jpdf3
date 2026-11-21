@@ -6,7 +6,9 @@ use crate::{FaceMetrics, PathSegment, Point};
 /// ```text
 /// toyfont <tt|cff|cff2|type1> <units per em>
 /// g <advance> <name or -> [segments]  one glyph: M x y, L x y, Q x y x y, C x y x y x y,
-///                                       Z; or `loop` (an endless subroutine loop)
+///                                       Z; or `loop` (an endless subroutine loop); or
+///                                       `ref <gid>…` (a composite: each component visited
+///                                       costs one operation)
 /// c <platform> <encoding> <code> <gid> a cmap entry
 /// i <cid> <gid>                         a CID entry
 /// e <standard|expert>                   built-in encoding
@@ -38,6 +40,16 @@ struct Toy {
     fixed_upem: bool,
     /// Use a built-in ops budget instead of the caller's (still stops `loop` glyphs).
     ignore_caller_ops: bool,
+    /// Count one operation per outline call, whatever the glyph runs.
+    flat_ops: bool,
+    /// Composite components cost no operations.
+    free_components: bool,
+    /// `cid_to_glyph` maps an unlisted CID to the glyph with the same number (in range).
+    identity_cids: bool,
+    /// `cmap_lookup` on a subtable the face doesn't have maps codes by identity (in range).
+    identity_cmap: bool,
+    /// `cmap_subtables` always reports (3,1), even for bare CFF and Type 1.
+    fake_cmap_subtables: bool,
 }
 
 struct ToyGlyph {
@@ -45,6 +57,8 @@ struct ToyGlyph {
     name: Option<String>,
     /// `None` for a `loop` glyph.
     outline: Option<Outline>,
+    /// Components of a composite glyph (its own `outline` is empty).
+    refs: Vec<u16>,
 }
 
 /// Parses `M x y`, `L x y`, `Q …`, `C …`, `Z` tokens into a well-formed outline.
@@ -160,15 +174,23 @@ impl Toy {
                         None => return Err(BackendError::Malformed("glyph")),
                     };
                     let mut rest = f.peekable();
-                    let outline = if rest.peek() == Some(&"loop") {
-                        None
-                    } else {
-                        Some(segments(rest)?)
+                    let mut refs = Vec::new();
+                    let outline = match rest.peek() {
+                        Some(&"loop") => None,
+                        Some(&"ref") => {
+                            rest.next();
+                            for r in rest {
+                                refs.push(num(Some(r))?);
+                            }
+                            Some(Outline::default())
+                        }
+                        _ => Some(segments(rest)?),
                     };
                     face.glyphs.push(ToyGlyph {
                         advance,
                         name,
                         outline,
+                        refs,
                     });
                     if !self.ignore_glyph_limit
                         && face.glyphs.len() > usize::from(limits.max_glyphs)
@@ -199,8 +221,9 @@ impl Toy {
         if count == 0 {
             return Err(BackendError::Truncated);
         }
-        let in_range =
-            face.cmap.iter().all(|e| e.2 < count) && face.cids.iter().all(|e| e.1 < count);
+        let in_range = face.cmap.iter().all(|e| e.2 < count)
+            && face.cids.iter().all(|e| e.1 < count)
+            && face.glyphs.iter().flat_map(|g| &g.refs).all(|r| *r < count);
         if !in_range {
             return Err(BackendError::Malformed("glyph id"));
         }
@@ -259,40 +282,68 @@ impl FontFace for ToyFace {
     }
 
     fn outline(&self, glyph: GlyphId, limits: &FontLimits) -> Result<Outline, BackendError> {
-        let stored = match self.glyph(glyph) {
-            Err(_) if self.toy.accept_bad_glyph => return Ok(Outline::default()),
-            g => &g?.outline,
-        };
-        let Some(outline) = stored else {
-            // A `loop` glyph never ends: a real interpreter runs until the ops budget is spent.
-            return if self.toy.ignore_ops_limit {
-                Ok(Outline::default())
-            } else {
-                Err(BackendError::LimitExceeded("outline ops"))
-            };
-        };
-        // One charstring operator per segment; TrueType simple glyphs run none.
-        let ops = if self.format == OutlineFormat::TrueType {
-            0
-        } else {
-            outline.segments.len()
-        };
+        if self.glyph(glyph).is_err() && self.toy.accept_bad_glyph {
+            return Ok(Outline::default());
+        }
         let ops_limit = if self.toy.ignore_caller_ops {
             1 << 20
         } else {
             limits.max_outline_ops
         };
-        if u32::try_from(ops).map_or(true, |n| n > ops_limit) {
-            return Err(BackendError::LimitExceeded("outline ops"));
+        let mut ops: u32 = 0;
+        let mut spend = |n: usize| -> Result<(), BackendError> {
+            let n = u32::try_from(n).map_err(|_| BackendError::LimitExceeded("outline ops"))?;
+            ops = ops.saturating_add(n);
+            if ops > ops_limit {
+                return Err(BackendError::LimitExceeded("outline ops"));
+            }
+            Ok(())
+        };
+        if self.toy.flat_ops {
+            spend(1)?;
         }
-        if outline.point_count() > limits.max_outline_points && !self.toy.ignore_point_limit {
-            return Err(BackendError::LimitExceeded("outline points"));
+        let mut out = Outline::default();
+        let mut points: u32 = 0;
+        // Components are expanded with an explicit stack, so a self-referencing composite
+        // runs into the ops limit instead of overflowing the stack.
+        let mut pending = vec![glyph.0];
+        let mut visits: u32 = 0;
+        while let Some(id) = pending.pop() {
+            // A hard cap, so even `free_components` can't loop forever on an empty cycle.
+            visits = visits.saturating_add(1);
+            if visits > 1 << 20 {
+                return Err(BackendError::LimitExceeded("outline visits"));
+            }
+            let g = self.glyph(GlyphId(id))?;
+            let Some(outline) = &g.outline else {
+                // A `loop` glyph never ends: a real interpreter runs until the ops budget is
+                // spent.
+                return if self.toy.ignore_ops_limit {
+                    Ok(Outline::default())
+                } else {
+                    Err(BackendError::LimitExceeded("outline ops"))
+                };
+            };
+            if !self.toy.flat_ops {
+                if !self.toy.free_components {
+                    spend(g.refs.len())?;
+                }
+                // One charstring operator per segment; TrueType simple glyphs run none.
+                if self.format != OutlineFormat::TrueType {
+                    spend(outline.segments.len())?;
+                }
+            }
+            pending.extend(g.refs.iter().rev());
+            out.segments.extend(outline.segments.iter().copied());
+            points = points.saturating_add(outline.point_count());
+            if points > limits.max_outline_points && !self.toy.ignore_point_limit {
+                return Err(BackendError::LimitExceeded("outline points"));
+            }
         }
-        let mut outline = outline.clone();
         if self.toy.no_close {
-            outline.segments.retain(|s| *s != PathSegment::Close);
+            out.segments.retain(|s| *s != PathSegment::Close);
         }
-        Ok(outline)
+        Ok(out)
     }
 
     fn cmap_subtables(&self) -> Vec<CmapId> {
@@ -302,10 +353,19 @@ impl FontFace for ToyFace {
                 ids.push(*id);
             }
         }
+        if self.toy.fake_cmap_subtables && !ids.contains(&cmap(3, 1)) {
+            ids.push(cmap(3, 1));
+        }
         ids
     }
 
     fn cmap_lookup(&self, cmap: CmapId, code: u32) -> Option<GlyphId> {
+        if self.toy.identity_cmap && !self.cmap.iter().any(|e| e.0 == cmap) {
+            return u16::try_from(code)
+                .ok()
+                .filter(|c| *c > 0 && *c < self.count())
+                .map(GlyphId);
+        }
         let found = self
             .cmap
             .iter()
@@ -334,7 +394,11 @@ impl FontFace for ToyFace {
     }
 
     fn cid_to_glyph(&self, cid: u16) -> Option<GlyphId> {
-        self.cids.iter().find(|e| e.0 == cid).map(|e| GlyphId(e.1))
+        let listed = self.cids.iter().find(|e| e.0 == cid).map(|e| GlyphId(e.1));
+        if listed.is_none() && self.toy.identity_cids && cid < self.count() {
+            return Some(GlyphId(cid));
+        }
+        listed
     }
 
     fn builtin_encoding(&self) -> BuiltinEncoding {
@@ -385,8 +449,9 @@ fn outline(text: &str) -> Outline {
     segments(text.split_whitespace()).unwrap_or_default()
 }
 
-/// A fixture with `.notdef` (a box), `space` (empty) and `A` (a curve of the format's kind;
-/// the largest glyph).
+/// A fixture with `.notdef` (a box), `space` (empty), `A` (a curve of the format's kind; the
+/// largest glyph) and `heavy` (a composite of [`HEAVY_OPS`] empty `space` components: a
+/// benign glyph that needs exactly that many operations in TrueType, more in the others).
 fn fixture(
     name: &str,
     format: &str,
@@ -400,11 +465,13 @@ fn fixture(
     } else {
         "M 0 0 C 100 700 500 700 600 0 L 150 -20 Z"
     };
+    let heavy = " 1".repeat(100);
     let data = format!(
         "toyfont {format} 1000\n\
          g 500 .notdef {notdef}\n\
          g 250 space\n\
          g 600 A {a}\n\
+         g 0 heavy ref{heavy}\n\
          {extra}"
     );
     FontFixture {
@@ -412,7 +479,7 @@ fn fixture(
         data: data.into_bytes(),
         program,
         outline_format,
-        glyph_count: 3,
+        glyph_count: 4,
         font_matrix: [0.001, 0.0, 0.0, 0.001, 0.0, 0.0],
         metrics: FaceMetrics {
             bbox: [0.0, 0.0, 1000.0, 1000.0],
@@ -441,6 +508,7 @@ fn fixture(
         names: vec![(GlyphId(1), "space".into()), (GlyphId(2), "A".into())],
         cids: Vec::new(),
         builtin_encoding: BuiltinEncoding::None,
+        min_ops: vec![(GlyphId(3), HEAVY_OPS)],
         tolerance: 0.01,
     }
 }
@@ -482,9 +550,10 @@ fn engine_fixtures() -> Vec<FontFixture> {
         OutlineFormat::Cff,
         "i 0 0\ni 7 2\n",
     );
-    cid.cids = vec![(7, Some(GlyphId(2))), (8, None)];
+    cid.cids = vec![(0, Some(GlyphId(0))), (7, Some(GlyphId(2))), (8, None)];
     let cff2 = fixture("cff2", "cff2", FontProgram::Sfnt, OutlineFormat::Cff2, "");
-    vec![tt, cff, cid, cff2]
+    let otf = fixture("cff-otf", "cff", FontProgram::Sfnt, OutlineFormat::Cff, "");
+    vec![tt, cff, cid, cff2, otf]
 }
 
 /// One hostile toy program per format: glyph 1 loops forever, glyph 0 is the control.
@@ -492,7 +561,7 @@ fn hostile_for(formats: &[(&str, FontProgram, OutlineFormat)]) -> Vec<HostileFon
     formats
         .iter()
         .map(|&(format, program, outline_format)| HostileFont {
-            name: format!("{format}-loop"),
+            name: format!("{format}-{program:?}-loop"),
             data: format!(
                 "toyfont {format} 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\ng 500 bomb loop\n"
             )
@@ -510,6 +579,7 @@ fn engine_hostile() -> Vec<HostileFont> {
         ("tt", FontProgram::Sfnt, OutlineFormat::TrueType),
         ("cff", FontProgram::BareCff, OutlineFormat::Cff),
         ("cff2", FontProgram::Sfnt, OutlineFormat::Cff2),
+        ("cff", FontProgram::Sfnt, OutlineFormat::Cff),
     ])
 }
 
@@ -638,9 +708,15 @@ fn out_of_range_cmap_results_are_caught() {
         cmap_off_by_one: true,
         ..Toy::default()
     };
+    // Hostile faces are asked the standard subtables too, so they catch it as well.
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
-        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+        vec![
+            "font.fixture_loads",
+            "font.hostile",
+            "font.invariants",
+            "font.truncated"
+        ]
     );
 }
 
@@ -695,7 +771,7 @@ fn a_wrong_expected_value_fails_only_the_fixture_check() {
         vec!["font.fixture_loads"]
     );
     let mut fixtures = engine_fixtures();
-    fixtures[2].cids[0].1 = Some(GlyphId(1));
+    fixtures[2].cids[1].1 = Some(GlyphId(1));
     assert_eq!(
         engine_failures(Toy::default(), &fixtures),
         vec!["font.fixture_loads"]
@@ -705,7 +781,7 @@ fn a_wrong_expected_value_fails_only_the_fixture_check() {
 #[test]
 fn an_invalid_fixture_is_reported() {
     let broken: [fn(&mut FontFixture); 4] = [
-        |f| f.glyphs[0].glyph = GlyphId(3),
+        |f| f.glyphs[0].glyph = GlyphId(f.glyph_count),
         |f| f.tolerance = 1.5,
         |f| f.tolerance = f32::NAN,
         |f| f.glyphs[0].outline.segments.pop().map_or((), |_| ()),
@@ -768,9 +844,15 @@ fn cmap_glyph_zero_is_caught() {
         cmap_zero: true,
         ..Toy::default()
     };
+    // Hostile faces are asked the standard subtables too, so they catch it as well.
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
-        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+        vec![
+            "font.fixture_loads",
+            "font.hostile",
+            "font.invariants",
+            "font.truncated"
+        ]
     );
 }
 
@@ -788,33 +870,276 @@ fn ignoring_the_callers_ops_limit_is_caught() {
 
 #[test]
 fn weak_hostile_fixtures_fail() {
-    let cases: [fn(&mut HostileFont); 4] = [
-        // An out-of-range glyph fails with InvalidArgument for every backend.
-        |h| h.glyphs = vec![GlyphId(9999)],
+    const BOTH: &[&str] = &["font.has_hostile_fixtures", "font.hostile"];
+    type Case = (fn(&mut HostileFont), &'static [&'static str]);
+    let cases: [Case; 5] = [
+        // An out-of-range glyph fails with InvalidArgument for every backend. The program
+        // still loads and its control glyph outlines, so it proves the format.
+        (|h| h.glyphs = vec![GlyphId(9999)], &["font.hostile"]),
         // A program that fails to load for a dull reason proves nothing.
-        |h| h.data = b"not a font".to_vec(),
+        (|h| h.data = b"not a font".to_vec(), BOTH),
         // The control glyph must outline.
-        |h| h.control_glyph = Some(GlyphId(1)),
-        |h| h.glyphs.clear(),
+        (|h| h.control_glyph = Some(GlyphId(1)), BOTH),
+        (|h| h.glyphs.clear(), BOTH),
+        // A program that loads as another format than it declares.
+        (|h| h.outline_format = OutlineFormat::Cff2, BOTH),
     ];
-    for (i, breakage) in cases.iter().enumerate() {
+    for (i, (breakage, want)) in cases.iter().enumerate() {
         let mut hostile = engine_hostile();
         breakage(&mut hostile[0]);
         let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
-        assert_eq!(report.failed_checks(), vec!["font.hostile"], "case {i}");
+        assert_eq!(report.failed_checks(), *want, "case {i}");
     }
-    // Without a control glyph, a load failure must still be LimitExceeded or Malformed.
+    // Without a control glyph, a load failure must still be LimitExceeded or Malformed. Such
+    // a program passes font.hostile (alongside the proving ones) but proves nothing.
     let mut hostile = engine_hostile();
-    hostile[0].control_glyph = None;
-    hostile[0].data = b"toyfont tt 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\nzzz\n".to_vec();
+    let mut extra = hostile[0].clone();
+    extra.control_glyph = None;
+    extra.data = b"toyfont tt 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\nzzz\n".to_vec();
+    hostile.push(extra);
     assert!(run_font_engine(&Toy::default(), &engine_fixtures(), &hostile).passed());
     let toy = Toy {
         panic_on_bad_utf8: true,
         ..Toy::default()
     };
-    hostile[0].data = vec![0xff];
+    if let Some(last) = hostile.last_mut() {
+        last.data = vec![0xff];
+    }
     let report = run_font_engine(&toy, &engine_fixtures(), &hostile);
     assert!(report.failed("font.hostile"));
+}
+
+#[test]
+fn junk_without_control_glyphs_does_not_cover_the_formats() {
+    // Audit 0001: junk labelled with each format, without control glyphs, passed the suite.
+    let hostile: Vec<HostileFont> = engine_hostile()
+        .into_iter()
+        .map(|h| HostileFont {
+            data: b"not a font".to_vec(),
+            control_glyph: None,
+            ..h
+        })
+        .collect();
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+    let hostile: Vec<HostileFont> = type1_hostile()
+        .into_iter()
+        .map(|h| HostileFont {
+            data: b"not a font".to_vec(),
+            control_glyph: None,
+            ..h
+        })
+        .collect();
+    let report = run_type1(&Toy::default(), &type1_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+}
+
+#[test]
+fn a_mislabelled_hostile_program_does_not_cover_its_format() {
+    // The CFF slot holds a TrueType program declared as CFF.
+    let mut hostile = engine_hostile();
+    hostile[1].data = hostile[0].data.clone();
+    hostile[1].program = FontProgram::Sfnt;
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+    assert_eq!(
+        report.failed_checks(),
+        vec!["font.has_hostile_fixtures", "font.hostile"]
+    );
+}
+
+#[test]
+fn a_self_referencing_composite_is_hostile() {
+    let mut hostile = engine_hostile();
+    hostile[0].data =
+        b"toyfont tt 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\ng 0 bomb ref 0 1\n".to_vec();
+    assert!(run_font_engine(&Toy::default(), &engine_fixtures(), &hostile).passed());
+    let toy = Toy {
+        free_components: true,
+        ..Toy::default()
+    };
+    // Components that cost nothing never reach the ops limit; the point limit stops the
+    // growing outline instead, which still rejects it, so only the min_ops checks see it.
+    let report = run_font_engine(&toy, &engine_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.outline_ops_limit"]);
+}
+
+#[test]
+fn counting_too_few_operations_is_caught() {
+    for toy in [
+        Toy {
+            flat_ops: true,
+            ..Toy::default()
+        },
+        Toy {
+            free_components: true,
+            ..Toy::default()
+        },
+    ] {
+        assert_eq!(
+            engine_failures(toy, &engine_fixtures()),
+            vec!["font.outline_ops_limit"]
+        );
+        let report = run_type1(&toy, &type1_fixtures(), &type1_hostile());
+        assert_eq!(report.failed_checks(), vec!["font.outline_ops_limit"]);
+    }
+}
+
+#[test]
+fn heavy_min_ops_glyphs_are_required_per_format() {
+    for i in 0..engine_fixtures().len() {
+        let mut fixtures = engine_fixtures();
+        let format = fixtures[i].outline_format;
+        for f in fixtures.iter_mut().filter(|f| f.outline_format == format) {
+            f.min_ops.clear();
+        }
+        assert_eq!(
+            engine_failures(Toy::default(), &fixtures),
+            vec!["font.fixture_coverage"],
+            "without min_ops for {format:?}"
+        );
+    }
+    // A bound below HEAVY_OPS checks the glyph but does not cover the format.
+    let mut fixtures = engine_fixtures();
+    fixtures[0].min_ops[0].1 = HEAVY_OPS - 1;
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_coverage"]
+    );
+    let mut fixtures = type1_fixtures();
+    for f in &mut fixtures {
+        f.min_ops.clear();
+    }
+    let report = run_type1(&Toy::default(), &fixtures, &type1_hostile());
+    assert_eq!(report.failed_checks(), vec!["font.fixture_coverage"]);
+}
+
+#[test]
+fn coverage_is_per_container_and_outline_pairing() {
+    // Only the sfnt-CFF fixture loses its heavy glyph: bare CFF still has one.
+    let mut fixtures = engine_fixtures();
+    fixtures[4].min_ops.clear();
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_coverage"]
+    );
+    // Only the sfnt-CFF hostile program is missing: bare CFF still has one.
+    let mut hostile = engine_hostile();
+    hostile.remove(3);
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
+}
+
+#[test]
+fn an_overstated_min_ops_bound_fails() {
+    // The TrueType composite needs exactly HEAVY_OPS operations; claiming one more makes the
+    // check expect LimitExceeded where a correct backend succeeds.
+    let mut fixtures = engine_fixtures();
+    fixtures[0].min_ops[0].1 = HEAVY_OPS + 1;
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.outline_ops_limit"]
+    );
+}
+
+#[test]
+fn invalid_min_ops_entries_are_reported() {
+    let broken: [fn(&mut FontFixture); 3] = [
+        |f| f.min_ops[0].0 = GlyphId(f.glyph_count),
+        |f| f.min_ops.push((GlyphId(0), 0)),
+        // A bound no default limit can pass is the fixture's error, not the backend's.
+        |f| f.min_ops[0].1 = FontLimits::default().max_outline_ops + 1,
+    ];
+    for (i, breakage) in broken.iter().enumerate() {
+        let mut fixtures = engine_fixtures();
+        breakage(&mut fixtures[0]);
+        assert_eq!(
+            engine_failures(Toy::default(), &fixtures),
+            vec!["font.fixture_valid"],
+            "breakage {i}"
+        );
+    }
+}
+
+#[test]
+fn identity_cids_are_caught() {
+    let toy = Toy {
+        identity_cids: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec![
+            "font.fixture_loads",
+            "font.hostile",
+            "font.invariants",
+            "font.truncated"
+        ]
+    );
+    let report = run_type1(&toy, &type1_fixtures(), &type1_hostile());
+    assert!(report.failed("font.invariants"));
+    // An unlisted CID that the CID-keyed fixture maps fails it too.
+    let mut fixtures = engine_fixtures();
+    fixtures[2].cids.remove(0);
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_loads"]
+    );
+}
+
+#[test]
+fn identity_cmap_on_unknown_subtables_is_caught() {
+    let toy = Toy {
+        identity_cmap: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.hostile", "font.invariants", "font.truncated"]
+    );
+    let report = run_type1(&toy, &type1_fixtures(), &type1_hostile());
+    assert!(report.failed("font.invariants"));
+}
+
+#[test]
+fn cmap_subtables_on_non_sfnt_programs_are_caught() {
+    let toy = Toy {
+        fake_cmap_subtables: true,
+        ..Toy::default()
+    };
+    // The sfnt fixtures may have (3,1); the bare CFF ones and the CFF hostile program may not.
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.hostile", "font.invariants", "font.truncated"]
+    );
+    let report = run_type1(&toy, &type1_fixtures(), &type1_hostile());
+    assert_eq!(
+        report.failed_checks(),
+        vec!["font.hostile", "font.invariants", "font.truncated"]
+    );
+}
+
+#[test]
+fn names_past_glyph_64_and_beyond_128_names_are_checked() {
+    // Audit 0001: names on glyph ids of 64 and up were never asked, and only 128 names were
+    // looked up, so a correct backend failed.
+    let mut fixtures = engine_fixtures();
+    let f = &mut fixtures[0];
+    let mut data = String::from_utf8(f.data.clone()).unwrap_or_default();
+    for i in 0..200u16 {
+        data.push_str(&format!("g 100 n{i}\n"));
+        f.names.push((GlyphId(4 + i), format!("n{i}")));
+    }
+    f.data = data.into_bytes();
+    f.glyph_count = 204;
+    assert!(engine_failures(Toy::default(), &fixtures).is_empty());
+    // And a wrong name on a late glyph is caught.
+    if let Some(last) = fixtures[0].names.last_mut() {
+        last.1 = "n0".into();
+    }
+    assert_eq!(
+        engine_failures(Toy::default(), &fixtures),
+        vec!["font.fixture_loads"]
+    );
 }
 
 #[test]

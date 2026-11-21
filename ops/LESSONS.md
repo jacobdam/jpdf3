@@ -7,7 +7,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 ## Tooling & environment
 - Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
-  directory, never `/tmp` (owner instruction, #28).
+  directory, never `/tmp` (owner instruction, #28). `$TMPDIR` is unset in the sandbox (so
+  `$TMPDIR/x` is `/x`, read-only): use the git-ignored `target/scratch/` of your worktree
+  ([journal](journal/2026-11-21.md), PR #93).
 - Claude Code project settings and hooks apply **live** to running sessions → never write
   `.claude/settings.json` before its hook script exists and passes `--selftest` (bootstrap, 2026-11-20).
 - PKCS#12 fixtures on macOS: `/usr/bin/openssl` is LibreSSL → always pass `-keypbe AES-256-CBC
@@ -107,8 +109,12 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a conformance suite (details beyond the template's self-check) → lenient-read rules
   need a positive salvage check; every limit needs a per-axis/per-path boundary; compare whole
   results, not summaries (full outline segments, not count + bounding box); make tolerances
-  relative or capped (an absolute 0.01 accepted any font matrix) ([journal](journal/2026-11-21.md),
-  PR #56, PR #67, audit 0001).
+  relative or capped (an absolute 0.01 accepted any font matrix); count coverage from what
+  the backend actually loaded (format, a reachable control path), never from fixture labels
+  and never from the backend's pass/fail verdict (a failing backend would also fail
+  coverage); check promised empty answers (`None`, empty lists) too; and keep toy
+  implementations linear (an O(n) count inside a growth loop turned one test into 91 s)
+  ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, audit 0001).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,

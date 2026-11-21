@@ -9,7 +9,7 @@ space), §11.3 (compositing, blend modes), §11.4.7 (isolated groups), §11.6.5 
 Annex C (limits)
 Journeys: none directly (an internal boundary; every rendering, saving and security journey
 depends on it)
-Status: implemented (part 1 of 4: #14; part 2, font programs: #53; part 3, rasterizer: #54).
+Status: implemented (part 1 of 4: #14; part 2, font programs: #53, suite tightened in #68; part 3, rasterizer: #54).
 Text shaping: #66. ICC: #70. Signatures: #55.
 
 ## Behavior
@@ -306,7 +306,10 @@ failed check by a stable name:
   - Fixtures are fonts **we** generate under a permissive license, with values from a
     reference tool. Each states the outline format, glyph count, font matrix, metrics,
     built-in encoding, and each listed glyph's advance and full outline. It can also list
-    `cmap` lookups, names (checked both ways) and CID lookups.
+    `cmap` lookups, names (checked both ways, for any glyph id; every listed name is looked up,
+    plus up to 128 names the face returns) and
+    CID lookups, plus glyphs with a known lower bound on the operations their outline needs
+    (`min_ops`).
   - Outlines are compared segment by segment within the fixture's tolerance: same segment
     kinds, same order, same points. So reversed winding, permuted points and swapped control
     points all fail. A `LineTo` back to the contour start (within the tolerance) right before
@@ -320,21 +323,35 @@ failed check by a stable name:
   - Engine coverage:
     - TrueType, CFF and CFF2 outlines, each with a curve (`QuadTo` for TrueType, `CurveTo`
       for the others);
-    - both containers;
+    - every container and outline pairing a PDF can embed: sfnt with TrueType, sfnt with
+      CFF (OpenType `CFF `), sfnt with CFF2, and bare CFF;
+    - per container and outline pairing, a `min_ops` glyph with a bound of at least 100 (for
+      TrueType, a composite: each component visited counts as one operation; for CFF, CFF2
+      and Type 1, fixture authors should run most operators inside subroutines);
     - mapped `cmap` lookups in (3,1), (3,0) and (1,0);
     - a mapped CID;
     - a CFF custom encoding.
 
-    Type 1 coverage: every fixture is Type 1, one has a `CurveTo`, and one has a `Custom`
-    encoding. At least one fixture glyph must have points.
-  - Hostile programs (at least one per covered outline format): self-referencing
+    Type 1 coverage: every fixture is Type 1, one has a `CurveTo`, one has a `Custom`
+    encoding, and one has a `min_ops` glyph with a bound of at least 100. At least one
+    fixture glyph must have points.
+  - Hostile programs (at least one per container and outline pairing; Type 1 has one
+    pairing): self-referencing
     composites, recursive subroutines, fan-out bombs.
     - With a control glyph, the program must load. The control glyph must outline (proof
       that the hostile path is reachable), and every listed glyph must fail with
       `LimitExceeded` or `Malformed`.
     - Without one, the load or every listed glyph must fail that way.
+    - A program that loads must report the outline format it declares.
     - Listed glyphs must be in range (an out-of-range id fails trivially with
       `InvalidArgument`).
+    - Coverage counts only programs that **prove** their format: at least one listed glyph,
+      the program loads as the declared format, and its control glyph outlines, so the
+      listed glyphs sit on a path the backend reaches. Whether they are rejected is the
+      backend's verdict, reported by `font.hostile`, not part of the proof. A program without
+      a control glyph may still be supplied (it must not panic and must be rejected as
+      above), but junk that fails to load for a dull reason proves nothing, so it never
+      satisfies coverage.
     - No panic, and the invariants hold. Unbounded recursion overflows the
     stack and aborts the test process, which fails the run without a report entry.
   - Each fixture loads and matches exactly. Glyph id `glyph_count` gives `InvalidArgument`
@@ -342,11 +359,18 @@ failed check by a stable name:
   - `max_font_program_bytes` and `max_glyphs` pass at the fixture's size and give
     `LimitExceeded` one below. `max_outline_points` passes at the backend's own point count
     for the largest fixture glyph and gives `LimitExceeded` one below. Operation counts are
-    backend-specific, so `max_outline_ops` gets a lower-bound check instead of an exact
-    boundary. A Type 1, CFF or CFF2 glyph with points runs at least one operator, so with
-    `max_outline_ops` 0 it must give `LimitExceeded`. This catches a backend that ignores
-    the caller's value and relies on a built-in budget. The hostile programs cover the
-    upper end.
+    backend-specific, so `max_outline_ops` gets lower-bound checks instead of an exact
+    boundary:
+    - A Type 1, CFF or CFF2 glyph with points runs at least one operator, so with
+      `max_outline_ops` 0 it must give `LimitExceeded`. This catches a backend that ignores
+      the caller's value and relies on a built-in budget.
+    - Each `min_ops` glyph (bound `n`, from 1 to the default `max_outline_ops`) outlines at
+      the default limits and gives `LimitExceeded` with `max_outline_ops` `n - 1`. The
+      required bound of 100 catches a backend that counts too little (one per glyph, nothing
+      for TrueType composite components) and so passes the check at 0. The fixture author
+      states a bound they can justify from the program (operators written, components
+      visited); a loose bound is allowed but weakens the check.
+    - The hostile programs cover the upper end.
   - Every strict prefix and every one-byte flip (about 144 positions each): no panic. A face
     that loads must keep the invariants under limits capped at the fixture's size. The
     suite queries the first 64 glyphs, the last one and two out-of-range ids; every `cmap`
@@ -358,15 +382,33 @@ failed check by a stable name:
     - glyph and point counts within the limits;
     - well-formed outlines;
     - names of at most 127 bytes;
-    - a sorted custom encoding.
+    - a sorted custom encoding;
+    - promised empty answers: no `cmap` subtables for a bare CFF or Type 1 program, `None`
+      from `cmap_lookup` on a subtable `cmap_subtables` does not list (the suite also asks
+      (3,1), (3,0), (1,0), (0,3) and (3,10) for codes 0–255 when they are not listed), and
+      `None` from `cid_to_glyph` for every face that is not CFF.
+
+    A fixture is also checked against the answers it promises by omission: every CID the
+    suite asks about (0–63 and the listed ones) that the fixture does not list must give
+    `None`, so a fixture that is not CID-keyed lists no CIDs, and a CID-keyed one lists every
+    mapped CID below 64.
   - Empty input is an error for both containers.
   - **What the suites can't see.** Byte flips and prefixes are a smoke test, not coverage
     of charstring interpreters, `seac`, PFB segments or hex `eexec`. Deep coverage comes
     from per-adapter fuzz targets (#17) and from admission (#16), which must supply hostile
     programs for each format the adapter parses. Also out of reach: points summed across
-    composite components (no composite fixture is required), and the per-FD `FontMatrix`
+    composite components (the TrueType `min_ops` composite proves components are visited,
+    not that their points are summed against the limit), and the per-FD `FontMatrix`
     normalisation of CID-keyed CFF. Admission adds a multi-FD fixture whose FD matrices
-    differ from the Top DICT's.
+    differ from the Top DICT's. The ops checks bound the count from below at three points
+    (0, `n - 1`, the default), so a backend that rejects every caller value below some
+    threshold and uses a built-in budget above it still passes. A backend that skips
+    operators inside subroutines passes unless the `min_ops` glyph runs its operators there,
+    and an uncounted fan-out bomb then hangs the run rather than failing a check. A
+    fixture's or hostile program's container is the one it declares: a backend that sniffs
+    the format and ignores the `program` argument could run a bare CFF program labelled sfnt
+    through its bare-CFF path, so fixture authors must build each pairing's programs in that
+    container.
 
 - `raster::run(&dyn Rasterizer)`. It checks pixels only where every correct backend agrees:
   shapes on pixel boundaries, pixel centres with anti-aliasing off, area coverage within ±20
@@ -524,6 +566,9 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
   - `font`: a toy text-format font for every format. Broken variants:
     - ignore any of the four limits (the ops limit through a hostile `loop` glyph), or use
       a built-in ops budget instead of the caller's;
+    - count one operation per glyph, or nothing for composite components;
+    - map CIDs by identity, fall back to identity on unknown `cmap` subtables, or report a
+      `cmap` subtable for every program;
     - panic on empty or mutated input;
     - accept out-of-range glyph ids;
     - return an out-of-range glyph or glyph 0 from `cmap`;
@@ -536,7 +581,12 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     outline); dropping each required fixture, `cmap` subtable or CFF custom encoding; a
     TrueType fixture without a `QuadTo`; missing hostile programs or a missing format among
     them; and weak hostile programs (an out-of-range glyph, a program that fails to load
-    for a dull reason, a failing control glyph, no glyphs listed).
+    for a dull reason, a failing control glyph, no glyphs listed, a mislabelled format, and
+    junk without control glyphs standing in for every format). Dropping the sfnt-CFF
+    fixture, any `min_ops` glyph, or only the sfnt-CFF heavy glyph or hostile program fails
+    coverage; a `min_ops` bound of 0, out of range or above the default limit is an invalid
+    fixture; names on glyphs past 64 and more than
+    128 names pass against the correct toy.
   - `raster`: a 4 × 4-supersampling toy with f64 winding numbers and strokes built from
     polygons. It must pass. Each broken variant must fail exactly the expected checks:
     - ignores limits; skips validation (and panics on NaN);
