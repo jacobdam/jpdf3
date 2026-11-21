@@ -295,9 +295,9 @@ fn kill_group(group: u32) {
 /// The watchdog's script (spec item 7). It reads one line per event from the bench: a
 /// process-group id when an engine starts, `-` when that engine's group is gone. At end of
 /// input, which comes when the bench exits for any reason (a signal, SIGKILL, a panic), it
-/// kills the last group still registered. Terminal signals are ignored, so a Ctrl-C that
-/// stops the bench can't stop its watchdog first; it runs in its own process group anyway.
-const WATCHDOG_SCRIPT: &str = "trap '' HUP INT; g=-; while IFS= read -r l; do g=$l; done; \
+/// kills the last group still registered. It runs in its own process group, so a Ctrl-C
+/// that stops the bench (SIGINT to the terminal's foreground group) doesn't reach it.
+const WATCHDOG_SCRIPT: &str = "g=-; while IFS= read -r l; do g=$l; done; \
 case $g in ''|*[!0-9]*) ;; *) kill -s KILL -- \"-$g\" ;; esac";
 
 /// The write end of the watchdog's input; `None` when it could not be started.
