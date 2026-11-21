@@ -53,7 +53,8 @@ code and has no dependencies.
    span lines (a line continuation is captured, then refused for its `\`):
    - **import positions** (code): `import … from "x"`, `export … from "x"`, `import "x"`,
      `import("x")` and ``import(`x`)``, with comments allowed between the keyword and the
-     specifier; CSS `@import "x"` and `@import url(x)`;
+     specifier (a `//` comment ends at LF, CR, U+2028 or U+2029, as in ECMAScript); CSS
+     `@import "x"` and `@import url(x)`;
    - **asset positions**: any CSS `url(x)`, every quoted string inside CSS `image-set(…)`
      except `type("…")` MIME types, and in HTML files the `src`, `href`, `poster` and
      `srcset` attributes, plus `content` when its value has no whitespace and contains
@@ -61,6 +62,8 @@ code and has no dependencies.
      as `light dark`); quoted or unquoted. `srcset` is split the way the HTML parser does
      it: a URL runs to whitespace (trailing commas stripped), then a descriptor runs to the
      next comma, so `data:image/png;base64,AA== 1x` is one URL and `a.png 1x,b.png 2x` two.
+     Vite's own splitter differs, so every token in a descriptor that isn't a descriptor
+     (`2x`, `100w`, `1.5x`) is checked as a URL too (`/src/a.png /e2e/x.png 2x`).
    - In `.css` and `.html` files the forms match case-insensitively (`URL(x)`, `@IMPORT`,
      `SRC=`), because CSS and HTML are; in JS they match case-sensitively, so `new URL(x)`
      is not read as a CSS `url(x)`. HTML files get the JS and CSS forms too (inline
@@ -98,7 +101,8 @@ code and has no dependencies.
    - in JS and HTML, any `import(` that doesn't hold exactly one string literal followed
      by `)` or `,` (import attributes). Vite turns `import("./" + x + ".ts")` and
      `import("./".concat(…))` into globs over every joined literal, and a computed
-     specifier can't be checked;
+     specifier can't be checked. The match also fires inside strings and comments (a
+     false alarm only);
    - any `@jsx` pragma (`@jsxImportSource`, `@jsx`, `@jsxFrag`, `@jsxRuntime`): an import
      source makes esbuild inject `import "<source>/jsx-runtime"`.
 5. **Bundle guards.** These change what gets bundled, and the import scan can't follow
@@ -116,11 +120,11 @@ code and has no dependencies.
      output (`writeBundle`, `closeBundle`).
    - Another `vite.config.*` file, which Vite loads before `.ts`.
    - Plugins imported from another module, which hide their hooks. `./csp` is the one
-     allowed module, so `csp.ts` must import nothing (no `import`, `export … from` or
-     `require(`), carries none of the keys above, and names none of `process`,
-     `globalThis`, `global`, `getBuiltinModule`, `eval`, `Function`, `Reflect`, `module`,
-     `exports` (it runs at config load, so it could otherwise write a file into `src/`
-     after the scan). Hyphenated CSP words (`'wasm-unsafe-eval'`) don't count.
+     allowed module, and it runs at config load (it could import a tool or write a file
+     into `src/` after the scan). An identifier denylist is easy to get around
+     (`"".constructor.constructor(…)`), so its **shape is fixed**: after dropping whole-line
+     `//` comments, it must be exactly `export const CSP = [ "…", … ].join("; ");` with
+     plain double-quoted strings (no `\`, no concatenation, no trailing comments).
    - `tsconfig.json`: esbuild takes `jsxImportSource` from it (or from what it `extends`).
      It must exist (otherwise a parent directory's applies) and must not contain
      `jsxImportSource`, `extends`, `references` (tsconfck would pick a referenced config
@@ -142,7 +146,7 @@ code and has no dependencies.
    (`{ [k]: v }` with `k = "al" + "ias"`); `transformIndexHtml` (allowed, our CSP plugin
    uses it) returning a `<script src>` tag; plugin code that reads a file itself
    (`fs.readFileSync` into a string) or **writes one into `src/` after this scan** (any
-   code in `vite.config.ts` can; `csp.ts` is held to the identifier list above);
+   code in `vite.config.ts` can; `csp.ts` is held to the fixed shape above);
    environment-specific config (`environments.*`) and hooks not listed above.
 6. **Source files.** Every regular file under `src/` must have a lower-case
    `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` extension, and all of them are
@@ -214,7 +218,12 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
     run (the earlier pattern took minutes). The delta review added: a line continuation
     in a string, `+`/`.concat`/variable/template dynamic imports, `srcset` without spaces
     after commas and with a `data:` URL, `mailto:`, `content` without a leading slash,
-    `csp.ts` identifiers, `references` and `\u` in `tsconfig.json`.
+    `references` and `\u` in `tsconfig.json`. The second delta review added: line
+    comments ended by CR, U+2028 and U+2029 (static, `export … from` and dynamic forms),
+    a Vite-style second URL in a `srcset` descriptor, and the `csp.ts` shape (imports,
+    `process`, `"".constructor.constructor`, `\u` escapes, concatenation, template
+    strings, inline and trailing comments, another `join` argument, trailing code; plus
+    three accepted shapes).
   - Each of these mutations was applied by hand and failed the suite.
   - The integration test runs the real script on a fixture app directory. It covers nested
     `src/` directories and `.cts` files. It refuses a symlinked file, a symlinked directory

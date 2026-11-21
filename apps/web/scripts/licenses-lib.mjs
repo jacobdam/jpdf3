@@ -142,7 +142,9 @@ export function bareRoot(spec) {
 
 // Whitespace and comments allowed between the keyword and the specifier. The comment body
 // can't run past `*/` (a lazy `[\s\S]*?` backtracks exponentially over many comments).
-const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*\n)*`;
+// A line comment ends at any ECMAScript line terminator (LF, CR, U+2028, U+2029), not
+// only LF, or `import //<CR>"x"` would hide the specifier.
+const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n\r\u2028\u2029]*(?:[\n\r\u2028\u2029]|$))*`;
 // A quoted string, each quote kind closed by its own kind (`"a'b"` is one string). Newlines
 // are allowed inside, so a line continuation (`"./a\<newline>/../x"`) is still captured
 // (and then refused for its `\`).
@@ -212,7 +214,7 @@ const ASSET_SCHEMES_RE = /^(?:data|https?|mailto):/i;
  */
 export function importProblem(file, spec, deps, kind = "import") {
   if (kind === "dynamic") {
-    return `${file}: has an import(…) that isn't one string literal (Vite globs + and .concat)`;
+    return `${file}: has an import(…) that isn't one string literal (Vite globs + and .concat; also matched in strings and comments)`;
   }
   const asset = kind === "asset";
   if (PACKAGE_PATH_RE.test(spec)) {
@@ -264,7 +266,13 @@ export function srcsetUrls(value) {
     if (/,$/.test(url)) {
       url = url.replace(/,+$/, "");
     } else {
+      // The descriptor runs to the next comma. Vite's own splitter differs, so any token
+      // in it that isn't a descriptor (`2x`, `100w`, `1.5x`) is checked as a URL too.
+      const start = j;
       while (j < value.length && value.charAt(j) !== ",") j += 1;
+      for (const token of value.slice(start, j).split(/\s+/)) {
+        if (token !== "" && !/^\d+(?:\.\d+)?[wxh]$/.test(token)) urls.push(token);
+      }
     }
     urls.push(url);
     i = j;

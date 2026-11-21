@@ -136,24 +136,22 @@ for (const m of viteConfig.matchAll(importRe)) {
     problems.push(`vite.config.ts: imports ${spec(m)}; only vite and ./csp are checked`);
   }
 }
-// csp.ts is the one module vite.config.ts may import besides vite: it must import nothing
-// and carry no guarded key either.
+// csp.ts is the one module vite.config.ts may import besides vite, and it runs at config
+// load (it could import a tool or write a file into src/ after this scan). A denylist of
+// identifiers is easy to get around (`"".constructor.constructor(…)`), so its shape is
+// fixed instead: whole-line `//` comments, then exactly
+// `export const CSP = [ "…", … ].join("; ");` with plain double-quoted strings.
+const CSP_SHAPE =
+  /^\s*export const CSP = \[(?:\s*"[^"\\\n]*",)*(?:\s*"[^"\\\n]*")?\s*\]\.join\("; "\);\s*$/;
 const cspText = readFileSync(new URL("csp.ts", root), "utf8");
-if (
-  /\bimport\s*[("'`{*]|\bimport\s+\w|\brequire\s*\(/.test(cspText) ||
-  [...cspText.matchAll(importRe)].length > 0
-) {
-  problems.push("csp.ts: imports something; it must stay self-contained");
-}
-// It runs at config load, so it could also write a file into src/ after this scan; refuse
-// the ways to reach fs or code generation.
-for (const m of cspText.matchAll(
-  /(?<![\w$-])(process|globalThis|global|getBuiltinModule|eval|Function|Reflect|module|exports)(?![\w$-])/g,
-)) {
-  problems.push(`csp.ts: uses ${m[1]}; it must stay a plain constant`);
-}
-for (const m of cspText.matchAll(guardRe)) {
-  problems.push(`csp.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`);
+const cspCode = cspText
+  .split("\n")
+  .filter((line) => !/^\s*\/\//.test(line))
+  .join("\n");
+if (!CSP_SHAPE.test(cspCode)) {
+  problems.push(
+    'csp.ts: must be only `//` comment lines and `export const CSP = ["…", …].join("; ");`',
+  );
 }
 // esbuild takes `jsxImportSource` from tsconfig.json (and whatever it `extends`) and injects
 // `import "<source>/jsx-runtime"` into every .tsx file. A missing tsconfig.json would let a

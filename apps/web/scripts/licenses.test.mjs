@@ -629,6 +629,14 @@ test("specifiers that decode or resolve past the check are refused (review of #1
     ["src/a.ts", "const m = import(name);"],
     ["src/a.ts", `const m = import(\`./\${x}.ts\`);`],
     ["index.html", '<script type="module">import("./" + x + ".js")</script>'],
+    // A line comment ends at CR, U+2028 and U+2029 too.
+    ["src/a.ts", 'import //\r"../../e2e/x.ts";'],
+    ["src/a.ts", 'export * from //\r"../../e2e/x.ts";'],
+    ["src/a.ts", 'import //\u2028"../../e2e/x.ts";'],
+    ["src/a.ts", 'const m = import //\r(`./` + "../../e2e/" + x + ".ts");'],
+    ["src/a.ts", 'const m = import //\u2029("./" + x);'],
+    // Vite's srcset splitter reads a second URL where the HTML parser sees a descriptor.
+    ["index.html", '<img srcset="/src/a.png /e2e/x.png 2x">'],
   ];
   for (const [file, text] of bad) {
     const p = problems({ sources: [{ file, text }] });
@@ -665,6 +673,8 @@ test("srcset URLs are split the way the HTML parser splits them", () => {
   assert.deepEqual(srcsetUrls("data:image/png;base64,AA== 1x"), ["data:image/png;base64,AA=="]);
   assert.deepEqual(srcsetUrls(" ,, a.png  100w ,"), ["a.png"]);
   assert.deepEqual(srcsetUrls(""), []);
+  assert.deepEqual(srcsetUrls("a.png 1.5x, b.png 100w 2h"), ["a.png", "b.png"]);
+  assert.deepEqual(srcsetUrls("a.png b.png 2x").sort(), ["a.png", "b.png"]);
 });
 
 test("unquoted url() with long whitespace runs stays fast", () => {
@@ -758,7 +768,7 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     write("node_modules/tool/package.json", JSON.stringify({ license: "MPL-2.0" }));
     write("index.html", '<script type="module" src="/src/main.tsx"></script>');
     write("vite.config.ts", "export default {};");
-    write("csp.ts", "export const CSP = \"require-trusted-types-for 'script'\";");
+    write("csp.ts", 'export const CSP = ["require-trusted-types-for \'script\'"].join("; ");');
     write("tsconfig.json", '{ "compilerOptions": { "jsx": "react-jsx" } }');
     write("src/main.tsx", 'import "ui";');
     write("src/deep/er/x.cts", 'import "ui";');
@@ -946,32 +956,38 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     assert.match(r.stderr, /vite\.config\.ts: imports \.\/csp'\/\.\.\/plugin;/);
     write("vite.config.ts", "export default {};");
 
-    // csp.ts imports nothing and has no guarded key.
-    for (const text of ['import "tool";', 'export * from "./x";', 'const t = require("tool");']) {
-      write("csp.ts", text);
-      r = run();
-      assert.equal(r.status, 1, text);
-      assert.match(r.stderr, /csp\.ts: imports something/, text);
-    }
+    // csp.ts has a fixed shape: comment lines and one array of plain strings, joined.
+    const cspOk = 'export const CSP = [\n  // a comment\n  "a \'self\'",\n  "b",\n].join("; ");\n';
     for (const text of [
+      'import "tool";',
+      'export * from "./x";',
+      'const t = require("tool");',
       'process.getBuiltinModule("fs").writeFileSync("src/gen.ts", "x");',
-      'globalThis["proc" + "ess"];',
-      'eval("x");',
-      'new Function("x")();',
+      '"".constructor.constructor("return proc" + "ess")();',
+      String.raw`\u0070rocess.exit();`,
+      "export default { transform(c) { return c; } };",
+      `${cspOk}import "tool";`,
+      cspOk.replace('"b"', '"b" + x'),
+      cspOk.replace('"b"', '"\\u0062"'),
+      cspOk.replace('"b"', "`b`"),
+      cspOk.replace('"b"', '"b" /* c */'),
+      cspOk.replace('join("; ")', "join(x)"),
+      cspOk.replace("  // a comment", '  "x", // trailing comment'),
     ]) {
       write("csp.ts", text);
       r = run();
       assert.equal(r.status, 1, text);
-      assert.match(r.stderr, /csp\.ts: uses \w+; it must stay a plain constant/, text);
+      assert.match(r.stderr, /csp\.ts: must be only/, text);
     }
-    write("csp.ts", "export const CSP = \"script-src 'self' 'wasm-unsafe-eval'\";");
-    r = run();
-    assert.equal(r.status, 0, r.stderr);
-    write("csp.ts", "export default { transform(c) { return c; } };");
-    r = run();
-    assert.equal(r.status, 1);
-    assert.match(r.stderr, /csp\.ts: uses transform,/);
-    write("csp.ts", 'export const CSP = "x";');
+    for (const text of [
+      cspOk,
+      "// header\nexport const CSP = [\"script-src 'self' 'wasm-unsafe-eval'\"].join(\"; \");",
+      'export const CSP = [].join("; ");',
+    ]) {
+      write("csp.ts", text);
+      r = run();
+      assert.equal(r.status, 0, `${text}\n${r.stderr}`);
+    }
 
     // tsconfig.json: no jsxImportSource, no extends, and it must exist.
     for (const text of [
