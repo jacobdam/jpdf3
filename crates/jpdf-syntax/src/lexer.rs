@@ -137,9 +137,16 @@ impl<'a, 'b> Lexer<'a, 'b> {
         self.check()
     }
 
-    fn take_string(&mut self, out: Vec<u8>) -> Vec<u8> {
+    /// Charges a finished string or name to the room for this parse. The checks inside the
+    /// decoding loops run before each push, so they miss the last byte (a name's final byte, an
+    /// odd hex string's implied 0); this final check makes the limit exact for every token: a
+    /// total of exactly `max_string_bytes_per_parse` passes, one byte more fails (#113).
+    fn take_string(&mut self, out: Vec<u8>) -> Result<Vec<u8>, SyntaxError> {
+        if out.len() > self.string_room {
+            return Err(SyntaxError::LimitExceeded("string bytes in one object"));
+        }
         self.string_room = self.string_room.saturating_sub(out.len());
-        out
+        Ok(out)
     }
 
     pub(crate) fn pos(&self) -> usize {
@@ -188,19 +195,43 @@ impl<'a, 'b> Lexer<'a, 'b> {
         Ok(self.data.get(start..self.pos).unwrap_or_default())
     }
 
+    /// Steps over a run of regular characters if it is at most `max` bytes long. A longer run
+    /// returns `None` after stepping over `max + 1` of its bytes (the caller rewinds).
+    fn short_regular_run(&mut self, max: usize) -> Result<Option<&'a [u8]>, SyntaxError> {
+        let start = self.pos;
+        let mut len: usize = 0;
+        while self.peek().is_some_and(is_regular) {
+            if len == max {
+                return Ok(None);
+            }
+            len = len.saturating_add(1);
+            self.bump();
+            self.check()?;
+        }
+        Ok(self.data.get(start..self.pos))
+    }
+
     /// After an integer: if `gen R` follows (ISO 32000-2 §7.3.10), consumes it and returns the
     /// generation token value. Allocation-free: never decodes strings during look-ahead.
+    ///
+    /// The look-ahead is bounded (#113): a generation token longer than
+    /// `MAX_GENERATION_TOKEN` bytes, or a third token other than exactly `R`, is not a reference,
+    /// and the scan stops there. So a long token after an integer is stepped over and classified
+    /// once, as itself, rather than up to three times by the look-ahead of the integers before it.
     pub(crate) fn reference_tail(&mut self) -> Result<Option<i64>, SyntaxError> {
         let save = self.pos;
         self.skip_whitespace_and_comments()?;
         let at = self.pos;
-        let generation = match classify_regular(self.regular_run()?, at) {
-            Ok(Token::Integer(g)) => Some(g),
-            _ => None,
+        let generation = match self.short_regular_run(MAX_GENERATION_TOKEN)? {
+            Some(word) => match classify_regular(word, at) {
+                Ok(Token::Integer(g)) => Some(g),
+                _ => None,
+            },
+            None => None,
         };
         if let Some(g) = generation {
             self.skip_whitespace_and_comments()?;
-            if self.regular_run()? == b"R" {
+            if self.short_regular_run(1)? == Some(b"R") {
                 return Ok(Some(g));
             }
         }
@@ -232,7 +263,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
                     Token::DictStart
                 } else {
                     let s = self.hex_string()?;
-                    Token::String(self.take_string(s))
+                    Token::String(self.take_string(s)?)
                 }
             }
             b'>' => {
@@ -247,12 +278,12 @@ impl<'a, 'b> Lexer<'a, 'b> {
             b'(' => {
                 self.bump();
                 let s = self.literal_string(start)?;
-                Token::String(self.take_string(s))
+                Token::String(self.take_string(s)?)
             }
             b'/' => {
                 self.bump();
                 let n = self.name()?;
-                Token::Name(self.take_string(n))
+                Token::Name(self.take_string(n)?)
             }
             b')' | b'{' | b'}' => return Err(malformed("unexpected delimiter", start)),
             _ => {
@@ -395,6 +426,11 @@ impl<'a, 'b> Lexer<'a, 'b> {
         }
     }
 }
+
+/// Longest token read as a generation number in `num gen R` (#113). A generation is a
+/// non-negative integer that fits `u16` (ISO 32000-2 §7.3.10, §7.5.4: at most 65 535), so 5 digits;
+/// the bound leaves room for a sign and leading zeros as written by lenient producers.
+const MAX_GENERATION_TOKEN: usize = 20;
 
 /// ISO 32000-2 §7.3.3: numbers; anything else is a keyword.
 fn classify_regular(word: &[u8], offset: usize) -> Result<Token<'_>, SyntaxError> {
@@ -768,6 +804,158 @@ mod tests {
         assert_eq!(
             r,
             Err(SyntaxError::LimitExceeded("string bytes in one object"))
+        );
+    }
+
+    fn parse_with_room(src: &[u8], room: usize) -> Result<Object, SyntaxError> {
+        let limits = Limits {
+            max_string_bytes_per_parse: room,
+            ..Limits::default()
+        };
+        let budget = LexBudget::new(src.len(), &limits);
+        Parser::new(src, 0, &limits, &budget).parse_object()
+    }
+
+    const STRING_LIMIT: Result<Object, SyntaxError> =
+        Err(SyntaxError::LimitExceeded("string bytes in one object"));
+
+    /// Issue #113: every token kind decodes exactly up to the room. At the limit the object
+    /// parses with the right bytes; one decoded byte more is the limit error.
+    #[test]
+    fn string_room_is_exact_for_every_token_kind() {
+        let name = |b: &[u8]| Ok(Object::Name(b.to_vec()));
+        let string = |b: &[u8]| Ok(Object::String(b.to_vec()));
+        // (at the limit, its result, one decoded byte past the limit)
+        type Case<'a> = (&'a [u8], Result<Object, SyntaxError>, &'a [u8]);
+        let cases: &[Case<'_>] = &[
+            // Names, including `#xx` escapes (one decoded byte per escape).
+            (b"/abcd", name(b"abcd"), b"/abcde"),
+            (b"/a#62c#64", name(b"abcd"), b"/a#62c#64e"),
+            (b"/abc#64", name(b"abcd"), b"/abc#64#65"),
+            // Hex strings, even and odd (the odd one's last byte is the implied 0).
+            (b"<61626364>", string(b"abcd"), b"<6162636465>"),
+            (b"<6162636>", string(b"abc`"), b"<616263646>"),
+            (b"<61 62 63 6 >", string(b"abc`"), b"<61 62 63 64 6 >"),
+            // Literal strings, with an escape last and an end-of-line pair last.
+            (b"(abcd)", string(b"abcd"), b"(abcde)"),
+            (b"(abc\\\\)", string(b"abc\\"), b"(abcd\\\\)"),
+            (b"(abc\r\n)", string(b"abc\n"), b"(abcd\r\n)"),
+        ];
+        for (at, want, past) in cases {
+            assert_eq!(&parse_with_room(at, 4), want, "{}", at.escape_ascii());
+            assert_eq!(
+                parse_with_room(past, 4),
+                STRING_LIMIT,
+                "{}",
+                past.escape_ascii()
+            );
+        }
+        // An empty token fits a zero room; a 1-byte one does not.
+        assert_eq!(parse_with_room(b"/", 0), name(b""));
+        assert_eq!(parse_with_room(b"<>", 0), string(b""));
+        assert_eq!(parse_with_room(b"()", 0), string(b""));
+        for past in [&b"/a"[..], b"<4>", b"<41>", b"(a)"] {
+            assert_eq!(parse_with_room(past, 0), STRING_LIMIT, "{past:?}");
+        }
+    }
+
+    /// Issue #113: the room is shared by every token of one object, so once it is used up, each
+    /// further 1-byte name or odd hex string is refused (they used to add a byte each).
+    #[test]
+    fn string_room_is_shared_and_exact_across_tokens() {
+        for (unit, decoded) in [(&b"/a "[..], &b"a"[..]), (b"<4> ", b"@"), (b"(a) ", b"a")] {
+            let src = |n: usize| {
+                let mut s = b"[".to_vec();
+                for _ in 0..n {
+                    s.extend_from_slice(unit);
+                }
+                s.push(b']');
+                s
+            };
+            let r = parse_with_room(&src(18), 18);
+            let Ok(Object::Array(items)) = r else {
+                panic!("{unit:?}: expected an array, got {r:?}");
+            };
+            assert_eq!(items.len(), 18, "{unit:?}");
+            assert!(
+                items.iter().all(|o| match o {
+                    Object::Name(b) | Object::String(b) => b == decoded,
+                    _ => false,
+                }),
+                "{unit:?}"
+            );
+            assert_eq!(parse_with_room(&src(19), 18), STRING_LIMIT, "{unit:?}");
+            assert_eq!(parse_with_room(&src(1000), 18), STRING_LIMIT, "{unit:?}");
+        }
+    }
+
+    /// Issue #113: the reference look-ahead steps over a long token after an integer only up to
+    /// its bound, so the token is lexed once (as itself), not three times.
+    #[test]
+    fn reference_look_ahead_is_bounded() {
+        // An integer, a real and a keyword, each 100 001 bytes long.
+        for (lead, fill) in [(b'0', b'0'), (b'.', b'1'), (b'x', b'x')] {
+            let mut src = b"[1 1 ".to_vec();
+            src.push(lead);
+            src.extend(std::iter::repeat_n(fill, 100_000));
+            src.push(b']');
+            let long = char::from(lead);
+            let limits = Limits::default();
+            let budget = LexBudget::new(src.len(), &limits);
+            let r = Parser::new(&src, 0, &limits, &budget).parse_object();
+            assert_eq!(r.is_ok(), lead != b'x', "{long:?}: {r:?}");
+            let used = budget.used.get();
+            // One pass over the input plus two bounded look-aheads (at most 2 × 21 bytes) and the
+            // short re-reads of `1 1 `: well under 2 × the long token.
+            assert!(
+                used <= src.len().saturating_add(64),
+                "{long:?}: lexed {used} bytes of {}",
+                src.len()
+            );
+        }
+    }
+
+    /// Issue #113: a generation token of up to `MAX_GENERATION_TOKEN` bytes still makes a
+    /// reference; one byte longer does not (so `R` is then an unexpected keyword).
+    #[test]
+    fn generation_token_length_boundary() {
+        let src = |gen_len: usize| {
+            let mut s = b"[7 ".to_vec();
+            s.extend(std::iter::repeat_n(b'0', gen_len.saturating_sub(1)));
+            s.extend(b"3 R]");
+            s
+        };
+        let r7_3 = Object::Ref(ObjRef {
+            num: 7,
+            generation: 3,
+        });
+        assert_eq!(MAX_GENERATION_TOKEN, 20);
+        assert_eq!(parse(&src(1)), Ok(Object::Array(vec![r7_3.clone()])));
+        assert_eq!(parse(&src(20)), Ok(Object::Array(vec![r7_3])));
+        assert!(matches!(
+            parse(&src(21)),
+            Err(SyntaxError::Malformed { .. })
+        ));
+        // A signed generation still reads as before, and `R` must stand alone.
+        assert_eq!(
+            parse(b"[7 +3 R]"),
+            Ok(Object::Array(vec![Object::Ref(ObjRef {
+                num: 7,
+                generation: 3
+            })]))
+        );
+        assert!(parse(b"[7 3 Rx]").is_err());
+        assert_eq!(
+            parse(b"[7 3]"),
+            Ok(Object::Array(vec![Object::Integer(7), Object::Integer(3)]))
+        );
+        assert_eq!(
+            parse(b"[7 3 /R]"),
+            Ok(Object::Array(vec![
+                Object::Integer(7),
+                Object::Integer(3),
+                Object::Name(b"R".to_vec())
+            ]))
         );
     }
 
