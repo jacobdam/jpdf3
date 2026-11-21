@@ -82,6 +82,9 @@ the `wide` shards are the follow-up issue
    must not be under the repository root, and no ancestor may contain `.git`. Otherwise it is
    a usage error. The tier directory (`<cache>/<tier>`) and `<cache>/git` are created and
    must canonicalize to themselves (a symlink there is a usage error).
+   A `$HOME` that is itself a git working tree (a dotfiles repository) therefore refuses the
+   default cache; pass `--cache` or set `JPDF_CORPUS_CACHE`. Interrupted runs may leave
+   `*.part` files; they are never read (the bench reads `*.pdf` only).
 8. **Repository root** is found at compile time (`CARGO_MANIFEST_DIR/../..`), so the tool
    always reads the manifests of the checkout it was built from.
 

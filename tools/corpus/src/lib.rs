@@ -141,6 +141,18 @@ pub fn resolve_cache(
         path: planned.display().to_string(),
         source,
     })?;
+    // Re-check what was really created (a link planted meanwhile would resolve elsewhere).
+    let made = planned.canonicalize().map_err(|source| Error::Io {
+        path: planned.display().to_string(),
+        source,
+    })?;
+    if made != planned {
+        return Err(Error::Usage(format!(
+            "cache {} resolves to {}",
+            planned.display(),
+            made.display()
+        )));
+    }
     Ok(planned)
 }
 

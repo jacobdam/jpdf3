@@ -146,7 +146,11 @@ fn verify(path: &Path, e: &Entry) -> Result<(), VerifyError> {
     let mut buf = [0u8; 64 * 1024];
     let mut len: u64 = 0;
     loop {
-        let n = file.read(&mut buf).map_err(io)?;
+        let n = match file.read(&mut buf) {
+            Ok(n) => n,
+            Err(x) if x.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(x) => return Err(io(x)),
+        };
         if n == 0 {
             break;
         }

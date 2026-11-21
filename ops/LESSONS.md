@@ -113,6 +113,11 @@ instead of adding near-duplicates.
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
   `fsck --full` before reading, and `cat-file --batch-check` sizes before `--batch`
   ([journal](journal/2026-11-21.md), PR #62).
+- Guarding "never write inside the repo" from a tool built in a worktree → the repo root
+  is `.claude/worktrees/<x>`, which sits inside the main checkout. Refuse any path with an
+  enclosing `.git`, check before creating directories, and re-check subdirectories for
+  symlinks. Write new manifest/data parsers against the judge's real files first (smoke
+  lists one blob twice) ([journal](journal/2026-11-21.md), PR #65).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 

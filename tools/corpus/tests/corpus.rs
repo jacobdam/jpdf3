@@ -127,14 +127,22 @@ fn wrong_bytes_are_integrity_failures() {
     // Served bytes differ from the manifest: same size, wrong hash; and wrong size.
     std::fs::write(d.join("serve/hash.pdf"), b"XX").unwrap();
     std::fs::write(d.join("serve/size.pdf"), b"XXX").unwrap();
+    std::fs::write(d.join("serve/short.pdf"), b"X").unwrap();
     let entries = [
         entry("hash.pdf", b"YY"),
         entry("size.pdf", b"ZZ"),
         entry("big.pdf", b"WW"),
+        entry("short.pdf", b"VV"),
     ];
     let out = d.join("out");
     let r = fetch(&entries, &out, &opts(curl));
-    assert_eq!(r.integrity.len(), 3, "{r:?}");
+    assert_eq!(r.integrity.len(), 4, "{r:?}");
+    assert!(
+        r.integrity
+            .iter()
+            .any(|m| m.contains("short.pdf: size is 1, expected 2")),
+        "{r:?}"
+    );
     assert!(
         r.integrity
             .iter()
@@ -155,7 +163,7 @@ fn wrong_bytes_are_integrity_failures() {
     );
     // No retries on integrity failures, and nothing is left behind.
     let log = std::fs::read_to_string(d.join("log")).unwrap();
-    assert_eq!(log.lines().count(), 3, "{log}");
+    assert_eq!(log.lines().count(), 4, "{log}");
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
     std::fs::remove_dir_all(&d).unwrap();
 }
