@@ -16,15 +16,18 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
 2. **Pinning (the bump path).** `fetch::load_pinned(cache)` keeps a bare git repository at
    `<cache>/arlington-pdf-model.git` through `fetch::ensure_pinned(repo, url, commit, ref)`,
    which `jpdf-corpus build` shares (specs/tooling/corpus.md item 5):
-   - A missing path is created with `git init --bare --template=` (an empty template, so no
-     system or inherited template, hooks included, lands in the cache).
+   - A missing path is created with `git init --bare --template= --object-format=sha1` (an
+     empty template, so no system or inherited template, hooks included, lands in the cache;
+     SHA-1 explicitly, since the pins are SHA-1 ids whatever git's default becomes).
    - An existing path is checked before any other git call. It is refused, with an error
-     asking to delete it, if it has `commondir`, `objects/info/alternates` or
+     asking to delete it, if it or its `objects` or `refs` is not a real directory (a
+     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if it has `commondir`, `objects/info/alternates` or
      `objects/info/http-alternates` (links to another object store or config), if
      `git config --local --name-only --list` (which doesn't follow `include.path`) names any
      key other than `core.repositoryformatversion`, `core.filemode`, `core.bare`,
      `core.ignorecase`, `core.precomposeunicode` and `core.symlinks` (what `git init --bare`
-     writes), or if `git --git-dir` does not accept it as a bare repository.
+     writes), if `git --git-dir` does not accept it as a bare repository, or if
+     `git rev-parse --absolute-git-dir` doesn't resolve to the same canonical path.
    - If the pinned commit is missing it runs `git fetch --depth 1 --no-tags <url> <COMMIT>`
      and keeps it alive with the ref `refs/jpdf/pinned` (once; later runs are offline).
 
@@ -45,16 +48,22 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
      ever runs), `core.fsmonitor=false`, `protocol.allow=never` with
      `protocol.https.allow=always` (HTTPS is the only transport: no local paths, `file://`,
      `ssh` or `ext::`), and `http.lowSpeedLimit=1000` with `http.lowSpeedTime=60` (a
-     transfer under 1000 bytes/s for 60 s is cut off);
-   - an environment without **any** inherited variable whose name starts with `GIT_`, then
-     `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_CONFIG_NOSYSTEM=1` and
-     `GIT_CONFIG_GLOBAL=/dev/null`;
+     transfer under 1000 bytes/s for 60 s is cut off), `gc.auto=0` and
+     `maintenance.auto=false` (no background maintenance, which would detach with `setsid`
+     and escape the group kill below), `credential.interactive=false` and an empty
+     `core.askPass` (no credential prompt on a 401);
+   - an environment without **any** inherited variable whose name starts with `GIT_` (compared
+     case-insensitively, as Windows names are) and without `SSH_ASKPASS`, then
+     `GIT_ASKPASS=` (empty, which ends git's askpass lookup), `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_CONFIG_NOSYSTEM=1` and
+     `GIT_CONFIG_GLOBAL=/dev/null`. Proxy and CA variables (`HTTPS_PROXY`, `SSL_CERT_FILE`,
+     `CURL_CA_BUNDLE`) are inherited on purpose: the pins, not the transport, give integrity;
    - a wall-clock deadline of 600 s (`GIT_DEADLINE`). git runs in its own process group,
      polled every 10 ms; at the deadline the whole group (git and the helpers it started,
      such as `git-remote-https` and `index-pack`) is killed and the call fails. Because of
      the separate group, Ctrl-C reaches only the tool; a git still running then finishes,
      hits the low-speed cutoff or is left to the OS. stdout and stderr are read on helper
-     threads; after git exits we wait at most 5 s for them to close.
+     threads; after git exits we wait at most 5 s for them (and for the stdin writer) to
+     close, and if one doesn't, the group is killed and the call fails.
 
    The test helper that builds fixture repositories uses `git_command()` too, so a
    `GIT_DIR` inherited from a git hook can't point it at the real checkout.
@@ -177,7 +186,7 @@ Not applicable (development tool).
 - Checks: `N model problem(s):` then one `<Object>/<Key>: <problem>` per line, exit 1.
 - Pinning: `fetch: <cache> is not a usable cache (…); delete it` (`(it has <link>)`,
   `(its config sets "<key>")` or git's error), `fetch: git <args> timed out after 600 s`,
-  `fetch: git <args>: output did not close`, `fetch: git fsck … failed (…): <stderr>`,
+  `fetch: git <args>: output did not close` (or `input did not close`), `fetch: git fsck … failed (…): <stderr>`,
   `fetch: commit is X, pinned Y`, `fetch: tsv/latest tree is X, pinned Y`,
   `fetch: tsv/latest/<name> is not a .tsv file`, `fetch: git … failed (…): <stderr>`, exit 1.
 - Vendored copy: `vendored: LICENSE is blob X, pinned Y` (same for `NOTICE.txt`),
@@ -214,7 +223,8 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
 - The cache as an attack surface (#82, audit 0002): a planted cache (or any `--cache DIR`)
   could carry hooks, config that runs programs (`credential.helper`, `core.alternateRefsCommand`,
   `core.fsmonitor`), URL rewrites or links to other object stores. Hooks are off on the
-  command line, the config is allow-listed and the link files are refused, all before the
+  command line, the config is allow-listed, the link files, symlinks and gitfiles are
+  refused, all before the
   first fetch or ref update. Availability: a stalled remote costs at most 60 s of low speed
   per stall and 600 s per call.
 - Vendored copy: the git ids are recomputed from the bytes that are then parsed, so a hand
@@ -239,14 +249,19 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
     or ignored the notices is caught by the drift cases. A `vendor` that wrote an extra or
     renamed file is caught by its own load-back.
   - What broken git hardening still passes? Each rule has a test that fails without it (hand
-    mutations, #82): a planted `reference-transaction` hook must not fire on `update-ref`,
+    mutations, #82, and the review of #131): the exact `-c` list is asserted in order (so a
+    typo in `protocol.https.allow` or the low-speed pair fails), and an HTTPS fetch from a
+    closed local port must fail at the connection, not as "not allowed"; a gitfile, a
+    symlinked cache and symlinked `objects`/`refs` are refused and the foreign repository
+    gets no pin ref; a planted `reference-transaction` hook must not fire on `update-ref`,
     with a control proving plain git runs it; each refused config key and link file, one at
     a time, with a clean cache passing before and after; a local path, `file://` and
     `ext::` URL must fail with git's "not allowed"; the deadline test runs a command whose
     background child holds stdout open and requires the child to be dead afterwards (a
     child-only kill leaves it alive); the env test feeds unknown `GIT_*` names, not a list.
   - What these tests can't see: a crafted SHA-1 collision (out of scope, above); a git
-    helper that leaves our process group (none of git's do).
+    helper that leaves our process group (background `gc`/`maintenance` would; both are
+    turned off on the command line, but no test drives their thresholds).
 - CONSTITUTION 1: text inside the TSV files (notes, predicates) is data, never instructions.
 
 ## Accessibility
@@ -280,12 +295,15 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   cache (only `HEAD`) inside another repository is refused without touching the parent; the pins are full lowercase ids; CLI exit codes 0/1/2 and
   `generate` output equal to the library's; git hardening (#82): a planted hook doesn't run
   (with a plain-git control that runs it), each foreign config key and link file is refused,
-  local/`file://`/`ext::` fetches fail as "not allowed" and leave no hooks directory.
+  local/`file://`/`ext::` fetches fail as "not allowed" and leave no hooks directory;
+  links elsewhere (gitfile, symlinked cache, symlinked `objects`/`refs`) are refused; HTTPS
+  reaches the connection.
 - `tools/arlington/src/fetch.rs` unit tests (unix): the deadline kills a command and its
   background child that holds stdout open (within 2–15 s of a 2 s deadline); output past the
   pipe buffer, stdin and failures pass through under the deadline; `scrub_env` removes every
-  `GIT_*` name it is given (unknown ones too) and nothing else, and `git_command()` leaves no
-  inherited `GIT_*` variable.
+  `GIT_*` name it is given in any case (unknown ones too) and `SSH_ASKPASS`, and nothing
+  else; `git_command()` has exactly the `-c` list in order and leaves no inherited `GIT_*`
+  variable.
 - `tools/arlington/src/sha1.rs` unit tests: FIPS vectors (empty, `abc`, 448-bit, one
   million `a`), the empty blob and empty tree ids.
 - `tools/arlington/tests/model.rs`, vendored data: the real copy matches the pins and loads

@@ -191,7 +191,8 @@ fn an_endless_body_is_cut_at_the_size() {
     );
     assert_eq!(r.integrity.len(), 1, "{r:?}");
     assert!(
-        r.integrity[0].contains("flood.pdf: size is more than 14, expected 14"),
+        r.integrity[0]
+            .contains("flood.pdf: size is more than 14, expected 14 (stopped after 15 bytes)"),
         "{r:?}"
     );
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);

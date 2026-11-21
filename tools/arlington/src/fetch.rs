@@ -93,8 +93,14 @@ pub fn ensure_pinned(repo: &Path, url: &str, commit: &str, pin_ref: &str) -> Res
         }
         // An empty template: nothing from a system or inherited template directory.
         let mut init = git_command();
-        init.args(["init", "--bare", "--quiet", "--template="])
-            .arg(repo);
+        init.args([
+            "init",
+            "--bare",
+            "--quiet",
+            "--template=",
+            "--object-format=sha1",
+        ])
+        .arg(repo);
         run(init, "init", None, GIT_DEADLINE)?;
     }
     check_cache(repo)?;
@@ -124,6 +130,19 @@ fn check_cache(repo: &Path) -> Result<(), Error> {
             repo.display()
         ))
     };
+    // `--git-dir` follows a gitfile (`gitdir: …`) and symlinks, so the cache and the
+    // directories git writes into must be real directories here.
+    for dir in [repo.to_path_buf(), repo.join("objects"), repo.join("refs")] {
+        match std::fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() => {}
+            _ => {
+                return Err(unusable(format!(
+                    "{} is not a directory (symlinks and gitfiles are refused)",
+                    dir.display()
+                )));
+            }
+        }
+    }
     for name in FOREIGN_LINKS {
         if std::fs::symlink_metadata(repo.join(name)).is_ok() {
             return Err(unusable(format!("it has {name}")));
@@ -146,6 +165,16 @@ fn check_cache(repo: &Path) -> Result<(), Error> {
             "{} is not a bare repository; delete it",
             repo.display()
         )));
+    }
+    // Belt and braces: git must resolve the cache to itself.
+    let want = repo.canonicalize().map_err(|e| unusable(e.to_string()))?;
+    let got = git_text(repo, &["rev-parse", "--absolute-git-dir"])
+        .map_err(|e| unusable(e.to_string()))?;
+    let got = Path::new(&got)
+        .canonicalize()
+        .map_err(|e| unusable(e.to_string()))?;
+    if got != want {
+        return Err(unusable(format!("git resolves it to {}", got.display())));
     }
     Ok(())
 }
@@ -359,29 +388,49 @@ pub fn git_out(git_dir: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Result<
 /// any inherited `GIT_*` variable or system/global config. Tests that drive git use it too.
 pub fn git_command() -> Command {
     let mut cmd = Command::new("git");
-    for kv in [
-        format!("core.hooksPath={}", null_device()),
-        "core.fsmonitor=false".to_string(),
-        "protocol.allow=never".to_string(),
-        "protocol.https.allow=always".to_string(),
-        "http.lowSpeedLimit=1000".to_string(),
-        "http.lowSpeedTime=60".to_string(),
-    ] {
+    for kv in hardening_config() {
         cmd.arg("-c").arg(kv);
     }
     scrub_env(&mut cmd, std::env::vars_os().map(|(k, _)| k));
     cmd
 }
 
-/// Removes every variable in `inherited` whose name starts with `GIT_`, then sets the few
-/// git needs from us.
+/// The `-c` settings of [`git_command`], in order.
+fn hardening_config() -> [String; 10] {
+    [
+        format!("core.hooksPath={}", null_device()),
+        "core.fsmonitor=false".to_string(),
+        "protocol.allow=never".to_string(),
+        "protocol.https.allow=always".to_string(),
+        "http.lowSpeedLimit=1000".to_string(),
+        "http.lowSpeedTime=60".to_string(),
+        // No background `gc`/`maintenance` that daemonizes out of our process group.
+        "gc.auto=0".to_string(),
+        "maintenance.auto=false".to_string(),
+        // Never ask for credentials (a 401 from a missing repository).
+        "credential.interactive=false".to_string(),
+        "core.askPass=".to_string(),
+    ]
+}
+
+/// Removes every variable in `inherited` whose name starts with `GIT_` (in any case, as
+/// Windows names are case-insensitive) and `SSH_ASKPASS`, then sets the few git needs from
+/// us. An empty `GIT_ASKPASS` ends git's askpass lookup, so no prompt program ever runs.
+/// Proxy and CA variables (`HTTPS_PROXY`, `SSL_CERT_FILE`, …) are inherited on purpose:
+/// the pins, not the transport, guarantee integrity.
 pub fn scrub_env(cmd: &mut Command, inherited: impl IntoIterator<Item = OsString>) {
     for name in inherited {
-        if name.as_encoded_bytes().starts_with(b"GIT_") {
+        let bytes = name.as_encoded_bytes();
+        if bytes
+            .get(..4)
+            .is_some_and(|p| p.eq_ignore_ascii_case(b"GIT_"))
+            || bytes.eq_ignore_ascii_case(b"SSH_ASKPASS")
+        {
             cmd.env_remove(name);
         }
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", null_device());
@@ -413,7 +462,13 @@ fn run(
         .map_err(|e| Error::Fetch(format!("cannot run git: {e}")))?;
     // Feed stdin from a thread so a full stdout pipe can't deadlock us.
     let writer = match (stdin, child.stdin.take()) {
-        (Some(data), Some(mut pipe)) => Some(std::thread::spawn(move || pipe.write_all(&data))),
+        (Some(data), Some(mut pipe)) => {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(pipe.write_all(&data));
+            });
+            Some(rx)
+        }
         _ => None,
     };
     // Read stdout and stderr on their own threads, so neither pipe can fill up and block git.
@@ -436,7 +491,12 @@ fn run(
             }
         }
     };
-    let stderr = stderr.recv_timeout(PIPE_GRACE).unwrap_or_default();
+    let Ok(stderr) = stderr.recv_timeout(PIPE_GRACE) else {
+        kill_tree(&mut child);
+        return Err(Error::Fetch(format!(
+            "git {what} ({status}): output did not close"
+        )));
+    };
     // Report git's own failure (and its stderr) before a broken pipe it caused.
     if !status.success() {
         return Err(Error::Fetch(format!(
@@ -444,13 +504,18 @@ fn run(
             String::from_utf8_lossy(&stderr).trim()
         )));
     }
-    let stdout = stdout
-        .recv_timeout(PIPE_GRACE)
-        .map_err(|_| Error::Fetch(format!("git {what}: output did not close")))?;
+    let Ok(stdout) = stdout.recv_timeout(PIPE_GRACE) else {
+        kill_tree(&mut child);
+        return Err(Error::Fetch(format!("git {what}: output did not close")));
+    };
     if let Some(w) = writer {
-        match w.join() {
+        match w.recv_timeout(PIPE_GRACE) {
             Ok(Ok(())) => {}
-            _ => return Err(Error::Fetch("writing to git failed".into())),
+            Ok(Err(_)) => return Err(Error::Fetch("writing to git failed".into())),
+            Err(_) => {
+                kill_tree(&mut child);
+                return Err(Error::Fetch(format!("git {what}: input did not close")));
+            }
         }
     }
     Ok(stdout)
@@ -597,9 +662,12 @@ mod tests {
             "GIT_ALLOW_PROTOCOL",
             "GIT_CONFIG_KEY_0",
             "GIT_FUTURE_VARIABLE",
+            "Git_Dir",
+            "git_exec_path",
+            "SSH_ASKPASS",
             "GITX",
             "PATH",
-            "git_dir",
+            "GI",
         ];
         scrub_env(&mut cmd, names.map(OsString::from));
         let envs: Vec<(String, Option<String>)> = cmd
@@ -611,22 +679,47 @@ mod tests {
                 )
             })
             .collect();
-        for name in names.iter().filter(|n| n.starts_with("GIT_")) {
+        for name in names
+            .iter()
+            .filter(|n| n.to_ascii_uppercase().starts_with("GIT_") || **n == "SSH_ASKPASS")
+        {
             assert!(envs.contains(&(name.to_string(), None)), "{name}: {envs:?}");
         }
-        for name in ["GITX", "PATH", "git_dir"] {
+        for name in ["GITX", "PATH", "GI"] {
             assert!(envs.iter().all(|(k, _)| k != name), "{name}: {envs:?}");
         }
         for (k, v) in [
             ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_ASKPASS", ""),
             ("GIT_NO_REPLACE_OBJECTS", "1"),
             ("GIT_CONFIG_NOSYSTEM", "1"),
             ("GIT_CONFIG_GLOBAL", "/dev/null"),
         ] {
             assert!(envs.contains(&(k.to_string(), Some(v.to_string()))), "{k}");
         }
-        // The real builder applies it to the real environment.
+        // The real builder applies it to the real environment, and every setting is on the
+        // command line, in order, before anything else.
         let real = git_command();
+        let args: Vec<String> = real
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let want: Vec<String> = [
+            "core.hooksPath=/dev/null",
+            "core.fsmonitor=false",
+            "protocol.allow=never",
+            "protocol.https.allow=always",
+            "http.lowSpeedLimit=1000",
+            "http.lowSpeedTime=60",
+            "gc.auto=0",
+            "maintenance.auto=false",
+            "credential.interactive=false",
+            "core.askPass=",
+        ]
+        .iter()
+        .flat_map(|kv| ["-c".to_string(), kv.to_string()])
+        .collect();
+        assert_eq!(args, want);
         for (k, _) in std::env::vars_os() {
             if k.as_encoded_bytes().starts_with(b"GIT_") {
                 let set = real.get_envs().find(|(n, _)| *n == k).map(|(_, v)| v);

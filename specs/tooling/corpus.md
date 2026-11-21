@@ -74,7 +74,8 @@ the `wide` shards are the follow-up issue
      stdout and is copied into `<blob>.part`, created with `create_new` (a file or symlink
      already at that name is never written through), at most `size + 1` bytes: curl before
      8.4 doesn't enforce `--max-filesize` without a Content-Length, so this cap is the real
-     bound; past it curl is killed and the size check below reports the overflow. curl's
+     bound; past it curl is killed and the download is an integrity failure,
+     `size is more than <size>, expected <size> (stopped after <size + 1> bytes)`. curl's
      stderr is kept up to 64 KiB (the rest is drained) and its first 300 bytes go in the
      error. Up to 3 attempts per file, 1 s then 2 s apart. The `.part` file must have exactly `size` bytes and
      the right blob id (streamed through SHA-1 with a 64 KiB buffer, at most `size + 1` bytes
@@ -153,7 +154,8 @@ data (workspace lints).
   own terms.
 - **Self-check (#82):** what broken fetch still passes? Hand mutations each fail a test:
   dropping the `is_file` pre-check (the FIFO test times out at 30 s), `--max-redirs 5`
-  (the argv check), and an off-by-one copy cap (the endless-body test). Not tested: a
+  (the argv check), and a copy cap too small or too large (the endless-body test checks
+  the byte count, review of #131). Not tested: a
   symlink planted at the exact `.part` name between `remove_file` and `create_new` (the name
   holds a process-wide counter; `create_new` is `O_CREAT|O_EXCL`, which never follows one).
   Arithmetic: `size + 1` is `saturating_add` on a manifest size ≤ 64 MiB.
@@ -186,7 +188,8 @@ Unit tests (`cargo nextest run -p jpdf-corpus`):
 - fetch with a shell `curl` stand-in (passed as `Options::curl`): argv starts with `-q`,
   encoded URLs, retries, cached and corrupted-cache files, a hash mismatch, a size mismatch
   and curl exit 63 (integrity, no retry, nothing left behind), argv has `--max-redirs 0` and
-  no `--output`, an endless body cut at `size + 1` (integrity, within 30 s, nothing left),
+  no `--output`, an endless body cut at exactly `size + 1` bytes (the message carries the
+  count; integrity, within 30 s, nothing left),
   a FIFO at a cached name replaced without blocking, download failures and the
   `max(1, N/100)` threshold, a missing curl, three concurrent fetches of one tier;
 - `select` (sort, then `--limit`) and `Report::exit_code` (0, 1 before 75, 75);

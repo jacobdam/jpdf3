@@ -242,8 +242,7 @@ fn fetch_one(e: &Entry, dir: &Path, opts: &Options) -> Outcome {
 /// Runs curl with the body on stdout and copies at most `size + 1` bytes of it into `part`,
 /// which must not exist yet (`create_new`, so a planted file or symlink is never written
 /// through). curl < 8.4 doesn't enforce `--max-filesize` without a Content-Length; the cap
-/// here does. On overflow curl is killed and `Ok` is returned: [`verify`] then reports the
-/// size. Redirects fail (`--max-redirs 0`, curl exit 47): no source host redirects, and a
+/// here does. On overflow curl is killed and the result is curl's exit 63 (integrity). Redirects fail (`--max-redirs 0`, curl exit 47): no source host redirects, and a
 /// redirect target's host was never checked.
 fn run_curl(opts: &Options, e: &Entry, part: &Path) -> Result<(), (Option<i32>, String)> {
     let mut file = std::fs::OpenOptions::new()
@@ -302,7 +301,16 @@ fn run_curl(opts: &Options, e: &Entry, part: &Path) -> Result<(), (Option<i32>, 
     let status = child.wait();
     let stderr = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
     if overflow {
-        return Ok(());
+        // Reported like curl's own exit 63 (an integrity failure, no retry), with the count
+        // of bytes that reached `part`.
+        let copied = copied.unwrap_or(0);
+        return Err((
+            Some(63),
+            format!(
+                "size is more than {}, expected {} (stopped after {copied} bytes)",
+                e.size, e.size
+            ),
+        ));
     }
     let status = status.map_err(|x| (None, format!("curl: {x}")))?;
     if !status.success() {

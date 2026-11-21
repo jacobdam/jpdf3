@@ -361,6 +361,7 @@ fn a_broken_cache_is_refused_not_discovered_upwards() {
 /// A bare cache made by `ensure_pinned` (whose fetch URL is never reached) holding the
 /// fixture commit, copied in over the local transport that `git_command` itself refuses.
 #[cfg(test)]
+#[cfg(unix)]
 fn fixture_cache(name: &str) -> (PathBuf, PathBuf, String) {
     let (dir, commit, _) = fixture_repo(name);
     let repo = scratch(&format!("{name}-cache")).join("c.git");
@@ -386,6 +387,7 @@ fn fixture_cache(name: &str) -> (PathBuf, PathBuf, String) {
 const UNUSED_URL: &str = "https://example.invalid/unused.git";
 
 #[cfg(test)]
+#[cfg(unix)]
 fn plant_hook(repo: &Path, marker: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let hooks = repo.join("hooks");
@@ -396,6 +398,7 @@ fn plant_hook(repo: &Path, marker: &Path) {
 }
 
 /// A hook planted in the cache never runs (audit 0002 on #82), though plain git runs it.
+#[cfg(unix)]
 #[test]
 fn cache_hooks_never_run() {
     let (_, repo, commit) = fixture_cache("pin-hook");
@@ -422,6 +425,7 @@ fn cache_hooks_never_run() {
 
 /// A cache's own config may hold only what `git init --bare` writes; links to another
 /// object store or common directory are refused too.
+#[cfg(unix)]
 #[test]
 fn caches_with_foreign_config_or_links_are_refused() {
     let (_, repo, commit) = fixture_cache("pin-config");
@@ -474,6 +478,70 @@ fn caches_with_foreign_config_or_links_are_refused() {
 }
 
 /// HTTPS is the only transport: a local path, `file://` and `ext::` are refused by git.
+/// The cache itself, or the directories git writes into, can't be links elsewhere: a
+/// gitfile, a symlinked cache, symlinked `objects` or `refs` (review of #131).
+#[cfg(unix)]
+#[test]
+fn caches_that_point_elsewhere_are_refused() {
+    let (_, foreign, commit) = fixture_cache("pin-elsewhere");
+    let base = scratch("pin-elsewhere-links");
+    let check = |repo: &Path, what: &str| {
+        let e = fetch::ensure_pinned(repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("is not a directory (symlinks and gitfiles are refused)"),
+            "{what}: {e}"
+        );
+        // Nothing was written into the foreign repository.
+        let r = fetch::git_out(
+            &foreign,
+            &["rev-parse", "--verify", "--quiet", fetch::PIN_REF],
+            None,
+        );
+        assert!(
+            r.is_err(),
+            "{what}: the pin ref reached the foreign repository"
+        );
+    };
+    let gitfile = base.join("gitfile.git");
+    std::fs::write(&gitfile, format!("gitdir: {}\n", foreign.display())).unwrap();
+    check(&gitfile, "gitfile");
+    let link = base.join("link.git");
+    std::os::unix::fs::symlink(&foreign, &link).unwrap();
+    check(&link, "symlinked cache");
+    for sub in ["objects", "refs"] {
+        let (_, repo, _) = fixture_cache(&format!("pin-elsewhere-{sub}"));
+        let real = repo.with_file_name(format!("{sub}-real"));
+        std::fs::rename(repo.join(sub), &real).unwrap();
+        std::os::unix::fs::symlink(&real, repo.join(sub)).unwrap();
+        let e = fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("symlinks and gitfiles are refused"),
+            "{sub}: {e}"
+        );
+    }
+    // Control: the foreign repository itself is a fine cache.
+    fetch::ensure_pinned(&foreign, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();
+}
+
+/// HTTPS is allowed (a typo in the protocol settings would refuse it): a fetch from a
+/// closed local HTTPS port fails at the connection, not with "not allowed".
+#[cfg(unix)]
+#[test]
+fn https_reaches_the_network_layer() {
+    let (_, commit, _) = fixture_repo("pin-https");
+    let repo = scratch("pin-https-cache").join("c.git");
+    let e = fetch::ensure_pinned(&repo, "https://127.0.0.1:1/x.git", &commit, fetch::PIN_REF)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("git fetch") && !e.contains("not allowed"), "{e}");
+    assert!(e.contains("127.0.0.1"), "{e}");
+}
+
+#[cfg(unix)]
 #[test]
 fn only_https_is_fetched() {
     let (dir, commit, _) = fixture_repo("pin-proto");
