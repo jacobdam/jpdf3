@@ -47,7 +47,7 @@ git fetch -q origin
 # (due at >= 10 merges or 7 days; if the first line is empty, no audit exists yet: due now)
 git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md'
 a=$(git log -1 --diff-filter=A --format=%H origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md')
-[ -n "$a" ] && git rev-list --count --first-parent "$a"..origin/main
+[ -n "$a" ] && git rev-list --count --first-parent "$a"..origin/main || true
 # retro due? date the last retro record was ADDED (due after 7 days; empty: due 7 days after
 # bootstrap). The pattern is exact `NNNN.md`, so 0000-pilot.md doesn't reset the clock.
 git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0-9][0-9][0-9].md'
