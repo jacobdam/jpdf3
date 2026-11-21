@@ -36,6 +36,8 @@ struct Toy {
     cmap_zero: bool,
     /// Read the units per em as 2048 whatever the program says.
     fixed_upem: bool,
+    /// Use a built-in ops budget instead of the caller's (still stops `loop` glyphs).
+    ignore_caller_ops: bool,
 }
 
 struct ToyGlyph {
@@ -269,6 +271,20 @@ impl FontFace for ToyFace {
                 Err(BackendError::LimitExceeded("outline ops"))
             };
         };
+        // One charstring operator per segment; TrueType simple glyphs run none.
+        let ops = if self.format == OutlineFormat::TrueType {
+            0
+        } else {
+            outline.segments.len()
+        };
+        let ops_limit = if self.toy.ignore_caller_ops {
+            1 << 20
+        } else {
+            limits.max_outline_ops
+        };
+        if u32::try_from(ops).map_or(true, |n| n > ops_limit) {
+            return Err(BackendError::LimitExceeded("outline ops"));
+        }
         if outline.point_count() > limits.max_outline_points && !self.toy.ignore_point_limit {
             return Err(BackendError::LimitExceeded("outline points"));
         }
@@ -471,13 +487,34 @@ fn engine_fixtures() -> Vec<FontFixture> {
     vec![tt, cff, cid, cff2]
 }
 
-fn hostile(format: &str, program: FontProgram) -> Vec<HostileFont> {
-    vec![HostileFont {
-        name: format!("{format}-loop"),
-        data: format!("toyfont {format} 1000\ng 500 .notdef\ng 500 bomb loop\n").into_bytes(),
-        program,
-        glyphs: vec![GlyphId(1)],
-    }]
+/// One hostile toy program per format: glyph 1 loops forever, glyph 0 is the control.
+fn hostile_for(formats: &[(&str, FontProgram, OutlineFormat)]) -> Vec<HostileFont> {
+    formats
+        .iter()
+        .map(|&(format, program, outline_format)| HostileFont {
+            name: format!("{format}-loop"),
+            data: format!(
+                "toyfont {format} 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\ng 500 bomb loop\n"
+            )
+            .into_bytes(),
+            program,
+            outline_format,
+            glyphs: vec![GlyphId(1)],
+            control_glyph: Some(GlyphId(0)),
+        })
+        .collect()
+}
+
+fn engine_hostile() -> Vec<HostileFont> {
+    hostile_for(&[
+        ("tt", FontProgram::Sfnt, OutlineFormat::TrueType),
+        ("cff", FontProgram::BareCff, OutlineFormat::Cff),
+        ("cff2", FontProgram::Sfnt, OutlineFormat::Cff2),
+    ])
+}
+
+fn type1_hostile() -> Vec<HostileFont> {
+    hostile_for(&[("type1", FontProgram::Sfnt, OutlineFormat::Type1)])
 }
 
 fn type1_fixtures() -> Vec<FontFixture> {
@@ -501,28 +538,20 @@ fn type1_fixtures() -> Vec<FontFixture> {
 }
 
 fn engine_failures(toy: Toy, fixtures: &[FontFixture]) -> Vec<&'static str> {
-    let report = run_font_engine(&toy, fixtures, &hostile("tt", FontProgram::Sfnt));
+    let report = run_font_engine(&toy, fixtures, &engine_hostile());
     assert!(report.checks_run > 0);
     report.failed_checks()
 }
 
 #[test]
 fn correct_engine_passes() {
-    let report = run_font_engine(
-        &Toy::default(),
-        &engine_fixtures(),
-        &hostile("tt", FontProgram::Sfnt),
-    );
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &engine_hostile());
     assert!(report.passed(), "{report}");
 }
 
 #[test]
 fn correct_type1_parser_passes() {
-    let report = run_type1(
-        &Toy::default(),
-        &type1_fixtures(),
-        &hostile("type1", FontProgram::Sfnt),
-    );
+    let report = run_type1(&Toy::default(), &type1_fixtures(), &type1_hostile());
     assert!(report.passed(), "{report}");
 }
 
@@ -724,7 +753,12 @@ fn unclosed_contours_are_caught() {
     };
     assert_eq!(
         engine_failures(toy, &engine_fixtures()),
-        vec!["font.fixture_loads", "font.invariants", "font.truncated"]
+        vec![
+            "font.fixture_loads",
+            "font.hostile",
+            "font.invariants",
+            "font.truncated"
+        ]
     );
 }
 
@@ -738,6 +772,57 @@ fn cmap_glyph_zero_is_caught() {
         engine_failures(toy, &engine_fixtures()),
         vec!["font.fixture_loads", "font.invariants", "font.truncated"]
     );
+}
+
+#[test]
+fn ignoring_the_callers_ops_limit_is_caught() {
+    let toy = Toy {
+        ignore_caller_ops: true,
+        ..Toy::default()
+    };
+    assert_eq!(
+        engine_failures(toy, &engine_fixtures()),
+        vec!["font.outline_ops_limit"]
+    );
+}
+
+#[test]
+fn weak_hostile_fixtures_fail() {
+    let cases: [fn(&mut HostileFont); 4] = [
+        // An out-of-range glyph fails with InvalidArgument for every backend.
+        |h| h.glyphs = vec![GlyphId(9999)],
+        // A program that fails to load for a dull reason proves nothing.
+        |h| h.data = b"not a font".to_vec(),
+        // The control glyph must outline.
+        |h| h.control_glyph = Some(GlyphId(1)),
+        |h| h.glyphs.clear(),
+    ];
+    for (i, breakage) in cases.iter().enumerate() {
+        let mut hostile = engine_hostile();
+        breakage(&mut hostile[0]);
+        let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+        assert_eq!(report.failed_checks(), vec!["font.hostile"], "case {i}");
+    }
+    // Without a control glyph, a load failure must still be LimitExceeded or Malformed.
+    let mut hostile = engine_hostile();
+    hostile[0].control_glyph = None;
+    hostile[0].data = b"toyfont tt 1000\ng 500 .notdef M 0 0 L 1 0 L 1 1 Z\nzzz\n".to_vec();
+    assert!(run_font_engine(&Toy::default(), &engine_fixtures(), &hostile).passed());
+    let toy = Toy {
+        panic_on_bad_utf8: true,
+        ..Toy::default()
+    };
+    hostile[0].data = vec![0xff];
+    let report = run_font_engine(&toy, &engine_fixtures(), &hostile);
+    assert!(report.failed("font.hostile"));
+}
+
+#[test]
+fn hostile_coverage_needs_every_format() {
+    let mut hostile = engine_hostile();
+    hostile.remove(1);
+    let report = run_font_engine(&Toy::default(), &engine_fixtures(), &hostile);
+    assert_eq!(report.failed_checks(), vec!["font.has_hostile_fixtures"]);
 }
 
 #[test]
@@ -802,27 +887,15 @@ fn type1_ignoring_the_encoding_is_caught() {
         ignore_encoding: true,
         ..Toy::default()
     };
-    let report = run_type1(
-        &toy,
-        &type1_fixtures(),
-        &hostile("type1", FontProgram::Sfnt),
-    );
+    let report = run_type1(&toy, &type1_fixtures(), &type1_hostile());
     assert_eq!(report.failed_checks(), vec!["font.fixture_loads"]);
 }
 
 #[test]
 fn type1_requires_a_custom_encoding_fixture() {
     let fixtures: Vec<FontFixture> = type1_fixtures().into_iter().skip(1).collect();
-    let report = run_type1(
-        &Toy::default(),
-        &fixtures,
-        &hostile("type1", FontProgram::Sfnt),
-    );
+    let report = run_type1(&Toy::default(), &fixtures, &type1_hostile());
     assert_eq!(report.failed_checks(), vec!["font.fixture_coverage"]);
-    let report = run_type1(
-        &Toy::default(),
-        &engine_fixtures(),
-        &hostile("type1", FontProgram::Sfnt),
-    );
+    let report = run_type1(&Toy::default(), &engine_fixtures(), &type1_hostile());
     assert!(report.failed("font.fixture_coverage"));
 }

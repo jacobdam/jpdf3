@@ -20,13 +20,18 @@ pub struct ExpectedGlyph {
     /// Its advance, in glyph space.
     pub advance: f32,
     /// Its outline, compared segment by segment within the fixture's tolerance after
-    /// [`normalize`] (TrueType implied on-curve points are explicit `QuadTo` end points).
+    /// dropping a `LineTo` back to the contour start right before `Close` (within the
+    /// tolerance; backends differ on emitting it). TrueType implied on-curve points are
+    /// explicit `QuadTo` end points.
     /// Empty for a glyph without contours.
     pub outline: Outline,
 }
 
-/// A program the backend must reject: loading it fails, or the outline of each listed glyph
-/// does (self-referencing composites, recursive subroutines, subroutine fan-out bombs).
+/// A program the backend must reject (self-referencing composites, recursive subroutines,
+/// subroutine fan-out bombs). With a `control_glyph`, the program must load, the control
+/// glyph must outline successfully (proving the hostile path is reachable), and each listed
+/// glyph must fail with `LimitExceeded` or `Malformed`. Without one, the load or each listed
+/// glyph must fail that way.
 /// A backend that recurses without a bound overflows the stack, which aborts the test
 /// process: that is a failure too, just not one the report can list.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,8 +42,12 @@ pub struct HostileFont {
     pub data: Vec<u8>,
     /// Its container ([`run_font_engine`] only).
     pub program: FontProgram,
-    /// Glyphs whose outline must fail if the program loads (at least one).
+    /// The outline format it attacks (coverage needs one hostile program per format).
+    pub outline_format: OutlineFormat,
+    /// Glyphs whose outline must fail if the program loads (at least one, all in range).
     pub glyphs: Vec<GlyphId>,
+    /// A benign glyph in the same program that must outline successfully.
+    pub control_glyph: Option<GlyphId>,
 }
 
 /// A font program and what it parses to.
@@ -136,7 +145,16 @@ pub fn run_font_engine(
         let empty = guarded(|| engine.load(&[], program, &FontLimits::default()).err());
         empty_input(&mut report, empty);
     }
-    common(&mut report, fixtures, hostile);
+    common(
+        &mut report,
+        fixtures,
+        hostile,
+        &[
+            OutlineFormat::TrueType,
+            OutlineFormat::Cff,
+            OutlineFormat::Cff2,
+        ],
+    );
     report
 }
 
@@ -175,7 +193,7 @@ pub fn run_type1(
     }
     let empty = guarded(|| parser.load(&[], &FontLimits::default()).err());
     empty_input(&mut report, empty);
-    common(&mut report, fixtures, hostile);
+    common(&mut report, fixtures, hostile, &[OutlineFormat::Type1]);
     report
 }
 
@@ -192,9 +210,9 @@ fn has_curve(fixtures: &[FontFixture], format: OutlineFormat) -> bool {
         })
 }
 
-/// Drops a `LineTo` back to the contour's start right before `Close` (backends differ on
-/// whether they emit it; the shape is the same).
-pub fn normalize(outline: &Outline) -> Vec<PathSegment> {
+/// Drops a `LineTo` back to the contour's start (within `tolerance`) right before `Close`
+/// (backends differ on whether they emit it; the shape is the same).
+fn normalize(outline: &Outline, tolerance: f32) -> Vec<PathSegment> {
     let mut out: Vec<PathSegment> = Vec::with_capacity(outline.segments.len());
     let mut start: Option<Point> = None;
     for segment in &outline.segments {
@@ -202,7 +220,8 @@ pub fn normalize(outline: &Outline) -> Vec<PathSegment> {
             PathSegment::MoveTo(p) => start = Some(*p),
             PathSegment::Close => {
                 if let (Some(PathSegment::LineTo(p)), Some(s)) = (out.last(), start)
-                    && *p == s
+                    && close(p.x, s.x, tolerance)
+                    && close(p.y, s.y, tolerance)
                 {
                     out.pop();
                 }
@@ -217,7 +236,7 @@ pub fn normalize(outline: &Outline) -> Vec<PathSegment> {
 /// Whether two outlines match segment by segment within `tolerance`.
 fn outlines_match(got: &Outline, want: &Outline, tolerance: f32) -> bool {
     let near = |a: &Point, b: &Point| close(a.x, b.x, tolerance) && close(a.y, b.y, tolerance);
-    let (got, want) = (normalize(got), normalize(want));
+    let (got, want) = (normalize(got, tolerance), normalize(want, tolerance));
     got.len() == want.len()
         && got.iter().zip(&want).all(|pair| match pair {
             (PathSegment::MoveTo(a), PathSegment::MoveTo(b))
@@ -501,7 +520,12 @@ fn empty_input(report: &mut Report, empty: Option<Option<BackendError>>) {
 }
 
 /// Fixture-independent checks.
-fn common(report: &mut Report, fixtures: &[FontFixture], hostile: &[HostileFont]) {
+fn common(
+    report: &mut Report,
+    fixtures: &[FontFixture],
+    hostile: &[HostileFont],
+    formats: &[OutlineFormat],
+) {
     report.check("font.has_fixtures", !fixtures.is_empty(), || {
         "no fixtures supplied; the adapter must provide at least one".into()
     });
@@ -512,29 +536,69 @@ fn common(report: &mut Report, fixtures: &[FontFixture], hostile: &[HostileFont]
             .any(|f| f.glyphs.iter().any(|g| g.outline.point_count() > 0)),
         || "fixtures must expect at least one glyph with points (for the point limit)".into(),
     );
-    report.check("font.has_hostile_fixtures", !hostile.is_empty(), || {
-        "no hostile programs supplied; the adapter must provide at least one".into()
+    let covered = formats
+        .iter()
+        .all(|f| hostile.iter().any(|h| h.outline_format == *f));
+    report.check("font.has_hostile_fixtures", covered, || {
+        format!("hostile programs must cover every outline format: {formats:?}")
     });
 }
 
-/// A hostile program never panics, and is rejected at load or for each listed glyph.
+/// A hostile program never panics and is rejected the way [`HostileFont`] describes.
 fn run_hostile(report: &mut Report, h: &HostileFont, load: &LoadFn<'_>) {
+    let full = FontLimits::default();
+    let mut glyphs = h.glyphs.clone();
+    glyphs.extend(h.control_glyph);
     let q = Questions {
-        limits: FontLimits::default(),
-        glyphs: h.glyphs.clone(),
+        limits: full,
+        glyphs,
         ..Questions::default()
     };
-    let result = load(&h.data, &FontLimits::default(), &q);
+    let rejected = |e: &BackendError| {
+        matches!(
+            e,
+            BackendError::LimitExceeded(_) | BackendError::Malformed(_)
+        )
+    };
+    let result = load(&h.data, &full, &q);
     let problem = match &result {
+        _ if h.glyphs.is_empty() => Some("no glyphs listed".to_owned()),
         None => Some("panicked".to_owned()),
+        Some(Err(e)) if h.control_glyph.is_some() => {
+            Some(format!("has a control glyph but failed to load: {e:?}"))
+        }
+        Some(Err(e)) if !rejected(e) => Some(format!("load failed with {e:?}")),
         Some(Err(_)) => None,
-        Some(Ok(_)) if h.glyphs.is_empty() => Some("no glyphs listed".to_owned()),
-        Some(Ok(p)) => h
-            .glyphs
-            .iter()
-            .find(|g| !matches!(p.outline(**g), Some(Err(_))))
-            .map(|g| format!("glyph {}: outline did not fail", g.0))
-            .or_else(|| p.invariant_violation(&FontLimits::default())),
+        Some(Ok(p)) => {
+            let out_of_range = h
+                .glyphs
+                .iter()
+                .chain(&h.control_glyph)
+                .find(|g| g.0 >= p.glyph_count);
+            let control_failed = h
+                .control_glyph
+                .filter(|g| !matches!(p.outline(*g), Some(Ok(_))));
+            if let Some(g) = out_of_range {
+                Some(format!(
+                    "glyph {} is not below glyph_count {}",
+                    g.0, p.glyph_count
+                ))
+            } else if let Some(g) = control_failed {
+                Some(format!("control glyph {} did not outline", g.0))
+            } else {
+                h.glyphs
+                    .iter()
+                    .find(|g| !matches!(p.outline(**g), Some(Err(e)) if rejected(e)))
+                    .map(|g| {
+                        format!(
+                            "glyph {}: expected LimitExceeded or Malformed, got {:?}",
+                            g.0,
+                            p.outline(*g)
+                        )
+                    })
+                    .or_else(|| p.invariant_violation(&full))
+            }
+        }
     };
     report.check("font.hostile", problem.is_none(), || {
         format!("{}: {}", h.name, problem.clone().unwrap_or_default())
@@ -693,6 +757,38 @@ fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
         }
     }
 
+    // The ops limit comes from the caller: every Type 1/CFF/CFF2 glyph with points runs at
+    // least one charstring operator, so with `max_outline_ops` 0 it must fail. (TrueType
+    // simple glyphs count no operations.)
+    if let Some((g, _)) = largest.filter(|_| f.outline_format != OutlineFormat::TrueType) {
+        let q = Questions {
+            limits: FontLimits {
+                max_outline_ops: 0,
+                ..full
+            },
+            glyphs: vec![g.glyph],
+            ..Questions::default()
+        };
+        let result = ask(&f.data, &full, &q);
+        let outline = match &result {
+            Some(Ok(p)) => p.outline(g.glyph).cloned(),
+            _ => None,
+        };
+        report.check(
+            "font.outline_ops_limit",
+            matches!(outline, Some(Err(BackendError::LimitExceeded(_)))),
+            || {
+                format!(
+                    "{name}: glyph {} with max_outline_ops 0: expected LimitExceeded, got {:?}",
+                    g.glyph.0,
+                    outline
+                        .as_ref()
+                        .map(|r| r.as_ref().map(Outline::point_count))
+                )
+            },
+        );
+    }
+
     // Truncated and mutated programs: no panic, and every answer from a face that loads keeps
     // the invariants. Small limits keep runaway output visible and the run fast.
     let most_points = f
@@ -760,7 +856,9 @@ fn fixture_mismatch(p: &Probe, f: &FontFixture) -> Option<String> {
             p.glyph_count, f.glyph_count
         ));
     }
-    let rel = |a: f32, b: f32| (a - b).abs() <= 1e-4 * a.abs().max(b.abs());
+    // Relative to the matrix's largest entry, so a near-zero skew still compares sanely.
+    let scale = f.font_matrix.iter().fold(0f32, |m, v| m.max(v.abs()));
+    let rel = |a: f32, b: f32| (a - b).abs() <= 1e-4 * scale;
     if !p
         .font_matrix
         .iter()

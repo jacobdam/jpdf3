@@ -222,10 +222,14 @@ failed check by a stable name:
     `cmap` lookups, names (checked both ways) and CID lookups.
   - Outlines are compared segment by segment within the fixture's tolerance: same segment
     kinds, same order, same points. So reversed winding, permuted points and swapped control
-    points all fail. A `LineTo` back to the contour start right before `Close` is dropped
-    first (`normalize`), because backends differ on emitting it. The tolerance is in font
+    points all fail. A `LineTo` back to the contour start (within the tolerance) right before
+    `Close` is dropped first, because backends differ on emitting it. Contours start at the
+    program's first on-curve point. A TrueType contour with no on-curve point starts at the
+    implied midpoint of its first two points. Fixture authors should prefer contours that
+    start on-curve. The tolerance is in font
     units, must be finite and between 0 and 1, and also applies to advances and metrics. The
-    font matrix is compared with a relative tolerance of 1e-4, so a wrong units-per-em fails.
+    font matrix is compared within 1e-4 times its largest expected entry, so a wrong
+    units-per-em fails and a near-zero skew still compares sanely.
   - Engine coverage:
     - TrueType, CFF and CFF2 outlines, each with a curve (`QuadTo` for TrueType, `CurveTo`
       for the others);
@@ -236,17 +240,26 @@ failed check by a stable name:
 
     Type 1 coverage: every fixture is Type 1, one has a `CurveTo`, and one has a `Custom`
     encoding. At least one fixture glyph must have points.
-  - Hostile programs (at least one required): self-referencing composites, recursive
-    subroutines, fan-out bombs. Each must fail to load, or fail `outline` for every listed
-    glyph, without a panic and keeping the invariants. Unbounded recursion overflows the
+  - Hostile programs (at least one per covered outline format): self-referencing
+    composites, recursive subroutines, fan-out bombs.
+    - With a control glyph, the program must load. The control glyph must outline (proof
+      that the hostile path is reachable), and every listed glyph must fail with
+      `LimitExceeded` or `Malformed`.
+    - Without one, the load or every listed glyph must fail that way.
+    - Listed glyphs must be in range (an out-of-range id fails trivially with
+      `InvalidArgument`).
+    - No panic, and the invariants hold. Unbounded recursion overflows the
     stack and aborts the test process, which fails the run without a report entry.
   - Each fixture loads and matches exactly. Glyph id `glyph_count` gives `InvalidArgument`
     from both `advance` and `outline`.
   - `max_font_program_bytes` and `max_glyphs` pass at the fixture's size and give
     `LimitExceeded` one below. `max_outline_points` passes at the backend's own point count
-    for the largest fixture glyph and gives `LimitExceeded` one below. `max_outline_ops` has
-    no generic boundary test, because operation counts are backend-specific; the hostile
-    programs cover it.
+    for the largest fixture glyph and gives `LimitExceeded` one below. Operation counts are
+    backend-specific, so `max_outline_ops` gets a lower-bound check instead of an exact
+    boundary. A Type 1, CFF or CFF2 glyph with points runs at least one operator, so with
+    `max_outline_ops` 0 it must give `LimitExceeded`. This catches a backend that ignores
+    the caller's value and relies on a built-in budget. The hostile programs cover the
+    upper end.
   - Every strict prefix and every one-byte flip (about 144 positions each): no panic. A face
     that loads must keep the invariants under limits capped at the fixture's size. The
     suite queries the first 64 glyphs, the last one and two out-of-range ids; every `cmap`
@@ -263,7 +276,10 @@ failed check by a stable name:
   - **What the suites can't see.** Byte flips and prefixes are a smoke test, not coverage
     of charstring interpreters, `seac`, PFB segments or hex `eexec`. Deep coverage comes
     from per-adapter fuzz targets (#17) and from admission (#16), which must supply hostile
-    programs for each format the adapter parses.
+    programs for each format the adapter parses. Also out of reach: points summed across
+    composite components (no composite fixture is required), and the per-FD `FontMatrix`
+    normalisation of CID-keyed CFF. Admission adds a multi-FD fixture whose FD matrices
+    differ from the Top DICT's.
 
 Images have no "a truncated prefix is never `Complete`" rule, unlike Flate. Some JBIG2 and
 CCITT streams have valid end points in the middle, so a prefix can be a complete, smaller
@@ -353,7 +369,8 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     variants that ignore the IV, accept bad padding, check only the last padding byte, or
     apply the decryption cap to the plaintext.
   - `font`: a toy text-format font for every format. Broken variants:
-    - ignore any of the four limits (the ops limit through a hostile `loop` glyph);
+    - ignore any of the four limits (the ops limit through a hostile `loop` glyph), or use
+      a built-in ops budget instead of the caller's;
     - panic on empty or mutated input;
     - accept out-of-range glyph ids;
     - return an out-of-range glyph or glyph 0 from `cmap`;
@@ -364,7 +381,9 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     Also tested: each wrong expected value (advance, reversed contour, moved point, metrics,
     name, CID); invalid fixtures (glyph out of range, tolerance 1.5 or NaN, malformed
     outline); dropping each required fixture, `cmap` subtable or CFF custom encoding; a
-    TrueType fixture without a `QuadTo`; and missing hostile programs.
+    TrueType fixture without a `QuadTo`; missing hostile programs or a missing format among
+    them; and weak hostile programs (an out-of-range glyph, a program that fails to load
+    for a dull reason, a failing control glyph, no glyphs listed).
 - Unit tests for `Outline::point_count`, `control_box`, `is_well_formed`, `is_finite` and
   `Limits::font_limits`.
 - Existing `jpdf-syntax`/`jpdf-engine` tests cover the moved `Limits` unchanged.
