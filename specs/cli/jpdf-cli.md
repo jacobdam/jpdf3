@@ -47,11 +47,17 @@ Reading FILE (#77), in order:
 1. `stat` the path (following symlinks). Anything but a regular file (FIFO, socket, character
    or block device, directory) is refused: `cannot read FILE: not a regular file`. A size above
    `Limits::max_file_size` is refused: `limit exceeded: file size`. Neither case opens the file.
-2. Open it with `O_NONBLOCK` (Linux `0o4000`, macOS `0x0004`), so if the path was swapped for
-   a FIFO after step 1 the open still returns at once. Step 1's checks run again on the opened
+2. Open it with `O_NONBLOCK`, so if the path was swapped for a FIFO after step 1 the open
+   still returns at once; on Linux also `O_NOCTTY`, so a swapped-in terminal never becomes the
+   controlling terminal. Values: Linux `0o4000 | 0o400` on x86, x86_64, arm, aarch64, riscv64,
+   powerpc64 and s390x; macOS `0x0004`. Other targets (mips, sparc, … use different values)
+   open with plain flags and rely on step 1 alone. Step 1's checks run again on the opened
    file (`fstat`).
 3. Reserve exactly the file size and read at most `max_file_size + 1` bytes (a file growing
    while it is read hits the limit instead of growing memory).
+
+Reading from a pipe (`/dev/stdin`, `<(…)`) is therefore refused with exit 2; CONTRACT §1 always
+passes a regular file path.
 
 The engine never touches the file system; only the CLI does.
 
@@ -122,9 +128,10 @@ exit 0 or 2 in ≤ 3.4 s (1 000 `/Prev` sections over one 2 M-name trailer: 36 s
 section spans were checked; 127 dense non-overlapping kids: 9.9 s before the per-document
 object budget). macOS peak footprint for the worst one: 1.31 GB.
 
-All input-derived arithmetic is checked, and `clippy::arithmetic_side_effects` is denied in
-`jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and `jpdf-cli` (#77), so an unchecked `+`/`-`/`*` on
-any value fails the build. Integers are exactly `i64::MIN..=i64::MAX` (§7.3.3 leaves the range
+All input-derived arithmetic is checked, and `clippy::arithmetic_side_effects` is denied in the
+library/binary crate roots of `jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and `jpdf-cli` (#77), so
+an unchecked `+`/`-`/`*` there fails CI's `cargo clippy -D warnings` (not `cargo build`).
+Integration tests under `tests/` and other crates are not covered yet (#105). Integers are exactly `i64::MIN..=i64::MAX` (§7.3.3 leaves the range
 to the implementation; Annex C recommends at least 32 bits); one past either end is malformed
 (boundary test `integer_range_boundaries`). Number tokens are never copied: reals are parsed
 in place from the input slice, so a 290 M-digit real costs no memory beyond the file (it
@@ -140,10 +147,16 @@ Self-check (#77):
   most three digits (≤ 0o777, saturating ops that never saturate).
 - What broken implementation still passes? A CLI that opens before checking the size fails
   `oversized_file_is_rejected_before_opening` (write-only file: "Permission denied" instead of
-  the limit), unless the tests run as root, where it skips. A CLI that blocks on FIFOs fails
-  `fifo_and_devices_exit_2_without_blocking` (20 s timeout); a wrong `O_NONBLOCK` value fails
-  `open_never_blocks_on_a_fifo`, which calls the open directly. An `i64::MIN` regression
-  fails `integer_range_boundaries`.
+  the limit); as root only that ordering half is skipped, the limit message is still checked.
+  A CLI that blocks on FIFOs fails `fifo_and_devices_exit_2_without_blocking` (20 s timeout).
+  A wrong `O_NONBLOCK` value, or a `check_metadata` that accepts an opened FIFO, fails
+  `open_never_blocks_on_a_fifo` (Linux in CI; macOS locally, because the macOS CI job runs no
+  Rust tests). A missing `take(max + 1)` fails `read_stops_one_byte_past_the_limit` (an
+  endless reader). An `i64::MIN` regression fails `integer_range_boundaries`.
+  Still passing: deleting the `fstat` re-check call in `read_limited` (a swap between `stat`
+  and `open` is a race no test can stage deterministically; both halves it combines are tested
+  on their own), and dropping the pre-open FIFO check (the non-blocking open + `fstat` give the
+  same message).
 - What the tests can't see: allocations. Nothing asserts that reals and `/Prev` are not
   copied (a counting global allocator is banned by CONSTITUTION 3); review covers it, and the
   adversarial memory harness (#25) is the long-term check. The 4 GiB sparse-file case is
@@ -169,9 +182,11 @@ resolves only the catalog, the page-tree root and its kids.
 - `tools/jpdf-cli/tests/cli.rs`: every contract command with valid flags exits 3; argument errors
   exit 2 with empty stdout; `info` on generated minimal PDFs prints the right count; empty,
   garbage and truncated files exit 2 or 3; an oversized (sparse, write-only) file is refused
-  before opening, with the exact-boundary case; a FIFO, `/dev/null` and `/dev/zero` exit 2
-  at once with "not a regular file".
-- `tools/jpdf-cli/src/main.rs` unit test: the non-blocking open returns at once on a FIFO.
+  before opening, with the exact-boundary case; a FIFO, a directory, `/dev/null` and `/dev/zero`
+  exit 2 at once with "not a regular file". Tests remove their FIFO, directory and sparse files.
+- `tools/jpdf-cli/src/main.rs` unit tests: the non-blocking open returns at once on a FIFO and
+  the opened-file check refuses it; reading stops one byte past the limit (exactly `max`
+  passes; `max + 1` and an endless source fail).
 - `crates/jpdf-syntax/src/lexer.rs` unit tests: `i64` range boundaries, every real shape
   (`5.`, `.5`, `+.5`, `-3.`, `-0.`), 1 MB-digit reals, non-numbers, octal and hex escapes.
 - `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3/50 pages, `/Prev` updates, `/Prev`

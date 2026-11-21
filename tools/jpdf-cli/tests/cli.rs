@@ -329,25 +329,29 @@ fn oversized_file_is_rejected_before_opening() -> io::Result<()> {
     let max = max_file_size()?;
     let over = write_only_sparse(max + 1)?;
     let at = write_only_sparse(max)?;
-    if std::fs::File::open(&at).is_ok() {
-        // Running as root: permissions don't stop the open, so this test can't tell.
-        eprintln!("skipped: permissions are not enforced for this user");
-        return Ok(());
-    }
     let o = cli(&["info", over.to_str().unwrap()])?;
+    let at_o = cli(&["info", at.to_str().unwrap()])?;
+    // Running as root, permissions don't stop the open: the ordering proof below needs a
+    // normal user, but the limit message must hold either way.
+    let enforced = std::fs::File::open(&at).is_err();
+    std::fs::remove_file(&over)?;
+    std::fs::remove_file(&at)?;
     assert_eq!(code(&o), Some(2), "{o:?}");
     assert_eq!(
         String::from_utf8_lossy(&o.stderr),
         "jpdf-cli: limit exceeded: file size\n"
     );
     assert!(o.stdout.is_empty());
-    let o = cli(&["info", at.to_str().unwrap()])?;
-    assert_eq!(code(&o), Some(2), "{o:?}");
-    let err = String::from_utf8_lossy(&o.stderr);
-    assert!(
-        err.starts_with("jpdf-cli: cannot read ") && err.contains("ermission denied"),
-        "{err}"
-    );
+    assert_eq!(code(&at_o), Some(2), "{at_o:?}");
+    if enforced {
+        let err = String::from_utf8_lossy(&at_o.stderr);
+        assert!(
+            err.starts_with("jpdf-cli: cannot read ") && err.contains("ermission denied"),
+            "{err}"
+        );
+    } else {
+        eprintln!("at-limit ordering check skipped: permissions are not enforced for root");
+    }
     Ok(())
 }
 
@@ -362,7 +366,14 @@ fn fifo_and_devices_exit_2_without_blocking() -> io::Result<()> {
     std::fs::remove_file(&fifo)?;
     let made = Command::new("mkfifo").arg(&fifo).status()?;
     assert!(made.success());
-    for path in [fifo.to_str().unwrap(), "/dev/null", "/dev/zero"] {
+    let dir = fifo.with_extension("dir");
+    std::fs::create_dir_all(&dir)?;
+    for path in [
+        fifo.to_str().unwrap(),
+        dir.to_str().unwrap(),
+        "/dev/null",
+        "/dev/zero",
+    ] {
         let mut child = Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
             .args(["info", path])
             .stdout(std::process::Stdio::piped())
@@ -384,5 +395,7 @@ fn fifo_and_devices_exit_2_without_blocking() -> io::Result<()> {
             format!("jpdf-cli: cannot read {path}: not a regular file\n")
         );
     }
+    std::fs::remove_file(&fifo)?;
+    std::fs::remove_dir(&dir)?;
     Ok(())
 }
