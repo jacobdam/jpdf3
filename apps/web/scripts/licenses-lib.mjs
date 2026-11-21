@@ -2,6 +2,8 @@
 // Pure functions over already-read data, so the test suite can feed hostile trees. Never
 // runs package code.
 
+import { posix } from "node:path";
+
 /** Licenses allowed for anything that can reach a shipped artifact (CONSTITUTION 10). */
 export const STRICT = new Set([
   "MIT",
@@ -114,35 +116,59 @@ export function bareRoot(spec) {
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
+// Whitespace and comments allowed between the keyword and the specifier.
+const GAP = String.raw`(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*`;
+const Q = "[\"'`]";
 // Static `import … from "x"`, `export … from "x"`, side-effect `import "x"`, dynamic
-// `import("x")` and ``import(`x`)``, and CSS `@import "x"` / `@import url(x)`. Over-matching
-// (an import-like string in a comment) only adds a false alarm.
+// `import("x")` and ``import(`x`)`` (comments allowed in the gaps), CSS `@import "x"` and any
+// CSS `url(x)`. In HTML files also every `src=` and `href=`. Over-matching (an import-like
+// string in a comment) only adds a false alarm.
 const IMPORT_RES = [
-  /\b(?:from|import)\s*\(?\s*["'`]([^"'`]+)["'`]/g,
-  /@import\s+url\(\s*["'`]?([^"'`)\s]+)/g,
+  new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${Q}([^"'\`]+)${Q}`, "g"),
+  /\burl\(\s*["'`]?([^"'`)\s]+)/g,
 ];
+const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/g];
 
 /**
- * Every bare import in shipped sources must name a package in the root manifest's
- * `dependencies`, so nothing from the test/build-only tree can be bundled.
+ * One problem string for a specifier in shipped source `file` (a path relative to the app
+ * directory, such as `src/a.ts` or `index.html`), or null if it is allowed:
+ * - a path into node_modules (relative, absolute, Vite's `/@fs/` or `/@id/`) is refused;
+ * - a relative or root-absolute path must stay inside `src/`, because files outside it are
+ *   not scanned (`../vendor/x.ts` could import a tool package);
+ * - a bare specifier must name a package in `deps`;
+ * - scheme URLs (`data:`, `https:`) and fragments are left to the CSP and E2E checks.
+ */
+export function importProblem(file, spec, deps) {
+  if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
+    return `${file}: imports ${spec}, a path into node_modules (use the package name)`;
+  }
+  if (spec.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(spec)) return null;
+  if (spec.startsWith(".") || spec.startsWith("/")) {
+    const target = spec.startsWith("/")
+      ? posix.normalize(spec.slice(1))
+      : posix.normalize(posix.join(posix.dirname(file), spec));
+    return target.startsWith("src/")
+      ? null
+      : `${file}: imports ${spec}, which is outside src/ and not scanned`;
+  }
+  const root = bareRoot(spec);
+  return deps.has(root)
+    ? null
+    : `${file}: imports ${spec}, which is not in package.json dependencies`;
+}
+
+/**
+ * Every import in shipped sources must stay in `src/` or name a package in the root
+ * manifest's `dependencies`, so nothing from the test/build-only tree can be bundled.
  */
 export function checkImports(sources, rootManifest, problems) {
   const deps = new Set(keys(rootManifest.dependencies));
   for (const { file, text } of sources) {
-    for (const re of IMPORT_RES) {
+    const res = file.endsWith(".html") ? [...IMPORT_RES, ...HTML_RES] : IMPORT_RES;
+    for (const re of res) {
       for (const m of text.matchAll(re)) {
-        const spec = m[1];
-        // A path into node_modules (relative, absolute or Vite's /@fs/) bypasses the name.
-        if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
-          problems.push(
-            `${file}: imports ${spec}, a path into node_modules (use the package name)`,
-          );
-          continue;
-        }
-        const root = bareRoot(spec);
-        if (root !== null && !deps.has(root)) {
-          problems.push(`${file}: imports ${spec}, which is not in package.json dependencies`);
-        }
+        const problem = importProblem(file, m[1], deps);
+        if (problem !== null) problems.push(problem);
       }
     }
   }

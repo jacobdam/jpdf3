@@ -41,8 +41,9 @@ CONSTITUTION 10 has to be enforced by us.
    - The **full tree** may also use the tool-only licenses. CC-BY-4.0 passes only for named
      data packages (`caniuse-lite`).
    - Shipped sources (`src/`, `index.html`) may import only `dependencies`, by name, never
-     by a path into `node_modules`. `public/`, `resolve.alias` and `publicDir` are refused
-     until the check covers them.
+     by a path into `node_modules`, and files only inside `src/`. `public/` and Vite
+     options that remap the bundle (aliases, root, input, plugin resolve/load/transform
+     hooks) are refused until #99 checks Rollup's module graph.
 
    The bundled-code gap recorded here before is now covered by the rule. Playwright bundles
    `caniuse-lite` (CC-BY-4.0, data) and `minimatch` (BlueOak-1.0.0); Vite bundles

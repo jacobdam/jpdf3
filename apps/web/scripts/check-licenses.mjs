@@ -1,11 +1,12 @@
 // CONSTITUTION 10: npm license check (spec: specs/tooling/licenses.md).
-// The production tree (reached from package.json `dependencies`) must use the strict list;
+// The production tree (every lockfile entry without `dev`, plus everything reachable from
+// package.json `dependencies`) must use the strict list;
 // the rest (test and build tools) may also use the tool-only licenses. Licenses are read from
 // the lockfile and from each installed node_modules/<pkg>/package.json (from the
 // integrity-checked tarball, so an edited lockfile can't hide a package). Shipped sources may
-// import only `dependencies`. Never runs package code. Third-party code bundled *inside* a
+// import only `dependencies` or files inside src/. Never runs package code. Third-party code bundled *inside* a
 // package is not visible here; see docs/adr/0002 item 5.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { check } from "./licenses-lib.mjs";
@@ -27,31 +28,45 @@ for (const path of Object.keys(lock.packages ?? {})) {
 }
 
 // Everything Vite bundles: src/ (recursively) and index.html.
+const sourceProblems = [];
 const sources = [{ file: "index.html", text: readFileSync(new URL("index.html", root), "utf8") }];
 for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFileTypes: true })) {
-  if (!(entry.isFile() || entry.isSymbolicLink())) continue;
   if (!/\.([cm]?[jt]sx?|css|html)$/.test(entry.name)) continue;
   const full = join(entry.parentPath, entry.name);
+  // Follows symlinks; a source-named directory (or a symlink to one) is reported.
+  if (!entry.isFile() && !(entry.isSymbolicLink() && statSync(full).isFile())) {
+    if (entry.isDirectory() || entry.isSymbolicLink()) {
+      sourceProblems.push(`${relative(fileURLToPath(root), full)}: not a regular file`);
+    }
+    continue;
+  }
   sources.push({ file: relative(fileURLToPath(root), full), text: readFileSync(full, "utf8") });
 }
 
 const { problems, production, installed } = check({ lock, rootManifest, manifests, sources });
+problems.push(...sourceProblems);
 
-// Ways into the bundle that the import scan can't see: Vite copies `public/` verbatim, and
-// aliases or another public directory remap imports. None is used; refuse them until the
-// check covers them (specs/tooling/licenses.md).
+// Ways into the bundle that the import scan can't see: Vite copies `public/` verbatim;
+// aliases, another root, public directory or input, and plugin hooks that resolve, load or
+// transform modules remap what is bundled. None is used; refuse them until #99 checks the
+// real module graph. This guard is a text match, so it is advisory (specs/tooling/licenses.md).
 if (existsSync(new URL("public", root))) {
   problems.push(
     "public/: Vite copies it into the bundle unchecked; extend the license check first",
   );
 }
-const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
-for (const key of ["alias", "publicDir"]) {
-  if (viteConfig.includes(key)) {
-    problems.push(
-      `vite.config.ts: uses ${key}, which the import scan can't follow; extend the check first`,
-    );
+for (const name of readdirSync(root)) {
+  if (/^vite\.config\./.test(name) && name !== "vite.config.ts") {
+    problems.push(`${name}: Vite would load it instead of the checked vite.config.ts`);
   }
+}
+const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
+for (const m of viteConfig.matchAll(
+  /\b(alias|publicDir|root|input|resolveId|load|transform)\s*[:(]/g,
+)) {
+  problems.push(
+    `vite.config.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`,
+  );
 }
 if (problems.length > 0) {
   console.error(`licenses: ${problems.length} problem(s) (CONSTITUTION 10):`);

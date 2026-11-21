@@ -9,7 +9,7 @@ Status: implemented
 `npm run licenses` in `apps/web` first runs the unit tests (`node --test
 scripts/licenses.test.mjs`), then `scripts/check-licenses.mjs`. That script reads
 `package-lock.json`, `package.json`, every installed `node_modules/<path>/package.json`,
-`index.html`, `vite.config.ts` and every `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html`
+`index.html`, `vite.config.ts`, the app directory's file names and every `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html`
 file (or symlink) under `src/`, recursively. An optional argument names another app
 directory (used by the integration test). The
 logic is in `scripts/licenses-lib.mjs`, pure functions over that data. It never runs package
@@ -43,19 +43,34 @@ code and has no dependencies.
    - OFL-1.1 (fonts only) is not accepted for npm packages; no font package is used.
 3. **Installed.** A lockfile entry that isn't optional, devOptional, peer or extraneous
    must be installed (`run npm ci first`).
-4. **Shipped imports.** These forms are scanned in the shipped sources: `import … from "x"`,
-   `export … from "x"`, `import "x"`, `import("x")`, ``import(`x`)``, CSS `@import "x"` and
-   `@import url(x)`.
+4. **Shipped imports.** These forms are scanned in the shipped sources:
+   - `import … from "x"`, `export … from "x"`, `import "x"`, `import("x")` and
+     ``import(`x`)``, with comments allowed between the keyword and the specifier;
+   - CSS `@import "x"` and any CSS `url(x)`;
+   - in HTML files, every `src=` and `href=` attribute.
    - Every bare specifier must name a package in the root `dependencies`. Root
      `optionalDependencies` and `peerDependencies` are not enough. Scoped names use two
      segments.
    - Any specifier containing `node_modules`, `/@fs/` or `/@id/` is refused: a path into a
      package bypasses its name.
-   - Other relative, absolute and URL/scheme specifiers are skipped.
-5. **Bundle guards.** Vite copies `public/` verbatim, and `resolve.alias` or `publicDir`
-   remap what gets bundled, so the import scan can't follow them. None is used. The script
-   fails if `public/` exists or if `vite.config.ts` mentions `alias` or `publicDir`, until
-   the check is extended to cover them.
+   - A relative or root-absolute path must resolve inside `src/` (from the importing file's
+     directory; `/` is the app directory). Files outside `src/` aren't scanned, so
+     `../vendor/x.ts` could import a tool package.
+   - Scheme URLs (`data:`, `https:`) and `#` fragments are skipped. The CSP and the E2E
+     no-third-party-request test cover them.
+5. **Bundle guards.** These change what gets bundled, and the import scan can't follow
+   them:
+   - Vite copies `public/` verbatim.
+   - These config keys: `alias`, `publicDir`, `root`, `input`.
+   - Plugin hooks `resolveId`, `load` and `transform`.
+   - Another `vite.config.*` file, which Vite loads before `.ts`.
+
+   None is used. The script fails if `public/` exists, if another `vite.config.*` exists, or
+   if `vite.config.ts` has one of those keys followed by `:` or `(`. This is a text match,
+   so it is advisory until #99 checks Rollup's real module graph; `vite build --config x`
+   bypasses it.
+6. **Source files.** Files under `src/` with a source extension are scanned, following
+   symlinks. A directory with a source-file name (or a symlink to one) is reported.
 
 ## Persistence
 Not applicable. Output goes to stderr: `licenses: ok (N packages, P production, I installed,
@@ -91,7 +106,13 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
   - One that allows CC-BY-4.0 by license alone fails the CC-BY tests. These include a
     scoped `@x/caniuse-lite` look-alike and an npm alias.
   - The integration test runs the real script on a fixture app directory. It covers nested
-    `src/` directories, `.cts` files, installed manifests and the bundle guards.
+    `src/` directories, `.cts` files, a symlinked source file, a source-named directory,
+    installed manifests, every bundle-guard key and a stray `vite.config.mjs`.
+  - One that skips relative paths fails the outside-`src/` cases. One that drops comment
+    gaps fails the `import(/* chunk */ "tool")` case. The alias test checks the lockfile
+    `name` and the manifest `name` separately.
+  - Dropping `/@fs/` or `/@id/` from the `node_modules` pattern passes the tests, because
+    those root-absolute paths are also outside `src/`. They are kept as defense in depth.
   - The `AND`/`WITH`/parentheses guard is redundant with the exact `OR` split. Removing it
     passes the tests and changes nothing.
   - One that applies the tool list everywhere fails "an MPL-2.0 production package fails";
@@ -109,8 +130,8 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
     doesn't declare. Node and Vite would resolve it, and the code would be bundled without
     a strict check. The owner's rule has the same gap. A full fix checks Rollup's module
     graph (every bundled module under a production-tree path); that is #99.
-  - `vite.config.ts`, `csp.ts` and `e2e/` aren't scanned for imports: they run at build or
-    test time and aren't bundled.
+  - `vite.config.ts`, `csp.ts` and `e2e/` aren't scanned for imports. They run at build or
+    test time, and `src/` can't import them (they're outside `src/`).
   - The import scan is a regular expression. Over-matching (an import-like string in a
     comment) only adds a false alarm. It misses computed specifiers (``import(`${x}`)``,
     `new URL(x, import.meta.url)`) and `require`. Review has to catch those in `src/`.
@@ -126,7 +147,7 @@ Node ≥ 22.12 (the `engines` field); uses `node:test`, `fs.readdirSync({ recurs
 About 0.1 s for 186 packages plus about 0.1 s of tests.
 
 ## Tests
-`apps/web/scripts/licenses.test.mjs` (32 tests, `node:test`, one of them an integration
+`apps/web/scripts/licenses.test.mjs` (33 tests, `node:test`, one of them an integration
 test of `check-licenses.mjs` on a fixture directory under the git-ignored
 `node_modules/.cache/`), run by every `npm run
 licenses`, so on every `cargo xtask ci linux` run.

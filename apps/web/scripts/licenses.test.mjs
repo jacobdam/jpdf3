@@ -1,7 +1,7 @@
 // Tests for licenses-lib.mjs (spec: specs/tooling/licenses.md). Run: node --test scripts/
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -369,8 +369,13 @@ test("edges are the union of the lockfile entry and the installed manifest", () 
 });
 
 test("an npm alias doesn't inherit the CC-BY data allowance", () => {
+  // Only the lockfile names the real package; the installed manifest looks right.
   const evil = { license: "CC-BY-4.0", dev: true, name: "evil-code" };
-  assert.equal(problems({ packages: { "node_modules/caniuse-lite": evil } }).length, 2);
+  const lockOnly = problems({
+    packages: { "node_modules/caniuse-lite": evil },
+    manifests: { "node_modules/caniuse-lite": { license: "CC-BY-4.0", name: "caniuse-lite" } },
+  });
+  assert.equal(lockOnly.length, 2, lockOnly.join("\n"));
   const real = { license: "CC-BY-4.0", dev: true };
   const p = problems({
     packages: { "node_modules/caniuse-lite": real },
@@ -390,6 +395,16 @@ test("paths into node_modules, template literals and CSS imports are scanned", (
     'import x from "../node_modules/tool/index.js";',
     'import x from "/node_modules/tool/index.js";',
     'import x from "/@fs/home/u/app/node_modules/ui/x.js";',
+    'import x from "/@fs/home/u/vendor/x.js";',
+    'import x from "/@id/tool";',
+    'import x from "../vendor/x.ts";',
+    'import x from "../../x.ts";',
+    'import "/csp.ts";',
+    'import "./../../e2e/helper.ts";',
+    'const m = await import(/* chunk */ "tool");',
+    'import x from /* c */ "tool";',
+    'import x from // c\n "tool";',
+    "a { background: url(tool/x.png); }",
     'import x from "../node_modules/ui/x.js";',
     "const m = await import(`tool`);",
     '@import "tool/x.css";',
@@ -399,6 +414,15 @@ test("paths into node_modules, template literals and CSS imports are scanned", (
     assert.equal(problems({ sources: src(text) }).length, 1, text);
   }
   assert.deepEqual(problems({ sources: src('@import url("./local.css");') }), []);
+  // Relative and root-absolute paths inside src/ are fine; schemes and fragments are left to
+  // the CSP and E2E checks.
+  const ok = [
+    { file: "src/deep/a.ts", text: 'import "../b"; import "./c"; import "/src/d.ts";' },
+    { file: "src/a.css", text: "a { background: url(data:image/png;base64,AA); }" },
+    { file: "index.html", text: '<script type="module" src="/src/main.tsx"></script>' },
+    { file: "index.html", text: '<a href="#top">x</a><script src="./src/m.ts"></script>' },
+  ];
+  assert.deepEqual(problems({ sources: ok }), []);
 });
 
 test("a hostile root manifest is reported, not thrown", () => {
@@ -455,14 +479,51 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     assert.match(r.stderr, /node_modules\/ui: package\.json says MPL-2\.0 \(production tree\)/);
     write("node_modules/ui/package.json", JSON.stringify({ license: "MIT" }));
 
+    symlinkSync(join(dir, "elsewhere.ts"), join(dir, "src", "linked.ts"));
+    write("elsewhere.ts", 'import "tool";');
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /src\/linked\.ts: imports tool/);
+    rmSync(join(dir, "src", "linked.ts"));
+
+    mkdirSync(join(dir, "src", "dir.ts"));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /src\/dir\.ts: not a regular file/);
+    rmSync(join(dir, "src", "dir.ts"), { recursive: true });
+
+    write("vite.config.mjs", "export default {};");
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /vite\.config\.mjs: Vite would load it/);
+    rmSync(join(dir, "vite.config.mjs"));
+
     write("public/x.js", "");
-    write("vite.config.ts", "export default { resolve: { alias: {} }, publicDir: 'p' };");
+    write(
+      "vite.config.ts",
+      "export default { root: 'x', resolve: { alias: {} }, publicDir: 'p', build: { rollupOptions: { input: 'y' } }, plugins: [{ resolveId(id) {}, load(id) {}, transform(c) {}, transformIndexHtml: {} }] };",
+    );
     r = run();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /public\/: Vite copies it/);
-    assert.match(r.stderr, /uses alias/);
-    assert.match(r.stderr, /uses publicDir/);
+    for (const key of ["alias", "publicDir", "root", "input", "resolveId", "load", "transform"]) {
+      assert.match(r.stderr, new RegExp(`uses ${key},`), key);
+    }
+    assert.equal(r.stderr.match(/uses transform,/g).length, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("index.html src and href attributes are scanned", () => {
+  for (const text of [
+    '<script type="module" src="tool"></script>',
+    '<link rel="stylesheet" href="tool/x.css">',
+    "<script type=module src=/vendor/x.js></script>",
+    '<link href="../x.css">',
+  ]) {
+    assert.equal(problems({ sources: [{ file: "index.html", text }] }).length, 1, text);
+  }
+  // In other files src=/href= is not an import (JSX props are scanned by the import forms).
+  assert.deepEqual(problems({ sources: [{ file: "src/a.tsx", text: '<img src="x.png" />' }] }), []);
 });
