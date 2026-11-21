@@ -7,7 +7,7 @@
 // import only `dependencies` or files inside src/. Never runs package code. Third-party code bundled *inside* a
 // package is not visible here; see docs/adr/0002 item 5.
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { check, sourceExtensionOk } from "./licenses-lib.mjs";
 
@@ -109,19 +109,99 @@ const GUARDED = [
   "outro",
   "renderChunk",
   "generateBundle",
+  "renderDynamicImport",
+  "resolveImportMeta",
+  "resolveFileUrl",
+  "writeBundle",
+  "closeBundle",
+  // Config keys that inject code or an import source into every module or chunk.
+  "jsxInject",
+  "jsxImportSource",
+  "tsconfigRaw",
+  "renderBuiltUrl",
+  "postcss",
 ];
-for (const m of viteConfig.matchAll(
-  new RegExp(String.raw`\b(${GUARDED.join("|")})\b["'\]]{0,2}\s*[:(,}]`, "g"),
-)) {
+const guardRe = new RegExp(String.raw`\b(${GUARDED.join("|")})\b["'\`\]]{0,2}\s*[:(,}]`, "g");
+// Quoted strings closed by their own quote kind, so `"./csp'/../plugin"` is one specifier.
+const importRe = /\b(?:from|import)\s*\(?\s*(?:"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`)/g;
+const spec = (m) => m[1] ?? m[2] ?? m[3];
+for (const m of viteConfig.matchAll(guardRe)) {
   problems.push(
     `vite.config.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`,
   );
 }
 // Plugins defined in another module would hide their hooks from the text match above.
-for (const m of viteConfig.matchAll(/\b(?:from|import)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) {
-  if (m[1] !== "vite" && m[1] !== "./csp") {
-    problems.push(`vite.config.ts: imports ${m[1]}; only vite and ./csp are checked`);
+for (const m of viteConfig.matchAll(importRe)) {
+  if (spec(m) !== "vite" && spec(m) !== "./csp") {
+    problems.push(`vite.config.ts: imports ${spec(m)}; only vite and ./csp are checked`);
   }
+}
+// csp.ts is the one module vite.config.ts may import besides vite: it must import nothing
+// and carry no guarded key either.
+const cspText = readFileSync(new URL("csp.ts", root), "utf8");
+if (
+  /\bimport\s*[("'`{*]|\bimport\s+\w|\brequire\s*\(/.test(cspText) ||
+  [...cspText.matchAll(importRe)].length > 0
+) {
+  problems.push("csp.ts: imports something; it must stay self-contained");
+}
+for (const m of cspText.matchAll(guardRe)) {
+  problems.push(`csp.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`);
+}
+// esbuild takes `jsxImportSource` from tsconfig.json (and whatever it `extends`) and injects
+// `import "<source>/jsx-runtime"` into every .tsx file. A missing tsconfig.json would let a
+// parent directory's apply.
+if (existsSync(new URL("tsconfig.json", root))) {
+  const tsconfig = readFileSync(new URL("tsconfig.json", root), "utf8");
+  for (const key of ["jsxImportSource", "extends"]) {
+    if (tsconfig.includes(key)) problems.push(`tsconfig.json: uses ${key}; not checked`);
+  }
+} else {
+  problems.push("tsconfig.json: missing, so esbuild would look for one in a parent directory");
+}
+// Vite loads a PostCSS config from the app directory or any parent (or a `postcss` field in
+// a package.json there); its plugins can inject CSS and imports.
+for (let dir = appDir; ; ) {
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    // An unreadable directory can't be loaded by Vite either.
+  }
+  for (const name of names) {
+    if (/^(?:\.postcssrc|postcss\.config\.)/.test(name)) {
+      problems.push(`${join(dir, name)}: a PostCSS config, which the check doesn't follow`);
+    }
+  }
+  if (names.includes(".config")) {
+    try {
+      for (const name of readdirSync(join(dir, ".config"))) {
+        if (/^postcssrc/.test(name)) {
+          problems.push(`${join(dir, ".config", name)}: a PostCSS config, not followed`);
+        }
+      }
+    } catch {
+      // As above.
+    }
+  }
+  if (names.includes("package.json")) {
+    let manifest = null;
+    try {
+      manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    } catch {
+      problems.push(
+        `${join(dir, "package.json")}: unreadable, so a postcss field can't be ruled out`,
+      );
+    }
+    if (manifest !== null && typeof manifest === "object" && "postcss" in manifest) {
+      problems.push(
+        `${join(dir, "package.json")}: a postcss field, which the check doesn't follow`,
+      );
+    }
+  }
+  const parent = dirname(dir);
+  if (parent === dir) break;
+  dir = parent;
 }
 // The root `imports` field maps `#x` specifiers anywhere, past the import scan.
 if (rootManifest !== null && typeof rootManifest === "object" && "imports" in rootManifest) {

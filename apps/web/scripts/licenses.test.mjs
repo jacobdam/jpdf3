@@ -420,6 +420,23 @@ test("the CC-BY data allowance needs the registry tarball for that name and vers
   assert.equal(registryTarball("@s/b", "2.0.0"), "https://registry.npmjs.org/@s/b/-/b-2.0.0.tgz");
   assert.equal(registryTarball("x", ""), null);
   assert.equal(registryTarball("x", undefined), null);
+  assert.equal(registryTarball("x", "1.0"), null);
+  assert.equal(registryTarball("x", "1.0.0/../y"), null);
+  assert.equal(
+    registryTarball("x", "1.0.0-rc.1+b.2"),
+    "https://registry.npmjs.org/x/-/x-1.0.0-rc.1+b.2.tgz",
+  );
+  // The installed manifest must carry the same version.
+  const mismatch = problems({
+    packages: {
+      "node_modules/caniuse-lite": fromRegistry("caniuse-lite", {
+        license: "CC-BY-4.0",
+        dev: true,
+      }),
+    },
+    manifests: { "node_modules/caniuse-lite": { license: "CC-BY-4.0", version: "2.0.0" } },
+  });
+  assert.equal(mismatch.length, 2);
   const real = fromRegistry("caniuse-lite", { license: "CC-BY-4.0", dev: true });
   const reg = "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.1.tgz";
   for (const fork of [
@@ -430,6 +447,12 @@ test("the CC-BY data allowance needs the registry tarball for that name and vers
     { resolved: undefined },
     { version: "9.9.9" },
     { version: undefined },
+    // A traversal version that WHATWG URL parsing would normalize to another package.
+    {
+      version: "x/../../../evil/-/evil-1.0.0",
+      resolved:
+        "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-x/../../../evil/-/evil-1.0.0.tgz",
+    },
   ]) {
     const pkg = { ...real, ...fork };
     const p = problems({
@@ -559,6 +582,75 @@ test("CSS forms are matched case-insensitively, and image-set strings are scanne
   assert.deepEqual(problems({ sources: [{ file: "src/a.ts", text: js }] }), []);
 });
 
+test("specifiers that decode or resolve past the check are refused (review of #112)", () => {
+  const bad = [
+    // Vite bundles data: and file: modules: no scheme in import positions.
+    ["src/a.ts", 'import "data:text/javascript;base64,aW1wb3J0ICd0b29sJw==";'],
+    ["src/a.ts", `import "data:text/javascript,import 'tool'";`],
+    ["src/a.ts", 'import "file:///ci/apps/web/node%5Fmodules/tool/index.js";'],
+    ["src/a.ts", 'const m = await import("https://cdn.example/x.js");'],
+    ["src/a.css", "@import \"data:text/css,@import 'tool/x.css';\";"],
+    ["src/a.css", "@import url(data:text/css,x);"],
+    ["src/a.css", "a { background: url(file:///x.png); }"],
+    ["index.html", '<script type="module" src="javascript:alert(1)"></script>'],
+    // A quote of the other kind doesn't end the string.
+    ["src/a.ts", `import "./'/../../e2e/x.ts";`],
+    ["src/a.css", `@import "./a.css'/../../../e2e/x.css";`],
+    // Escapes, entities, percent-encoding and whitespace aren't decoded: refused.
+    ["src/a.ts", String.raw`import "/src/\x2e\x2e/node\x5fmodules/tool/index.js";`],
+    ["src/a.ts", String.raw`import "./../../e2e/x.ts";`],
+    ["index.html", '<script type="module" src="/src/&#46;&#46;/node&#95;modules/tool/i.js">'],
+    ["index.html", '<link rel="stylesheet" href="/src/%2e%2e/e2e/x.css">'],
+    ["index.html", '<script type="module" src="/src/a.ts /../../e2e/x.ts"></script>'],
+    ["index.html", `<script type="module" src='/src/a.ts"/../../../e2e/x.ts'></script>`],
+    ["src/a.css", '@import url("./a.css /../../../e2e/x.css");'],
+    ["src/a.css", "a { background: url(./a.png /../../../e2e/x.png); }"],
+    // `.` and `..` segments in a package path.
+    ["src/a.ts", 'import "ui/../tool/index.js";'],
+    ["src/a.ts", 'import "ui/./x.js";'],
+    // esbuild JSX pragmas.
+    ["src/a.tsx", "/** @jsxImportSource tool */ export const A = () => <div />;"],
+    ["src/a.tsx", "// @jsx h\nexport const A = 1;"],
+    // HTML asset attributes Vite rewrites.
+    ["index.html", '<img srcset="/src/a.png 1x, /e2e/x.png 2x">'],
+    ["index.html", '<video poster="/e2e/x.png"></video>'],
+    ["index.html", '<meta property="og:image" content="/e2e/x.png">'],
+  ];
+  for (const [file, text] of bad) {
+    const p = problems({ sources: [{ file, text }] });
+    assert.ok(p.length >= 1, `${file}: ${text}`);
+  }
+  const deps = { dependencies: { ui: "1", "@s/z": "1" } };
+  const ok = [
+    ["src/a.css", "a { background: url( ./a.png ); }"],
+    ["src/a.css", "a { background: url(data:image/png;base64,AA==); }"],
+    ["index.html", '<img src="https://example.org/x.png" srcset="/src/a.png 1x, /src/b.png 2x">'],
+    ["index.html", '<meta name="viewport" content="width=device-width, initial-scale=1" />'],
+    ["src/a.ts", 'import x from "./b.ts?raw"; import "ui/x.js"; import y from "@s/z";'],
+  ];
+  for (const [file, text] of ok) {
+    const r = check({ ...tree({ sources: [{ file, text }] }), rootManifest: deps });
+    // @s/z isn't in the fixture lockfile; only the import scan is under test here.
+    assert.deepEqual(
+      r.problems.filter((x) => !x.includes("not in lockfile")),
+      [],
+      `${file}: ${text}`,
+    );
+  }
+});
+
+test("comment gaps don't backtrack exponentially", () => {
+  const start = performance.now();
+  for (const [text, n] of [
+    [`import${" /**/".repeat(60)} "tool";`, 1],
+    [`import${" /**/".repeat(60)} x;`, 0],
+    [`import${" /**/".repeat(60)}.meta.glob;`, 1],
+  ]) {
+    assert.equal(problems({ sources: [{ file: "src/a.ts", text }] }).length, n, text);
+  }
+  assert.ok(performance.now() - start < 2000, "comment gaps took too long");
+});
+
 test("only lower-case scanned source extensions are allowed", () => {
   for (const name of ["a.js", "a.jsx", "a.mjs", "a.cjs", "a.ts", "a.tsx", "a.mts", "a.cts"]) {
     assert.equal(sourceExtensionOk(name), true, name);
@@ -603,7 +695,10 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
   const scripts = fileURLToPath(new URL(".", import.meta.url));
   const base = join(scripts, "..", "node_modules", ".cache");
   mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(join(base, "licenses-test-"));
+  const top = mkdtempSync(join(base, "licenses-test-"));
+  // The app sits one level down, so a PostCSS config in its parent can be tested.
+  const dir = join(top, "app");
+  mkdirSync(dir);
   const run = () =>
     spawnSync(process.execPath, [join(scripts, "check-licenses.mjs"), dir], { encoding: "utf8" });
   const write = (rel, text) => {
@@ -627,6 +722,8 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     write("node_modules/tool/package.json", JSON.stringify({ license: "MPL-2.0" }));
     write("index.html", '<script type="module" src="/src/main.tsx"></script>');
     write("vite.config.ts", "export default {};");
+    write("csp.ts", "export const CSP = \"require-trusted-types-for 'script'\";");
+    write("tsconfig.json", '{ "compilerOptions": { "jsx": "react-jsx" } }');
     write("src/main.tsx", 'import "ui";');
     write("src/deep/er/x.cts", 'import "ui";');
     let r = run();
@@ -762,9 +859,26 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
       "renderChunk",
       "generateBundle",
       "resolveDynamicImport",
+      "renderDynamicImport",
+      "resolveImportMeta",
+      "resolveFileUrl",
+      "writeBundle",
+      "closeBundle",
+      "jsxInject",
+      "jsxImportSource",
+      "tsconfigRaw",
+      "renderBuiltUrl",
+      "postcss",
     ];
     for (const key of more) {
-      for (const cfg of [`{ ${key}: 1 }`, `{ ${key}() {} }`, `{ "${key}": 1 }`, `{ ${key} }`]) {
+      for (const cfg of [
+        `{ ${key}: 1 }`,
+        `{ ${key}() {} }`,
+        `{ "${key}": 1 }`,
+        `{ ${key} }`,
+        `{ ["${key}"]: 1 }`,
+        `{ [\`${key}\`](c) {} }`,
+      ]) {
         write("vite.config.ts", `export default ${cfg};`);
         r = run();
         assert.equal(r.status, 1, cfg);
@@ -787,8 +901,77 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     );
     r = run();
     assert.equal(r.status, 0, r.stderr);
+    write("vite.config.ts", "export default {};");
+
+    // A quote of the other kind doesn't end the vite.config.ts import specifier.
+    write("vite.config.ts", `import p from "./csp'/../plugin"; export default {};`);
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /vite\.config\.ts: imports \.\/csp'\/\.\.\/plugin;/);
+    write("vite.config.ts", "export default {};");
+
+    // csp.ts imports nothing and has no guarded key.
+    for (const text of ['import "tool";', 'export * from "./x";', 'const t = require("tool");']) {
+      write("csp.ts", text);
+      r = run();
+      assert.equal(r.status, 1, text);
+      assert.match(r.stderr, /csp\.ts: imports something/, text);
+    }
+    write("csp.ts", "export default { transform(c) { return c; } };");
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /csp\.ts: uses transform,/);
+    write("csp.ts", 'export const CSP = "x";');
+
+    // tsconfig.json: no jsxImportSource, no extends, and it must exist.
+    for (const text of [
+      '{ "compilerOptions": { "jsxImportSource": "tool" } }',
+      '{ "extends": "./base.json" }',
+    ]) {
+      write("tsconfig.json", text);
+      r = run();
+      assert.equal(r.status, 1, text);
+      assert.match(r.stderr, /tsconfig\.json: uses (jsxImportSource|extends)/, text);
+    }
+    rmSync(join(dir, "tsconfig.json"));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /tsconfig\.json: missing/);
+    write("tsconfig.json", "{}");
+
+    // PostCSS configs in the app directory, its .config/ and a parent; a postcss field.
+    for (const where of [
+      join(dir, "postcss.config.js"),
+      join(dir, ".postcssrc.json"),
+      join(dir, ".config", "postcssrc.mjs"),
+      join(top, "postcss.config.cjs"),
+      join(top, ".postcssrc"),
+    ]) {
+      mkdirSync(join(where, ".."), { recursive: true });
+      writeFileSync(where, "export default {};");
+      r = run();
+      assert.equal(r.status, 1, where);
+      assert.match(r.stderr, /a PostCSS config/, where);
+      rmSync(where);
+    }
+    write("package.json", JSON.stringify({ dependencies: { ui: "1" }, postcss: {} }));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /package\.json: a postcss field/);
+    write("package.json", JSON.stringify({ dependencies: { ui: "1" } }));
+    writeFileSync(join(top, "package.json"), JSON.stringify({ postcss: { plugins: {} } }));
+    r = run();
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes(`${join(top, "package.json")}: a postcss field`), r.stderr);
+    writeFileSync(join(top, "package.json"), "{ not json");
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /package\.json: unreadable/);
+    rmSync(join(top, "package.json"));
+    r = run();
+    assert.equal(r.status, 0, r.stderr);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(top, { recursive: true, force: true });
   }
 });
 
