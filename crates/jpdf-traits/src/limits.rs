@@ -513,8 +513,9 @@ mod tests {
         // retains, one decode's working memory or output, whichever is larger, and one
         // render's working memory) sum to at most the judge's 2 GiB address-space cap
         // (PLAN §2.2). This is a ceiling on the budgeted terms
-        // only: the binary, stacks, the xref table and one parse's objects are not charged and
-        // have no headroom at these defaults (#109).
+        // only: the binary, stacks, the xref table, one parse's objects and a filter chain's
+        // intermediate output feeding the image decoder are not charged and have no headroom
+        // at these defaults (#109).
         let l = Limits::default();
         let file = u64::try_from(l.max_file_size).unwrap_or(u64::MAX);
         let stream = u64::try_from(l.max_decoded_bytes_per_stream)

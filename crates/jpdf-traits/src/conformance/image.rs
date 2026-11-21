@@ -42,11 +42,9 @@ pub struct JpegFixture {
     pub tolerance: u16,
     /// A cut the decoder must salvage, if any. At least one JPEG fixture needs one.
     pub salvage: Option<Salvage>,
-    /// A lower bound on the operations decoding needs, justified from the stream (see
-    /// [`DecodeUsage::ops`](crate::DecodeUsage::ops)); 0 claims nothing beyond one per output
-    /// sample. JPEG, JPEG 2000 and JBIG2 need one valid fixture with at least 4 × its output
-    /// samples ([`HEAVY_WORK_FACTOR`]).
-    pub min_ops: u64,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A JPEG 2000 file and the image it decodes to.
@@ -66,11 +64,9 @@ pub struct Jpeg2000Fixture {
     pub tolerance: u16,
     /// A cut the decoder must salvage, if any. At least one JPEG 2000 fixture needs one.
     pub salvage: Option<Salvage>,
-    /// A lower bound on the operations decoding needs, justified from the stream (see
-    /// [`DecodeUsage::ops`](crate::DecodeUsage::ops)); 0 claims nothing beyond one per output
-    /// sample. JPEG, JPEG 2000 and JBIG2 need one valid fixture with at least 4 × its output
-    /// samples ([`HEAVY_WORK_FACTOR`]).
-    pub min_ops: u64,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A JBIG2 embedded stream and the bitmap it decodes to (exact match).
@@ -85,11 +81,9 @@ pub struct Jbig2Fixture {
     pub globals: Option<Vec<u8>>,
     /// The expected bitmap.
     pub expected: Bitmap,
-    /// A lower bound on the operations decoding needs, justified from the stream (see
-    /// [`DecodeUsage::ops`](crate::DecodeUsage::ops)); 0 claims nothing beyond one per output
-    /// sample. JPEG, JPEG 2000 and JBIG2 need one valid fixture with at least 4 × its output
-    /// samples ([`HEAVY_WORK_FACTOR`]).
-    pub min_ops: u64,
+    /// The same image encoded with less work, if any. JPEG, JPEG 2000 and JBIG2 need one
+    /// valid fixture whose claim is heavy ([`HEAVY_WORK_FACTOR`]).
+    pub extra_work: Option<ExtraWork>,
 }
 
 /// A CCITT stream and the bitmap it decodes to (exact match).
@@ -106,14 +100,23 @@ pub struct CcittFixture {
     /// A cut the decoder must salvage, if any. At least one CCITT fixture needs one, and its
     /// `params.rows` must be set (with `Rows` 0 a cut can be a valid end).
     pub salvage: Option<Salvage>,
-    /// A lower bound on the operations decoding needs (see
-    /// [`DecodeUsage::ops`](crate::DecodeUsage::ops)); 0 claims nothing beyond one per output
-    /// pixel. CCITT needs no heavy-work fixture: its work is linear in input plus output.
-    pub min_ops: u64,
 }
 
-/// The heavy-work fixture's `min_ops` must be at least this many times its output samples, so
-/// a decoder that counts only output samples fails `image.work_fixture`.
+/// A claim that a fixture's input needs more work than a lighter encoding of the same image
+/// (specs/core/decode-work-limits.md). The suite measures the difference between the two
+/// decodes, so a decoder that charges only per output sample, however many per sample, reports
+/// no difference and fails `image.extra_work`.
+#[derive(Debug, Clone)]
+pub struct ExtraWork {
+    /// The same image with less work (one scan instead of several, one quality layer, no
+    /// overlapping symbol instances). It must decode Complete to the fixture's expected output.
+    pub lighter: Vec<u8>,
+    /// A lower bound on `ops(input) - ops(lighter)`, justified from the two streams.
+    pub min_extra_ops: u64,
+}
+
+/// A heavy-work claim's `min_extra_ops` is at least this many times the output samples.
+/// JPEG, JPEG 2000 and JBIG2 need a valid fixture with one (`image.work_fixture`).
 pub const HEAVY_WORK_FACTOR: u64 = 4;
 
 /// The largest per-sample tolerance a lossy fixture may have: 1 below 8 bits, 2 otherwise.
@@ -148,7 +151,7 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
             max_tolerance: max_lossy_tolerance(f.expected.source_bits),
             salvage: f.salvage,
             refused: None,
-            min_ops: f.min_ops,
+            extra_work: f.extra_work.as_ref(),
         };
         let valid = run_fixture(&mut report, &spec, &decode);
         heavy |= valid && spec.heavy();
@@ -251,7 +254,8 @@ fn color_transform(
     if f.options.color_transform.is_none() {
         let result = with(applied);
         let ok = matches!(&result, Some(Ok(d))
-            if d.status == DecodeStatus::Complete && d.value.matches(&f.expected, f.tolerance));
+            if d.status == DecodeStatus::Complete && d.value.matches(&f.expected, f.tolerance))
+            && ok_result_valid(&result, &unlimited);
         report.check("image.option_used", ok, || {
             format!(
                 "{}: no ColorTransform must decode like ColorTransform {applied} (the APP14 \
@@ -320,7 +324,7 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
             },
             salvage: f.salvage,
             refused: None,
-            min_ops: f.min_ops,
+            extra_work: f.extra_work.as_ref(),
         };
         let valid = run_fixture(&mut report, &spec, &decode);
         heavy |= valid && spec.heavy();
@@ -351,7 +355,7 @@ pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Repor
             max_tolerance: 0,
             salvage: None,
             refused: None,
-            min_ops: f.min_ops,
+            extra_work: f.extra_work.as_ref(),
         };
         let valid = run_fixture(&mut report, &spec, &decode);
         heavy |= valid && spec.heavy();
@@ -412,7 +416,7 @@ pub fn run_ccitt(decoder: &dyn CcittDecoder, fixtures: &[CcittFixture]) -> Repor
             salvage: f.salvage,
             refused: (f.salvage.is_some() && f.params.rows == 0)
                 .then_some("a salvage cut needs Rows set (with Rows 0 a cut can be a valid end)"),
-            min_ops: f.min_ops,
+            extra_work: None,
         };
         if !run_fixture(&mut report, &spec, &decode) {
             continue;
@@ -681,7 +685,7 @@ fn salvage_coverage(report: &mut Report, mut salvages: impl Iterator<Item = Opti
 }
 
 /// An option flipped (or left out) must not reproduce the expected output. An error or a
-/// different image passes.
+/// different, valid image passes ([`ok_result_valid`] at the default limits).
 fn check_option_used<R: Raster>(
     report: &mut Report,
     spec: &FixtureSpec<'_, R>,
@@ -689,7 +693,9 @@ fn check_option_used<R: Raster>(
     result: &Outcome<R>,
 ) {
     let same = matches!(result, Some(Ok(d)) if d.value.matches(spec.expected, spec.tolerance));
-    report.check("image.option_used", result.is_some() && !same, || {
+    // Option probes run at the default limits; any Ok must still be valid (usage included).
+    let valid = ok_result_valid(result, &DecodeLimits::default());
+    report.check("image.option_used", valid && !same, || {
         format!(
             "{}: {label}: the result must differ from the expected image (an ignored option), got {}",
             spec.name,
@@ -951,14 +957,17 @@ struct FixtureSpec<'a, R> {
     salvage: Option<Salvage>,
     /// A format-specific reason the fixture is refused, if any.
     refused: Option<&'static str>,
-    /// The fixture's lower bound on operations.
-    min_ops: u64,
+    /// The fixture's extra-work claim, if any.
+    extra_work: Option<&'a ExtraWork>,
 }
 
 impl<R: Raster> FixtureSpec<'_, R> {
-    /// Whether the fixture claims at least [`HEAVY_WORK_FACTOR`] operations per output sample.
+    /// Whether the fixture claims at least [`HEAVY_WORK_FACTOR`] extra operations per output
+    /// sample.
     fn heavy(&self) -> bool {
-        self.min_ops >= self.expected.samples().saturating_mul(HEAVY_WORK_FACTOR)
+        self.extra_work.is_some_and(|w| {
+            w.min_extra_ops >= self.expected.samples().saturating_mul(HEAVY_WORK_FACTOR)
+        })
     }
 }
 
@@ -967,8 +976,9 @@ impl<R: Raster> FixtureSpec<'_, R> {
 fn work_coverage(report: &mut Report, mut heavy: impl Iterator<Item = bool>) {
     report.check("image.work_fixture", heavy.any(|h| h), || {
         format!(
-            "fixtures must include a valid one whose min_ops is at least {HEAVY_WORK_FACTOR} × its \
-             output samples (work that produces no output: scans, layers, symbol instances)"
+            "fixtures must include a valid one with an extra_work claim of at least \
+             {HEAVY_WORK_FACTOR} × its output samples (work that produces no output: scans, \
+             layers, symbol instances)"
         )
     });
 }
@@ -1019,12 +1029,17 @@ fn fixture_problem<R: Raster>(spec: &FixtureSpec<'_, R>) -> Option<String> {
     if let Some(reason) = spec.refused {
         return Some(reason.into());
     }
-    let max_ops = DecodeLimits::default().max_ops;
-    if spec.min_ops > max_ops {
-        return Some(format!(
-            "min_ops {} is above the default max_decode_ops {max_ops}",
-            spec.min_ops
-        ));
+    if let Some(w) = spec.extra_work {
+        let max_ops = DecodeLimits::default().max_ops;
+        if w.min_extra_ops > max_ops {
+            return Some(format!(
+                "min_extra_ops {} is above the default max_decode_ops {max_ops}",
+                w.min_extra_ops
+            ));
+        }
+        if w.lighter.as_slice() == spec.input {
+            return Some("the extra_work lighter input is the fixture's own input".into());
+        }
     }
     if let Some(s) = spec.salvage {
         // A cut at 0 is empty input, which must be an error.
@@ -1115,34 +1130,63 @@ fn run_fixture<R: Raster>(
             }
         }));
     }
+    // Usage never depends on the limits (specs/core/decode-work-limits.md), so every at-limit
+    // success must report what the default-limits decode reported.
+    let reference = match &result {
+        Some(Ok(d)) => Some(d.usage),
+        _ => None,
+    };
+    let same_usage = |d: &Decoded<R>| reference.is_none_or(|u| d.usage == u);
     for (check, at, set) in boundaries {
         Boundary { check, name, at }.probe(
             report,
             set,
             |limits| call(input, limits),
-            complete_match,
+            |d: &Decoded<R>| complete_match(d) && same_usage(d),
             describe_raster,
         );
     }
 
     // Working memory and operations (specs/core/decode-work-limits.md): lower bounds on what
-    // the decoder reported, then exact boundaries at it. At the boundary the call must report
-    // the same usage again (usage never depends on the limits).
-    if let Some(Ok(d)) = &result {
-        let usage = d.usage;
+    // the decoder reported, then exact boundaries at it.
+    if let Some(usage) = reference {
         let samples = expected.samples();
         let len_u64 = u64::try_from(len).unwrap_or(u64::MAX);
         report.check(
             "image.usage_valid",
-            usage.working_bytes >= len_u64 && usage.ops >= samples && usage.ops >= spec.min_ops,
+            usage.working_bytes >= len_u64 && usage.ops >= samples,
             || {
                 format!(
                     "{name}: usage {usage:?} must have working_bytes >= the {len_u64} output \
-                     bytes and ops >= the {samples} output samples and >= min_ops {}",
-                    spec.min_ops
+                     bytes and ops >= the {samples} output samples"
                 )
             },
         );
+        // The extra-work claim: the lighter encoding decodes to the same image, and the
+        // difference in reported operations is at least the claim.
+        if let Some(w) = spec.extra_work {
+            let lighter = call(&w.lighter, &unlimited);
+            let ok = match &lighter {
+                Some(Ok(l)) => {
+                    complete_match(l)
+                        && ok_result_valid(&lighter, &unlimited)
+                        && usage
+                            .ops
+                            .checked_sub(l.usage.ops)
+                            .is_some_and(|extra| extra >= w.min_extra_ops)
+                }
+                _ => false,
+            };
+            report.check("image.extra_work", ok, || {
+                format!(
+                    "{name}: the lighter input must decode Complete to the expected image with at \
+                     least {} fewer ops than the {} reported for the input, got {}",
+                    w.min_extra_ops,
+                    usage.ops,
+                    describe_raster(&lighter)
+                )
+            });
+        }
         let work: [(&'static str, u64, SetFn); 2] = [
             ("image.working_limit", usage.working_bytes, |n| {
                 DecodeLimits {
@@ -1160,7 +1204,7 @@ fn run_fixture<R: Raster>(
                 report,
                 set,
                 |limits| call(input, limits),
-                |d: &Decoded<R>| complete_match(d) && d.usage == usage,
+                |d: &Decoded<R>| complete_match(d) && same_usage(d),
                 describe_raster,
             );
         }
@@ -1331,6 +1375,14 @@ mod tests {
         working_without_output: bool,
         /// Counts only output samples, not the trailing-byte work.
         ops_output_only: bool,
+        /// Charges a flat 100 operations per output sample and nothing for the trailing-byte
+        /// work (a per-sample overcount that covers any absolute bound).
+        flat_ops_per_sample: bool,
+        /// Reports one operation more whenever `max_output_bytes` isn't the default.
+        usage_from_output_limit: bool,
+        /// CCITT: reports 0 working bytes for Group 4 without EncodedByteAlign (a stream only
+        /// the option checks decode).
+        ccitt_option_usage_zero: bool,
         /// Reports `max_ops + 1` operations on truncated results.
         truncated_usage_over_limit: bool,
     }
@@ -1517,7 +1569,12 @@ mod tests {
             let trailing = u64::try_from(input.len().saturating_sub(5))
                 .map_err(|_| over.clone())?
                 .saturating_sub(len);
-            let extra = if self.ops_output_only {
+            let samples = if self.flat_ops_per_sample {
+                samples.checked_mul(100).ok_or(over.clone())?
+            } else {
+                samples
+            };
+            let extra = if self.ops_output_only || self.flat_ops_per_sample {
                 0
             } else {
                 trailing.checked_mul(TOY_TRAILING_OPS).ok_or(over.clone())?
@@ -1545,6 +1602,11 @@ mod tests {
             }
             if self.usage_from_limits && limits.max_ops != DecodeLimits::default().max_ops {
                 usage.ops = usage.ops.saturating_sub(1);
+            }
+            if self.usage_from_output_limit
+                && limits.max_output_bytes != DecodeLimits::default().max_output_bytes
+            {
+                usage.ops = usage.ops.saturating_add(1);
             }
             Ok(usage)
         }
@@ -1640,7 +1702,11 @@ mod tests {
             if self.panic_on_extreme_k && params.k == i32::MIN {
                 panic!("K");
             }
-            self.decode_bitmap(input, limits, ccitt_key(params))
+            let mut d = self.decode_bitmap(input, limits, ccitt_key(params))?;
+            if self.ccitt_option_usage_zero && params.k < 0 && !params.encoded_byte_align {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -1703,12 +1769,16 @@ mod tests {
     }
 
     /// Makes a fixture need heavy work: one trailing byte (which the toy charges
-    /// [`TOY_TRAILING_OPS`] for and otherwise ignores), and the exact `min_ops` that gives.
-    /// Returns the new `min_ops`; never use it on a fixture with a salvage cut (the cut would
-    /// fall in the trailing byte).
-    fn add_work(input: &mut Vec<u8>, samples: u64) -> u64 {
+    /// [`TOY_TRAILING_OPS`] for and otherwise ignores). The lighter input is the original, and
+    /// the claim is the toy's exact difference. Never use it on a fixture with a salvage cut
+    /// (the cut would fall in the trailing byte).
+    fn add_work(input: &mut Vec<u8>) -> Option<ExtraWork> {
+        let lighter = input.clone();
         input.push(0x5a);
-        samples + TOY_TRAILING_OPS
+        Some(ExtraWork {
+            lighter,
+            min_extra_ops: TOY_TRAILING_OPS,
+        })
     }
 
     /// The salvage cut every toy fixture uses: the last byte missing, all rows but the last
@@ -1746,7 +1816,7 @@ mod tests {
             options: JpegOptions { color_transform },
             expected,
             tolerance: 0,
-            min_ops: 0,
+            extra_work: None,
         }
     }
 
@@ -1760,7 +1830,7 @@ mod tests {
     /// - portrait 2×5 RGB, no APP14, ColorTransform false (overrides the default conversion).
     fn jpeg_fixtures() -> Vec<JpegFixture> {
         let mut heavy = jpeg_fixture((4, 4), 0x03, None, false);
-        heavy.min_ops = add_work(&mut heavy.input, heavy.expected.samples());
+        heavy.extra_work = add_work(&mut heavy.input);
         vec![
             jpeg_fixture((4, 3), 0xb3, Some(true), true),
             jpeg_fixture((2, 5), 0xb3, Some(false), false),
@@ -1794,12 +1864,12 @@ mod tests {
                 expected,
                 lossy: false,
                 tolerance: 0,
-                min_ops: 0,
+                extra_work: None,
             }
         })
         .map(|mut f| {
             if f.expected.height == 5 {
-                f.min_ops = add_work(&mut f.input, f.expected.samples());
+                f.extra_work = add_work(&mut f.input);
             }
             f
         })
@@ -1819,10 +1889,10 @@ mod tests {
                     input,
                     globals: Some(vec![0x80, 2, 3, 4]),
                     expected,
-                    min_ops: 0,
+                    extra_work: None,
                 };
                 if h == 9 {
-                    f.min_ops = add_work(&mut f.input, f.expected.samples());
+                    f.extra_work = add_work(&mut f.input);
                 }
                 f
             })
@@ -1860,7 +1930,6 @@ mod tests {
                 input,
                 params,
                 expected,
-                min_ops: 0,
             }
         })
         .collect()
@@ -1980,20 +2049,53 @@ mod tests {
 
     #[test]
     fn counting_only_output_samples_is_caught() {
+        // Exactly one per sample, or a flat 100 per sample: either way the lighter input costs
+        // the same, so the difference is 0.
+        for toy in [
+            Toy {
+                ops_output_only: true,
+                ..Toy::default()
+            },
+            Toy {
+                flat_ops_per_sample: true,
+                ..Toy::default()
+            },
+        ] {
+            let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+            for report in [jpeg, jpx, jbig2] {
+                assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+            }
+            // CCITT needs no heavy-work fixture (linear work), so it passes.
+            assert!(ccitt.passed(), "{ccitt}");
+        }
+    }
+
+    #[test]
+    fn usage_that_depends_on_the_output_limit_is_caught() {
         let toy = Toy {
-            ops_output_only: true,
+            usage_from_output_limit: true,
             ..Toy::default()
         };
-        let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
-        for report in [jpeg, jpx, jbig2] {
+        for report in every_suite(&toy) {
             assert_eq!(
                 report.failed_checks(),
-                vec!["image.usage_valid"],
+                vec!["image.output_limit"],
                 "{report}"
             );
         }
-        // CCITT needs no heavy-work fixture (linear work), so it passes.
-        assert!(ccitt.passed(), "{ccitt}");
+    }
+
+    #[test]
+    fn invalid_usage_in_an_option_probe_is_caught() {
+        let toy = Toy {
+            ccitt_option_usage_zero: true,
+            ..Toy::default()
+        };
+        // Only the EncodedByteAlign-false probe of the Group 4 fixture decodes that way.
+        let report = run_ccitt(&toy, &ccitt_fixtures(true));
+        assert!(report.failed("image.option_used"), "{report}");
+        assert!(!report.failed("image.usage_valid"), "{report}");
+        assert!(!report.failed("image.fixture_decodes"), "{report}");
     }
 
     #[test]
@@ -2018,21 +2120,29 @@ mod tests {
     fn a_heavy_work_fixture_is_required_at_four_times_the_samples() {
         let toy = Toy::default();
         let mut fixtures = jbig2_fixtures(0x80);
-        let heavy = fixtures.iter().position(|f| f.min_ops > 0).unwrap();
+        let heavy = fixtures
+            .iter()
+            .position(|f| f.extra_work.is_some())
+            .unwrap();
         let samples = fixtures[heavy].expected.samples();
-        // The toy charges samples + 256 for the trailing byte, so 4 × samples fits.
-        assert!(HEAVY_WORK_FACTOR * samples <= samples + TOY_TRAILING_OPS);
-        fixtures[heavy].min_ops = HEAVY_WORK_FACTOR * samples;
+        // The toy charges 256 for the trailing byte, so a claim of 4 × samples is true.
+        assert!(HEAVY_WORK_FACTOR * samples <= TOY_TRAILING_OPS);
+        let set = |fixtures: &mut Vec<Jbig2Fixture>, n: u64| {
+            if let Some(w) = fixtures[heavy].extra_work.as_mut() {
+                w.min_extra_ops = n;
+            }
+        };
+        set(&mut fixtures, HEAVY_WORK_FACTOR * samples);
         let report = run_jbig2(&toy, &fixtures);
         assert!(report.passed(), "{report}");
-        fixtures[heavy].min_ops = HEAVY_WORK_FACTOR * samples - 1;
+        set(&mut fixtures, HEAVY_WORK_FACTOR * samples - 1);
         let report = run_jbig2(&toy, &fixtures);
         assert_eq!(
             report.failed_checks(),
             vec!["image.work_fixture"],
             "{report}"
         );
-        fixtures[heavy].min_ops = 0;
+        fixtures[heavy].extra_work = None;
         let report = run_jbig2(&toy, &fixtures);
         assert_eq!(
             report.failed_checks(),
@@ -2042,30 +2152,44 @@ mod tests {
     }
 
     #[test]
-    fn min_ops_is_a_lower_bound_on_reported_ops() {
+    fn the_extra_work_claim_is_measured_and_validated() {
         let toy = Toy::default();
-        let mut fixtures = jpx_fixtures();
-        let heavy = fixtures.iter().position(|f| f.min_ops > 0).unwrap();
-        // add_work states the toy's exact count: one more is more than the decoder did.
-        fixtures[heavy].min_ops += 1;
-        let report = run_jpeg2000(&toy, &fixtures);
+        let fixtures = jpx_fixtures();
+        let heavy = fixtures
+            .iter()
+            .position(|f| f.extra_work.is_some())
+            .unwrap();
+        let with = |change: &dyn Fn(&mut ExtraWork)| {
+            let mut fixtures = fixtures.clone();
+            if let Some(w) = fixtures[heavy].extra_work.as_mut() {
+                change(w);
+            }
+            run_jpeg2000(&toy, &fixtures)
+        };
+        // The claim is the toy's exact difference: at it passes, one more fails.
+        assert!(with(&|_| {}).passed());
+        let report = with(&|w| w.min_extra_ops += 1);
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        // A lighter input that decodes to another image fails.
+        let report = with(&|w| {
+            if let Some(b) = w.lighter.get_mut(5) {
+                *b ^= 1;
+            }
+        });
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        // A lighter input equal to the input is an invalid fixture (and then not heavy).
+        let input = fixtures[heavy].input.clone();
+        let report = with(&|w| w.lighter = input.clone());
         assert_eq!(
             report.failed_checks(),
-            vec!["image.usage_valid"],
+            vec!["image.fixture_valid", "image.work_fixture"],
             "{report}"
         );
-        // At the default max_decode_ops the fixture is valid (the toy just doesn't do that
-        // much work); one past it is an invalid fixture.
+        // At the default max_decode_ops the claim is valid but false; one past is invalid.
         let max = DecodeLimits::default().max_ops;
-        fixtures[heavy].min_ops = max;
-        let report = run_jpeg2000(&toy, &fixtures);
-        assert_eq!(
-            report.failed_checks(),
-            vec!["image.usage_valid"],
-            "{report}"
-        );
-        fixtures[heavy].min_ops = max + 1;
-        let report = run_jpeg2000(&toy, &fixtures);
+        let report = with(&|w| w.min_extra_ops = max);
+        assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        let report = with(&|w| w.min_extra_ops = max + 1);
         assert_eq!(
             report.failed_checks(),
             vec!["image.fixture_valid", "image.work_fixture"],
@@ -2658,6 +2782,7 @@ mod tests {
             vec![
                 "image.component_limit",
                 "image.dimension_limit",
+                "image.extra_work",
                 "image.fixture_decodes",
                 "image.ops_limit",
                 "image.output_limit",
@@ -2709,9 +2834,8 @@ mod tests {
             let mut fixtures = jpeg_fixtures();
             for (index, mut replacement) in replacements {
                 // Keep the heavy-work fixture heavy, so only the option rule is missing.
-                if fixtures[index].min_ops > 0 {
-                    replacement.min_ops =
-                        add_work(&mut replacement.input, replacement.expected.samples());
+                if fixtures[index].extra_work.is_some() {
+                    replacement.extra_work = add_work(&mut replacement.input);
                 }
                 fixtures[index] = replacement;
             }
