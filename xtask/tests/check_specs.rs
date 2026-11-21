@@ -178,3 +178,53 @@ fn filesystem_and_supersede_edge_cases() {
     want.push(&n);
     assert_eq!(err.lines().collect::<Vec<_>>(), want);
 }
+
+#[cfg(unix)]
+#[test]
+fn template_and_trace_must_be_regular_files() {
+    // A FIFO would block the open forever and a symlink could point anywhere: both are
+    // refused before opening (specs/tooling/check-specs.md, Limits). The run has a
+    // deadline, so the old blocking behavior fails instead of hanging the suite.
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("xtask-special-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let specs = root.join("specs");
+    std::fs::create_dir_all(specs.join("area")).unwrap();
+    let good = format!("{}/specs", fixture("good"));
+    std::fs::copy(format!("{good}/area/feat.md"), specs.join("area/feat.md")).unwrap();
+    std::fs::copy(format!("{good}/TRACE.md"), root.join("trace-target.md")).unwrap();
+    std::os::unix::fs::symlink(root.join("trace-target.md"), specs.join("TRACE.md")).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(specs.join("_TEMPLATE.md"))
+        .status()
+        .unwrap();
+    assert!(made.success(), "mkfifo failed");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["check-specs", "--root"])
+        .arg(&root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_dir_all(&root);
+            panic!("check-specs blocked on a FIFO");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let o = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    for line in [
+        "specs/_TEMPLATE.md: cannot read: not a regular file",
+        "specs/TRACE.md: cannot read: a symlink (not followed)",
+        "specs/TRACE.md: symlink not followed; specs must be regular files",
+    ] {
+        assert!(err.lines().any(|l| l == line), "missing {line:?} in:\n{err}");
+    }
+}

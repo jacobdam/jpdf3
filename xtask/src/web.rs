@@ -109,6 +109,10 @@ pub fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `npm ci` with dependency install scripts off. `.npmrc` sets `ignore-scripts` too, but an
+/// inherited `npm_config_ignore_scripts=false` overrides the file; the flag overrides both.
+const NPM_INSTALL: &[&str] = &["ci", "--ignore-scripts"];
+
 fn tool_version(tool: &str) -> Option<String> {
     let out = Command::new(tool).arg("--version").output().ok()?;
     out.status
@@ -231,8 +235,7 @@ fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
         }
     }
     let no_env: &[(&str, &Path)] = &[];
-    // .npmrc sets ignore-scripts: no dependency install script ever runs.
-    step(&web, "install", "npm", &["ci"], no_env)?;
+    step(&web, "install", "npm", NPM_INSTALL, no_env)?;
     step(&web, "licenses", "npm", &["run", "licenses"], no_env)?;
     step(&web, "typecheck", "npm", &["run", "typecheck"], no_env)?;
     step(&web, "lint", "npm", &["run", "lint"], no_env)?;
@@ -260,6 +263,13 @@ fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_turns_scripts_off_on_the_command_line() {
+        // Checked by hand with npm 11: `npm_config_ignore_scripts=false npm config get
+        // ignore-scripts` prints false in apps/web despite .npmrc; with the flag, true.
+        assert_eq!(NPM_INSTALL, ["ci", "--ignore-scripts"]);
+    }
 
     #[test]
     fn web_ids() {
