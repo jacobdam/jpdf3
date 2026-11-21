@@ -4,22 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #119 (the owner's Codex second-reviewer proposal): reviewed in 6 rounds, all findings fixed in the proposal,
-  ai-review posted, auto-merge on. Once merged, the owner applies the protected diffs (step 1) and dry-runs
-  Codex (step 2).
-- This record PR (journal, STATUS, LESSONS).
+- PR #121 (#112, web license-check bypasses): reviewed in 4 rounds, auto-merge on. #112 closes when it merges.
+- PR #119 (the owner's Codex proposal) merged; the owner applies the protected diffs.
 
 ## Last session
-- **PR #119 review** (rule a, the owner's comment). 14 major findings fixed in ops/proposals/codex-second-reviewer.md
-  (script confinement, sealed-corpus exposure through git discovery and symlinks, guard-rule fail-opens from
-  regex blow-ups, TICK background-timeout). See the proposal's "Review record".
+- **#112** (rule d): the web license check now refuses unscanned `src/` extensions, `import.meta` (not env),
+  package paths in any text, scheme imports (`data:`, `file:`), undecodable specifier characters, non-literal
+  `import(`, `@jsx` pragmas; it guards csp.ts by shape, tsconfig, PostCSS configs up the tree and 31 config keys,
+  and pins the CC-BY allowance to the registry tarball. The reviewer found 4 blockers, then 2, then 1 more;
+  all fixed. #99 (the Rollup module graph) is still the durable fix.
 
 ## Previous session
-- Audit 0002 (rule g): 0 critical, 5 high (#112, #116, #117), filed #112–#117; see docs/audits/0002.md.
+- PR #119 review (rule a): 14 major findings fixed in ops/proposals/codex-second-reviewer.md.
 
 ## Next step (suggested order, TICK letters)
-1. d (security) issues, lowest number first: **#81, #82, #83, #106, #107, #109, #112, #113, #114, #116, #117**.
-   - **#112 first, out of order:** CONSTITUTION 10 rests on the license check, and it is proven bypassable.
+1. d (security) issues, lowest number first: **#81, #82, #83, #106, #107, #109, #113, #114, #116, #117**.
+   - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#81, #116, #117) and the decoder contracts (#106).
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i), lowest number first: #21, #55, #61, #64, #66, #70, #78, #84–#87, #91,
@@ -37,6 +37,6 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
   checked locally only.
-- Open proposal: ops/proposals/codex-second-reviewer.md (on main once #119 merges; the owner applies it). Suggested owner follow-up: a command
+- Open proposal: ops/proposals/codex-second-reviewer.md (merged; the owner applies it). Suggested owner follow-up: a command
   size cap in guard.py and an explicit hook `timeout`; the current guard has quadratic inputs and a timed-out hook allows.
 - 7 merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).

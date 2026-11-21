@@ -24,6 +24,30 @@ export const TOOL_EXTRA = new Set(["MPL-2.0", "BlueOak-1.0.0", "CC0-1.0", "0BSD"
  */
 export const CC_BY_DATA = new Set(["caniuse-lite"]);
 
+/**
+ * The npm registry tarball URL for `name@version`, or null if either is missing. The CC-BY
+ * data allowance holds only for a lockfile entry resolved from exactly this URL, so a git or
+ * tarball fork that takes a listed name doesn't inherit it.
+ */
+export function registryTarball(name, version) {
+  // A strict semver version, so `x/../../evil/-/evil-1.0.0` can't steer the URL.
+  const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+  if (typeof name !== "string" || typeof version !== "string" || !semver.test(version)) {
+    return null;
+  }
+  const base = name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
+  return `https://registry.npmjs.org/${name}/-/${base}-${version}.tgz`;
+}
+
+/**
+ * Source files Vite may bundle that the scan reads: lower-case `.js .jsx .mjs .cjs .ts .tsx
+ * .mts .cts .css .html`. Every other file under src/ is refused (Vite parses `./a.mod` or
+ * `./c.JS` as JavaScript and `.pcss` as CSS, and the scan would never read them).
+ */
+export function sourceExtensionOk(fileName) {
+  return /\.(?:[cm]?[jt]sx?|css|html)$/.test(fileName);
+}
+
 /** Package name from a lockfile path such as `node_modules/a/node_modules/@s/b`. */
 export function nameOf(path) {
   const i = path.lastIndexOf("node_modules/");
@@ -116,38 +140,96 @@ export function bareRoot(spec) {
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
-// Whitespace and comments allowed between the keyword and the specifier.
-const GAP = String.raw`(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*`;
-const Q = "[\"'`]";
+// Whitespace and comments allowed between the keyword and the specifier. The comment body
+// can't run past `*/` (a lazy `[\s\S]*?` backtracks exponentially over many comments).
+// A line comment ends at any ECMAScript line terminator (LF, CR, U+2028, U+2029), not
+// only LF, or `import //<CR>"x"` would hide the specifier.
+const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n\r\u2028\u2029]*(?:[\n\r\u2028\u2029]|$))*`;
+// A quoted string, each quote kind closed by its own kind (`"a'b"` is one string). Newlines
+// are allowed inside, so a line continuation (`"./a\<newline>/../x"`) is still captured
+// (and then refused for its `\`).
+const QSTR = String.raw`(?:"([^"]*)"|'([^']*)'|` + "`([^`]*)`)";
+// url(…): a quoted string, or an unquoted run trimmed in code. One alternative each, so
+// whitespace isn't shared between quantifiers (no polynomial backtracking).
+const URL_ARG = String.raw`(?:\s*${QSTR}\s*|([^)"'\`]*))\)`;
 // Static `import … from "x"`, `export … from "x"`, side-effect `import "x"`, dynamic
-// `import("x")` and ``import(`x`)`` (comments allowed in the gaps), CSS `@import "x"` and any
-// CSS `url(x)`. In HTML files also every `src=` and `href=`. Over-matching (an import-like
-// string in a comment) only adds a false alarm.
-const IMPORT_RES = [
-  new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${Q}([^"'\`]+)${Q}`, "g"),
-  /\burl\(\s*["'`]?([^"'`)\s]+)/g,
+// `import("x")` and ``import(`x`)`` (comments allowed in the gaps), CSS `@import "x"` and
+// `@import url(x)`: these load code, so they are "import" specifiers. CSS `url(x)`,
+// `image-set("x")` strings and HTML attributes are "asset" specifiers. Over-matching (an
+// import-like string in a comment) only adds a false alarm.
+// In CSS and HTML files matching is case-insensitive (CSS function names, at-rules and HTML
+// attribute names are); in JS it is not, so `new URL(x)` isn't read as CSS `url(x)`.
+const sourceRes = (flags) => [
+  ["import", new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${QSTR}`, flags)],
+  ["import", new RegExp(String.raw`@import${GAP}url\(${URL_ARG}`, flags)],
+  ["asset", new RegExp(String.raw`\burl\(${URL_ARG}`, flags)],
 ];
-const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/g];
+// Vite turns `import("./" + x + ".ts")` and `import("./".concat(x))` into globs over the
+// joined literals, which the scan would check only the first of. So every JS `import(` must
+// hold exactly one string literal, followed by `)` or `,` (import attributes).
+const DYNAMIC_IMPORT_RE = new RegExp(String.raw`\bimport${GAP}\(`, "g");
+const SINGLE_LITERAL_RE = new RegExp(String.raw`^${GAP}${QSTR}${GAP}[),]`);
+const JS_RES = sourceRes("g");
+const MARKUP_RES = sourceRes("gi");
+// HTML attributes Vite rewrites: `src`, `href`, `srcset` (comma-separated `url size`),
+// `poster` and `<meta content>` (og:image). `content` is checked only when it looks like a
+// path, because it is also plain text (`width=device-width`).
+const HTML_ATTR_RE =
+  /\b(src|href|srcset|poster|content)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+// CSS `image-set("x.png" 1x)`: Vite rewrites its plain strings like url().
+const IMAGE_SET_RE = /\bimage-set\(((?:[^()]|\([^()]*\))*)\)/gi;
+const QUOTED_RE = /"([^"\n]*)"|'([^'\n]*)'/g;
+// Anywhere in the text, not only in import forms: a string naming a path into a package.
+const PACKAGE_PATH_RE = /node_modules|\/@fs\/|\/@id\//i;
+// `import.meta` other than `import.meta.env`: Vite turns `import.meta.glob(…)` and
+// `new URL(…, import.meta.url)` into imports the scan can't follow.
+const IMPORT_META_RE = new RegExp(
+  String.raw`\bimport${GAP}\.${GAP}meta\b(?!${GAP}\.${GAP}env\b)`,
+  "i",
+);
+// esbuild's `@jsx`, `@jsxImportSource`, `@jsxFrag`, `@jsxRuntime` pragmas: an import source
+// makes esbuild inject `import "<source>/jsx-runtime"`, which the scan never sees.
+const JSX_PRAGMA_RE = /@jsx/i;
+// Characters a checked path specifier may use. Anything else (`\` escapes, `&` entities,
+// `%` encodings, quotes, whitespace, `$`) could decode to a different path than the one
+// checked, so it is refused rather than decoded.
+const SPEC_CHARS_RE = /^[A-Za-z0-9@._/~?=#+-]+$/;
+// Scheme URLs left to the CSP and the E2E no-third-party-request test, in asset positions
+// only. Vite bundles `data:` and `file:` modules, so import positions refuse every scheme.
+const ASSET_SCHEMES_RE = /^(?:data|https?|mailto):/i;
 
 /**
  * One problem string for a specifier in shipped source `file` (a path relative to the app
- * directory, such as `src/a.ts` or `index.html`), or null if it is allowed:
+ * directory, such as `src/a.ts` or `index.html`), or null if it is allowed. `kind` is
+ * `"import"` (code: JS import forms, CSS `@import`) or `"asset"` (CSS `url()`, `image-set`,
+ * HTML attributes):
  * - a path into node_modules (relative, absolute, Vite's `/@fs/` or `/@id/`) is refused;
+ * - a scheme URL is refused in import positions; in asset positions only `data:`, `http:`
+ *   and `https:` are allowed (left to the CSP and E2E checks);
+ * - `#x` is a fragment in asset positions and a refused subpath import in import positions;
+ * - any character outside `A-Z a-z 0-9 @ . _ / ~ ? = # + -` is refused (no decoding);
  * - a relative or root-absolute path must stay inside `src/`, because files outside it are
  *   not scanned (`../vendor/x.ts` could import a tool package);
- * - a bare specifier must name a package in `deps`;
- * - scheme URLs (`data:`, `https:`) and, in CSS url() and HTML attributes, `#` fragments are
- *   left to the CSP and E2E checks; in JS import forms `#x` is a subpath import and refused.
+ * - a bare specifier must name a package in `deps` and have no `.` or `..` segment.
  */
-export function importProblem(file, spec, deps, fragmentsOk = false) {
-  if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
+export function importProblem(file, spec, deps, kind = "import") {
+  if (kind === "dynamic") {
+    return `${file}: has an import(…) that isn't one string literal (Vite globs + and .concat; also matched in strings and comments)`;
+  }
+  const asset = kind === "asset";
+  if (PACKAGE_PATH_RE.test(spec)) {
     return `${file}: imports ${spec}, a path into node_modules (use the package name)`;
   }
-  // `#x` is a fragment in CSS url() and HTML, but a subpath import in JS.
-  if (spec.startsWith("#")) {
-    return fragmentsOk ? null : `${file}: imports ${spec}, a #subpath import (not checked)`;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(spec)) {
+    if (asset && ASSET_SCHEMES_RE.test(spec)) return null;
+    return `${file}: imports ${spec}, a scheme URL (Vite bundles data: and file: modules)`;
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(spec)) return null;
+  if (spec.startsWith("#")) {
+    return asset ? null : `${file}: imports ${spec}, a #subpath import (not checked)`;
+  }
+  if (!SPEC_CHARS_RE.test(spec)) {
+    return `${file}: imports ${JSON.stringify(spec)}, which has characters the scan doesn't decode`;
+  }
   if (spec.startsWith(".") || spec.startsWith("/")) {
     const target = spec.startsWith("/")
       ? posix.normalize(spec.slice(1))
@@ -156,10 +238,56 @@ export function importProblem(file, spec, deps, fragmentsOk = false) {
       ? null
       : `${file}: imports ${spec}, which is outside src/ and not scanned`;
   }
+  if (spec.split("/").some((s) => s === "." || s === "..")) {
+    return `${file}: imports ${spec}, a package path with . or .. segments`;
+  }
   const root = bareRoot(spec);
   return deps.has(root)
     ? null
     : `${file}: imports ${spec}, which is not in package.json dependencies`;
+}
+
+const captured = (m, from = 1) => m.slice(from).find((g) => g !== undefined) ?? "";
+
+/**
+ * The URLs in a `srcset` value, as the HTML parser reads them: a URL runs to whitespace
+ * (trailing commas stripped), then a descriptor runs to the next comma. So
+ * `data:image/png;base64,AA== 1x` is one URL and `a.png 1x,b.png 2x` two.
+ */
+export function srcsetUrls(value) {
+  const urls = [];
+  let i = 0;
+  while (i < value.length) {
+    while (i < value.length && /[\s,]/.test(value.charAt(i))) i += 1;
+    if (i >= value.length) break;
+    let j = i;
+    while (j < value.length && !/\s/.test(value.charAt(j))) j += 1;
+    let url = value.slice(i, j);
+    if (/,$/.test(url)) {
+      url = url.replace(/,+$/, "");
+    } else {
+      // The descriptor runs to the next comma. Vite's own splitter differs, so any token
+      // in it that isn't a descriptor (`2x`, `100w`, `1.5x`) is checked as a URL too.
+      const start = j;
+      while (j < value.length && value.charAt(j) !== ",") j += 1;
+      for (const token of value.slice(start, j).split(/\s+/)) {
+        if (token !== "" && !/^\d+(?:\.\d+)?[wxh]$/.test(token)) urls.push(token);
+      }
+    }
+    urls.push(url);
+    i = j;
+  }
+  return urls;
+}
+
+/** The asset specifiers in one HTML attribute. */
+function attrSpecs(name, value) {
+  const attr = name.toLowerCase();
+  if (attr === "srcset") return srcsetUrls(value);
+  // `content` is also plain text (`width=device-width, initial-scale=1`, `light dark`);
+  // check it when it looks like a path (`/` or a leading `.`, no whitespace).
+  if (attr === "content") return /^\S*$/.test(value) && /\/|^\./.test(value) ? [value] : [];
+  return [value];
 }
 
 /**
@@ -169,13 +297,57 @@ export function importProblem(file, spec, deps, fragmentsOk = false) {
 export function checkImports(sources, rootManifest, problems) {
   const deps = new Set(keys(rootManifest.dependencies));
   for (const { file, text } of sources) {
-    const res = file.endsWith(".html") ? [...IMPORT_RES, ...HTML_RES] : IMPORT_RES;
-    for (const [i, re] of res.entries()) {
+    const specs = [];
+    const html = file.endsWith(".html");
+    const css = file.endsWith(".css");
+    for (const [kind, re] of html || css ? MARKUP_RES : JS_RES) {
       for (const m of text.matchAll(re)) {
-        const problem = importProblem(file, m[1], deps, i > 0);
-        if (problem !== null) problems.push(problem);
+        const spec = captured(m);
+        // An unquoted CSS url() may carry surrounding whitespace; inner whitespace stays.
+        specs.push([m[4] !== undefined ? spec.trim() : spec, kind]);
       }
     }
+    if (!css) {
+      for (const m of text.matchAll(DYNAMIC_IMPORT_RE)) {
+        const rest = text.slice((m.index ?? 0) + m[0].length);
+        if (!SINGLE_LITERAL_RE.test(rest)) specs.push(["", "dynamic"]);
+      }
+    }
+    if (html) {
+      for (const m of text.matchAll(HTML_ATTR_RE)) {
+        for (const spec of attrSpecs(m[1], captured(m, 2))) specs.push([spec, "asset"]);
+      }
+    }
+    if (css) {
+      for (const m of text.matchAll(IMAGE_SET_RE)) {
+        // `type("image/png")` names a MIME type, not a file.
+        const args = m[1].replace(/\btype\(\s*["'][^"']*["']\s*\)/gi, "");
+        for (const q of args.matchAll(QUOTED_RE)) specs.push([captured(q), "asset"]);
+      }
+    }
+    // One line per distinct problem (`@import url(x)` matches two forms).
+    const found = new Set();
+    let packagePath = false;
+    for (const [spec, kind] of specs) {
+      const problem = importProblem(file, spec, deps, kind);
+      if (problem === null) continue;
+      if (PACKAGE_PATH_RE.test(spec)) packagePath = true;
+      found.add(problem);
+    }
+    // Strings outside the import forms (`import.meta.glob("/node_modules/x")`, a computed
+    // specifier, a comment): one problem per file unless an import already reported it.
+    if (!packagePath && PACKAGE_PATH_RE.test(text)) {
+      found.add(`${file}: names a path into node_modules (/@fs/, /@id/); not allowed in src/`);
+    }
+    if (IMPORT_META_RE.test(text)) {
+      found.add(
+        `${file}: uses import.meta other than import.meta.env (glob, url), which the scan can't follow`,
+      );
+    }
+    if (JSX_PRAGMA_RE.test(text)) {
+      found.add(`${file}: has an @jsx pragma, which can make esbuild inject an import`);
+    }
+    problems.push(...found);
   }
 }
 
@@ -206,7 +378,14 @@ export function check({ lock, rootManifest: rawRoot, manifests, sources }) {
     // must not inherit it: the real names have to agree with the path.
     const pathName = nameOf(path);
     const realNames = [pkg.name, manifest?.name].filter((n) => n !== undefined);
-    const name = realNames.every((n) => n === pathName) ? pathName : null;
+    const sameName = realNames.every((n) => n === pathName);
+    // The CC-BY allowance also needs the registry tarball for that name and version.
+    // The installed manifest (when present) must have the same version.
+    const fromRegistry =
+      typeof pkg.resolved === "string" &&
+      pkg.resolved === registryTarball(pathName, pkg.version) &&
+      (manifest === undefined || manifest?.version === pkg.version);
+    const name = sameName && fromRegistry ? pathName : null;
     // Reachable from `dependencies` (dev flags ignored), or not marked dev in the lockfile
     // (the owner's rule for #50): either one puts the package under the strict list.
     const prod = production.has(path) || pkg.dev !== true;
