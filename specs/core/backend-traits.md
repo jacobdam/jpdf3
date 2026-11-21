@@ -3,11 +3,14 @@
 Area: core (`crates/jpdf-traits`)
 ISO 32000-2 clauses: §7.4.4 (Flate), §7.4.6 (CCITTFax), §7.4.7 (JBIG2), §7.4.8 (DCT),
 §7.4.9 (JPX), §7.6.3–§7.6.4 (encryption algorithms), §8.9.3 (sample data), §9.2.4 (glyph
-space), §9.6.5 (built-in encodings), §9.9 (embedded font programs), Annex C (limits)
+space), §9.6.5 (built-in encodings), §9.9 (embedded font programs), §8.3.3 (transforms), §8.4.3 (line
+width, caps, joins, miter limit, dashes), §8.5.3 (painting, fill rules, clipping), §8.9.4 (image
+space), §11.3 (compositing, blend modes), §11.4.7 (isolated groups), §11.6.5 (soft masks),
+Annex C (limits)
 Journeys: none directly (an internal boundary; every rendering, saving and security journey
 depends on it)
-Status: implemented (part 1 of 4: #14; part 2, font programs: #53). Text shaping: #66.
-Rasterizer and ICC: #54. Signatures: #55.
+Status: implemented (part 1 of 4: #14; part 2, font programs: #53; part 3, rasterizer: #54).
+Text shaping: #66. ICC: #70. Signatures: #55.
 
 ## Behavior
 `jpdf-traits` defines the replaceable-backend boundary of PLAN §3. Third-party crates are
@@ -16,8 +19,8 @@ has no implementations and no dependencies. ADR 0004 records where `Limits` live
 the error type is hand-written.
 
 **Rules for every trait** (later parts must follow them too):
-1. Every call that produces data takes `&DecodeLimits` (font calls: `&FontLimits`) and
-   checks it **before allocating**.
+1. Every call that produces data takes `&DecodeLimits` (font calls: `&FontLimits`,
+   rasterizer calls: `&RasterLimits`) and checks it **before allocating**.
    Output larger than `max_output_bytes`, or an image header above `max_image_pixels`,
    `max_image_dimension` or `max_image_components`, fails with
    `BackendError::LimitExceeded`. The only exception is `HashState`, whose output has a fixed
@@ -52,11 +55,17 @@ defaults:
 | `max_font_glyphs` | 65,535 | Glyph ids are 16-bit in TrueType, CFF and CFF2 |
 | `max_outline_points` | 131,072 | One glyph, composites and subroutines expanded. Counted per segment (implied TrueType points and 3 per cubic count), so a simple glyph within `maxp`'s 65,535 raw points can exceed 65,536 |
 | `max_outline_ops` | 1,048,576 | One outline call: charstring operators executed plus composite components visited. Bounds CPU for subroutine fan-out and empty-component loops, which emit no points |
+| `max_canvas_pixels` | 16,777,216 (2^24) | One render target is one tile (PLAN §3: `jpdf-render` renders tiles), e.g. 4096 × 4096; a 64 MiB RGBA buffer |
+| `max_path_segments` | 1,048,576 | Segments in one path, and dashes one dashed stroke may produce (a dash array of tiny lengths otherwise turns one segment into millions) |
+| `max_clip_depth` | 64 | Nested clips; each is one 8-bit mask the size of the canvas |
+| `max_layer_depth` | 32 | Nested transparency groups; each is one RGBA buffer the size of the canvas |
+| `max_raster_working_bytes` | 1 GiB | `pixels × (4 × (1 + layer depth) + clip depth)`, half of the 2 GiB process budget. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
 `Limits::font_limits()` builds the `FontLimits` for font calls. Font output is structured
 (glyphs, outline segments), so it is bounded by counts instead of bytes.
+`Limits::raster_limits()` builds the `RasterLimits` for rasterizer calls.
 
 **Traits in this part.**
 - `Inflate::inflate(input, FlateFormat, &DecodeLimits) -> Decoded<Vec<u8>>`.
@@ -161,6 +170,62 @@ can't change which glyph a page shows. Backends only answer questions about the 
   - Every number returned is finite. Every glyph id returned is below `glyph_count`.
 - Advances and coordinates are `f32`: CFF and Type 1 charstring arithmetic is fractional,
   and IEEE `f32` arithmetic gives the same results natively and on wasm32.
+
+**Traits in part 3 (rasterizer).** `jpdf-render` turns a page into a display list in device
+space and hands it to a `Rasterizer`. Everything PDF-specific is resolved before this boundary:
+colour spaces (colours arrive as device RGB), shadings and patterns (as images or paths), text
+(as glyph outlines), soft-mask luminosity (as a ready mask) and knockout groups. So swapping a
+backend changes only anti-aliasing and rounding, never what a page shows.
+- `Rasterizer::render(width, height, &[DrawCommand], &RasterLimits) -> Pixmap`. Stateless,
+  `Send + Sync`.
+  - Device space: origin at the top-left, x right, y down; pixel `(i, j)` covers
+    `[i, i+1) × [j, j+1)`. The canvas starts transparent.
+  - `Pixmap`: 8-bit RGBA, **premultiplied**, rows top to bottom, no padding. Premultiplied is
+    what compositing produces and what tiles are composited with. The bindings convert for
+    web `ImageData` (straight alpha).
+- `DrawCommand`s:
+  - `Fill { path, rule, transform, paint }` and `Stroke { path, style, transform, paint }`.
+    Paths reuse `PathSegment`, in user space. Each subpath starts with `MoveTo`; `Close` is
+    optional, and only `MoveTo` may follow it. Fills close open subpaths; strokes don't.
+    `Transform` is a PDF matrix `[a b c d e f]` (§8.3.3) to device space. For strokes it scales
+    the pen too.
+  - `Paint`: a `Color` (device RGB, straight alpha, each component in `0..=1`; the constant
+    alpha `CA`/`ca` is folded into alpha), a `BlendMode` and `anti_alias`. With
+    anti-aliasing a pixel's coverage is its covered area; without, its centre decides.
+  - `StrokeStyle` (§8.4.3): width ≥ 0 (0 is the thinnest visible line), caps, joins, a miter
+    limit ≥ 1 (beyond it a miter bevels, §8.4.3.5), and a dash array (empty is solid;
+    non-negative, not all zero; odd length repeats) with a phase.
+  - `Image { image, transform, interpolate, opacity, blend }`. The image is 8-bit RGBA with
+    straight alpha, colour and soft mask already applied. As in §8.9.4 the transform maps the
+    unit square, and the first row maps to `v = 1`.
+  - `PushClip { path, rule, transform, anti_alias }` / `PopClip`: clips intersect.
+  - `PushLayer { opacity, blend, mask }` / `PopLayer`: an isolated, non-knockout group
+    (§11.4.7). Content draws into a transparent buffer, which then composites onto the
+    backdrop. Group opacity applies once, to the group's result; the optional `mask` holds one
+    byte per canvas pixel and multiplies alpha (the luminosity or alpha of §11.6.5, computed
+    by `jpdf-render`).
+  - Clips and layers nest together; a pop must match the innermost push.
+- Compositing is §11.3.6 source-over with the blend function `B` of §11.3.5 (all 16 modes,
+  including the non-separable `Hue`, `Saturation`, `Color` and `Luminosity`), in the device's
+  encoded RGB values. Over a transparent backdrop every mode gives the source.
+- **Known divergence:** non-isolated groups (§11.4.8) aren't represented. For groups that use
+  only `Normal` inside, isolated rendering gives the same pixels. Groups with other blend
+  modes inside differ, because their content should blend with the backdrop. Tracked by a
+  discovery issue for `jpdf-render` (#72).
+- `check_scene(width, height, commands, &RasterLimits) -> SceneStats` validates a list and
+  enforces the limits without drawing. Adapters call it first, so the strict checks live in
+  one place. It returns:
+  - `InvalidArgument` for a zero-size canvas, any non-finite number, a colour, opacity or
+    mask out of range, a negative width, a miter limit below 1, a bad dash array, an image
+    or mask whose length doesn't match, a malformed path, a mismatched pop, or a push left
+    open;
+  - `LimitExceeded` for canvas pixels, segments in one path, clip or layer depth, or working
+    bytes over the limit.
+  The dash count depends on geometry, so the adapter enforces it while dashing.
+- Curve flattening and dashing must stay bounded for any finite coordinates. A backend clips
+  to the canvas first or caps subdivision. At lengths near 1e30, adding a dash length to a
+  position no longer changes it, so a naive dash loop never ends. No error describes a hang;
+  the suite's huge-coordinate scenes catch one through the test timeout.
 
 **Conformance suites** (`jpdf_traits::conformance`). Each returns a `Report` listing every
 failed check by a stable name:
@@ -281,6 +346,52 @@ failed check by a stable name:
     normalisation of CID-keyed CFF. Admission adds a multi-FD fixture whose FD matrices
     differ from the Top DICT's.
 
+- `raster::run(&dyn Rasterizer)`. It checks pixels only where every correct backend agrees:
+  shapes on pixel boundaries, pixel centres with anti-aliasing off, area coverage within ±20
+  of 255 with it on, and the §11.3 formulas within ±2 per channel. Every scene runs on a 32 ×
+  32 canvas, and every output is checked for size and premultiplied alpha (`raster.output`).
+  - `raster.fill`: axis-aligned rects (exact, with and without anti-aliasing), scaled and
+    rotated transforms, half alpha, a cubic circle, and a quadratic arch (a backend that
+    treats `QuadTo` as a line fails).
+  - `raster.fill_rule`: nested rects with the same and opposite winding under both rules.
+  - `raster.anti_alias`: 3/4- and 1/4-covered pixels with and without anti-aliasing.
+  - `raster.stroke`: butt, square and round caps; miter, bevel and round joins; a miter over
+    its limit; closed and open subpaths; a pen scaled by the transform; a hairline.
+  - `raster.dash`: `[4 4]` at phases 0, 2 and 10 (wrapping), and `[4]`.
+  - `raster.clip`: one clip, nested clips, a pop restoring the outer clip, an even-odd clip,
+    and an anti-aliased clip edge.
+  - `raster.layer`: layer opacity; group opacity applied once (blue over red inside a 50%
+    group gives half-transparent blue); nested opacity; a soft mask with values 255, 128 and
+    0.
+  - `raster.blend`: all 16 modes as fill blend modes and as layer blend modes, against
+    expected values the suite computes from the §11.3.5 formulas. Also: three modes over a
+    transparent backdrop (which must give the source) and a half-transparent `Multiply`.
+  - `raster.image`: a 3 × 2 image with a half-transparent and a clear pixel at 1:1 (both
+    `interpolate` values; first row on top), at 4× nearest, with opacity, and with a blend
+    mode.
+  - `raster.invalid`: 30 invalid lists, each of which must give `InvalidArgument`.
+  - `raster.degenerate`: an empty list or path, zero area, a lone `MoveTo`, a singular
+    transform, an empty clip, a ±1e30 rect (must cover the canvas, with and without
+    anti-aliasing), curves with 1e30 control points, a 1e30-wide stroke, zero-length dashes, a
+    1 × 1 canvas.
+  - `raster.limits.*`: each limit passes at the scene's exact value and gives `LimitExceeded`
+    one below:
+    - canvas pixels (square, landscape and portrait);
+    - segments in a fill, a stroke and a clip path;
+    - clip depth and layer depth, plus sequential pushes at depth limit 1 (counting pushes
+      instead of depth fails);
+    - working bytes for 2 layers and 3 clips.
+
+    Dashes get a lower-bound check (1000 dashes pass with limit 2000 and fail with 100),
+    because backends may count a dash on a boundary differently.
+  - `raster.hostile`: 48 pseudo-random valid lists built from extreme values (±1e30, 1e-30,
+    the smallest normal `f32`, and values on pixel edges), each with transforms, clips,
+    layers and dashed strokes. Each list must give `Ok` or `LimitExceeded`, never panic.
+  - **What the suite can't see.** It checks the rounding where backends agree, not the
+    anti-aliasing quality. It can't see allocations (the working-bytes formula is a nominal
+    bound), or a hang except through the test timeout. Gradients don't cross this boundary.
+    The fuzz target and admission (#16) cover deeper geometry.
+
 Images have no "a truncated prefix is never `Complete`" rule, unlike Flate. Some JBIG2 and
 CCITT streams have valid end points in the middle, so a prefix can be a complete, smaller
 image.
@@ -323,6 +434,10 @@ may record a repair note.
   catch panics, so an adapter that panics or returns more than a cap can't pass (see
   Limits for what they can't observe).
 - Fuzz targets per trait come with #17. Font adapters add theirs at admission (#16).
+- Display lists come from the engine, but their numbers derive from hostile content streams.
+  `check_scene` rejects every non-finite or out-of-range value, and the limits bound memory
+  before any buffer is allocated. A dash array of tiny lengths, or coordinates near 1e30,
+  must not turn into unbounded work.
 - Font programs are a classic attack surface (charstring interpreters, composite recursion).
   The face API never hands out raw tables. The suite checks every answer it gets from a
   damaged program against the invariants, and requires hostile programs; see Conformance
@@ -344,6 +459,8 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
 ## Performance
 - Traits take slices and return owned buffers. Copy-free streaming can be added later as a
   provided method without breaking adapters.
+- The raster suite takes about 3–7 s against the toy rasterizer in a debug build. The toy
+  supersamples 4 × 4 and tests winding numbers per sample. A real backend is much faster.
 - The font suites take well under a second against the toy font. A fixture costs about 300
   loads: up to 144 prefixes, up to 144 flips and a few limit loads.
 - A full Flate run takes about 1.5 s for the toy codec in a debug build (generating the
@@ -384,6 +501,20 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     TrueType fixture without a `QuadTo`; missing hostile programs or a missing format among
     them; and weak hostile programs (an out-of-range glyph, a program that fails to load
     for a dull reason, a failing control glyph, no glyphs listed).
+  - `raster`: a 4 × 4-supersampling toy with f64 winding numbers and strokes built from
+    polygons. It must pass. Each broken variant must fail exactly the expected checks:
+    - ignores limits; skips validation (and panics on NaN);
+    - ignores anti-aliasing;
+    - applies layer opacity per object;
+    - blends without the `(1 − αb)` term;
+    - ignores the miter limit, the even-odd rule or the dash phase;
+    - flips images;
+    - returns straight alpha;
+    - counts nested clips as one level.
+
+    A panicking rasterizer is reported, not propagated. The blend formulas are checked
+    against values computed by hand.
+  - `check_scene`: path validity, the working-bytes formula, pixel reads bounds-checked.
 - Unit tests for `Outline::point_count`, `control_box`, `is_well_formed`, `is_finite` and
   `Limits::font_limits`.
 - Existing `jpdf-syntax`/`jpdf-engine` tests cover the moved `Limits` unchanged.
