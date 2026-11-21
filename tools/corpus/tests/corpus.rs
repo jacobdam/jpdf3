@@ -1,0 +1,266 @@
+//! Fetch behavior with a curl stand-in, and the committed manifests
+//! (specs/tooling/corpus.md, "Tests").
+#![cfg(unix)]
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use jpdf_corpus::fetch::{Options, fetch};
+use jpdf_corpus::manifest::{self, Entry};
+use jpdf_corpus::sha1::git_blob_id;
+use jpdf_corpus::{Tier, sources};
+
+#[cfg(test)]
+fn scratch(name: &str) -> PathBuf {
+    let d = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-{name}"));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("serve")).unwrap();
+    std::fs::create_dir_all(d.join("out")).unwrap();
+    d
+}
+
+/// A curl stand-in: serves `<dir>/serve/<last URL segment>`, logs each argv line to
+/// `<dir>/log`. Names starting with `fail` exit 22, `big` exit 63, and `flaky` fail once.
+#[cfg(test)]
+fn fake_curl(dir: &Path) -> PathBuf {
+    let script = format!(
+        r#"#!/bin/sh
+echo "$*" >> '{d}/log'
+out=; url=
+while [ $# -gt 0 ]; do
+  case "$1" in --output) out=$2; shift;; --url) url=$2; shift;; esac
+  shift
+done
+name=${{url##*/}}
+case "$name" in
+  fail*) echo "could not resolve" >&2; exit 22;;
+  big*) exit 63;;
+  flaky*) if [ ! -f '{d}/flaked' ]; then touch '{d}/flaked'; exit 7; fi;;
+esac
+cp '{d}/serve/'"$name" "$out" || exit 22
+"#,
+        d = dir.display()
+    );
+    let p = dir.join("curl");
+    std::fs::write(&p, script).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[cfg(test)]
+fn entry(name: &str, bytes: &[u8]) -> Entry {
+    Entry {
+        blob: git_blob_id(bytes),
+        size: bytes.len() as u64,
+        url: format!("https://raw.githubusercontent.com/o/r/c/{name}"),
+    }
+}
+
+#[cfg(test)]
+fn opts(curl: PathBuf) -> Options {
+    Options {
+        curl,
+        jobs: 3,
+        retry_delay: Duration::ZERO,
+    }
+}
+
+#[test]
+fn downloads_verifies_and_reuses() {
+    let d = scratch("ok");
+    let curl = fake_curl(&d);
+    let files: [(&str, &[u8]); 3] = [
+        ("a.pdf", b"%PDF-1.7 a"),
+        ("b c.pdf", b"bb"),
+        ("flaky.pdf", b"f"),
+    ];
+    let mut entries = Vec::new();
+    for (name, bytes) in files {
+        std::fs::write(d.join("serve").join(name.replace(' ', "%20")), bytes).unwrap();
+        entries.push(entry(name, bytes));
+    }
+    let out = d.join("out");
+    let r = fetch(&entries, &out, &opts(curl.clone()));
+    assert_eq!((r.total, r.cached, r.downloaded), (3, 0, 3), "{r:?}");
+    assert!(r.failed.is_empty() && r.integrity.is_empty(), "{r:?}");
+    for e in &entries {
+        let bytes = std::fs::read(out.join(format!("{}.pdf", e.blob))).unwrap();
+        assert_eq!(git_blob_id(&bytes), e.blob);
+    }
+    let log = std::fs::read_to_string(d.join("log")).unwrap();
+    assert_eq!(
+        log.lines().count(),
+        4,
+        "flaky.pdf took two attempts:\n{log}"
+    );
+    for line in log.lines() {
+        assert!(
+            line.starts_with("-q --proto =https --proto-redir =https "),
+            "{line}"
+        );
+        assert!(line.contains("--max-filesize "), "{line}");
+    }
+    assert!(
+        log.contains("--url https://raw.githubusercontent.com/o/r/c/b%20c.pdf"),
+        "{log}"
+    );
+    assert_eq!(r.summary(), "fetched 3/3 (0 cached, 0 failed, 0 integrity)");
+
+    // Second run: everything verified from disk, curl never called.
+    std::fs::remove_file(d.join("log")).unwrap();
+    let r = fetch(&entries, &out, &opts(curl.clone()));
+    assert_eq!((r.cached, r.downloaded), (3, 0), "{r:?}");
+    assert!(!d.join("log").exists());
+
+    // A corrupted cached file is downloaded again.
+    std::fs::write(out.join(format!("{}.pdf", entries[0].blob)), b"%PDF-1.7 X").unwrap();
+    let r = fetch(&entries, &out, &opts(curl));
+    assert_eq!((r.cached, r.downloaded), (2, 1), "{r:?}");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn wrong_bytes_are_integrity_failures() {
+    let d = scratch("integrity");
+    let curl = fake_curl(&d);
+    // Served bytes differ from the manifest: same size, wrong hash; and wrong size.
+    std::fs::write(d.join("serve/hash.pdf"), b"XX").unwrap();
+    std::fs::write(d.join("serve/size.pdf"), b"XXX").unwrap();
+    let entries = [
+        entry("hash.pdf", b"YY"),
+        entry("size.pdf", b"ZZ"),
+        entry("big.pdf", b"WW"),
+    ];
+    let out = d.join("out");
+    let r = fetch(&entries, &out, &opts(curl));
+    assert_eq!(r.integrity.len(), 3, "{r:?}");
+    assert!(
+        r.integrity
+            .iter()
+            .any(|m| m.contains("hash.pdf: blob id is")),
+        "{r:?}"
+    );
+    assert!(
+        r.integrity
+            .iter()
+            .any(|m| m.contains("size.pdf: size is 3, expected 2")),
+        "{r:?}"
+    );
+    assert!(
+        r.integrity
+            .iter()
+            .any(|m| m.contains("big.pdf: curl exit Some(63)")),
+        "{r:?}"
+    );
+    // No retries on integrity failures, and nothing is left behind.
+    let log = std::fs::read_to_string(d.join("log")).unwrap();
+    assert_eq!(log.lines().count(), 3, "{log}");
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn download_failures_and_the_infra_threshold() {
+    let d = scratch("fail");
+    let curl = fake_curl(&d);
+    let mut entries = Vec::new();
+    for i in 0..198 {
+        let name = format!("f{i}.pdf");
+        let bytes = name.as_bytes().to_vec();
+        std::fs::write(d.join("serve").join(&name), &bytes).unwrap();
+        entries.push(entry(&name, &bytes));
+    }
+    entries.push(entry("fail1.pdf", b"1"));
+    entries.push(entry("fail2.pdf", b"2"));
+    let r = fetch(&entries, &d.join("out"), &opts(curl.clone()));
+    assert_eq!((r.downloaded, r.failed.len()), (198, 2), "{r:?}");
+    assert!(
+        r.failed[0].contains("curl exit Some(22): could not resolve"),
+        "{r:?}"
+    );
+    // 2 of 200 missing is max(1, 200/100) = 2: not yet an infrastructure failure.
+    assert!(!r.is_infra_failure());
+    entries.push(entry("fail3.pdf", b"3"));
+    let r = fetch(&entries, &d.join("out"), &opts(curl));
+    assert_eq!((r.cached, r.failed.len()), (198, 3), "{r:?}");
+    assert!(r.is_infra_failure());
+    // Three attempts per failing file (3 files × 3) in the second run.
+    let log = std::fs::read_to_string(d.join("log")).unwrap();
+    assert_eq!(
+        log.lines().filter(|l| l.contains("/fail")).count(),
+        6 + 9,
+        "{log}"
+    );
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn missing_curl_is_a_download_failure() {
+    let d = scratch("nocurl");
+    let r = fetch(
+        &[entry("a.pdf", b"a")],
+        &d.join("out"),
+        &opts(d.join("no-such-curl")),
+    );
+    assert_eq!(r.failed.len(), 1, "{r:?}");
+    assert!(r.failed[0].contains("cannot run"), "{r:?}");
+    assert!(!r.is_infra_failure(), "1 of 1 is within max(1, 0)");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn committed_regress_manifest_matches_the_pinned_sources() {
+    let m = manifest::load(&Tier::Regress.manifest()).unwrap();
+    assert!(m.entries.len() > 5000, "{}", m.entries.len());
+    let mut sorted = m.entries.clone();
+    sorted.sort_by(|a, b| a.blob.cmp(&b.blob));
+    assert_eq!(sorted, m.entries, "rows are sorted by blob id");
+    for e in &m.entries {
+        let src = sources::REGRESS
+            .iter()
+            .find(|s| e.url.starts_with(&format!("{}{}/", s.raw_prefix, s.commit)));
+        assert!(src.is_some(), "{} is not from a pinned source", e.url);
+        assert!(e.size <= sources::MAX_BUILD_FILE, "{}", e.url);
+    }
+    for s in sources::REGRESS {
+        let line = format!("source {} {} {} files=", s.name, s.repo, s.commit);
+        assert!(
+            m.comments.iter().any(|c| c.starts_with(&line)),
+            "header misses {}",
+            s.name
+        );
+    }
+    assert_eq!(
+        m.comments.last().map(String::as_str),
+        Some("columns: git_blob_sha1<TAB>size<TAB>url")
+    );
+}
+
+#[test]
+fn smoke_manifest_parses_with_the_same_rules() {
+    let m = manifest::load(&Tier::Smoke.manifest()).unwrap();
+    assert!(m.entries.len() > 1000, "{}", m.entries.len());
+}
+
+#[test]
+fn sources_are_pinned_https_on_allowed_hosts() {
+    let mut names = std::collections::HashSet::new();
+    for s in sources::REGRESS {
+        assert!(names.insert(s.name), "duplicate source name {}", s.name);
+        assert!(
+            s.name.bytes().all(|b| b.is_ascii_alphanumeric()),
+            "{}",
+            s.name
+        );
+        assert_eq!(s.commit.len(), 40, "{}", s.name);
+        assert!(
+            s.commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+        assert!(s.repo.starts_with("https://"), "{}", s.name);
+        manifest::check_url(&s.url("x.pdf")).unwrap();
+        assert!(s.raw_prefix.ends_with('/'), "{}", s.name);
+    }
+}
