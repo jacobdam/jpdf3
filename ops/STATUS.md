@@ -4,38 +4,41 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #71 (#54, Rasterizer trait + suite): auto-merge once CI passes; ai-review is posted.
+- Audit 0001 PR (#74): docs/audits/0001.md, journal, STATUS, LESSONS.
 
 ## Last session
-- #54: added `Rasterizer` (display list → premultiplied RGBA8), `RasterLimits`, `check_scene`
-  and `conformance::raster::run`, tested against a toy and 11 broken variants. Review:
-  1 blocker (an overflow panic on image size) + 14 others, all fixed; the delta review
-  approved. ColorTransform → #70. Discoveries for `jpdf-render`: #72, #73.
-- The worktree `.claude/worktrees/license-amend` (`t/50-test-only-licenses`) holds
-  uncommitted CONSTITUTION.md edits, apparently the owner's. Agents must not touch it.
+- **Audit 0001** (#74; the first one, covering 26 merged PRs up to 3b6101b). There were 0 critical findings. The hostile-input
+  core is sound: no panics, budgets apply everywhere, no unsafe. The high findings:
+  - the conformance suites accept proven-broken adapters (#80, #81, #68)
+  - the E2E harnesses can write `pass` for a failed run (#76)
+  - a flaky bench test (#75)
 
-## Next step
-- **An audit is overdue** (25+ merged PRs, none yet; TICK §2 i, §6). TICK's strict order
-  (g before i) keeps skipping it, so take the audit next. A retro should also reorder the
-  rules.
-- `ready` M0 issues: #55, #61, #64, #66, #70, lowest number first. #14 closes after #55 and
-  #70, #20 after #61, #22 after #64.
-- #19 (nightly) can start: `jpdf-corpus fetch regress` (exit 75 = infra), then
-  `cargo xtask fuzz`, `cargo xtask bench --corpus ~/.cache/jpdf-corpus/regress`, and the 5%
-  regression check between reports that share a machine id (PLAN §5).
-- #16 (backend admission) can start. Every adapter must pass its
-  `jpdf_traits::conformance` suite, add a fuzz target and add seeds (fuzz/README.md).
-  Font adapters must also supply hostile programs per format and a multi-FD CID fixture.
-- #15 (metrics dashboard) reads `bench.json` (`schema: jpdf-bench/1`) and goes under
-  `site/metrics/`.
-- #21 (fire drill) waits on #19. #45 (wireframes) is low priority.
-- Audits bump `NIGHTLY` in xtask/src/fuzz.rs, refresh `fuzz/Cargo.lock`, consider bumping
-  the Arlington pin, may bump corpus pins, and should delete the remote `t/*` branches of
-  merged PRs.
+  Mutants on the parsers: 80% caught; no limit has an exact-boundary test (#87). Completeness gaps went to journeys
+  issues #84 (platform conventions) and #85 (PDFgear inventory). The other issues: #77, #79, #78 (M1), #82, #83, #86;
+  nightly no-op → comment on #19.
+- Before that: #54 (Rasterizer trait + suite) merged as PR #71.
+
+## Next step (suggested order)
+1. **#75 flaky** (rule e; fix within 5 sessions).
+2. **#76**: harness honesty, which the judge relies on.
+3. **#80, #81, #68**: tighten the suites **before** #16 admits any adapter (each lists the proving toy).
+4. **#77, #79**: memory margins and trait-contract budgets (also before #16).
+5. Then the `ready` backlog, lowest number first: #55, #61, #64, #66, #70, then #82, #83, #84–#87.
+   #14 closes after #55 and #70, #20 after #61, #22 after #64.
+- #16 (admission): every adapter passes its `conformance` suite, adds a fuzz target and seeds (fuzz/README.md); font
+  adapters also need hostile programs per format and a multi-FD CID fixture. #15 (dashboard) reads `bench.json`
+  (`jpdf-bench/1`) into `site/metrics/`. #21 waits on #19; #45 is low priority.
+- #19 (nightly): wire `fuzz::run` and `bench::run` first; meanwhile print "not implemented" on stderr.
+- A **retro** is due soon (7 days since bootstrap on 2026-11-27, or earlier on an incident). Agenda item: TICK §2 puts g
+  before i, so audits never come up while ready issues exist.
+- Next audit: after 10 more merges or by 2026-11-28. Its carry-over list is in docs/audits/0001.md (pins, the fuzz lock,
+  mutants on jpdf-traits, tools and xtask).
 
 ## Blockers / owner-todo
-- #50: license ruling for test- and build-only tools, including libfuzzer-sys (NCSA).
+- #50: license ruling for test- and build-only tools. A local worktree `t/50-test-only-licenses` holds uncommitted
+  CONSTITUTION edits (presumably the owner's); agents leave it alone.
 - #52: `sudo automationmodetool enable-automationmode-without-authentication` on the Mac mini.
 - #60: may the Arlington TSVs (and tables generated from them) be committed?
 - #21: the owner's fire-drill steps.
 - Proposal for the owner: ops/proposals/pages-deploy-retry.md (ci.yml is protected).
+- The stale remote branch `t/2-bootstrap-labels` (PR #3, merged) can't be deleted by agents (the guard blocks remote deletes).

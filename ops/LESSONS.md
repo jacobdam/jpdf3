@@ -18,6 +18,9 @@ instead of adding near-duplicates.
 - macOS: no `timeout` binary (exit 127), system `python3` lacks `tomllib` → use
   `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`, so put
   files for containers there, not in `/tmp` ([journal](journal/2026-11-20.md)).
+- Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
+  `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests)
+  ([journal](journal/2026-11-21.md), audit 0001).
 - Judge-like memory checks: macOS RSS ≠ address space → run the Linux build in docker
   (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
