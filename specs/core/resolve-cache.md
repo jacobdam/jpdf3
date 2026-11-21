@@ -66,8 +66,10 @@ an uncached object too often still fails with `LimitExceeded("bytes lexed per do
     less only object 1 is, and a smaller object 3 still fits afterwards (exact totals).
 - Lexing budget (`lex_budget_factor`, `lex_budget_slack`): unchanged and still charged on every
   parse. `shared_object_resolved_many_times_fits_the_default_budget`: a 2 MiB object resolved 11
-  times opens under the default limits (it parses once); its control, with a retained limit of
-  0, fails with `bytes lexed per document`, proving the test reaches the re-parse path.
+  times by `XrefDocument::resolve` stays under the default limits (it parses once); its
+  control, with a retained limit of 0, succeeds four times and fails the fifth resolve with
+  `bytes lexed per document`, proving the test reaches the re-parse path. There is no engine
+  test: today `flat_page_count` resolves each object once.
 - Overlap checks (`objects_nested_in_strings_are_rejected_as_overlapping`,
   `overlapping_objects_sharing_one_body_are_rejected` in `crates/jpdf-engine/tests/open.rs`)
   still fail as before: a cache hit needs a successful first resolve, and an overlapping object
@@ -95,7 +97,9 @@ an uncached object too often still fails with `LimitExceeded("bytes lexed per do
     length, dictionary entry size, key bytes, root node, entry overhead) fails
     `retained_cost_counts_every_allocation`, which pins exact values. Caching nulls or errors
     fails `null_references_and_errors_are_not_cached`; keying by number only fails its
-    generation case. Still passing: an overhead constant that undercounts the allocator's real
+    generation case. Caching before the end-of-object overlap check fails
+    `object_rejected_for_overlap_is_not_cached`. Charging lengths instead of capacities fails
+    the spare-capacity cases (string, name, key, array and dictionary buffers). Still passing: an overhead constant that undercounts the allocator's real
     per-entry cost (the 64 bytes are an estimate, not measured).
   - What the tests can't see: real allocator overhead and fragmentation. The cost counts
     capacities, not allocator headers, so actual RSS can exceed `retained_bytes()` by a small
@@ -114,7 +118,8 @@ A cache hit replaces a parse with a map lookup. A miss adds one walk over the pa
 ## Tests
 - `crates/jpdf-syntax/src/xref.rs`: `shared_object_resolved_many_times_fits_the_default_budget`,
   `retained_budget_boundary_for_one_object`, `retained_budget_adds_up_across_objects`,
-  `null_references_and_errors_are_not_cached`, `retained_cost_counts_every_allocation`.
+  `null_references_and_errors_are_not_cached`, `object_rejected_for_overlap_is_not_cached`,
+  `retained_cost_counts_every_allocation`.
 - `crates/jpdf-engine/tests/open.rs`: the existing overlap, quadratic-reparse and budget tests
   pass unchanged.
 - No E2E IDs (no UI).

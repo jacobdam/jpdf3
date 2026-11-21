@@ -430,10 +430,15 @@ mod tests {
             out.extend(body);
             out.extend(b"\nendobj\n");
         }
+        with_xref(out, &offsets)
+    }
+
+    /// Appends an xref table (objects 1.. at `offsets`) and a trailer to `out`.
+    fn with_xref(mut out: Vec<u8>, offsets: &[usize]) -> Vec<u8> {
         let xref_at = out.len();
-        let size = objects.len().saturating_add(1);
+        let size = offsets.len().saturating_add(1);
         out.extend(format!("xref\n0 {size}\n0000000000 65535 f\r\n").as_bytes());
-        for o in &offsets {
+        for o in offsets {
             out.extend(format!("{o:010} 00000 n\r\n").as_bytes());
         }
         out.extend(
@@ -477,9 +482,11 @@ mod tests {
         // of lexing budget, so the test above really exercises the re-parse path.
         let doc = XrefDocument::parse(&data, &with_retained(0)).expect("parses");
         let results: Vec<_> = (0..10).map(|_| doc.resolve(obj(1)).map(|_| ())).collect();
+        // The budget (about 9 MiB) covers four 2 MiB parses; the fifth runs out.
+        assert!(results[..4].iter().all(Result::is_ok), "{results:?}");
         assert_eq!(
-            results.last(),
-            Some(&Err(SyntaxError::LimitExceeded("bytes lexed per document")))
+            results[4],
+            Err(SyntaxError::LimitExceeded("bytes lexed per document"))
         );
         assert_eq!(doc.retained_bytes(), 0);
     }
@@ -591,6 +598,41 @@ mod tests {
         assert_eq!(doc.retained_bytes(), 0);
     }
 
+    /// An object rejected by the end-of-object overlap check (it covers an object parsed
+    /// earlier) is not cached: resolving it again fails the same way instead of returning a
+    /// cached value that skipped the check.
+    #[test]
+    fn object_rejected_for_overlap_is_not_cached() {
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let one = out.len();
+        out.extend(b"1 0 obj\n(");
+        let two = out.len();
+        out.extend(b"2 0 obj\n<< /A 1 >>\nendobj\n");
+        out.extend(b")\nendobj\n");
+        let data = with_xref(out, &[one, two]);
+        let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+        assert_eq!(
+            doc.resolve(obj(2)).as_deref(),
+            Ok(&Object::Dict(Dict(vec![(
+                b"A".to_vec(),
+                Object::Integer(1)
+            )])))
+        );
+        let cached = doc.retained_bytes();
+        for _ in 0..2 {
+            assert_eq!(
+                doc.resolve(obj(1)).map(|_| ()),
+                Err(SyntaxError::Malformed {
+                    what: "indirect objects overlap",
+                    offset: one,
+                })
+            );
+        }
+        assert_eq!(doc.retained_bytes(), cached);
+        assert_eq!(doc.cache.borrow().len(), 1);
+        assert!(!doc.cache.borrow().contains_key(&obj(1)));
+    }
+
     /// The cost is the entry overhead, the root node, and every heap allocation by capacity.
     #[test]
     fn retained_cost_counts_every_allocation() {
@@ -615,6 +657,22 @@ mod tests {
             (b"LL".to_vec(), Object::Ref(obj(1))),
         ]));
         assert_eq!(retained_cost(&dict), base + 2 * entry + 1 + (node + 2) + 2);
+
+        // Spare capacity counts everywhere: the dictionary buffer, keys and names (the parser
+        // grows them by pushing, so real ones usually have some).
+        let mut key = Vec::with_capacity(10);
+        key.push(b'K');
+        let mut name = Vec::with_capacity(20);
+        name.extend(b"Nm");
+        let mut entries = Vec::with_capacity(5);
+        entries.push((key, Object::Name(name)));
+        assert_eq!(
+            retained_cost(&Object::Dict(Dict(entries))),
+            base + 5 * entry + 10 + 20
+        );
+        let mut name = Vec::with_capacity(9);
+        name.push(b'N');
+        assert_eq!(retained_cost(&Object::Name(name)), base + 9);
     }
 
     #[test]
