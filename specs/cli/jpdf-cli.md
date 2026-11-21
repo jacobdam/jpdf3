@@ -116,11 +116,16 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   reference look-ahead that is re-read), so it fails mid-scan. Legitimate files need ≤ 3×
   (integer arrays re-read look-ahead tokens; a test shows they fit in 3× with no slack).
   The reference look-ahead (`num gen R`, §7.3.10) is bounded (#113): it reads a generation token
-  of at most 20 bytes (a `u16` has 5 digits; the rest allows a sign and leading zeros) and a
-  third token of exactly `R`, and stops one byte past either bound. A longer generation token
-  is not a reference (so `1 000…(21 bytes)…3 R` is malformed: `R` is then an unexpected
-  keyword). So a long token after an integer is lexed and classified once, as itself, not up to
-  3 times (boundary tests `generation_token_length_boundary`, `reference_look_ahead_is_bounded`).
+  of at most 64 bytes and a third token of exactly `R`, and stops one byte past either bound.
+  A generation fits `u16` (5 digits); 64 bytes leaves ample room for a sign and zero padding, so
+  padded generations still read leniently. A longer generation token is deliberately not a
+  reference: `1 000…(65 bytes)…3 R` is malformed (`R` is then an unexpected keyword). No real
+  producer pads that far, and an unbounded look-ahead is the cost #113 removed. So a long token
+  after an integer is lexed and classified once, as itself, not up to 3 times. Whitespace and
+  comment runs, which the look-ahead also rewinds over, are scanned once too: the lexer
+  remembers the last two runs it skipped (start and end), and a later skip from the same start
+  jumps to the end (boundary tests `generation_token_length_boundary`,
+  `reference_look_ahead_is_bounded`, `whitespace_and_comments_are_scanned_once`).
   Measured lexing speed ≈ 400 MB/s, so the worst case for a 512 MiB file is ≈ 5 s, under the
   20 s `info` limit. Hostile files can overlap objects or xref
   sections (an object hidden inside another's string, a `/Prev` pointing into the trailer's own
@@ -171,10 +176,14 @@ Self-check (#77):
   String room (#113): dropping the whole-token check, or making it off by one either way,
   fails the two `string_room_*` tests (each token kind at the limit and one past; the strict
   version also fails the older room tests). An unbounded generation or `R` look-ahead fails
-  `reference_look_ahead_is_bounded` (bytes lexed ≤ input + 64); a generation bound of 19 or 21
-  fails `generation_token_length_boundary`. Still passing: an `R` bound of 2 instead of 1
-  (equivalent: a 2-byte run is never `R`). The look-ahead test counts lexed bytes, not classify
-  passes; classifying happens only on a run the bounded scan returned, so it is ≤ 20 bytes.
+  `reference_look_ahead_is_bounded` (bytes lexed ≤ input + 68); a generation bound of 63 or 65
+  fails `generation_token_length_boundary`, and a scan bound 40 bytes looser than the constant
+  also fails the bytes-lexed test. Dropping the skip memo, or keeping only one entry, fails
+  `whitespace_and_comments_are_scanned_once`. Still passing: an `R` bound of 2 instead of 1
+  (equivalent: a 2-byte run is never `R`), and a scan bound up to 3 bytes looser than the
+  constant (inside the bytes-lexed slack; the length-boundary test catches it). The look-ahead
+  test counts lexed bytes, not classify passes; classifying happens only on a run the bounded
+  scan returned, so it is ≤ 64 bytes.
   Still passing: deleting the `fstat` re-check call in `read_limited` (a swap between `stat`
   and `open` is a race no test can stage deterministically; both halves it combines are tested
   on their own), and dropping the pre-open FIFO check (the non-blocking open + `fstat` give the
@@ -213,8 +222,9 @@ resolves only the catalog, the page-tree root and its kids.
   (`5.`, `.5`, `+.5`, `-3.`, `-0.`), 1 MB-digit reals, non-numbers, octal and hex escapes;
   string room at the limit and one past for names (with `#xx`), even and odd hex strings and
   literal strings (escape or EOL last), shared across tokens; the generation-token length
-  boundary (20 bytes is a reference, 21 is not); a 100 001-byte integer, real or keyword after
-  `1 1` lexes in one pass plus at most 64 bytes (#113).
+  boundary (64 bytes is a reference, 65 is not, with the exact error); a 100 001-byte integer,
+  real or keyword after `1 1` lexes in one pass plus at most 68 bytes; 100 000-byte whitespace
+  and comment runs between integers, or inside `num gen R`, lex in one pass plus 8 bytes (#113).
 - `crates/jpdf-engine/tests/open.rs`: page counts for 0/1/3/50 pages, `/Prev` updates, `/Prev`
   loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
   page limits, objects nested in strings and kids sharing one body (overlap rejection),

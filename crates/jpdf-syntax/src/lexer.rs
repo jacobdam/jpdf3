@@ -108,6 +108,11 @@ pub(crate) struct Lexer<'a, 'b> {
     budget: &'b LexBudget,
     /// Decoded string and name bytes still allowed in the current parse (memory bound).
     string_room: usize,
+    /// The last two whitespace-and-comment runs skipped, as `(from, to)`, newest first. The
+    /// reference look-ahead rewinds over up to two such runs (before the generation and before
+    /// `R`), so a later skip from the same position jumps to `to` instead of scanning the run
+    /// again (#113: a long comment after `1 1` was scanned 3 times).
+    skipped: [Option<(usize, usize)>; 2],
 }
 
 impl<'a, 'b> Lexer<'a, 'b> {
@@ -122,6 +127,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
             pos,
             budget,
             string_room,
+            skipped: [None, None],
         }
     }
 
@@ -166,6 +172,24 @@ impl<'a, 'b> Lexer<'a, 'b> {
 
     /// ISO 32000-2 §7.2.4: comments run from `%` to the end of the line.
     fn skip_whitespace_and_comments(&mut self) -> Result<(), SyntaxError> {
+        let from = self.pos;
+        if let Some((_, end)) = self
+            .skipped
+            .iter()
+            .flatten()
+            .find(|(start, _)| *start == from)
+        {
+            // Already scanned (and charged) from here; the input doesn't change.
+            self.pos = *end;
+            return Ok(());
+        }
+        self.skip_run()?;
+        let [newest, _] = self.skipped;
+        self.skipped = [Some((from, self.pos)), newest];
+        Ok(())
+    }
+
+    fn skip_run(&mut self) -> Result<(), SyntaxError> {
         while let Some(b) = self.peek() {
             self.check()?;
             if is_whitespace(b) {
@@ -430,7 +454,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
 /// Longest token read as a generation number in `num gen R` (#113). A generation is a
 /// non-negative integer that fits `u16` (ISO 32000-2 §7.3.10, §7.5.4: at most 65 535), so 5 digits;
 /// the bound leaves room for a sign and leading zeros as written by lenient producers.
-const MAX_GENERATION_TOKEN: usize = 20;
+const MAX_GENERATION_TOKEN: usize = 64;
 
 /// ISO 32000-2 §7.3.3: numbers; anything else is a keyword.
 fn classify_regular(word: &[u8], offset: usize) -> Result<Token<'_>, SyntaxError> {
@@ -905,11 +929,51 @@ mod tests {
             let r = Parser::new(&src, 0, &limits, &budget).parse_object();
             assert_eq!(r.is_ok(), lead != b'x', "{long:?}: {r:?}");
             let used = budget.used.get();
-            // One pass over the input plus two bounded look-aheads (at most 2 × 21 bytes) and the
-            // short re-reads of `1 1 `: well under 2 × the long token.
+            // One pass over the input, plus the second `1`'s look-ahead into the long token (it
+            // stops after `MAX + 1` bytes; the first `1`'s look-ahead reads the second `1` as
+            // the generation and stops after 1 byte of the `R` candidate) and 1-byte re-reads.
+            // Measured: `MAX + 2` (`MAX + 1` for the keyword).
+            let slack = MAX_GENERATION_TOKEN.saturating_add(4);
             assert!(
-                used <= src.len().saturating_add(64),
+                used <= src.len().saturating_add(slack),
                 "{long:?}: lexed {used} bytes of {}",
+                src.len()
+            );
+        }
+    }
+
+    /// Issue #113 review: the look-ahead rewinds over whitespace and comments too, so a long run
+    /// of either after an integer was scanned up to 3 times. Each run is now scanned once, also
+    /// when one look-ahead crosses two long runs, and references across them still resolve.
+    #[test]
+    fn whitespace_and_comments_are_scanned_once() {
+        let ws = vec![b' '; 100_000];
+        let mut comment = b"%".to_vec();
+        comment.extend(vec![b'c'; 100_000]);
+        comment.push(b'\n');
+        let cases: [(Vec<u8>, Object); 2] = [
+            (
+                [&b"[1"[..], &ws, b"1", &comment, b"1", &ws, b"]"].concat(),
+                Object::Array(vec![Object::Integer(1); 3]),
+            ),
+            (
+                [&b"[7"[..], &ws, b"3", &comment, b"R]"].concat(),
+                Object::Array(vec![Object::Ref(ObjRef {
+                    num: 7,
+                    generation: 3,
+                })]),
+            ),
+        ];
+        for (src, want) in cases {
+            let limits = Limits::default();
+            let budget = LexBudget::new(src.len(), &limits);
+            let r = Parser::new(&src, 0, &limits, &budget).parse_object();
+            assert_eq!(r, Ok(want));
+            let used = budget.used.get();
+            // Only the 1-byte tokens between the runs are re-read.
+            assert!(
+                used <= src.len().saturating_add(8),
+                "lexed {used} bytes of {}",
                 src.len()
             );
         }
@@ -929,13 +993,12 @@ mod tests {
             num: 7,
             generation: 3,
         });
-        assert_eq!(MAX_GENERATION_TOKEN, 20);
+        assert_eq!(MAX_GENERATION_TOKEN, 64);
         assert_eq!(parse(&src(1)), Ok(Object::Array(vec![r7_3.clone()])));
-        assert_eq!(parse(&src(20)), Ok(Object::Array(vec![r7_3])));
-        assert!(matches!(
-            parse(&src(21)),
-            Err(SyntaxError::Malformed { .. })
-        ));
+        assert_eq!(parse(&src(64)), Ok(Object::Array(vec![r7_3])));
+        // `7`, a 65-byte integer, then a stray `R` (the parser reports the offset where it
+        // started reading the token, before the space: 3 + 65).
+        assert_eq!(parse(&src(65)), Err(malformed("unexpected keyword", 68)));
         // A signed generation still reads as before, and `R` must stand alone.
         assert_eq!(
             parse(b"[7 +3 R]"),
@@ -944,7 +1007,7 @@ mod tests {
                 generation: 3
             })]))
         );
-        assert!(parse(b"[7 3 Rx]").is_err());
+        assert_eq!(parse(b"[7 3 Rx]"), Err(malformed("unexpected keyword", 4)));
         assert_eq!(
             parse(b"[7 3]"),
             Ok(Object::Array(vec![Object::Integer(7), Object::Integer(3)]))
