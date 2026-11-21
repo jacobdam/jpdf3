@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Fake `claude -p` for driver tests. Scenario from FAKE_SCENARIO; writes stream-json to stdout.
+sid='"session_id":"fake-sid"'
+ok_result='{"type":"result","subtype":"success","is_error":false,"result":"done","api_error_status":null,'"$sid"'}'
+asst='{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]},'"$sid"'}'
+user='{"type":"user","message":{"content":[{"type":"tool_result","content":"Error: API rate limit hit in a tool; usage limit words"}]},'"$sid"'}'
+rl_ok='{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795288800},'"$sid"'}'
+rl_rej='{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795288800},'"$sid"'}'
+bg1='{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a1","task_type":"local_agent"}],'"$sid"'}'
+bg0='{"type":"system","subtype":"background_tasks_changed","tasks":[],'"$sid"'}'
+init='{"type":"system","subtype":"init",'"$sid"'}'
+echo "$init"; echo "$rl_ok"
+case "$FAKE_SCENARIO" in
+  normal) echo "$asst"; echo "$ok_result"; exit 0 ;;
+  hang_child)  # final result, then an MCP-like child keeps the process alive
+    echo "$asst"; echo "$ok_result"
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  bg_wait)  # result while a background agent runs; it notifies after 6 s, then the session ends
+    echo "$asst"; echo "$bg1"; echo "$ok_result"
+    sleep 6
+    echo "$bg0"; echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  limit_result)
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1795288800","api_error_status":null,'"$sid"'}'
+    exit 1 ;;
+  limit_429)
+    echo "$asst"
+    echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","api_error_status":429,'"$sid"'}'
+    exit 1 ;;
+  words_only)  # transcript mentions limits, the session fails for another reason
+    echo "$asst"; echo "$user"; echo "$rl_ok"
+    echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"max turns","api_error_status":null,'"$sid"'}'
+    exit 1 ;;
+  limit_stderr) echo "$asst"; echo "Claude AI usage limit reached" >&2; exit 1 ;;
+  noise_stderr) echo "$asst"; echo "network error" >&2; exit 1 ;;
+  rl_rejected) echo "$asst"; echo "$rl_rej"; exit 1 ;;
+  forever) echo "$asst"; sleep 1000 & wait ;;
+  stubborn)  # result, then a child that ignores TERM
+    echo "$asst"; echo "$ok_result"
+    perl -e '$SIG{TERM}="IGNORE"; sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  late_turn)  # a quiet gap shorter than the grace, then another turn (a wakeup) and the end
+    echo "$asst"; echo "$ok_result"; sleep 2
+    echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  error_exit) echo "$asst"; echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'; exit 1 ;;
+esac
