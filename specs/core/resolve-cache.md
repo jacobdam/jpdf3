@@ -99,8 +99,10 @@ an uncached object too often still fails with `LimitExceeded("bytes lexed per do
     fails `null_references_and_errors_are_not_cached`; keying by number only fails its
     generation case. Caching before the end-of-object overlap check fails
     `object_rejected_for_overlap_is_not_cached`. Charging lengths instead of capacities fails
-    the spare-capacity cases (string, name, key, array and dictionary buffers). Still passing: an overhead constant that undercounts the allocator's real
-    per-entry cost (the 64 bytes are an estimate, not measured).
+    the spare-capacity cases (string, name, key, array and dictionary buffers). Switching the
+    cache to `Rc` fails to compile `xref_document_is_send`. Still passing: an overhead constant
+    that undercounts the allocator's real per-entry cost (the 64 bytes are an estimate, not
+    measured).
   - What the tests can't see: real allocator overhead and fragmentation. The cost counts
     capacities, not allocator headers, so actual RSS can exceed `retained_bytes()` by a small
     factor for many tiny objects. The 2 GiB budget accounting (#109) covers the headroom.
@@ -119,7 +121,7 @@ A cache hit replaces a parse with a map lookup. A miss adds one walk over the pa
 - `crates/jpdf-syntax/src/xref.rs`: `shared_object_resolved_many_times_fits_the_default_budget`,
   `retained_budget_boundary_for_one_object`, `retained_budget_adds_up_across_objects`,
   `null_references_and_errors_are_not_cached`, `object_rejected_for_overlap_is_not_cached`,
-  `retained_cost_counts_every_allocation`.
+  `retained_cost_counts_every_allocation`, `xref_document_is_send` (compile-time).
 - `crates/jpdf-engine/tests/open.rs`: the existing overlap, quadratic-reparse and budget tests
   pass unchanged.
 - No E2E IDs (no UI).

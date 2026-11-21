@@ -420,6 +420,13 @@ mod tests {
         assert_eq!(std::mem::size_of::<Entry>(), 12);
     }
 
+    /// `Arc` (not `Rc`) in the cache keeps the document `Send` (specs/core/resolve-cache.md).
+    #[test]
+    fn xref_document_is_send() {
+        fn send<T: Send>() {}
+        send::<XrefDocument<'static>>();
+    }
+
     /// A classic file whose objects are numbered from 1 in order; the trailer's /Root is 1 0 R.
     fn file(objects: &[Vec<u8>]) -> Vec<u8> {
         let mut out = b"%PDF-1.7\n".to_vec();
@@ -459,8 +466,8 @@ mod tests {
         }
     }
 
-    /// Issue #107: one 2 MiB dictionary that every page would share. Ten resolves cost
-    /// 20 MiB of lexing without a cache, over the default budget of 4 × file + 1 MiB (about
+    /// Issue #107: one 2 MiB dictionary that every page would share. Eleven resolves
+    /// cost 22 MiB of lexing without a cache, over the default budget of 4 × file + 1 MiB (about
     /// 9 MiB); with the cache the object is parsed once.
     #[test]
     fn shared_object_resolved_many_times_fits_the_default_budget() {
