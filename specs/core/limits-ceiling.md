@@ -28,10 +28,10 @@ and operations budget) and #107 (object resolve cache).
      `jpdf-engine` (PLAN §2.3).
 3. **New field `max_retained_bytes_per_document: u64`, default 256 MiB.** It bounds what one
    document keeps alive between calls: cached decoded streams, font programs held by cached
-   faces (`FontFace` borrows its program), and parsed objects once #107 adds a cache. The rule
+   faces (`FontFace` borrows its program), and parsed objects. The rule
    for every cache the engine adds: charge the bytes it holds, and evict or recompute instead
-   of going over. No cache exists yet, so nothing charges it today; the field and the rule
-   land before the first cache does.
+   of going over. The first cache to charge it is the object resolve cache
+   (specs/core/resolve-cache.md, #107).
    - `max_decoded_bytes_per_document` (4 GiB) stays. It is a lifetime total (time bound against
      many small bombs), not a memory bound; its doc comment now says so and points here.
    - Budgeted terms (today only the file size is checked; the rest bind future decoding,
@@ -41,8 +41,9 @@ and operations budget) and #107 (object resolve cache).
      address-space cap. That is a ceiling on these four terms only. The binary, stacks, the
      xref table (up to ~120 MiB), one parse's objects and strings, and decoder slack are not
      charged, so the defaults leave **no headroom**. #109 adds a reserve and lowers a default.
-   - Not enforced yet: no cache exists, so nothing charges the field. Docs say the future
-     face cache "must" charge it.
+   - Charged by the object resolve cache only (specs/core/resolve-cache.md). Docs say the
+     future face cache "must" charge it, through one counter shared with the object cache
+     (#138).
 
 ## Persistence
 Nothing is persisted. Limits are per process call.
@@ -72,8 +73,9 @@ give `LimitExceeded("nesting depth")` even with `max_nesting_depth = 10_000_000`
     sections (the default) opens and 1025 are refused
     (`caller_xref_section_limit_is_clamped`). This fails an `open` that clamps only the depth
     (checked by hand).
-- `max_retained_bytes_per_document` has no boundary test yet because nothing charges it; the
-  first cache (#107) adds the at-limit / one-past test.
+- `max_retained_bytes_per_document`: the at-limit / one-past tests are in
+  specs/core/resolve-cache.md (`retained_budget_boundary_for_one_object`,
+  `retained_budget_adds_up_across_objects`).
 - `charged_budgets_do_not_exceed_the_process_budget` checks the four budgeted terms sum to at
   most 2 GiB; it can't see the uncharged terms (#109).
 

@@ -56,8 +56,9 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
         .get(b"Root")
         .and_then(Object::as_ref)
         .ok_or(CosError::Malformed("trailer /Root is not a reference"))?;
-    // Only one parsed object is alive at a time (memory bound under hostile input): the catalog
-    // and the page-tree root are dropped once the references we need are extracted.
+    // Beyond the resolve cache (bounded by `max_retained_bytes_per_document`), only one parsed
+    // object is held at a time: our handles to the catalog and the page-tree root are dropped
+    // once the references we need are extracted, so an uncached object is freed right away.
     let pages_ref = doc
         .resolve(root)?
         .as_dict()
@@ -65,7 +66,7 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
         .get(b"Pages")
         .and_then(Object::as_ref)
         .ok_or(CosError::Malformed("catalog /Pages is not a reference"))?;
-    let kids = kid_refs(&doc.resolve(pages_ref)?, limits)?;
+    let kids = kid_refs(&*doc.resolve(pages_ref)?, limits)?;
     let mut seen = HashSet::with_capacity(kids.len());
     for &r in &kids {
         if r == pages_ref || !seen.insert(r) {

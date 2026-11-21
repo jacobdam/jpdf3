@@ -202,6 +202,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a "defaults fit the memory budget" check → summing the charged limits to exactly the 2 GiB cap proves
   nothing: list the uncharged terms (binary, stacks, xref table, one parse's objects, decoder slack) and require a
   reserve, or say plainly that there is none ([journal](journal/2026-11-21.md), PR #108, #109).
+- Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
+  resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
+  spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control
+  case assert where the uncached path first fails ([journal](journal/2026-11-21.md), PR #139).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 - The workspace denies `as` casts in tests too → convert floats with a bit-setting helper
