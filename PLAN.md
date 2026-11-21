@@ -80,7 +80,8 @@ working in this repo are in [CLAUDE.md](CLAUDE.md).
   bytes back to save. On macOS the XPC helper has no file entitlements at all.
 
 ### 2.2 Resource limits (part of security, not optional)
-A `Limits` struct is passed to every operation and enforced by the engine:
+A `Limits` struct is passed to every operation and enforced by the engine (callers can only
+tighten it: `Document::open` clamps it to the defaults and keeps it, ADR 0008):
 - max file size, object count, xref entries, nesting depth (objects, content-stream
   operators, Form XObjects, patterns, shading functions, outline/page tree)
 - max decompressed bytes per stream and per document (zip-bomb guard), max image

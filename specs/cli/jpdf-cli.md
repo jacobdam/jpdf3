@@ -143,7 +143,7 @@ Work is linear in file size: the lexing budget bounds total lexing to 4× the fi
 
 ## Security
 Self-check (#77):
-- Arithmetic: the lint above makes every unchecked operation a build error in the four crates;
+- Arithmetic: the lint above makes every unchecked operation a CI clippy error in the four crates;
   integer accumulation uses `checked_mul`/`checked_add`/`checked_sub`, octal escapes are at
   most three digits (≤ 0o777, saturating ops that never saturate).
 - What broken implementation still passes? A CLI that opens before checking the size fails
