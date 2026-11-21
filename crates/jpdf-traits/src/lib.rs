@@ -19,7 +19,9 @@ mod image;
 mod limits;
 mod raster;
 
-pub use codec::{CompressionLevel, DecodeStatus, Decoded, Deflate, FlateFormat, Inflate};
+pub use codec::{
+    CompressionLevel, DecodeStatus, DecodeUsage, Decoded, Deflate, FlateFormat, Inflate,
+};
 pub use crypto::{Cipher, Direction, HashAlgorithm, HashState, Hasher, Padding};
 pub use error::BackendError;
 pub use font::{

@@ -14,13 +14,30 @@ pub enum DecodeStatus {
     Truncated,
 }
 
-/// Decoder output plus whether the stream was complete.
+/// Decoder output, whether the stream was complete, and what the call charged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decoded<T> {
     /// The decoded value.
     pub value: T,
     /// Whether the input was complete.
     pub status: DecodeStatus,
+    /// What the call charged against [`DecodeLimits::max_working_bytes`] and
+    /// [`DecodeLimits::max_ops`]. Image decoders report it; Inflate, Deflate and Cipher don't
+    /// charge and report [`DecodeUsage::default`] (specs/core/decode-work-limits.md).
+    pub usage: DecodeUsage,
+}
+
+/// What one image decode charged (specs/core/decode-work-limits.md). It depends only on the
+/// input and the options, never on the limits, and an `Ok` result's usage is within its
+/// limits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DecodeUsage {
+    /// The most bytes the call held at once, by the backend's nominal accounting, output
+    /// buffer included (so at least the output's byte length).
+    pub working_bytes: u64,
+    /// Operations performed, in a backend-chosen unit: at least one per output sample, and
+    /// work that produces no output (tiles, layers, scans, symbol instances) counts too.
+    pub ops: u64,
 }
 
 /// Framing of a Flate stream.

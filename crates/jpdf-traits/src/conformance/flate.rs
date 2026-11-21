@@ -778,6 +778,7 @@ pub(crate) fn adler32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DecodeUsage;
     use crate::conformance::vectors::FLATE;
     use std::cell::Cell;
 
@@ -876,6 +877,7 @@ mod tests {
                 Ok(Decoded {
                     value: out,
                     status: DecodeStatus::Truncated,
+                    usage: DecodeUsage::default(),
                 })
             } else {
                 Err(BackendError::LimitExceeded("output"))
@@ -887,6 +889,7 @@ mod tests {
                 Ok(Decoded {
                     value: out,
                     status: DecodeStatus::Complete,
+                    usage: DecodeUsage::default(),
                 })
             } else if self.strict_truncation {
                 Err(BackendError::Malformed("truncated"))
@@ -896,6 +899,7 @@ mod tests {
                 Ok(Decoded {
                     value: out,
                     status: DecodeStatus::Truncated,
+                    usage: DecodeUsage::default(),
                 })
             }
         }
@@ -1005,6 +1009,7 @@ mod tests {
             Ok(Decoded {
                 value: out,
                 status: DecodeStatus::Complete,
+                usage: DecodeUsage::default(),
             })
         }
     }
