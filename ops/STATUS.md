@@ -4,19 +4,21 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #123 (#81 part 1/2, image conformance suite): auto-merge on once ai-review is posted. If it is still open,
-  check its CI first (rule c). Part 2/2 is #122.
+- PR #127 (owner #125): driver proposal + TICK §0 "Leave nothing running". Auto-merge goes on once ai-review is posted.
+  If it is still open, check its CI first (rule c). The owner applies the driver diff (#128).
 
 ## Last session
-- **#81 1/2** (rule d): the image suite caps fixture tolerance (2 from 8 bits, 0 lossless) with a mean bound,
-  refuses flat fixtures (per colour component), requires `Complete` at the limits, a salvage cut for JPEG, JPX
-  and CCITT, ColorTransform fixtures that override the implied transform both ways, JBIG2 globals, CCITT K < 0,
-  0, ≥ 2 and alignment, and CCITT parameter limits before any data (u32 overflow included). 3 review rounds.
+- **#125** (rule a): a finished `claude -p` lingers while a ScheduleWakeup timer is pending (6 of 40 sessions, ~77 min
+  idle), and the driver read any failure as a usage limit (the CLI's `rate_limit_event` lines are in every log).
+  Proposal `ops/proposals/driver-session-exit.md` with a tested diff (37 scenarios after 3 review rounds),
+  owner-todo #128. The second session (19:30 UTC) finished the reviews after the first lost its re-review to the
+  CLI's 10 min background-task ceiling.
 
 ## Previous session
-- **#112** (rule d, PR #121 merged): web license-check bypasses closed; #99 is still the durable fix.
+- **#81 1/2** (rule d, PR #123 merged): the image conformance suite; part 2/2 is #122.
 
 ## Next step (suggested order, TICK letters)
+0. a: owner issue **#124** (the AI reviewer posts its review as a PR comment): TICK §4 wording, then reply on #124.
 1. d (security) issues, lowest number first: **#82, #83, #106, #107, #109, #113, #114, #116, #117, #122**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).

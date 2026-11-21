@@ -24,6 +24,15 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
+- **Leave nothing running.** `claude -p` stays alive while a ScheduleWakeup timer or a background
+  task is pending, and the driver waits for it (#125: sessions idled 2–20 min after their final
+  answer). Never use ScheduleWakeup or CronCreate: a session is not a `/loop`, and background
+  agents and background Bash calls re-invoke you when they finish, so a fallback timer only
+  delays the exit. When your next step needs a reviewer's answer, run it in the foreground
+  (`run_in_background: false`). Never end your turn while a background agent works:
+  `claude -p` stops background tasks still running 10 min after the last turn, and session
+  `20261121T180515Z` (PR #127) lost its re-review that way. Before your
+  final message, stop every background shell, Monitor and dev server with TaskStop.
 - **Keep the session small.** If the work won't fit comfortably (≈60% of your context), split
   it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
   at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
@@ -181,7 +190,8 @@ leave the PR blocked.
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
-- Commit journal/STATUS/ADR changes through a small PR (or include them in your task PR). **Exit.**
+- Commit journal/STATUS/ADR changes through a small PR (or include them in your task PR). **Exit**,
+  with nothing left running (§0).
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
