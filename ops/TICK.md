@@ -139,12 +139,60 @@ Ask it also, for every checker, suite or validator in the diff: **what broken im
 still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
 past fails)?
 
-Fix what it finds (re-review if you changed much). Then post the status on the head commit:
+Tell it its round number K, and that its report is posted on the (public) PR as is, so it must
+stand alone and cite repo-relative paths only, with no preamble or header: one line per finding,
+`R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
+
+**Post every review on the PR** (owner, #124), so the owner can read it without the session log.
+K = 1 + the highest K in an `AI review, round K` header already on the PR, else 1 (a resumed PR
+continues).
+Each round K runs in this order:
+1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
+   HEAD`, checked against `git ls-remote origin <branch>`.
+2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment (split only as the
+   mechanics below say):
+   `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
+   A second reviewer's report (if one runs) goes right after it, headed `**AI review (second
+   reviewer), round K**`, with finding IDs `S<K>.<n>`.
+3. Fix, commit and **push**.
+4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
+   finding (R and S): `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
+   round gets one too ("no findings").
+5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
+   changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
+   set to the URL that `gh pr comment` printed for the last triage comment.
+
+Mechanics (the guard wants one simple command with the text inline, no files):
+- One post per Bash command, nothing chained before or after it.
+- Single-quote the body so `$`, backticks and `\` stay literal; write each `'` in the text as
+  `'\''` (close, escaped quote, reopen), which keeps it verbatim.
+- Over 60 000 characters → split into comments; each part starts with the tag and the round
+  header, then `(part i/n)`.
+- Replace any absolute local path with a repo-relative one (or `<local path>`), and list it with
+  the other changes.
+- If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
+  it), and list every such change at the end of the comment. Triggers seen so far, for example:
+  - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
+    `sed -i`, `perl -i`): write it `un-safe` (until owner-todo #130 is applied);
+  - the terminal-multiplexer name in any body that contains a `'` (such a body never counts as
+    inert text); after #130, only in a post that is chained or has another quoted argument
+    (write labels and assignees bare);
+  - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
+  - git push text with force or delete flags, a `+` word, or main; `-R <other repo>`;
+  - gh api writes to issue or comment endpoints, gh repo management, an admin merge, gh auth
+    commands;
+  - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
+    `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
+
+  Proposal: `ops/proposals/guard-inert-post-text.md`.
+
+Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
 --json headRefOid` can lag behind a push):
 ```sh
 gh api repos/jacobdam/jpdf3/statuses/<sha> \
-  -f state=success -f context=ai-review -f description="reviewed: <one line>"
+  -f state=success -f context=ai-review -f description="reviewed: <one line>" \
+  -f target_url=<URL of the last triage comment>
 ```
 (`state=failure` if unresolved findings remain.) `ai-review` is a required check: post it
 **before** enabling auto-merge and writing the journal, so a session that ends early doesn't
@@ -178,7 +226,11 @@ leave the PR blocked.
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
-  the last audit. Findings → issues.
+  the last audit. Findings → issues. Tell each reviewer what §4 tells its reviewer (public,
+  repo-relative paths, one line per finding), with IDs `AS.<n>` (security) or `AC.<n>` (code).
+  Post each report verbatim on the audit PR (draft it early) with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
+  (code)**` (no round number, so §4's K is unaffected). Then post `**Audit findings → issues**`,
+  mapping each finding to its issue.
 - **Test strength:** `cargo mutants` on changed crates; weak spots → issues.
 - **Completeness:** compare journeys + PLAN §4 with PDFgear's feature inventory and platform
   conventions (Save As, unsaved-changes prompt, file changed on disk, recent files, shortcuts,
