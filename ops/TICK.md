@@ -166,7 +166,8 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   it), and list every such change at the end of the comment. Known triggers: the Rust keyword
   for unchecked code together with a `.rs` path and `>` (write it `un-safe`), the sealed-corpus
   manifest name, the local settings file name, the GitHub API host, force-push and `git apply`
-  text, a `>` or arrow before a protected path. Proposal: `ops/proposals/guard-inert-post-text.md`.
+  text, a `>` or arrow before a protected path, and the terminal-multiplexer name in any body that
+  contains a `'` (such a body never counts as inert text). Proposal: `ops/proposals/guard-inert-post-text.md`.
 - A second reviewer's report (if one runs) is posted the same way, headed `**AI review (second
   reviewer), round K**`, with finding IDs `S<K>.<n>`.
 
