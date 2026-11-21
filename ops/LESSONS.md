@@ -6,6 +6,9 @@ review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lesson
 ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 ## Tooling & environment
+- Journal date and time → the machine's clock and the session's "today" are local (UTC+7); use `date -u`
+  for the journal file name and the `HH:MM UTC` heading (the 2026-11-22.md "00:30 UTC" entry was really
+  17:10 UTC on 11-21) ([journal](journal/2026-11-21.md), PR #123).
 - Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
   directory, never `/tmp` (owner instruction, #28). `$TMPDIR` is unset in the sandbox (so
   `$TMPDIR/x` is `/x`, read-only): use the git-ignored `target/scratch/` of your worktree
@@ -140,8 +143,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   the backend actually loaded (format, a reachable control path), never from fixture labels
   and never from the backend's pass/fail verdict (a failing backend would also fail
   coverage); check promised empty answers (`None`, empty lists) too; and keep toy
-  implementations linear (an O(n) count inside a growth loop turned one test into 91 s)
-  ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, audit 0001).
+  implementations linear (an O(n) count inside a growth loop turned one test into 91 s).
+  Decode options: a "flip the option, the result must differ" check proves only *different*
+  (an error or a blank image differs too), so require fixtures where the explicit value overrides the
+  implied one in every direction, and cap tolerances independently of the sample depth
+  ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, PR #123, audit 0001).
 - Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
   so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
   checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).

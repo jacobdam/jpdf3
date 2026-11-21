@@ -133,7 +133,7 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
     let has = |pred: &dyn Fn(&JpegFixture) -> bool| fixtures.iter().any(pred);
     // Explicit values must override the implied transform in both directions, or an adapter
     // that reads one explicit value as "the codestream decides" passes.
-    let coverage: [(&str, bool); 5] = [
+    let coverage: [(&str, bool); 6] = [
         (
             "a 3- or 4-component image with ColorTransform true and APP14 transform 0",
             has(&|f| {
@@ -156,6 +156,14 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
                 f.expected.components >= 3
                     && f.options.color_transform == Some(false)
                     && matches!(f.expected.adobe_app14, Some(1 | 2))
+            }),
+        ),
+        (
+            "a 3-component image with ColorTransform false and without APP14",
+            has(&|f| {
+                f.expected.components == 3
+                    && f.options.color_transform == Some(false)
+                    && f.expected.adobe_app14.is_none()
             }),
         ),
         (
@@ -1535,7 +1543,8 @@ mod tests {
     /// - square 4×4 RGB, no APP14, no ColorTransform (converted by default);
     /// - portrait 2×3 CMYK, no APP14, ColorTransform true (explicit, 4 components, overrides
     ///   the implied "no transform");
-    /// - portrait 2×5 RGB, APP14 0, ColorTransform true (overrides APP14).
+    /// - portrait 2×5 RGB, APP14 0, ColorTransform true (overrides APP14);
+    /// - portrait 2×5 RGB, no APP14, ColorTransform false (overrides the default conversion).
     fn jpeg_fixtures() -> Vec<JpegFixture> {
         vec![
             jpeg_fixture((4, 3), 0xb3, Some(true), true),
@@ -1544,6 +1553,7 @@ mod tests {
             jpeg_fixture((4, 4), 0x03, None, false),
             jpeg_fixture((2, 3), 0x04, Some(true), false),
             jpeg_fixture((2, 5), 0x93, Some(true), false),
+            jpeg_fixture((2, 5), 0x03, Some(false), false),
         ]
     }
 
@@ -1699,11 +1709,12 @@ mod tests {
 
     #[test]
     fn one_orientation_is_not_enough() {
-        // The portraits (2×5, 2×3, 2×5) turned landscape, with the same options.
+        // The portraits (2×5, 2×3, 2×5, 2×5) turned landscape, with the same options.
         let mut fixtures = jpeg_fixtures();
         fixtures[1] = jpeg_fixture((5, 2), 0xb3, Some(false), false);
         fixtures[4] = jpeg_fixture((3, 2), 0x04, Some(true), false);
         fixtures[5] = jpeg_fixture((5, 2), 0x93, Some(true), false);
+        fixtures[6] = jpeg_fixture((5, 2), 0x03, Some(false), false);
         let report = run_jpeg(&Toy::default(), &fixtures);
         assert_eq!(
             report.failed_checks(),
@@ -2277,7 +2288,7 @@ mod tests {
     fn option_coverage_is_required() {
         let toy = Toy::default();
         // Each JPEG rule in turn: one fixture swapped so that only that rule fails.
-        let cases: [(&str, Vec<(usize, JpegFixture)>); 5] = [
+        let cases: [(&str, Vec<(usize, JpegFixture)>); 6] = [
             (
                 "ColorTransform true and APP14 transform 0",
                 vec![(5, jpeg_fixture((2, 5), 0xb3, Some(true), false))],
@@ -2289,6 +2300,10 @@ mod tests {
             (
                 "ColorTransform false and APP14 transform 1 or 2",
                 vec![(1, jpeg_fixture((2, 5), 0x93, Some(false), false))],
+            ),
+            (
+                "ColorTransform false and without APP14",
+                vec![(6, jpeg_fixture((2, 5), 0x93, Some(false), false))],
             ),
             (
                 "converted by default",

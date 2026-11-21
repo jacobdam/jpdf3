@@ -339,11 +339,13 @@ program-byte and glyph limits.
   - **Options must matter** (`image.option_coverage`, `image.option_used`):
     - JPEG fixtures (3 or 4 components) must include: `Some(true)` on an image with APP14
       transform 0; `Some(true)` on a 4-component image without APP14; `Some(false)` on an
-      image with APP14 transform 1 or 2; a 3-component image without APP14 or
-      `color_transform` (converted by default); and a CMYK image with APP14 transform 2
-      (YCCK) and no `color_transform`. The first three make the fixture decode itself prove
-      that an explicit value overrides the implied one in every direction: the flip below
-      can't catch a decoder that returns a blank (but valid) image for one direction.
+      image with APP14 transform 1 or 2; `Some(false)` on a 3-component image without
+      APP14; a 3-component image without APP14 or `color_transform` (converted by
+      default); and a CMYK image with APP14 transform 2 (YCCK) and no `color_transform`.
+      The first four make the fixture decode itself prove that an explicit value overrides
+      each implied transform (the flip below can't catch a decoder that returns a blank but
+      valid image for one direction). Not required: `Some(false)` on APP14 2 specifically
+      (APP14 1 or 2 satisfies the rule).
     - Each such fixture is decoded again with the opposite of the transform it gets (the
       explicit value, else the implied one: the APP14 flag, else 3 components convert).
       That must give `Ok`, `Complete`, valid output with the fixture's header, and
@@ -636,6 +638,9 @@ may record a repair note.
   - ignore an option on input where the fixture author chose a stream that decodes the
     same either way. The `option_used` checks fail such a fixture, so it can't be used;
   - salvage only the rows the fixture asks for (rows after `rows` aren't compared);
+  - return a blank but valid image for an explicit ColorTransform direction that no
+    required fixture decodes (for example `Some(false)` on YCCK when the fixture set uses
+    APP14 1 for that rule): the flip check only proves the pixels differ;
   - decode 2-D CCITT lines wrongly when the K ≥ 2 fixture happens to code every line 1-D
     (the suite can't parse CCITT to tell).
 - Keys passed to `Cipher` are secrets: backends must not log or keep them. Zeroizing them
