@@ -119,7 +119,8 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   reference look-ahead that is re-read), so it fails mid-scan. Legitimate files need ≤ 3×
   (integer arrays re-read look-ahead tokens; a test shows they fit in 3× with no slack).
   The reference look-ahead (`num gen R`, §7.3.10) is bounded (#113): it reads a generation token
-  of at most 64 bytes and a third token of exactly `R`, and stops one byte past either bound.
+  of at most 64 bytes and a third token of exactly `R`, and stops at either bound (it steps over
+  at most that many bytes and peeks at one more).
   A generation fits `u16` (5 digits); 64 bytes leaves ample room for a sign and zero padding, so
   padded generations still read leniently. A longer generation token is deliberately not a
   reference: `1 000…(65 bytes)…3 R` is malformed (`R` is then an unexpected keyword). No real

@@ -222,7 +222,8 @@ impl<'a, 'b> Lexer<'a, 'b> {
     }
 
     /// Steps over a run of regular characters if it is at most `max` bytes long. A longer run
-    /// returns `None` after stepping over `max + 1` of its bytes (the caller rewinds).
+    /// steps over `max` bytes and returns `None` if byte `max + 1` is also regular (the caller
+    /// rewinds).
     fn short_regular_run(&mut self, max: usize) -> Result<Option<&'a [u8]>, SyntaxError> {
         let start = self.pos;
         let mut len: usize = 0;
@@ -956,8 +957,9 @@ mod tests {
             assert_eq!(r.is_ok(), lead != b'x', "{long:?}: {r:?}");
             let used = budget.used.get();
             // One pass over the input, plus the second `1`'s look-ahead into the long token (it
-            // stops after `MAX + 1` bytes; the first `1`'s look-ahead reads the second `1` as
-            // the generation and stops after 1 byte of the `R` candidate) and 1-byte re-reads.
+            // steps over `MAX` bytes and peeks at one more; the first `1`'s look-ahead reads the
+            // second `1` as the generation and stops after 1 byte of the `R` candidate) and
+            // 1-byte re-reads.
             // Measured: `MAX + 2` (`MAX + 1` for the keyword).
             let slack = MAX_GENERATION_TOKEN.saturating_add(4);
             assert!(
