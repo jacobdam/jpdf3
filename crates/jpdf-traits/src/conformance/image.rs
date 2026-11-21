@@ -1161,13 +1161,17 @@ fn run_fixture<R: Raster>(
     if let Some(usage) = reference {
         let samples = expected.samples();
         let len_u64 = u64::try_from(len).unwrap_or(u64::MAX);
+        // The default-limits decode itself must fit its limits too (an adapter that checks
+        // only non-default limits would otherwise pass).
         report.check(
             "image.usage_valid",
-            usage.working_bytes >= len_u64 && usage.ops >= samples,
+            usage.working_bytes >= len_u64
+                && usage.ops >= samples
+                && ok_result_valid(&result, &unlimited),
             || {
                 format!(
                     "{name}: usage {usage:?} must have working_bytes >= the {len_u64} output \
-                     bytes and ops >= the {samples} output samples"
+                     bytes and ops >= the {samples} output samples, and fit the default limits"
                 )
             },
         );
@@ -1396,6 +1400,12 @@ mod tests {
         /// CCITT: reports 0 working bytes for Group 4 without EncodedByteAlign (a stream only
         /// the option checks decode).
         ccitt_option_usage_zero: bool,
+        /// At exactly the default limits, skips the work checks and reports `max_ops + 1`
+        /// operations.
+        default_usage_over_limit: bool,
+        /// Reports one operation more whenever the pixel, dimension, component or working-bytes
+        /// limit isn't the default.
+        usage_from_other_limits: bool,
         /// Reports one operation fewer than the output samples (and no trailing work).
         ops_below_samples: bool,
         /// JPEG: reports 0 working bytes for an explicit ColorTransform true on a 3-component
@@ -1626,6 +1636,11 @@ mod tests {
                     used > cap
                 }
             };
+            let at_default = *limits == DecodeLimits::default();
+            if self.default_usage_over_limit && at_default {
+                usage.ops = limits.max_ops.saturating_add(1);
+                return Ok(usage);
+            }
             if !self.ignore_work_limits
                 && (exceeds(usage.working_bytes, limits.max_working_bytes)
                     || exceeds(usage.ops, limits.max_ops))
@@ -1637,6 +1652,15 @@ mod tests {
             }
             if self.ops_below_samples {
                 usage.ops = samples.saturating_sub(1);
+            }
+            let d = DecodeLimits::default();
+            if self.usage_from_other_limits
+                && (limits.max_image_pixels != d.max_image_pixels
+                    || limits.max_image_dimension != d.max_image_dimension
+                    || limits.max_image_components != d.max_image_components
+                    || limits.max_working_bytes != d.max_working_bytes)
+            {
+                usage.ops = usage.ops.saturating_add(1);
             }
             if self.usage_from_output_limit
                 && limits.max_output_bytes != DecodeLimits::default().max_output_bytes
@@ -2120,6 +2144,52 @@ mod tests {
             }
             // CCITT needs no heavy-work fixture (linear work), so it passes.
             assert!(ccitt.passed(), "{ccitt}");
+        }
+    }
+
+    #[test]
+    fn over_limit_usage_at_the_default_limits_is_caught() {
+        let toy = Toy {
+            default_usage_over_limit: true,
+            ..Toy::default()
+        };
+        // The fixture decode itself is over its limits (the other checks see it too, through
+        // usage that differs from the at-limit probes, but usage_valid names it).
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+        }
+    }
+
+    #[test]
+    fn usage_that_depends_on_the_other_limits_is_caught() {
+        let toy = Toy {
+            usage_from_other_limits: true,
+            ..Toy::default()
+        };
+        let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+        for report in [jpeg, jpx] {
+            assert_eq!(
+                report.failed_checks(),
+                vec![
+                    "image.component_limit",
+                    "image.dimension_limit",
+                    "image.pixel_limit",
+                    "image.working_limit"
+                ],
+                "{report}"
+            );
+        }
+        // Bitmaps have no component probe.
+        for report in [jbig2, ccitt] {
+            assert_eq!(
+                report.failed_checks(),
+                vec![
+                    "image.dimension_limit",
+                    "image.pixel_limit",
+                    "image.working_limit"
+                ],
+                "{report}"
+            );
         }
     }
 
@@ -2872,7 +2942,13 @@ mod tests {
             ];
             if !blank {
                 // The broken output also shows on truncated and mutated input.
-                expected.extend(["image.mutated", "image.option_used", "image.truncated"]);
+                // The fixture decode's own Ok is invalid too (usage_valid checks it whole).
+                expected.extend([
+                    "image.mutated",
+                    "image.option_used",
+                    "image.truncated",
+                    "image.usage_valid",
+                ]);
                 expected.sort_unstable();
             }
             assert_eq!(report.failed_checks(), expected, "{report}");

@@ -57,7 +57,8 @@ The change has four parts.
       within its limits. A `Truncated` result reports the work it did.
 4. **Image suite checks** (`jpdf_traits::conformance::image`, every format):
    - `image.usage_valid`: for every fixture decoded at the default limits, `working_bytes` is
-     at least the output's byte length and `ops` at least the output's sample count.
+     at least the output's byte length, `ops` at least the output's sample count, and the
+     whole result (usage included) fits the default limits.
    - `image.working_limit` and `image.ops_limit`: exact boundaries at the usage the decoder
      reported. At the reported value the call succeeds (Complete, matching); one below and 0
      give `LimitExceeded`.
@@ -104,8 +105,9 @@ still renders (specs/core/backend-traits.md, Errors).
   - suite, per fixture and both fields: at the reported usage passes, one below and 0 fail
     (`image.working_limit`, `image.ops_limit`);
   - suite self-tests: a toy that ignores the new limits, one that rejects at the limit (`>=`),
-    and ones that report usage depending on `max_ops` or `max_output_bytes` each fail those
-    checks;
+    and ones that report usage depending on `max_ops`, `max_output_bytes`, or the pixel,
+    dimension, component or working-bytes limit each fail those checks; one that reports
+    over-limit usage only at the default limits fails `image.usage_valid`;
   - `min_extra_ops`: the toy's exact difference passes, one more fails `image.extra_work`; at
     the default `max_decode_ops` the fixture is valid, one past is invalid; the heavy rule
     passes at exactly 4 × samples and fails one below (`image.work_fixture`);
