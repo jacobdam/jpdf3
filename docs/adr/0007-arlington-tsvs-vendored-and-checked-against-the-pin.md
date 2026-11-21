@@ -16,7 +16,7 @@ be committed, on these conditions:
 
 The owner left the choice to us: vendor the raw TSVs, or commit only the generated tables
 (prefer the smaller diff). At the pin, the 613 TSV files are 493,082 bytes; the generated
-`tables.rs` is 2,382,128 bytes.
+`tables.rs` is about 2.4 MB.
 
 ## Decision
 1. **Vendor the raw TSVs**, byte for byte, in `tools/arlington/data/tsv/`, with upstream's
@@ -31,16 +31,20 @@ The owner left the choice to us: vendor the raw TSVs, or commit only the generat
 3. **Offline pin check.** `fetch.rs` keeps `COMMIT` and `TSV_TREE` and adds the blob ids of
    `LICENSE` and `NOTICE.txt`. Loading the vendored copy reads each file once, computes its
    git blob id and the `tsv/` tree id from those same bytes (our own SHA-1, `std` only), and
-   refuses any mismatch, any non-`.tsv` entry, any symlink, and anything over the size caps.
+   refuses any mismatch, any non-`.tsv` entry, any stray file next to the data, any symlink
+   (files or directories), a changed `.gitattributes`, and anything over the size caps.
    So a hand edit, a missing or extra file, or a partial copy fails every test run and
    `cargo xtask ci linux`, and CI needs no network for Arlington any more.
 4. **Bumping the pin** (audit sessions, or when a newer model is needed): update the four
    ids, delete `tools/arlington/data`, run `jpdf-arlington vendor --out tools/arlington/data`
-   (it fetches the commit through ADR 0006's hardened, verified git cache, writes the files and
-   loads them back through the offline check), then `cargo xtask arlington`. The diff check is
+   (it fetches the commit through ADR 0006's hardened, verified git cache, writes the files
+   into a staging directory, loads them back through the offline check, and only then renames
+   it into place), then `cargo xtask arlington`. The diff check is
    the PR diff of `tools/arlington/data/`, and the tree id proves the files equal upstream's.
-5. **Not shipped.** `tools/arlington` is a development tool. Nothing in `crates/` or
-   `bindings/` may depend on it or include its data or tables without asking the owner.
+5. **Not shipped.** `tools/arlington` is a development tool. Nothing in `crates/`,
+   `bindings/` or `apps/` may depend on it or include its data or tables without asking the
+   owner. A test checks the resolved dependency graph (normal and build edges) and scans
+   shipped sources for the name.
 
 ## Consequences
 - The repository grows by about 0.5 MB, plus that much again in history at each bump.

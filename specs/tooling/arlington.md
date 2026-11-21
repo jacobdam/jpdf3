@@ -80,8 +80,11 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
      reads `LICENSE` and `NOTICE.txt` from it after checking each is exactly its pinned blob
      id and within the file cap, creates `DIR` (and missing parents), writes `DIR/tsv/<files>`,
      both notice files and `DIR/.gitattributes`, then loads `DIR` back through item 9.
-     Prints `wrote DIR (N files, git ids match the pins)`. File names come from the verified
-     tree; an empty name, a `/` or `\`, or a leading `.` is refused.
+     The files go into a sibling staging directory `DIR.staging-<pid>`, which is loaded back
+     through item 9 and only then renamed to `DIR`; on any failure it is removed and `DIR` is
+     not created. Prints `wrote DIR (N files, git ids match the pins)`. File names come from
+     the verified tree and are all checked before anything is created: an empty name, a `/`
+     or `\`, a leading `.`, or a name not ending in `.tsv` is refused.
 7. **`cargo xtask arlington`** loads the vendored copy (item 9, offline), writes
    `target/arlington/tables.rs` and type-checks it with `rustc --emit=metadata`.
    **`cargo xtask ci linux`** runs the same step last, so every PR proves that the vendored
@@ -100,22 +103,33 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    - `.gitattributes` with `* -text`, so git never converts line endings.
 
    Loading it:
-   1. reads `LICENSE` and `NOTICE.txt` (each must be a regular file, not a symlink, ≤ 1 MiB)
-      and compares their git blob ids with the pins;
-   2. lists `tsv/`; every entry must be a regular file (symlinks and directories refused)
+   1. the directory and its `tsv/` must be real directories (symlinks refused), and it may hold
+      only `tsv`, `LICENSE`, `NOTICE.txt` and `.gitattributes`;
+   2. reads `LICENSE` and `NOTICE.txt` (each must be a regular file, not a symlink, ≤ 1 MiB)
+      and compares their git blob ids with the pins; `.gitattributes` must equal the one
+      `vendor` writes;
+   3. lists `tsv/`; every entry must be a regular file (symlinks and directories refused)
       with a UTF-8 name ending in `.tsv`;
-   3. reads each file once, bounded as in Limits;
-   4. computes the git tree id of those bytes (entries sorted by name in byte order, mode
+   4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
+      regular file, so a swap to a FIFO or device after the first check is refused;
+   5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
       `TSV_TREE`;
-   5. returns the same bytes it hashed, so nothing is re-read after the check.
+   6. returns the same bytes it hashed, so nothing is re-read after the check.
+
+   The pinned path (item 2) also requires every `tsv/latest` entry to have mode `100644`
+   (a symlink is listed as a blob with mode `120000`), since the tree id assumes it.
 
    SHA-1 (`sha1.rs`) is our own implementation of FIPS 180-4 §6.1, `std` only.
-10. **Use** (owner condition on #60): tests and tools only. No crate under `crates/` or
-    `bindings/` takes `jpdf-arlington` as a normal or build dependency, or names
-    `jpdf_arlington`, `tools/arlington` or `arlington/tables` in a non-test `.rs` file
-    (`tests/` directories are allowed); a test enforces it. Changing that needs the owner.
+10. **Use** (owner condition on #60): tests and tools only. A test enforces it:
+    - in the resolved graph (`cargo tree -e normal,build -i jpdf-arlington`), no package
+      under `crates/` or `bindings/` depends on `jpdf-arlington`, directly or transitively
+      (dev-dependencies are allowed);
+    - no file under `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web/src` or
+      `apps/macos` (outside `tests`/`Tests`/`node_modules` directories) contains
+      "arlington" in any case.
+    Changing that needs the owner.
 
 ## Persistence
 No document persistence. The vendored data (about 0.5 MB) is committed. The cache
@@ -135,10 +149,15 @@ Not applicable (development tool).
   `vendored: <name> is not a regular file`, `vendored: tsv/<name> is not a regular .tsv file`,
   `vendored: tsv/<name> is not a UTF-8 name`, `vendored: tsv is tree X, pinned Y (… re-vendor
   instead of editing it)`, `vendored: DIR exists; delete it first`,
-  `vendored: bad file name …`, `<path>: <io error>` (missing file or directory), exit 1.
+  `vendored: <dir> is not a directory (symlinks are refused)`, `vendored: unexpected entry
+  "<name>" (re-vendor or remove stray files)`, `vendored: .gitattributes differs from the one
+  `vendor` writes`, `vendored: bad file name …`, `vendored: bad notice name …`,
+  `fetch: tsv/latest/<name> has mode M, expected 100644`, `<path>: <io error>` (missing file
+  or directory), exit 1.
 - Limits: `limit exceeded: …`, exit 1.
-- Usage (unknown command/flag, missing value, `--tsv` with `--cache`, `generate` without
-  `--out`, a flag given twice): the problem and the usage line, exit 2. `cargo xtask
+- Usage (unknown command/flag, missing value, more than one of `--vendored`/`--tsv`/`--cache`,
+  `generate` or `vendor` without `--out`, `--tsv` or `--vendored` given to `vendor`, `--out`
+  given to `check`, a flag given twice): the problem and the usage line, exit 2. `cargo xtask
   arlington <anything>`: usage, exit 2.
 
 ## Limits
@@ -220,11 +239,16 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   `.gitattributes`, refuses an existing target, and writes nothing on a wrong notice pin; the
   committed `.gitattributes` equals the one `vendor` writes; drift is refused (a changed,
   missing or extra TSV, a non-TSV file, a directory, a changed `LICENSE`, a missing
-  `NOTICE.txt`, a TSV one byte over the cap) and a TSV of exactly the cap is read (it then
-  fails only the tree check); symlinked TSV and notice files are refused; the CLI checks the
-  vendored copy by default, exits 1 on a copy that doesn't match the pins, and `vendor`
-  refuses an existing target without creating the cache; no shipped crate depends on the
-  tool or its data (item 10).
+  `NOTICE.txt`, an edited `NOTICE.txt`, a changed `.gitattributes`, a stray top-level file,
+  a `.DS_Store` in `tsv/`, a TSV one byte over the cap) and a TSV of exactly the cap is read
+  (it then fails only the tree check); every cap (file count, per-file including the notice
+  files, total) passes at the limit and fails one past it, on small caps; symlinked TSV and
+  notice files and a symlinked `tsv/` are refused; no staging directory is left behind;
+  `write_dir` refuses bad names before creating anything; an upstream entry with mode
+  `100755` is refused; the generated header names the copyright, Apache License 2.0 and the
+  pinned commit; the CLI checks the vendored copy by default, exits 1 with a `vendored:`
+  message on a copy that doesn't match the pins, and `vendor` refuses an existing target
+  without creating the cache; no shipped crate depends on the tool or its data (item 10).
 - `src/main.rs` unit test: argument parsing (including `--vendored`, `vendor`, and refused
   combinations).
 - `xtask/tests/check_specs.rs`: `arlington <extra>` exits 2; `ci linux` outside the repo

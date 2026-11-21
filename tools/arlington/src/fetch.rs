@@ -155,11 +155,17 @@ pub fn load_verified(
         let (meta, name) = entry
             .split_once('\t')
             .ok_or_else(|| Error::Fetch(format!("bad ls-tree line {entry:?}")))?;
-        let [_mode, kind, id] = meta.split(' ').collect::<Vec<_>>()[..] else {
+        let [mode, kind, id] = meta.split(' ').collect::<Vec<_>>()[..] else {
             return Err(Error::Fetch(format!("bad ls-tree line {entry:?}")));
         };
         if kind != "blob" || !name.ends_with(".tsv") {
             return Err(Error::Fetch(format!("{TSV_DIR}/{name} is not a .tsv file")));
+        }
+        // A symlink (120000) is also listed as a blob; the vendored tree id assumes 100644.
+        if mode != "100644" {
+            return Err(Error::Fetch(format!(
+                "{TSV_DIR}/{name} has mode {mode}, expected 100644"
+            )));
         }
         if entries.len() >= MAX_FILES {
             return Err(Error::Limit(format!("more than {MAX_FILES} files")));

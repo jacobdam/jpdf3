@@ -36,16 +36,46 @@ pub const PINNED: Pins<'static> = Pins {
     notice: fetch::NOTICE_BLOB,
 };
 
-/// Loads the vendored directory `dir` checked against [`PINNED`].
-pub fn load_vendored(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
-    load_checked(dir, PINNED)
+/// Size caps for a vendored directory. [`Caps::DEFAULT`] is the spec's Limits; tests use
+/// smaller values to reach every boundary cheaply.
+#[derive(Debug, Clone, Copy)]
+pub struct Caps {
+    pub files: usize,
+    pub file_bytes: usize,
+    pub total_bytes: usize,
 }
 
-/// Loads `dir/tsv/*.tsv`, refusing anything else in `dir/tsv`, and checks the notice files'
-/// blob ids and the TSV tree id against `pins`. Returns the files sorted by name.
-pub fn load_checked(dir: &Path, pins: Pins<'_>) -> Result<Vec<(String, Vec<u8>)>, Error> {
+impl Caps {
+    pub const DEFAULT: Caps = Caps {
+        files: MAX_FILES,
+        file_bytes: MAX_FILE_BYTES,
+        total_bytes: MAX_TOTAL_BYTES,
+    };
+}
+
+/// The only entries a vendored directory may hold.
+const TOP_LEVEL: [&str; 4] = [TSV_SUBDIR, "LICENSE", "NOTICE.txt", ".gitattributes"];
+
+/// Loads the vendored directory `dir` checked against [`PINNED`].
+pub fn load_vendored(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    load_checked(dir, PINNED, Caps::DEFAULT)
+}
+
+/// Loads `dir/tsv/*.tsv` and checks the whole directory against `pins`:
+/// - `dir` holds exactly `tsv/`, `LICENSE`, `NOTICE.txt` and `.gitattributes`, none a symlink;
+/// - the notice files have their pinned blob ids, and `.gitattributes` is [`GITATTRIBUTES`];
+/// - `tsv/` holds only regular `.tsv` files, whose tree id is the pinned one.
+///
+/// Returns the TSV files sorted by name: the same bytes that were hashed.
+pub fn load_checked(
+    dir: &Path,
+    pins: Pins<'_>,
+    caps: Caps,
+) -> Result<Vec<(String, Vec<u8>)>, Error> {
+    let tsv = dir.join(TSV_SUBDIR);
+    check_top_level(dir, &tsv)?;
     for (name, want) in [("LICENSE", pins.license), ("NOTICE.txt", pins.notice)] {
-        let bytes = read_capped(&dir.join(name), name)?;
+        let bytes = read_capped(&dir.join(name), name, caps.file_bytes)?;
         let got = sha1::hex(&sha1::object_id("blob", &bytes));
         if got != want {
             return Err(Error::Vendor(format!(
@@ -53,7 +83,16 @@ pub fn load_checked(dir: &Path, pins: Pins<'_>) -> Result<Vec<(String, Vec<u8>)>
             )));
         }
     }
-    let tsv = dir.join(TSV_SUBDIR);
+    let attrs = read_capped(
+        &dir.join(".gitattributes"),
+        ".gitattributes",
+        caps.file_bytes,
+    )?;
+    if attrs != GITATTRIBUTES.as_bytes() {
+        return Err(Error::Vendor(
+            ".gitattributes differs from the one `vendor` writes".into(),
+        ));
+    }
     let io = |source| Error::Io {
         path: tsv.display().to_string(),
         source,
@@ -69,17 +108,18 @@ pub fn load_checked(dir: &Path, pins: Pins<'_>) -> Result<Vec<(String, Vec<u8>)>
         // `DirEntry::file_type` does not follow symlinks, so a link is refused here.
         if !name.ends_with(".tsv") || !entry.file_type().map_err(io)?.is_file() {
             return Err(Error::Vendor(format!(
-                "{TSV_SUBDIR}/{name} is not a regular .tsv file"
+                "{TSV_SUBDIR}/{name} is not a regular .tsv file (re-vendor or remove stray files)"
             )));
         }
-        if files.len() >= MAX_FILES {
-            return Err(Error::Limit(format!("more than {MAX_FILES} files")));
+        if files.len() >= caps.files {
+            return Err(Error::Limit(format!("more than {} files", caps.files)));
         }
-        let bytes = read_capped(&entry.path(), &name)?;
+        let bytes = read_capped(&entry.path(), &name, caps.file_bytes)?;
         total = total.saturating_add(bytes.len());
-        if total > MAX_TOTAL_BYTES {
+        if total > caps.total_bytes {
             return Err(Error::Limit(format!(
-                "more than {MAX_TOTAL_BYTES} bytes in all files"
+                "more than {} bytes in all files",
+                caps.total_bytes
             )));
         }
         files.push((name, bytes));
@@ -98,25 +138,57 @@ pub fn load_checked(dir: &Path, pins: Pins<'_>) -> Result<Vec<(String, Vec<u8>)>
     Ok(files)
 }
 
-/// Reads at most [`MAX_FILE_BYTES`]; a larger file is a limit error, and no read goes past
-/// the cap. Symlinks are not followed for TSV files (checked by the caller); for the notice
-/// files, `symlink_metadata` refuses them here.
-fn read_capped(path: &Path, name: &str) -> Result<Vec<u8>, Error> {
+/// `dir` and `dir/tsv` are real directories (not symlinks), and `dir` holds only
+/// [`TOP_LEVEL`] entries.
+fn check_top_level(dir: &Path, tsv: &Path) -> Result<(), Error> {
+    for d in [dir, tsv] {
+        let meta = std::fs::symlink_metadata(d).map_err(|source| Error::Io {
+            path: d.display().to_string(),
+            source,
+        })?;
+        if !meta.is_dir() {
+            return Err(Error::Vendor(format!(
+                "{} is not a directory (symlinks are refused)",
+                d.display()
+            )));
+        }
+    }
+    let io = |source| Error::Io {
+        path: dir.display().to_string(),
+        source,
+    };
+    for entry in std::fs::read_dir(dir).map_err(io)? {
+        let name = entry.map_err(io)?.file_name();
+        if !TOP_LEVEL.iter().any(|t| name == *t) {
+            return Err(Error::Vendor(format!(
+                "unexpected entry {name:?} (re-vendor or remove stray files)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Reads at most `cap` bytes; a larger file is a limit error, and no read goes past the cap.
+/// The path must not be a symlink, and the opened file must be a regular file (checked again
+/// on the open handle, so a swap to a FIFO or device after the first check is refused).
+fn read_capped(path: &Path, name: &str, cap: usize) -> Result<Vec<u8>, Error> {
     let io = |source| Error::Io {
         path: path.display().to_string(),
         source,
     };
+    let not_regular = || Error::Vendor(format!("{name} is not a regular file"));
     if !std::fs::symlink_metadata(path).map_err(io)?.is_file() {
-        return Err(Error::Vendor(format!("{name} is not a regular file")));
+        return Err(not_regular());
+    }
+    let file = std::fs::File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(not_regular());
     }
     let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .and_then(|f| f.take(MAX_FILE_BYTES as u64 + 1).read_to_end(&mut bytes))
-        .map_err(io)?;
-    if bytes.len() > MAX_FILE_BYTES {
-        return Err(Error::Limit(format!(
-            "{name} is over {MAX_FILE_BYTES} bytes"
-        )));
+    let limit = u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1);
+    file.take(limit).read_to_end(&mut bytes).map_err(io)?;
+    if bytes.len() > cap {
+        return Err(Error::Limit(format!("{name} is over {cap} bytes")));
     }
     Ok(bytes)
 }
@@ -132,8 +204,9 @@ pub fn vendor_pinned(cache_dir: &Path, out: &Path) -> Result<usize, Error> {
 }
 
 /// [`vendor_pinned`] from an existing repository `git_dir` and explicit pins: verifies it
-/// ([`fetch::load_verified`]), reads the notice files by their pinned blob ids, writes `out`
-/// and loads it back through [`load_checked`].
+/// ([`fetch::load_verified`]), reads the notice files by their pinned blob ids, writes a
+/// sibling staging directory, loads it back through [`load_checked`], and only then renames
+/// it to `out`. On any failure the staging directory is removed and `out` is not created.
 pub fn vendor_from(
     git_dir: &Path,
     commit: &str,
@@ -146,8 +219,27 @@ pub fn vendor_from(
     for (name, id) in [("LICENSE", pins.license), ("NOTICE.txt", pins.notice)] {
         notices.push((name, fetch::read_pinned_blob(git_dir, commit, name, id)?));
     }
-    write_dir(out, &files, &notices)?;
-    load_checked(out, pins).map(|f| f.len())
+    let file_name = out
+        .file_name()
+        .ok_or_else(|| Error::Vendor(format!("{} has no file name", out.display())))?;
+    let mut staged_name = file_name.to_os_string();
+    staged_name.push(format!(".staging-{}", std::process::id()));
+    let staged = out.with_file_name(staged_name);
+    let result = write_dir(&staged, &files, &notices)
+        .and_then(|()| load_checked(&staged, pins, Caps::DEFAULT))
+        .and_then(|loaded| {
+            refuse_existing(out)?;
+            std::fs::rename(&staged, out).map_err(|source| Error::Io {
+                path: out.display().to_string(),
+                source,
+            })?;
+            Ok(loaded.len())
+        });
+    if result.is_err() {
+        // Only ever a directory this call created (write_dir refuses an existing path).
+        let _ = std::fs::remove_dir_all(&staged);
+    }
+    result
 }
 
 fn refuse_existing(out: &Path) -> Result<(), Error> {
@@ -162,6 +254,7 @@ fn refuse_existing(out: &Path) -> Result<(), Error> {
 }
 
 /// Writes `out/tsv/<files>`, the notice files and `.gitattributes`. `out` must not exist.
+/// Every name is checked before anything is created.
 pub fn write_dir(
     out: &Path,
     files: &[(String, Vec<u8>)],
@@ -171,6 +264,21 @@ pub fn write_dir(
         let path = path.display().to_string();
         move |source| Error::Io { path, source }
     };
+    // Names come from the verified tree listing; refuse anything that isn't a plain name.
+    for (name, _) in files {
+        if name.is_empty()
+            || name.contains(['/', '\\'])
+            || name.starts_with('.')
+            || !name.ends_with(".tsv")
+        {
+            return Err(Error::Vendor(format!("bad file name {name:?}")));
+        }
+    }
+    for (name, _) in notices {
+        if !["LICENSE", "NOTICE.txt"].contains(name) {
+            return Err(Error::Vendor(format!("bad notice name {name:?}")));
+        }
+    }
     refuse_existing(out)?;
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(io(parent))?;
@@ -180,10 +288,6 @@ pub fn write_dir(
     let tsv = out.join(TSV_SUBDIR);
     std::fs::create_dir(&tsv).map_err(io(&tsv))?;
     for (name, bytes) in files {
-        // Names come from the verified tree listing; refuse anything that isn't a plain name.
-        if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
-            return Err(Error::Vendor(format!("bad file name {name:?}")));
-        }
         let p = tsv.join(name);
         std::fs::write(&p, bytes).map_err(io(&p))?;
     }
