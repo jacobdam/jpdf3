@@ -125,7 +125,8 @@ per-object caps, peak memory ≈ file + 12 B × xref entries + one capped parse.
 Measured (Linux, release, real `ulimit -v 2097152` as in the judge): every adversarial file
 from review — 512 MiB with 10 M xref entries and four maximal objects, 500 MiB nested
 strings, overlapping objects/sections, 600 kids sharing one 2 M-object body — finishes with
-exit 0 or 2 in ≤ 3.4 s (1 000 `/Prev` sections over one 2 M-name trailer: 36 s before
+exit 0 or 2 in ≤ 3.4 s (not true for every file: audit 0002 measured 6.84 s for one 510 MB
+integer token; see #113) (1 000 `/Prev` sections over one 2 M-name trailer: 36 s before
 section spans were checked; 127 dense non-overlapping kids: 9.9 s before the per-document
 object budget). macOS peak footprint for the worst one: 1.31 GB.
 
@@ -143,7 +144,7 @@ Work is linear in file size: the lexing budget bounds total lexing to 4× the fi
 
 ## Security
 Self-check (#77):
-- Arithmetic: the lint above makes every unchecked operation a CI clippy error in the four crates;
+- Arithmetic: the lint above makes every unchecked `+`/`-`/`*` a CI clippy error in the four crates;
   integer accumulation uses `checked_mul`/`checked_add`/`checked_sub`, octal escapes are at
   most three digits (≤ 0o777, saturating ops that never saturate).
 - What broken implementation still passes? A CLI that opens before checking the size fails

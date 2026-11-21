@@ -15,7 +15,9 @@ Phase: bootstrap (pilot)
       glyph that is only junk).
   - Also: the lexer exceeds the string limit by 1 byte per name or odd hex token (#113); the clamp holds only at
     `Document::open` (#114); cleanup in #115; comments on #81, #82, #87 and #105.
-  - Mutants on the changed core: 96% of viable mutants caught (177 mutants).
+  - Mutants on the changed core: 95% of viable mutants caught (164/172).
+  - This session took the audit (g) over ready security issues (d), against TICK's strict order (see audit 0002,
+    "Rule order"). Retro 0002 decides the order.
 
 ## Next step (suggested order, TICK letters)
 1. d (security) issues, lowest number first: **#81, #82, #83, #106, #107, #109, #112, #113, #114, #116, #117**.
@@ -26,7 +28,7 @@ Phase: bootstrap (pilot)
    #99–#101, #105, #115.
    - #14 closes after #55 and #70; #20 after #61; #22 after #64.
 - **Next retro (rule h): by 2026-11-28.** Inputs from audit 0002 §6:
-  - TICK puts d above a due audit, so the audit can starve;
+  - TICK puts d above a due audit, so the audit can starve, and this session deviated (an incident);
   - STATUS "in flight" is stale as soon as its PR merges;
   - the template's `Area:` list lacks `tooling`.
 - **Next audit:** after 10 more merges or by 2026-11-28 (see the carry-overs in docs/audits/0002.md).
