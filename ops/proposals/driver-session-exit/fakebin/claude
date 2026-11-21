@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Fake `claude -p` for driver tests. Scenario from FAKE_SCENARIO; writes stream-json to stdout.
+sid='"session_id":"fake-sid"'
+ok_result='{"type":"result","subtype":"success","is_error":false,"result":"done","api_error_status":null,'"$sid"'}'
+asst='{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]},'"$sid"'}'
+user='{"type":"user","message":{"content":[{"type":"tool_result","content":"Error: API rate limit hit in a tool; usage limit words"}]},'"$sid"'}'
+rl_ok='{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795288800},'"$sid"'}'
+rl_rej='{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795288800},'"$sid"'}'
+bg1='{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a1","task_type":"local_agent"}],'"$sid"'}'
+bg0='{"type":"system","subtype":"background_tasks_changed","tasks":[],'"$sid"'}'
+init='{"type":"system","subtype":"init",'"$sid"'}'
+echo "$init"; echo "$rl_ok"
+case "$FAKE_SCENARIO" in
+  normal) echo "$asst"; echo "$ok_result"; exit 0 ;;
+  hang_child)  # final result, then an MCP-like child keeps the process alive
+    echo "$asst"; echo "$ok_result"
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  bg_wait)  # result while a background agent runs; it notifies after 6 s, then the session ends
+    echo "$asst"; echo "$bg1"; echo "$ok_result"
+    sleep 6
+    echo "$bg0"; echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  limit_result)
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1795288800","api_error_status":null,'"$sid"'}'
+    exit 1 ;;
+  limit_429)
+    echo "$asst"
+    echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","api_error_status":429,'"$sid"'}'
+    exit 1 ;;
+  words_only)  # transcript mentions limits, the session fails for another reason
+    echo "$asst"; echo "$user"; echo "$rl_ok"
+    echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"max turns","api_error_status":null,'"$sid"'}'
+    exit 1 ;;
+  limit_stderr) echo "$asst"; echo "Claude AI usage limit reached" >&2; exit 1 ;;
+  noise_stderr) echo "$asst"; echo "network error" >&2; exit 1 ;;
+  rl_rejected) echo "$asst"; echo "$rl_rej"; exit 1 ;;
+  forever) echo "$asst"; sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  slow_turn)  # a background agent finishes, the new turn's first output takes 5 s (> grace)
+    echo "$asst"; echo "$bg1"; echo "$ok_result"; sleep 1
+    echo "$bg0"; echo "$init"; sleep 5
+    echo "$asst"; echo "$ok_result"; exit 0 ;;
+  exit0_limit)  # a limit error result, but the process exits 0
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"You have hit your limit","api_error_status":null,'"$sid"'}'
+    exit 0 ;;
+  stderr_with_result)  # stderr names a limit, but the result line says something else
+    echo "$asst"; echo "MCP: usage limit reached on some server" >&2
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    exit 1 ;;
+  stderr_ratelimit)  # no result; stderr mentions rateLimit (MCP noise), not a usage limit
+    echo "$asst"; echo "mcp: rateLimit config loaded" >&2; exit 1 ;;
+  escaped_child)  # result, then a child in its own process group (like the Bash tool's shells)
+    echo "$asst"; echo "$ok_result"
+    perl -e 'setpgrp(0, 0); sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  bg_stuck)  # result while a background task is listed, then nothing ever happens
+    echo "$asst"; echo "$bg1"; echo "$ok_result"
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  hup_driver)  # hangs mid-turn; the test sends HUP to the driver
+    echo "$asst"
+    perl -e 'setpgrp(0, 0); sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  stubborn)  # result, then a child that ignores TERM
+    echo "$asst"; echo "$ok_result"
+    perl -e '$SIG{TERM}="IGNORE"; sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  late_turn)  # a quiet gap half a second shorter than the grace, then another turn (a wakeup)
+    echo "$asst"; echo "$ok_result"; sleep 2.5
+    echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  bg_near)  # a background task listed after the result, quiet half a second under BG_QUIET_MAX
+    echo "$asst"; echo "$bg1"; echo "$ok_result"; sleep 2.5
+    echo "$bg0"; echo "$init"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  mid_quiet)  # a quiet mid-turn stretch longer than BG_QUIET_MAX (no result yet) is not cut off
+    echo "$asst"; echo "$bg1"; sleep 4
+    echo "$bg0"; echo "$asst"; echo "$ok_result"; exit 0 ;;
+  multi_result)  # the first turn succeeded, the last one failed; then the process lingers
+    echo "$asst"; echo "$ok_result"; echo "$init"; echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  catches_term)  # lingers after a good result and exits 1 on its own when it gets TERM
+    echo "$asst"; echo "$ok_result"
+    trap 'exit 1' TERM; while :; do sleep 0.2; done 2>/dev/null ;;
+  rl_rej_then_ok) echo "$asst"; echo "$rl_rej"; echo "$rl_ok"; exit 1 ;;  # the last event decides
+  ok_rejected) echo "$asst"; echo "$rl_rej"; echo "$ok_result"; exit 0 ;;   # success wins over a rejection
+  bg_cleared)  # a background task came and went before the result: settles at the grace
+    echo "$asst"; echo "$bg1"; echo "$asst"; echo "$bg0"; echo "$ok_result"
+    sleep 1000 & echo $! > "$FAKE_DIR/child.pid"; wait ;;
+  grandchild)  # a setsid'd process under an intermediate shell (CLI > Bash tool shell > cargo)
+    echo "$asst"; echo "$ok_result"
+    ( perl -e 'setpgrp(0, 0); sleep 1000' & echo $! > "$FAKE_DIR/child.pid"; wait ) & wait ;;
+  orphan)  # an in-group process whose parent exited: only the group kill reaches it
+    echo "$asst"; echo "$ok_result"
+    ( sleep 1000 & echo $! > "$FAKE_DIR/child.pid" ); sleep 1000 & wait ;;
+  stubborn_escaped)  # a setsid'd descendant that ignores TERM: only the per-pid KILL reaches it
+    echo "$asst"; echo "$ok_result"
+    perl -e 'setpgrp(0, 0); $SIG{TERM}="IGNORE"; sleep 1000' & echo $! > "$FAKE_DIR/child.pid"
+    wait ;;
+  smax_term)  # no result, exits 0 on its own when it gets TERM: a SESSION_MAX stop is still 143
+    echo "$asst"; trap 'exit 0' TERM; while :; do sleep 0.2; done 2>/dev/null ;;
+  limit_then_boom)  # a limit error, then a later turn fails differently: the last result decides
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached","api_error_status":null,'"$sid"'}'
+    echo "$init"; echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    exit 1 ;;
+  boom_then_limit)
+    echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'
+    echo "$init"; echo "$asst"
+    echo '{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached","api_error_status":null,'"$sid"'}'
+    exit 1 ;;
+  self_kill)  # killed by a signal right after its answer (a crash, the owner's kill -9): rc from the result
+    echo "$asst"; echo "$ok_result"; sleep 1; kill -KILL $$ ;;
+  error_exit) echo "$asst"; echo '{"type":"result","subtype":"success","is_error":true,"result":"boom",'"$sid"'}'; exit 1 ;;
+esac
