@@ -4,23 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #121 (#112, web license-check bypasses): reviewed in 4 rounds, auto-merge on. #112 closes when it merges.
-- PR #119 (the owner's Codex proposal) merged; the owner applies the protected diffs.
+- PR #123 (#81 part 1/2, image conformance suite): auto-merge on once ai-review is posted. If it is still open,
+  check its CI first (rule c). Part 2/2 is #122.
 
 ## Last session
-- **#112** (rule d): the web license check now refuses unscanned `src/` extensions, `import.meta` (not env),
-  package paths in any text, scheme imports (`data:`, `file:`), undecodable specifier characters, non-literal
-  `import(`, `@jsx` pragmas; it guards csp.ts by shape, tsconfig, PostCSS configs up the tree and 31 config keys,
-  and pins the CC-BY allowance to the registry tarball. The reviewer found 4 blockers, then 2, then 1 more;
-  all fixed. #99 (the Rollup module graph) is still the durable fix.
+- **#81 1/2** (rule d): the image suite caps fixture tolerance (2 from 8 bits, 0 lossless) with a mean bound,
+  refuses flat fixtures (per colour component), requires `Complete` at the limits, a salvage cut for JPEG, JPX
+  and CCITT, ColorTransform fixtures that override the implied transform both ways, JBIG2 globals, CCITT K < 0,
+  0, ≥ 2 and alignment, and CCITT parameter limits before any data (u32 overflow included). 3 review rounds.
 
 ## Previous session
-- PR #119 review (rule a): 14 major findings fixed in ops/proposals/codex-second-reviewer.md.
+- **#112** (rule d, PR #121 merged): web license-check bypasses closed; #99 is still the durable fix.
 
 ## Next step (suggested order, TICK letters)
-1. d (security) issues, lowest number first: **#81, #82, #83, #106, #107, #109, #113, #114, #116, #117**.
+1. d (security) issues, lowest number first: **#82, #83, #106, #107, #109, #113, #114, #116, #117, #122**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
-   - **Before #16 admits any adapter:** the suites (#81, #116, #117) and the decoder contracts (#106).
+   - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i), lowest number first: #21, #55, #61, #64, #66, #70, #78, #84–#87, #91,
    #99–#101, #105, #115.

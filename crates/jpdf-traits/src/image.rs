@@ -202,9 +202,10 @@ impl Default for CcittParams {
 
 /// CCITT Group 3/4 fax decoding (CCITTFaxDecode, ISO 32000-2 §7.4.6).
 pub trait CcittDecoder {
-    /// Decodes the image. `columns == 0` fails with [`BackendError::InvalidArgument`];
-    /// `columns` or `rows` above `limits.max_image_dimension` fails with
-    /// [`BackendError::LimitExceeded`] before decoding.
+    /// Decodes the image. `columns == 0` fails with [`BackendError::InvalidArgument`].
+    /// `columns` or `rows` above `limits.max_image_dimension`, or (when `rows` is set)
+    /// `columns × rows` above `limits.max_image_pixels`, fails with
+    /// [`BackendError::LimitExceeded`] before any data is read, even for empty input.
     fn decode(
         &self,
         input: &[u8],
