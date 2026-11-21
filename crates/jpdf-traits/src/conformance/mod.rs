@@ -12,6 +12,7 @@
 
 pub mod crypto;
 pub mod flate;
+pub mod font;
 pub mod image;
 mod vectors;
 

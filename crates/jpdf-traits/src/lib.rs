@@ -14,14 +14,19 @@ mod codec;
 pub mod conformance;
 mod crypto;
 mod error;
+mod font;
 mod image;
 mod limits;
 
 pub use codec::{CompressionLevel, DecodeStatus, Decoded, Deflate, FlateFormat, Inflate};
 pub use crypto::{Cipher, Direction, HashAlgorithm, HashState, Hasher, Padding};
 pub use error::BackendError;
+pub use font::{
+    BuiltinEncoding, CmapId, FaceMetrics, FontEngine, FontFace, FontProgram, GlyphId, Outline,
+    OutlineFormat, PathSegment, Point, Type1Parser,
+};
 pub use image::{
     Bitmap, CcittDecoder, CcittParams, DecodedImage, ImageColor, Jbig2Decoder, Jpeg2000Decoder,
     JpegDecoder, JpegOptions,
 };
-pub use limits::{DecodeLimits, Limits};
+pub use limits::{DecodeLimits, FontLimits, Limits};
