@@ -1,6 +1,6 @@
 # Proposal: Codex as a second reviewer (trial), Opus review unchanged
 
-Status: proposed by the owner's interactive session, 2026-11-21; revised after five TICK §4 review
+Status: proposed by the owner's interactive session, 2026-11-21; revised after six TICK §4 review
 rounds (see "Review record" at the end). Touches protected paths (`CONSTITUTION.md`,
 `ops/driver/`, `.claude/settings.json`, `.claude/hooks/`), so the owner applies it with signed
 commits.
@@ -16,7 +16,7 @@ Evidence that review matters and is worth diversifying, not cutting:
 - The Opus reviewer catches real defects: 5 resource-limit bugs in session 3; the stack overflow
   without the clamp and the unbudgeted 2 GiB claim in PR #108; 7 of 34 build sessions needed a
   re-review after fixes (`ops/journal/2026-11-20.md`, `2026-11-21.md`). This proposal's own review
-  found 13 major issues across five rounds.
+  found 14 major issues across six rounds.
 - Usage, sessions 2026-11-20 08:57 → 2026-11-21 13:58 UTC (37 sessions, list-price equivalent
   from `ops/logs/*.jsonl` and the per-agent transcripts): writing 68% ($121), PR review 21% ($37),
   audit 0001 7% ($12.7), retro 2%. Codex itself runs on a separate (OpenAI) subscription; on the
@@ -360,20 +360,20 @@ skipped), then skips `VAR=value` words, keywords and wrappers with their options
 `bash -c '…'` and `eval …` (three levels) and after find's `-exec`. It works on the original case
 and compares lowercased words, so uppercase options (`xargs -I`, `sudo -H`) parse correctly. Each
 tokenizer pass reads each character once, each command start looks at a bounded number of words,
-and all nested texts (`bash -c`, `eval`) draw on one budget of 4× the command plus 4 KiB, so the
-total work is linear; running out of budget blocks. (Rounds 2–4 found a quadratic and then an
+and all nested texts (`bash -c`, `eval`) draw on one budget of 2× the command plus 4 KiB, so the
+total work is linear; running out of budget, or nesting deeper than three levels, blocks. (Rounds 2–4 found a quadratic and then an
 exponential case in successive regex versions, and round 5 a 125× recursion blow-up in the first
 tokenizer; the budget bounds that.) The inert text is computed once and shared with the cmux check.
 
 The diff below applies to the current `guard.py` (`git apply --check` passes). With it,
-`--selftest` passes 161/161 (the 86 existing cases and 75 new ones) plus the new timing check
-(sixteen adversarial inputs of about 300 kB that contain "codex", including `bash -c` behind four
-`-exec` at each of three levels; each under 2 s, measured 0.03–0.2 s), in about 1.7 s overall. Run
+`--selftest` passes 165/165 (the 86 existing cases and 79 new ones) plus the new timing check
+(seventeen adversarial inputs of about 300 kB that contain "codex", including `bash -c` behind four
+`-exec` at each of three levels; each under 2 s, measured 0.03–0.3 s), in about 2.1 s overall. Run
 it from a checkout where the patched guard.py is committed (an existing case checks for modified
 protected paths). Full-hook times, patched vs current: `"((codexx"*37500` 1.50 s vs 1.36 s;
 `";a="*100000` 0.29 s vs 0.66 s; `"$("*150000` 0.23 s vs 1.39 s; the nested `-exec`/`bash -c`
-input (300 kB) 0.43 s vs 0.35 s. On 1 MB inputs `codex_command` alone takes at most 0.65 s. 300 000
-random shell-like inputs raised no exception (an exception would make the hook exit 1 and fail
+input (300 kB) 0.43 s vs 0.35 s. On 1 MB inputs `codex_command` alone takes at most 0.7 s. 300 000
+random shell-like inputs (twice, with different token sets) raised no exception (an exception would make the hook exit 1 and fail
 open).
 
 ```diff
@@ -387,7 +387,7 @@ open).
  
  REPO = "jacobdam/jpdf3"
  PROTECTED = (
-@@ -24,7 +25,249 @@
+@@ -24,7 +25,254 @@
      "deny.toml", "supply-chain/", "clippy.toml", ".cargo/", ".config/nextest.toml",
      ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
  )
@@ -399,8 +399,8 @@ open).
 +# words, keywords, redirections, heredoc bodies and wrappers with their options (sudo -u x,
 +# timeout -s KILL 5, env -i, xargs -I {}, npx -y, pnpm dlx ...), and looks inside `bash -c '...'`,
 +# `eval ...` and after find's -exec. Quotes and backslashes are removed, so `co''dex` and `\codex`
-+# count. Recursion shares one character budget (4x the command + 4 KiB), so the total work stays
-+# linear; running out of budget blocks. Not a sandbox: `c=codex; $c`, `echo codex | sh` and other
++# count. Recursion shares one character budget (2x the command + 4 KiB), so the total work stays
++# linear; running out of budget, or nesting deeper than three levels, blocks. Not a sandbox: `c=codex; $c`, `echo codex | sh` and other
 +# launchers still pass (see ops/proposals/codex-second-reviewer.md, Risks).
 +CODEX_WRAPPERS = {  # wrapper -> its single-letter options that take a separate argument
 +    "sudo": "ughpcCDrtU", "doas": "uC", "env": "uCS", "exec": "a", "nohup": "", "command": "",
@@ -520,6 +520,11 @@ open).
 +                while k < n and s[k] not in " \t\n;&|<>()":
 +                    k += 1
 +                delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
++                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
++                    cur.append(op)  # arithmetic shift (1<<3, $((1 << n))), not a heredoc
++                    started = True
++                    i = j
++                    continue
 +                heredocs.append((delim, op == "<<-"))
 +                j = k
 +            else:
@@ -614,7 +619,7 @@ open).
 +    """Check text run by `bash -c` or `eval`, charging the shared budget; out of budget blocks."""
 +    budget[0] -= len(text) + 1
 +    if budget[0] < 0 or depth >= 3:
-+        return budget[0] < 0
++        return True  # too deep or too much nested text: block
 +    return _codex_check(text, budget, depth + 1)
 +
 +
@@ -623,22 +628,22 @@ open).
 +        if _codex_runs(words, 0, budget, depth):
 +            return True
 +        for j, w in enumerate(words):
-+            if w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8):
++            if j and w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8):
 +                return True
 +    return False
 +
 +
 +def codex_command(cmd):
 +    """True if the Bash command `cmd` runs codex. Linear: one tokenizer pass per text, and nested
-+    texts (bash -c, eval) draw on one budget of 4x the command plus 4 KiB."""
++    texts (bash -c, eval) draw on one budget of 2x the command plus 4 KiB."""
 +    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "").lower()
 +    if "codex" not in flat:
 +        return False
-+    return _codex_check(cmd, [4 * len(cmd) + 4096], 0)
++    return _codex_check(cmd, [2 * len(cmd) + 4096], 0)
  # Every issue/PR/comment the agent writes starts with this tag. The agent shares the owner's
  # GitHub account; ops/driver/owner-issues.sh treats only UNTAGGED owner text as instructions.
  TAG = "\U0001F916 jpdf-agent"
-@@ -142,8 +385,11 @@
+@@ -142,8 +390,11 @@
      # The cmux socket has no password (owner's choice), so this block is the only barrier between
      # an agent and the owner's other terminal tabs. The word may appear only as quoted, inert
      # title/body text of a gh post; anywhere else (incl. bash -c, $(...), grep) it is blocked.
@@ -651,7 +656,7 @@ open).
      if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
          raise Block("scripting keystrokes into other apps is not allowed")
      if re.search(r"\bsecurity\s+(find-|dump-keychain|export)", c):
-@@ -378,6 +624,81 @@
+@@ -378,6 +629,85 @@
      R = lambda p: os.path.join(root, p)  # noqa: E731
      cases = [
          # (tool, input, should_block)
@@ -709,6 +714,9 @@ open).
 +        ("Bash", {"command": "coproc foo { codex exec; }"}, True),
 +        ("Bash", {"command": "c\\\nodex exec"}, True),
 +        ("Bash", {"command": "cat > target/scratch/b.md <<'EOF'\ndon't touch x\nEOF\ncodex exec - < target/scratch/b.md"}, True),
++        ("Bash", {"command": "x=$((1<<3))\ncodex exec x"}, True),
++        ("Bash", {"command": "(( m = 1 << 4 ))\ncodex exec"}, True),
++        ("Bash", {"command": "eval eval eval eval codex exec"}, True),
 +        ("Read", {"file_path": os.path.join(HOME, ".codex/auth.json")}, True),
 +        ("Bash", {"command": "ops/driver/codex-review.sh target/scratch/review-1.md target/scratch/codex-1.json"}, False),
 +        ("Bash", {"command": "./ops/driver/codex-review.sh a b"}, False),
@@ -730,10 +738,11 @@ open).
 +        ("Bash", {"command": "cat <<EOF > notes.md\n(codex) finding\nfoo; codex bar\nEOF\nls"}, False),
 +        ("Bash", {"command": "python3 - <<'EOF'\ncodex = 1\nEOF"}, False),
 +        ("Bash", {"command": "cargo test 2>&1 | grep codex"}, False),
++        ("Bash", {"command": "echo $((1<<2)) codex"}, False),
          ("Write", {"file_path": R("ops/judge/verdict.py"), "content": "x"}, True),
          ("Edit", {"file_path": R("CONSTITUTION.md"), "old_string": "a", "new_string": "b"}, True),
          ("Write", {"file_path": R(".claude/settings.local.json"), "content": "{}"}, True),
-@@ -475,6 +796,22 @@
+@@ -475,6 +805,22 @@
          if blocked != should:
              failures += 1
              print("FAIL: %s %s -> blocked=%s, expected %s" % (tool, json.dumps(ti)[:100], blocked, should))
@@ -742,7 +751,7 @@ open).
 +    pads = ("(" * 300000, "$(" * 150000, "`" * 300000, ";a=" * 100000, "a=b " * 75000,
 +            "/codex " * 43000, "((codexx" * 37500, "sudo -x " * 37500, "bash -c " * 37500,
 +            "'codex' " * 37500, "\\" * 300000, "${" * 150000, "-exec sudo " * 27000,
-+            "<<a\n" * 75000, "> " * 150000)
++            "<<a\n" * 75000, "> " * 150000, ("{ eval '" + "`a`" * 5000 + "' ") * 20)
 +    nested = "a " * 50000 + "echo codex"  # bash -c behind four -exec at each of three levels
 +    for _ in range(3):
 +        nested = "sudo -exec sudo -exec sudo -exec sudo -exec bash -c " + shlex.quote(nested)
@@ -870,8 +879,9 @@ and after the "what broken implementation still passes?" paragraph:
   `find -exec`, and quoting tricks (`co''dex`, `\codex`, a backslash-newline inside the word).
   These still pass: variables (`c=codex; $c`), `$'codex'`, ``c``odex``, pipes into a shell
   (`echo codex | sh`), other launchers (`script`, `parallel`, `watch`, `launchctl submit`),
-  `env -S "codex …"`, `bash -c` or `eval` nested more than three levels, more than 64 words of
-  wrappers before the command (8 after `-exec`), `$(` or backticks inside an unquoted heredoc body,
+  `env -S "codex …"`, more than 64 words of wrappers before the command (8 after `-exec`), `$(` or
+  backticks inside an unquoted heredoc body, a heredoc whose delimiter starts with a digit or `$`
+  (read as an arithmetic shift), a quoted heredoc delimiter containing spaces,
   renamed binaries and `python3 -c "os.system(...)"`. That is the same exposure the agent's Bash
   and `python3` already have. The settings deny `Bash(codex:*)` adds a second layer for the plain
   form. Known false positives: `command -v codex`, and a `case` pattern line that starts with
@@ -1017,7 +1027,18 @@ all fixed:
   filters and `.git/info/attributes` still changed the export; now a byte-for-byte check).
 - **Nits:** the owner step's temp name; a backslash-newline inside the word skipped the fast path.
 
-**Re-tested after round 5** (fake codex in a throwaway repo under `target/scratch/`, `/bin/bash`
+**Round 6.** A sixth fresh reviewer tested the round-5 tokenizer changes (350k fuzz inputs, about
+60 targeted 1 MB inputs, the full hook; no `codex exec`). 1 major, 2 minor; fixed:
+- **Major:** an arithmetic shift (`x=$((1<<3))`, `(( m = 1 << 4 ))`) was read as a heredoc with
+  delimiter `3`, hiding every later line, so `x=$((1<<3))` + newline + `codex exec` passed. Fixed:
+  a `<<` whose delimiter starts with a digit, `$` or `(` is an arithmetic shift (self-tests added).
+- **Minor:** `{ eval '…' }` repeated to 1 MB took 2.1 s (each `{ eval` was parsed twice); fixed
+  with a 2× budget and no extra scan at word 0 (now 0.31 s, in the timing self-test). The depth cap
+  returned "no codex" (`eval eval eval eval codex` passed); it now blocks.
+- **Not changed:** a quoted heredoc delimiter containing spaces (listed in Risks). No exceptions,
+  no new false positives, and the byte check fails closed on every error the reviewer tried.
+
+**Re-tested after round 6** (fake codex in a throwaway repo under `target/scratch/`, `/bin/bash`
 3.2.57; the harness is not committed). Earlier rounds' checks, all still passing:
 - ok run, absolute paths, and non-JSON output each give the right `status`/`reason`; the prompt
   starts with the preamble; the export has no manifest, and inside it `git rev-parse
