@@ -73,10 +73,10 @@ GitHub (public repo jacobdam/jpdf3)
    d. `crash` / `security` issues
    e. ratchet or nightly regressions, `flaky` tests
    f. leftover branch from a dead session → resume or discard
-   g. `ready` task in the current milestone (dependencies met, lowest number)
-   h. milestone backlog empty → run gate (§9) or generate next milestone's backlog
-   i. every 10th merge or 7 days → AUDIT session instead (§10)
-   j. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
+   g. every 10th merge or 7 days → AUDIT session instead (§10)
+   h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
+   i. `ready` task in the current milestone (dependencies met, lowest number)
+   j. milestone backlog empty → run gate (§9) or generate next milestone's backlog
 3. SIZE CHECK: will this fit in one session? If not → split into issues, exit.
 4. CLAIM: assign the issue + comment "claimed by session <id>", then re-read to confirm the claim.
 5. WORK in a worktree: spec (with checklist §5.2) → failing tests → code →
