@@ -324,6 +324,9 @@ fn caller_limits_cannot_loosen_the_defaults() {
         lex_budget_factor: usize::MAX,
         ..Limits::default()
     };
+    // The document keeps the clamped limits for later operations.
+    let doc = Document::open(&minimal_pdf(1), &loose).map_err(|e| e.to_string());
+    assert_eq!(doc.map(|d| d.limits().clone()), Ok(Limits::default()));
     assert_eq!(
         Document::open(&nested_pdf(100_000), &loose).map(|d| d.page_count()),
         Err(EngineError::LimitExceeded("nesting depth"))
@@ -338,6 +341,44 @@ fn caller_limits_cannot_loosen_the_defaults() {
     assert_eq!(
         Document::open(&nested_pdf(default_depth), &loose).map(|d| d.page_count()),
         Err(EngineError::LimitExceeded("nesting depth"))
+    );
+}
+
+/// The base file plus `updates` incremental sections, each re-pointing object 1 at the original
+/// catalog, chained by `/Prev`: `updates + 1` cross-reference sections in total.
+fn prev_chain_pdf(updates: usize) -> Vec<u8> {
+    let prefix = b"%PDF-1.7\n";
+    let (mut file, mut prev) = build(prefix, 1, &page_objects(1), "");
+    for _ in 0..updates {
+        let xref_at = file.len();
+        file.extend(
+            format!(
+                "xref\n1 1\n{:010} 00000 n\r\ntrailer\n<< /Size 4 /Root 1 0 R /Prev {prev} >>\nstartxref\n{xref_at}\n%%EOF\n",
+                prefix.len()
+            )
+            .as_bytes(),
+        );
+        prev = xref_at;
+    }
+    file
+}
+
+/// A second clamped field, end to end: the caller's `max_xref_sections` can't exceed the
+/// default either, so `open` passes the defaults as the ceiling for more than the depth.
+#[test]
+fn caller_xref_section_limit_is_clamped() {
+    let loose = Limits {
+        max_xref_sections: usize::MAX,
+        ..Limits::default()
+    };
+    let max = Limits::default().max_xref_sections;
+    assert_eq!(
+        Document::open(&prev_chain_pdf(max - 1), &loose).map(|d| d.page_count()),
+        Ok(1)
+    );
+    assert_eq!(
+        Document::open(&prev_chain_pdf(max), &loose).map(|d| d.page_count()),
+        Err(EngineError::LimitExceeded("cross-reference sections"))
     );
 }
 

@@ -14,7 +14,9 @@ and operations budget) and #107 (object resolve cache).
    field-wise minimum of `self` and `ceiling`. Every `Limits` field is an upper bound (a
    smaller value is always stricter, `lex_budget_factor` and `lex_budget_slack` included), so
    the result is never looser than either side. The function destructures `Limits`
-   exhaustively, so a new field doesn't compile until it is clamped.
+   exhaustively, so a new field doesn't compile until it is listed there; the tests'
+   `all_fields` literal must list it too, and `clamping_works_per_field_one_past_the_ceiling`
+   fails if it isn't clamped.
 2. **`Document::open(bytes, &Limits)` clamps first.** Its first statement replaces the
    caller's limits with `limits.clamped_to(&Limits::default())`, and only the clamped value
    reaches the size check, the xref parser and the page tree. Front ends (CLI, Swift and JS
@@ -32,9 +34,13 @@ and operations budget) and #107 (object resolve cache).
    land before the first cache does.
    - `max_decoded_bytes_per_document` (4 GiB) stays. It is a lifetime total (time bound against
      many small bombs), not a memory bound; its doc comment now says so and points here.
-   - Default budget: the file (512 MiB) + retained (256 MiB) + one stream being decoded
-     (256 MiB) + one render's working memory (1 GiB) = 2 GiB, the judge's address-space cap.
-     Two of the largest font programs (64 MiB each) fit the retained budget.
+   - Charged budgets: the file (512 MiB) + retained (256 MiB) + one stream being decoded
+     (256 MiB) + one render's working memory (1 GiB) = exactly 2 GiB, the judge's
+     address-space cap. That is a ceiling on these four terms only. The binary, stacks, the
+     xref table (up to ~120 MiB), one parse's objects and strings, and decoder slack are not
+     charged, so the defaults leave **no headroom**. #109 adds a reserve and lowers a default.
+   - Not enforced yet: no cache exists, so nothing charges the field. Docs say the future
+     face cache "must" charge it.
 
 ## Persistence
 Nothing is persisted. Limits are per process call.
@@ -58,13 +64,23 @@ give `LimitExceeded("nesting depth")` even with `max_nesting_depth = 10_000_000`
     a catalog with 255 nested arrays (depth 256, the default) opens and 256 arrays are refused;
     100,000 arrays are refused instead of aborting
     (`caller_limits_cannot_loosen_the_defaults`). A tighter depth of 11 still binds at
-    exactly 10/11 arrays (`caller_limits_can_tighten_the_defaults`).
+    exactly 10/11 arrays (`caller_limits_can_tighten_the_defaults`). The opened document
+    reports the defaults as its limits.
+  - engine, a second field: with `max_xref_sections = usize::MAX`, a `/Prev` chain of 1024
+    sections (the default) opens and 1025 are refused
+    (`caller_xref_section_limit_is_clamped`). This fails an `open` that clamps only the depth
+    (checked by hand).
 - `max_retained_bytes_per_document` has no boundary test yet because nothing charges it; the
   first cache (#107) adds the at-limit / one-past test.
+- `charged_budgets_do_not_exceed_the_process_budget` checks the four charged terms sum to at
+  most 2 GiB; it can't see the uncharged terms (#109).
 
 ## Security
-- Trust boundary: the clamp sits in the facade every front end goes through, so a hostile or
-  buggy binding value cannot raise any limit (CONSTITUTION 4, 5).
+- Trust boundary: the clamp sits in `Document::open`, today the only engine entry point, so a
+  hostile or buggy binding value cannot raise any limit through it (CONSTITUTION 4, 5).
+  `Document` keeps the clamped limits (`Document::limits()`), so later operations use them
+  instead of taking a fresh `&Limits`. That bindings call only `jpdf-engine` is a convention
+  (ADR 0008); `bindings/` doesn't exist yet, and a dependency check belongs with it.
 - Self-check:
   - Arithmetic: `clamped_to` only takes minimums (no arithmetic). The budget test uses
     saturating sums on constants.
@@ -93,7 +109,7 @@ One struct copy per `Document::open`; no measurable cost.
 - `crates/jpdf-traits/src/limits.rs`: `clamping_lowers_every_looser_field_to_the_ceiling`,
   `clamping_keeps_every_tighter_field`, `clamping_works_per_field_one_past_the_ceiling`,
   `clamping_uses_each_field_of_the_ceiling`,
-  `simultaneous_worst_cases_fit_the_process_budget`.
+  `charged_budgets_do_not_exceed_the_process_budget`.
 - `crates/jpdf-engine/tests/open.rs`: `caller_limits_cannot_loosen_the_defaults`,
-  `caller_limits_can_tighten_the_defaults`.
+  `caller_limits_can_tighten_the_defaults`, `caller_xref_section_limit_is_clamped`.
 - No E2E IDs (no UI).

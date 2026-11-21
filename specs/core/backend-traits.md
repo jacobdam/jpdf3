@@ -48,7 +48,7 @@ defaults:
 |---|---|---|
 | `max_decoded_bytes_per_stream` | 256 MiB | One backend call's output; fits a 32-bit `usize` (wasm32) |
 | `max_decoded_bytes_per_document` | 4 GiB (`u64`) | Lifetime total charged by the engine; time bound against many small bombs |
-| `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Every cache charges it and evicts or recomputes instead of exceeding it (#79, specs/core/limits-ceiling.md) |
+| `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Not enforced yet (no cache exists): every cache added must charge it and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
 | `max_image_pixels` | 100,000,000 | Header check before any allocation; binds for 1–2 byte pixels, while the 256 MiB output cap binds first for RGB/CMYK |
 | `max_image_dimension` | 2^20 | Long strips stay legal; the pixel limit does the real bounding |
 | `max_image_components` | 33 | ISO 32000-2 Annex C: DeviceN has at most 32 colorants, plus one alpha channel (`SMaskInData`) |
@@ -132,8 +132,8 @@ clamps caller limits to the defaults, so front ends can only tighten them
 `Differences`, CMaps, the §9.6.5.4 `cmap` rules) stays in `jpdf-fonts`, so swapping a backend
 can't change which glyph a page shows. Backends only answer questions about the program.
 - `FontEngine`, `Type1Parser` and `FontFace` are `Send + Sync`: faces are long-lived, cached
-  per document and shared across rendering threads. A cached face and the program bytes it
-  borrows are charged to `max_retained_bytes_per_document`.
+  per document and shared across rendering threads. The face cache (not written yet) must
+  charge each cached face and the program bytes it borrows to `max_retained_bytes_per_document`.
 - `FontEngine::load(data, FontProgram, &FontLimits) -> Box<dyn FontFace + 'a>`.
   `FontProgram::Sfnt` is `FontFile2` or OpenType `FontFile3` (`glyf`, `CFF ` or `CFF2`
   outlines; no collections). `FontProgram::BareCff` is `FontFile3` `Type1C`/`CIDFontType0C`.

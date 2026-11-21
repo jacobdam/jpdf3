@@ -75,7 +75,9 @@ impl Limits {
     /// front end passes (Swift, JS, CLI) to [`Limits::default`] (CONSTITUTION 4 and 5). Every
     /// field is an upper bound, so the field-wise minimum is never looser than either side.
     pub fn clamped_to(&self, ceiling: &Limits) -> Limits {
-        // Exhaustive destructuring: a new field fails to compile until it is clamped here.
+        // Exhaustive destructuring: a new field fails to compile until it is listed here. That
+        // it is really clamped is checked by the tests' `all_fields` literal, which must list
+        // it too.
         let Limits {
             max_file_size,
             max_nesting_depth,
@@ -461,10 +463,12 @@ mod tests {
     }
 
     #[test]
-    fn simultaneous_worst_cases_fit_the_process_budget() {
-        // One file held in memory, everything a document may retain, one stream being decoded
-        // and one render's working memory, all at once, stay within the judge's 2 GiB
-        // address-space cap (PLAN §2.2).
+    fn charged_budgets_do_not_exceed_the_process_budget() {
+        // The four budgets the engine charges (the file held in memory, what a document
+        // retains, one stream being decoded, one render's working memory) sum to at most the
+        // judge's 2 GiB address-space cap (PLAN §2.2). This is a ceiling on the charged terms
+        // only: the binary, stacks, the xref table and one parse's objects are not charged and
+        // have no headroom at these defaults (#109).
         let l = Limits::default();
         let file = u64::try_from(l.max_file_size).unwrap_or(u64::MAX);
         let stream = u64::try_from(l.max_decoded_bytes_per_stream).unwrap_or(u64::MAX);
@@ -473,11 +477,6 @@ mod tests {
             .saturating_add(stream)
             .saturating_add(l.max_raster_working_bytes);
         assert!(total <= 2 << 30, "{total} bytes");
-        assert!(
-            l.max_retained_bytes_per_document
-                >= 2 * u64::try_from(l.max_font_program_bytes).unwrap_or(u64::MAX),
-            "two of the largest font programs can stay cached"
-        );
     }
 
     #[test]

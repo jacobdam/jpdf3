@@ -26,5 +26,7 @@ the facade take `&Limits` unclamped; they are only called by the engine and by t
   other change (CONSTITUTION 4).
 - A future option such as "open huge files" needs an explicit, reviewed ceiling, not a
   caller-supplied value.
-- Every new engine entry point that takes `&Limits` must clamp the same way; the spec
-  (specs/core/limits-ceiling.md) lists the rule.
+- `Document` keeps the clamped limits, so operations on an opened document use them instead of
+  taking `&Limits` again. Any new entry point that does take `&Limits` must clamp the same way
+  (specs/core/limits-ceiling.md). The "bindings call only `jpdf-engine`" rule is a convention
+  until `bindings/` exists; that change adds a dependency check.
