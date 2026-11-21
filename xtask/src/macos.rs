@@ -429,6 +429,7 @@ mod tests {
 
     #[test]
     fn capture_feeds_stdin_while_reading_output() {
+        // specs/ui-macos/app-skeleton.md Security (#83 item 6).
         // 300 000 bytes each way is well over a pipe buffer (64 KiB on macOS and Linux). The
         // tool writes all its output before it reads any input: writing stdin first, then
         // reading, deadlocks here.
@@ -447,6 +448,7 @@ mod tests {
 
     #[test]
     fn capture_reports_unread_input_and_failures() {
+        // specs/ui-macos/app-skeleton.md Security (#83 item 6).
         // A tool that exits 0 without reading 300 000 bytes of input didn't get its input.
         let e = capture_within(&["-c", "exit 0"], vec![b'b'; 300_000]).unwrap_err();
         assert!(e.starts_with("/bin/sh: write stdin: "), "{e}");

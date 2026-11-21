@@ -643,16 +643,26 @@ fn probes_are_bounded_and_versions_filtered() {
     assert!(took < Duration::from_secs(15), "{took:?}");
 }
 
-/// True while process `pid` exists (a zombie counts until its parent reaps it).
+/// True while process `pid` runs. A zombie counts as gone: the SIGKILL worked, and its new
+/// parent (pid 1 or a subreaper, which may never reap in a container) owns it now. Without
+/// `ps`, falls back to `kill -0` (a zombie then counts as alive).
 fn try_pid_alive(pid: &str) -> io::Result<bool> {
-    Command::new("kill")
-        .args(["-0", pid])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    match Command::new("ps").args(["-o", "stat=", "-p", pid]).output() {
+        Ok(o) => {
+            let stat = String::from_utf8_lossy(&o.stdout);
+            let stat = stat.trim();
+            Ok(!stat.is_empty() && !stat.starts_with('Z'))
+        }
+        Err(_) => Command::new("kill")
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success()),
+    }
 }
 
-/// Waits up to `limit` for `pid` to be gone; on failure kills it so it can't leak.
+/// Waits up to `limit` for `pid` to be gone; on failure kills it (still running, so the
+/// pid wasn't reused) so it can't leak.
 fn try_gone_within(pid: &str, limit: Duration) -> io::Result<bool> {
     let start = std::time::Instant::now();
     while start.elapsed() < limit {

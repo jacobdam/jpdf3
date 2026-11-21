@@ -258,7 +258,8 @@ fn read_text(path: &Path) -> Result<String, String> {
     // the read is capped, so a file grown after the check can't flood us. Not covered: a
     // swap to a FIFO between the lstat and the open (the open would block); these are
     // repository files. Closing it needs `O_NONBLOCK` through `custom_flags`, with
-    // per-target flag values; not done.
+    // per-target flag values; not done. Likewise a swap to a symlink in that window is
+    // followed (the fstat then sees whatever it points to).
     let link = fs::symlink_metadata(path).map_err(|e| format!("cannot read: {e}"))?;
     if !link.is_file() {
         return Err(not_regular(&link));

@@ -93,8 +93,9 @@ Status: implemented
    survive: the group kill takes one `/bin/sh` spawn, milliseconds). After a timeout, `-` is
    written before the reap, while the zombie leader still reserves the id. The windows
    between spawn and registration, and between a normal exit's reap and `-`, are
-   microseconds wide and not covered. Lines `0` and `1` never kill (`kill -- -1` would hit
-   every process of the user).
+   microseconds wide and not covered. Only lines `2`..`9999999` without leading zeros kill
+   (`kill -- -1`, also written `-01`, would hit every process of the user; `-0` is the
+   watchdog's own group).
    The watchdog holds one group, so runs never overlap (the bench is sequential).
    Children that leave the group on purpose are out of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
@@ -193,6 +194,11 @@ short writes to the watchdog.
   after its id kills it; after `<id>`, `-` it survives; a later id replaces an earlier one
   (a second sleeper with the earlier id survives); lines other than digits (`-<id>`, `<id>x`)
   kill nothing. Only the sleepers' ids are written, never `1`;
+- the watchdog's id guard, with `kill` replaced by `echo` (so no signal is sent): `2`,
+  `12345`, `9999999` reach the kill; empty input, `-`, `0`, `1`, `00`, `01`, `012345`,
+  `10000000`, `4294967297`, `12x`, `-12`, ` 12` and `<id>`,`-` don't;
+- a recorder (test builds only) sees `probe` register the group and unregister it for a
+  normal exit, and for a timeout register, unregister, then reap, in that order;
 - the bench under Ctrl-C (SIGINT to its process group), SIGTERM and SIGKILL while an engine
   runs: the engine's grandchild (in the engine's group) is gone within 5 s. Without the
   watchdog, or with the watchdog in the bench's group, the INT case fails;
