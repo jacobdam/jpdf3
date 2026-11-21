@@ -51,6 +51,16 @@ pub struct Limits {
     /// Operations in one outline call: charstring operators executed plus composite
     /// components visited (CPU bound for subroutine and composite loops).
     pub max_outline_ops: u32,
+    /// Pixels in one rasterizer canvas (one tile; the engine renders larger views in tiles).
+    pub max_canvas_pixels: u64,
+    /// Segments in one rasterizer path, and dashes one dashed stroke may produce.
+    pub max_path_segments: u32,
+    /// Nesting depth of rasterizer clips.
+    pub max_clip_depth: u16,
+    /// Nesting depth of rasterizer layers (transparency groups).
+    pub max_layer_depth: u16,
+    /// Nominal working memory of one render (see [`crate::SceneStats::working_bytes`]).
+    pub max_raster_working_bytes: u64,
 }
 
 impl Limits {
@@ -71,6 +81,17 @@ impl Limits {
             max_image_pixels: self.max_image_pixels,
             max_image_dimension: self.max_image_dimension,
             max_image_components: self.max_image_components,
+        }
+    }
+
+    /// The limits for rasterizer calls.
+    pub fn raster_limits(&self) -> RasterLimits {
+        RasterLimits {
+            max_canvas_pixels: self.max_canvas_pixels,
+            max_path_segments: self.max_path_segments,
+            max_clip_depth: self.max_clip_depth,
+            max_layer_depth: self.max_layer_depth,
+            max_working_bytes: self.max_raster_working_bytes,
         }
     }
 
@@ -107,6 +128,11 @@ impl Default for Limits {
             max_font_glyphs: u16::MAX,
             max_outline_points: 1 << 17,
             max_outline_ops: 1 << 20,
+            max_canvas_pixels: 1 << 24,
+            max_path_segments: 1 << 20,
+            max_clip_depth: 64,
+            max_layer_depth: 32,
+            max_raster_working_bytes: 1 << 30,
         }
     }
 }
@@ -156,6 +182,29 @@ impl Default for FontLimits {
     }
 }
 
+/// The limits a [`crate::Rasterizer`] must enforce before drawing
+/// ([`crate::check_scene`] checks them all). Exceeding one fails with
+/// [`crate::BackendError::LimitExceeded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterLimits {
+    /// Most canvas pixels (width × height).
+    pub max_canvas_pixels: u64,
+    /// Most segments in one path; also the most dashes one dashed stroke may produce.
+    pub max_path_segments: u32,
+    /// Deepest clip nesting.
+    pub max_clip_depth: u16,
+    /// Deepest layer nesting.
+    pub max_layer_depth: u16,
+    /// Most nominal working bytes, `pixels × (4 × (1 + layer depth) + clip depth)`.
+    pub max_working_bytes: u64,
+}
+
+impl Default for RasterLimits {
+    fn default() -> Self {
+        Limits::default().raster_limits()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +230,39 @@ mod tests {
         assert!(u32::try_from(limits.max_decoded_bytes_per_stream).is_ok());
         assert!(u32::try_from(limits.max_file_size).is_ok());
         assert!(u32::try_from(limits.max_font_program_bytes).is_ok());
+    }
+
+    #[test]
+    fn raster_limits_copy_the_document_limits() {
+        let limits = Limits {
+            max_canvas_pixels: 1,
+            max_path_segments: 2,
+            max_clip_depth: 3,
+            max_layer_depth: 4,
+            max_raster_working_bytes: 5,
+            ..Limits::default()
+        };
+        assert_eq!(
+            limits.raster_limits(),
+            RasterLimits {
+                max_canvas_pixels: 1,
+                max_path_segments: 2,
+                max_clip_depth: 3,
+                max_layer_depth: 4,
+                max_working_bytes: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn default_raster_limits_fit_the_memory_budget() {
+        // A full-size canvas with 4 layers and 32 clips stays within the working bytes.
+        let r = RasterLimits::default();
+        assert!(r.max_canvas_pixels * (4 * (1 + 4) + 32) <= r.max_working_bytes);
+        assert!(
+            r.max_working_bytes <= 1 << 30,
+            "half of the 2 GiB process budget"
+        );
     }
 
     #[test]

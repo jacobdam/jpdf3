@@ -1,0 +1,628 @@
+//! Rasterizing a display list into RGBA pixels (ISO 32000-2 §8.4–§8.5 paths and strokes,
+//! §8.9.4 image space, §11.3 compositing and blend modes).
+//!
+//! `jpdf-render` turns a page into a list of [`DrawCommand`]s in device space and hands it to
+//! a [`Rasterizer`]. Everything PDF-specific (colour spaces, shadings, text, soft-mask
+//! luminosity, knockout groups) is resolved before this boundary, so swapping a backend can
+//! only change anti-aliasing and rounding, never what a page shows.
+
+use crate::{BackendError, PathSegment, RasterLimits};
+
+/// An affine transform `[a b c d e f]` in PDF order (ISO 32000-2 §8.3.3): a point `(x, y)`
+/// maps to `(a·x + c·y + e, b·x + d·y + f)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform {
+    /// `a`.
+    pub a: f32,
+    /// `b`.
+    pub b: f32,
+    /// `c`.
+    pub c: f32,
+    /// `d`.
+    pub d: f32,
+    /// `e`.
+    pub e: f32,
+    /// `f`.
+    pub f: f32,
+}
+
+impl Transform {
+    /// The identity.
+    pub const IDENTITY: Self = Self::new(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+
+    /// A transform from its six entries.
+    pub const fn new(a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Self {
+        Self { a, b, c, d, e, f }
+    }
+
+    /// Whether every entry is finite.
+    pub fn is_finite(&self) -> bool {
+        [self.a, self.b, self.c, self.d, self.e, self.f]
+            .iter()
+            .all(|v| v.is_finite())
+    }
+}
+
+/// Which points a path covers (ISO 32000-2 §8.5.3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillRule {
+    /// Nonzero winding number.
+    NonZero,
+    /// Even-odd.
+    EvenOdd,
+}
+
+/// A colour in the device's RGB space (already colour-managed by `jpdf-color`), with
+/// straight (not premultiplied) alpha. Every component is finite and in `0.0..=1.0`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Color {
+    /// Red.
+    pub r: f32,
+    /// Green.
+    pub g: f32,
+    /// Blue.
+    pub b: f32,
+    /// Alpha (PDF constant alpha `CA`/`ca` folded in).
+    pub a: f32,
+}
+
+impl Color {
+    /// A colour from its components.
+    pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { r, g, b, a }
+    }
+
+    fn is_valid(&self) -> bool {
+        [self.r, self.g, self.b, self.a]
+            .iter()
+            .all(|v| (0.0..=1.0).contains(v))
+    }
+}
+
+/// The blend modes of ISO 32000-2 §11.3.5 (Tables 134 and 135).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlendMode {
+    /// `Normal` (and `Compatible`).
+    Normal,
+    /// `Multiply`.
+    Multiply,
+    /// `Screen`.
+    Screen,
+    /// `Overlay`.
+    Overlay,
+    /// `Darken`.
+    Darken,
+    /// `Lighten`.
+    Lighten,
+    /// `ColorDodge`.
+    ColorDodge,
+    /// `ColorBurn`.
+    ColorBurn,
+    /// `HardLight`.
+    HardLight,
+    /// `SoftLight`.
+    SoftLight,
+    /// `Difference`.
+    Difference,
+    /// `Exclusion`.
+    Exclusion,
+    /// `Hue` (non-separable).
+    Hue,
+    /// `Saturation` (non-separable).
+    Saturation,
+    /// `Color` (non-separable).
+    Color,
+    /// `Luminosity` (non-separable).
+    Luminosity,
+}
+
+impl BlendMode {
+    /// Every mode, in Table 134/135 order.
+    pub const ALL: [Self; 16] = [
+        Self::Normal,
+        Self::Multiply,
+        Self::Screen,
+        Self::Overlay,
+        Self::Darken,
+        Self::Lighten,
+        Self::ColorDodge,
+        Self::ColorBurn,
+        Self::HardLight,
+        Self::SoftLight,
+        Self::Difference,
+        Self::Exclusion,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
+    ];
+}
+
+/// How a fill or stroke paints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    /// The colour.
+    pub color: Color,
+    /// How it composites with the backdrop.
+    pub blend: BlendMode,
+    /// Area coverage at edges when true; pixel-centre sampling when false.
+    pub anti_alias: bool,
+}
+
+/// Line cap style (ISO 32000-2 §8.4.3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineCap {
+    /// Butt cap.
+    Butt,
+    /// Round cap.
+    Round,
+    /// Projecting square cap.
+    Square,
+}
+
+/// Line join style (ISO 32000-2 §8.4.3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineJoin {
+    /// Miter join, bevelled beyond the miter limit.
+    Miter,
+    /// Round join.
+    Round,
+    /// Bevel join.
+    Bevel,
+}
+
+/// Stroke parameters (ISO 32000-2 §8.4.3), in user space: the draw command's transform
+/// applies to the pen too.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeStyle {
+    /// Line width, finite and at least 0. 0 is the thinnest line the device can draw.
+    pub width: f32,
+    /// Cap at open ends and dashes.
+    pub cap: LineCap,
+    /// Join between segments.
+    pub join: LineJoin,
+    /// Miter limit, finite and at least 1 (§8.4.3.5).
+    pub miter_limit: f32,
+    /// Dash array (§8.4.3.6): empty for a solid line; otherwise finite, non-negative and not
+    /// all zero. An odd-length array repeats, so `[3]` means 3 on, 3 off.
+    pub dash: Vec<f32>,
+    /// Dash phase, finite.
+    pub dash_phase: f32,
+}
+
+impl StrokeStyle {
+    /// A solid stroke of `width` with butt caps and miter joins (limit 10, the PDF default).
+    pub fn solid(width: f32) -> Self {
+        Self {
+            width,
+            cap: LineCap::Butt,
+            join: LineJoin::Miter,
+            miter_limit: 10.0,
+            dash: Vec::new(),
+            dash_phase: 0.0,
+        }
+    }
+}
+
+/// An image to draw: 8-bit RGBA with straight alpha, rows top to bottom, no padding. Colour
+/// conversion, `Decode` and soft masks are already applied.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RgbaImage<'a> {
+    /// Width in pixels, at least 1.
+    pub width: u32,
+    /// Height in pixels, at least 1.
+    pub height: u32,
+    /// `width × height × 4` bytes.
+    pub data: &'a [u8],
+}
+
+/// One display-list command. Paths are in user space and use [`PathSegment`]s: each subpath
+/// starts with `MoveTo` and may end with `Close`; after a `Close` the next segment must be a
+/// `MoveTo`. Fills close open subpaths implicitly; strokes leave them open.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DrawCommand<'a> {
+    /// Fills a path.
+    Fill {
+        /// The path.
+        path: &'a [PathSegment],
+        /// Fill rule.
+        rule: FillRule,
+        /// User space to device space.
+        transform: Transform,
+        /// Paint.
+        paint: Paint,
+    },
+    /// Strokes a path.
+    Stroke {
+        /// The path.
+        path: &'a [PathSegment],
+        /// Pen.
+        style: &'a StrokeStyle,
+        /// User space to device space (applies to the pen as well).
+        transform: Transform,
+        /// Paint.
+        paint: Paint,
+    },
+    /// Draws an image into the parallelogram the transform makes of the unit square. As in
+    /// ISO 32000-2 §8.9.4, the image's first row maps to `v = 1`: the top-left pixel is at
+    /// image-space `(0, 1)`.
+    Image {
+        /// The pixels.
+        image: RgbaImage<'a>,
+        /// Unit square to device space.
+        transform: Transform,
+        /// Smooth when scaling (`/Interpolate`); nearest neighbour when false.
+        interpolate: bool,
+        /// Multiplies the image's alpha; finite, in `0.0..=1.0`.
+        opacity: f32,
+        /// How it composites with the backdrop.
+        blend: BlendMode,
+    },
+    /// Intersects the clip with a path until the matching [`DrawCommand::PopClip`].
+    PushClip {
+        /// The path.
+        path: &'a [PathSegment],
+        /// Fill rule (`W` or `W*`).
+        rule: FillRule,
+        /// User space to device space.
+        transform: Transform,
+        /// Soft clip edges when true; pixel-centre sampling when false.
+        anti_alias: bool,
+    },
+    /// Ends the innermost clip.
+    PopClip,
+    /// Starts an isolated, non-knockout transparency group (§11.4.7): following commands
+    /// draw into a transparent buffer until the matching [`DrawCommand::PopLayer`], which
+    /// composites it onto the backdrop.
+    PushLayer {
+        /// Group opacity; finite, in `0.0..=1.0`.
+        opacity: f32,
+        /// How the group composites with the backdrop.
+        blend: BlendMode,
+        /// Optional soft mask, one byte per canvas pixel (rows top to bottom), already
+        /// computed by the caller (§11.6.5); multiplies the group's alpha.
+        mask: Option<&'a [u8]>,
+    },
+    /// Ends the innermost layer.
+    PopLayer,
+}
+
+/// The rendered canvas: 8-bit RGBA, **premultiplied** alpha, rows top to bottom, no padding.
+/// Every colour byte is at most its pixel's alpha byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pixmap {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// `width × height × 4` bytes.
+    pub data: Vec<u8>,
+}
+
+impl Pixmap {
+    /// The premultiplied RGBA of pixel `(x, y)`, or `None` outside the canvas.
+    pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let index = (y as usize)
+            .checked_mul(self.width as usize)?
+            .checked_add(x as usize)?
+            .checked_mul(4)?;
+        self.data.get(index..index.checked_add(4)?)?.try_into().ok()
+    }
+}
+
+/// What [`check_scene`] measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneStats {
+    /// Deepest clip nesting.
+    pub clip_depth: u16,
+    /// Deepest layer nesting.
+    pub layer_depth: u16,
+    /// Nominal working memory: `pixels × (4 × (1 + layer_depth) + clip_depth)`, one RGBA
+    /// buffer for the canvas and each layer plus one 8-bit mask per clip.
+    pub working_bytes: u64,
+}
+
+/// Turns a display list into pixels. Implementations are stateless and shared across
+/// rendering threads.
+pub trait Rasterizer: Send + Sync {
+    /// Renders `commands` onto a transparent `width × height` canvas. Device space has its
+    /// origin at the top-left corner, x to the right and y down; pixel `(i, j)` covers
+    /// `[i, i+1) × [j, j+1)`. Compositing is the §11.3.6 source-over formula with the
+    /// command's blend mode, in the device's encoded RGB values.
+    ///
+    /// Before drawing, an implementation validates the whole list and enforces `limits`
+    /// ([`check_scene`] does both). Invalid input gives
+    /// [`BackendError::InvalidArgument`]; a limit gives [`BackendError::LimitExceeded`],
+    /// including a dashed stroke that would produce more than `max_path_segments` dashes.
+    /// Curve flattening must stay bounded for any finite coordinates (clip to the canvas
+    /// first); a hang is a failure even though no error type describes it.
+    fn render(
+        &self,
+        width: u32,
+        height: u32,
+        commands: &[DrawCommand<'_>],
+        limits: &RasterLimits,
+    ) -> Result<Pixmap, BackendError>;
+}
+
+/// Validates a display list and checks it against `limits`, without drawing. Adapters call
+/// this first. Errors:
+/// - `InvalidArgument`: a zero-size canvas; a non-finite number anywhere; a colour, opacity
+///   or mask outside its range; a negative stroke width; a miter limit below 1; a negative
+///   or all-zero dash array; an empty image or one whose data length isn't
+///   `width × height × 4`; a mask whose length isn't the canvas's pixel count; a malformed
+///   path; a pop that doesn't match the innermost push; a push left open at the end.
+/// - `LimitExceeded`: canvas pixels, segments in one path, clip or layer depth, or
+///   [`SceneStats::working_bytes`] above the limit.
+pub fn check_scene(
+    width: u32,
+    height: u32,
+    commands: &[DrawCommand<'_>],
+    limits: &RasterLimits,
+) -> Result<SceneStats, BackendError> {
+    use BackendError::{InvalidArgument, LimitExceeded};
+    if width == 0 || height == 0 {
+        return Err(InvalidArgument("zero-size canvas"));
+    }
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > limits.max_canvas_pixels {
+        return Err(LimitExceeded("canvas pixels"));
+    }
+    let check_path = |path: &[PathSegment]| -> Result<(), BackendError> {
+        if u64::try_from(path.len()).unwrap_or(u64::MAX) > u64::from(limits.max_path_segments) {
+            return Err(LimitExceeded("path segments"));
+        }
+        if !path_is_valid(path) {
+            return Err(InvalidArgument("malformed path"));
+        }
+        Ok(())
+    };
+    let check_transform = |t: &Transform| {
+        if t.is_finite() {
+            Ok(())
+        } else {
+            Err(InvalidArgument("non-finite transform"))
+        }
+    };
+    let unit = |v: f32| (0.0..=1.0).contains(&v);
+    // true = clip, false = layer.
+    let mut stack: Vec<bool> = Vec::new();
+    let (mut clips, mut layers) = (0u16, 0u16);
+    let (mut max_clips, mut max_layers) = (0u16, 0u16);
+    for command in commands {
+        match command {
+            DrawCommand::Fill {
+                path,
+                transform,
+                paint,
+                ..
+            } => {
+                check_path(path)?;
+                check_transform(transform)?;
+                if !paint.color.is_valid() {
+                    return Err(InvalidArgument("colour out of range"));
+                }
+            }
+            DrawCommand::Stroke {
+                path,
+                style,
+                transform,
+                paint,
+            } => {
+                check_path(path)?;
+                check_transform(transform)?;
+                if !paint.color.is_valid() {
+                    return Err(InvalidArgument("colour out of range"));
+                }
+                check_stroke(style)?;
+            }
+            DrawCommand::Image {
+                image,
+                transform,
+                opacity,
+                ..
+            } => {
+                check_transform(transform)?;
+                if !unit(*opacity) {
+                    return Err(InvalidArgument("opacity out of range"));
+                }
+                let expected = u64::from(image.width) * u64::from(image.height) * 4;
+                if image.width == 0
+                    || image.height == 0
+                    || u64::try_from(image.data.len()).ok() != Some(expected)
+                {
+                    return Err(InvalidArgument("image size"));
+                }
+            }
+            DrawCommand::PushClip {
+                path, transform, ..
+            } => {
+                check_path(path)?;
+                check_transform(transform)?;
+                clips = clips.saturating_add(1);
+                if clips > limits.max_clip_depth {
+                    return Err(LimitExceeded("clip depth"));
+                }
+                max_clips = max_clips.max(clips);
+                stack.push(true);
+            }
+            DrawCommand::PushLayer { opacity, mask, .. } => {
+                if !unit(*opacity) {
+                    return Err(InvalidArgument("opacity out of range"));
+                }
+                if let Some(mask) = mask
+                    && u64::try_from(mask.len()).ok() != Some(pixels)
+                {
+                    return Err(InvalidArgument("mask size"));
+                }
+                layers = layers.saturating_add(1);
+                if layers > limits.max_layer_depth {
+                    return Err(LimitExceeded("layer depth"));
+                }
+                max_layers = max_layers.max(layers);
+                stack.push(false);
+            }
+            DrawCommand::PopClip => {
+                if stack.pop() != Some(true) {
+                    return Err(InvalidArgument("unmatched PopClip"));
+                }
+                clips = clips.saturating_sub(1);
+            }
+            DrawCommand::PopLayer => {
+                if stack.pop() != Some(false) {
+                    return Err(InvalidArgument("unmatched PopLayer"));
+                }
+                layers = layers.saturating_sub(1);
+            }
+        }
+    }
+    if !stack.is_empty() {
+        return Err(InvalidArgument("unclosed clip or layer"));
+    }
+    let per_pixel = 4 * (1 + u64::from(max_layers)) + u64::from(max_clips);
+    let working_bytes = pixels.saturating_mul(per_pixel);
+    if working_bytes > limits.max_working_bytes {
+        return Err(LimitExceeded("working bytes"));
+    }
+    Ok(SceneStats {
+        clip_depth: max_clips,
+        layer_depth: max_layers,
+        working_bytes,
+    })
+}
+
+fn check_stroke(style: &StrokeStyle) -> Result<(), BackendError> {
+    use BackendError::InvalidArgument;
+    if !(style.width.is_finite() && style.width >= 0.0) {
+        return Err(InvalidArgument("stroke width"));
+    }
+    if !(style.miter_limit.is_finite() && style.miter_limit >= 1.0) {
+        return Err(InvalidArgument("miter limit"));
+    }
+    if !style.dash_phase.is_finite()
+        || style.dash.iter().any(|d| !(d.is_finite() && *d >= 0.0))
+        || (!style.dash.is_empty() && style.dash.iter().all(|d| *d == 0.0))
+    {
+        return Err(InvalidArgument("dash array"));
+    }
+    Ok(())
+}
+
+/// Whether every subpath starts with `MoveTo`, nothing but `MoveTo` follows a `Close`, and
+/// every coordinate is finite. An empty path is valid (it draws nothing).
+pub fn path_is_valid(path: &[PathSegment]) -> bool {
+    let mut open = false;
+    for segment in path {
+        if !segment.points().all(|p| p.x.is_finite() && p.y.is_finite()) {
+            return false;
+        }
+        match segment {
+            PathSegment::MoveTo(_) => open = true,
+            PathSegment::Close if open => open = false,
+            _ if open => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Point;
+
+    fn p(x: f32, y: f32) -> Point {
+        Point { x, y }
+    }
+
+    #[test]
+    fn paths_must_start_subpaths_with_move_to() {
+        use PathSegment::*;
+        assert!(path_is_valid(&[]));
+        assert!(path_is_valid(&[MoveTo(p(0.0, 0.0)), LineTo(p(1.0, 0.0))]));
+        assert!(path_is_valid(&[
+            MoveTo(p(0.0, 0.0)),
+            LineTo(p(1.0, 0.0)),
+            Close,
+            MoveTo(p(2.0, 2.0)),
+            MoveTo(p(3.0, 3.0)),
+        ]));
+        assert!(!path_is_valid(&[LineTo(p(1.0, 0.0))]));
+        assert!(!path_is_valid(&[Close]));
+        assert!(!path_is_valid(&[MoveTo(p(0.0, 0.0)), Close, Close]));
+        assert!(!path_is_valid(&[
+            MoveTo(p(0.0, 0.0)),
+            Close,
+            LineTo(p(1.0, 1.0))
+        ]));
+        assert!(!path_is_valid(&[MoveTo(p(f32::NAN, 0.0))]));
+        assert!(!path_is_valid(&[
+            MoveTo(p(0.0, 0.0)),
+            CurveTo(p(0.0, 0.0), p(f32::INFINITY, 0.0), p(1.0, 1.0)),
+        ]));
+    }
+
+    #[test]
+    fn working_bytes_follow_the_formula() {
+        let path = [PathSegment::MoveTo(p(0.0, 0.0))];
+        let clip = DrawCommand::PushClip {
+            path: &path,
+            rule: FillRule::NonZero,
+            transform: Transform::IDENTITY,
+            anti_alias: true,
+        };
+        let layer = DrawCommand::PushLayer {
+            opacity: 1.0,
+            blend: BlendMode::Normal,
+            mask: None,
+        };
+        let commands = [
+            layer.clone(),
+            clip.clone(),
+            clip,
+            DrawCommand::PopClip,
+            DrawCommand::PopClip,
+            DrawCommand::PopLayer,
+            layer,
+            DrawCommand::PopLayer,
+        ];
+        let stats = check_scene(10, 3, &commands, &RasterLimits::default());
+        assert_eq!(
+            stats,
+            Ok(SceneStats {
+                clip_depth: 2,
+                layer_depth: 1,
+                working_bytes: 30 * (4 * 2 + 2),
+            })
+        );
+        let tight = RasterLimits {
+            max_working_bytes: 299,
+            ..RasterLimits::default()
+        };
+        assert_eq!(
+            check_scene(10, 3, &commands, &tight),
+            Err(BackendError::LimitExceeded("working bytes"))
+        );
+    }
+
+    #[test]
+    fn pixel_reads_are_bounds_checked() {
+        let pixmap = Pixmap {
+            width: 2,
+            height: 1,
+            data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        assert_eq!(pixmap.pixel(1, 0), Some([5, 6, 7, 8]));
+        assert_eq!(pixmap.pixel(2, 0), None);
+        assert_eq!(pixmap.pixel(0, 1), None);
+        let short = Pixmap {
+            width: 2,
+            height: 1,
+            data: vec![0; 5],
+        };
+        assert_eq!(short.pixel(1, 0), None);
+    }
+}

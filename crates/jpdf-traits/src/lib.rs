@@ -17,6 +17,7 @@ mod error;
 mod font;
 mod image;
 mod limits;
+mod raster;
 
 pub use codec::{CompressionLevel, DecodeStatus, Decoded, Deflate, FlateFormat, Inflate};
 pub use crypto::{Cipher, Direction, HashAlgorithm, HashState, Hasher, Padding};
@@ -29,4 +30,8 @@ pub use image::{
     Bitmap, CcittDecoder, CcittParams, DecodedImage, ImageColor, Jbig2Decoder, Jpeg2000Decoder,
     JpegDecoder, JpegOptions,
 };
-pub use limits::{DecodeLimits, FontLimits, Limits};
+pub use limits::{DecodeLimits, FontLimits, Limits, RasterLimits};
+pub use raster::{
+    BlendMode, Color, DrawCommand, FillRule, LineCap, LineJoin, Paint, Pixmap, Rasterizer,
+    RgbaImage, SceneStats, StrokeStyle, Transform, check_scene, path_is_valid,
+};

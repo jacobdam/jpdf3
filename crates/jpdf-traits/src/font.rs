@@ -37,7 +37,8 @@ pub enum OutlineFormat {
     Type1,
 }
 
-/// A point in glyph space (font units, before the font matrix).
+/// A point: in glyph space (font units, before the font matrix) for font outlines, in user
+/// space (before the draw command's [`crate::Transform`]) for rasterizer paths.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     /// Horizontal coordinate.
@@ -73,7 +74,7 @@ impl PathSegment {
         }
     }
 
-    fn points(&self) -> impl Iterator<Item = Point> {
+    pub(crate) fn points(&self) -> impl Iterator<Item = Point> {
         let (a, b, c) = match *self {
             Self::MoveTo(p) | Self::LineTo(p) => (Some(p), None, None),
             Self::QuadTo(c1, p) => (Some(c1), Some(p), None),
