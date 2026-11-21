@@ -29,20 +29,27 @@ CONSTITUTION 10 has to be enforced by us.
    this way; accepted until the app can change files. Emotion's empty `<style>` elements are
    allowed by the hash of the empty string instead of `'unsafe-inline'` or a static nonce
    (a nonce in a static file is public, so it would allow any injected style).
-5. **Tooling inside the license allowlist.** CONSTITUTION 10 lists licenses without an
-   exemption for build-only tools, so the whole lockfile is checked. That rules out Vite 8
-   (requires `lightningcss`, MPL-2.0), ESLint (`minimatch`, BlueOak-1.0.0) and Babel-based
-   plugins (`caniuse-lite`, CC-BY-4.0). We use Vite 7 with esbuild's JSX transform (no React
-   plugin, so no fast refresh in development) and Biome for linting. `axe-core` (MPL-2.0)
-   is excluded too, though accessibility.md §5 asks for it; ops/proposals/test-only-licenses.md
-   asks the owner to decide (#50).
-   **Known gap:** the check reads package metadata (lockfile and installed `package.json`),
-   not third-party code that a package bundles inside its own files. Review of #49 found such
-   code in required tools: `playwright` bundles `caniuse-lite` (CC-BY-4.0) and `minimatch`
-   (BlueOak-1.0.0); `vite` bundles `string-hash` (CC0-1.0); `rollup` bundles `tslib` (0BSD).
-   Playwright is required by CONTRACT §2 and no bundler is free of this, so we can't comply
-   strictly; none of these files reaches the shipped bundle. We say so openly and the
-   proposal asks the owner to rule on them.
+5. **Tooling and the license rule** (amended for #50; the original text is in git history).
+   The owner amended CONSTITUTION 10 (PR #95): test and build tools whose code never reaches
+   a shipped artifact may also use MPL-2.0, BlueOak-1.0.0, CC-BY-4.0 (data only), CC0-1.0,
+   0BSD and NCSA. `npm run licenses` (specs/tooling/licenses.md) enforces the rule in two
+   trees:
+   - The **production tree** is everything reachable from `package.json` `dependencies`. It
+     is computed from installed manifests, not from the lockfile's `dev` flags, and must use
+     the strict list.
+   - The **full tree** may also use the tool-only licenses. CC-BY-4.0 passes only for named
+     data packages (`caniuse-lite`).
+   - Shipped sources (`src/`, `index.html`) may import only `dependencies`, so no tool-only
+     package can be bundled.
+
+   The bundled-code gap recorded here before is now covered by the rule. Playwright bundles
+   `caniuse-lite` (CC-BY-4.0, data) and `minimatch` (BlueOak-1.0.0); Vite bundles
+   `string-hash` (CC0-1.0); Rollup bundles `tslib` (0BSD). All of these are test/build tools
+   whose files never reach `dist/`. The check still reads package metadata only, not code
+   bundled inside a package's files. So a **production** dependency that bundles third-party
+   code, or a Vite plugin that injects third-party runtime code into the bundle, must be
+   checked by hand when it is added. Vite 8, ESLint, Babel-based plugins and axe-core are no
+   longer ruled out by license; adopting any of them is a separate issue (#50 item 3).
 6. Tests run against `vite preview` of the production build, never the dev server (whose HMR
    scripts would need a weaker policy).
 
@@ -50,5 +57,6 @@ CONSTITUTION 10 has to be enforced by us.
 - Adding an npm dependency means checking its whole tree with `npm run licenses` first.
 - Each feature's Playwright tests tag the journey IDs from its spec; the judge sees them the
   next run.
-- If the owner allows MPL-2.0 test-only tools, the accessibility audit (axe-core) and Vite 8
-  become possible; this ADR is then amended.
+- A new production dependency must pass the strict list. A new test/build tool may also use
+  the tool-only licenses. A CC-BY-4.0 tool package needs a check that it ships data only,
+  and then a `CC_BY_DATA` entry.

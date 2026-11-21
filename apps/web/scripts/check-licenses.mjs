@@ -1,48 +1,43 @@
-// CONSTITUTION 10: every npm package (shipped or build-only) must carry an allowlisted
-// license. Checks both the lockfile's `license` field and, for installed packages, the
-// `license` in node_modules/<pkg>/package.json (from the integrity-checked tarball, so an
-// edited lockfile can't hide a package). Never runs package code. Third-party code bundled
-// *inside* a package is not visible here; see docs/adr/0002 item 5.
-import { existsSync, readFileSync } from "node:fs";
+// CONSTITUTION 10: npm license check (spec: specs/tooling/licenses.md).
+// The production tree (reached from package.json `dependencies`) must use the strict list;
+// the rest (test and build tools) may also use the tool-only licenses. Licenses are read from
+// the lockfile and from each installed node_modules/<pkg>/package.json (from the
+// integrity-checked tarball, so an edited lockfile can't hide a package). Shipped sources may
+// import only `dependencies`. Never runs package code. Third-party code bundled *inside* a
+// package is not visible here; see docs/adr/0002 item 5.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { check } from "./licenses-lib.mjs";
 
-const ALLOWED = new Set([
-  "MIT",
-  "Apache-2.0",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "Zlib",
-  "ISC",
-  "Unicode-3.0",
-]);
 const root = new URL("../", import.meta.url);
-const lock = JSON.parse(readFileSync(new URL("package-lock.json", root), "utf8"));
+const readJson = (url) => JSON.parse(readFileSync(url, "utf8"));
 
-// A plain id, or "A OR B" (we may pick any allowed option). AND, WITH and parentheses are rejected.
-function allowed(expr) {
-  if (typeof expr !== "string" || /[()]|\b(AND|WITH)\b/.test(expr)) return false;
-  return expr.split(" OR ").some((id) => ALLOWED.has(id.trim()));
-}
+const lock = readJson(new URL("package-lock.json", root));
+const rootManifest = readJson(new URL("package.json", root));
 
-const bad = [];
-let installed = 0;
-for (const [path, pkg] of Object.entries(lock.packages ?? {})) {
+const manifests = new Map();
+for (const path of Object.keys(lock.packages ?? {})) {
   if (path === "") continue;
-  if (!allowed(pkg.license)) bad.push(`${path}: lockfile says ${pkg.license ?? "no license"}`);
-  const manifest = new URL(`${path}/package.json`, root);
-  if (existsSync(manifest)) {
-    installed += 1;
-    const real = JSON.parse(readFileSync(manifest, "utf8")).license;
-    if (!allowed(real)) bad.push(`${path}: package.json says ${real ?? "no license"}`);
-    // Optional and unused optional-peer (extraneous) entries are never installed.
-  } else if (!pkg.optional && !pkg.devOptional && !pkg.peer && !pkg.extraneous) {
-    bad.push(`${path}: not installed (run npm ci first)`);
-  }
+  const url = new URL(`${path}/package.json`, root);
+  if (existsSync(url)) manifests.set(path, readJson(url));
 }
-if (bad.length > 0) {
-  console.error(`licenses: ${bad.length} problem(s) (CONSTITUTION 10):`);
-  for (const b of bad) console.error(`  ${b}`);
+
+// Everything Vite bundles: src/ (recursively) and index.html.
+const sources = [{ file: "index.html", text: readFileSync(new URL("index.html", root), "utf8") }];
+for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFileTypes: true })) {
+  if (!entry.isFile() || !/\.(m?[jt]sx?|css|html)$/.test(entry.name)) continue;
+  const full = join(entry.parentPath, entry.name);
+  sources.push({ file: relative(fileURLToPath(root), full), text: readFileSync(full, "utf8") });
+}
+
+const { problems, production, installed } = check({ lock, rootManifest, manifests, sources });
+if (problems.length > 0) {
+  console.error(`licenses: ${problems.length} problem(s) (CONSTITUTION 10):`);
+  for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
 console.error(
-  `licenses: ok (${Object.keys(lock.packages).length - 1} packages, ${installed} installed)`,
+  `licenses: ok (${Object.keys(lock.packages).length - 1} packages, ${production} production, ` +
+    `${installed} installed, ${sources.length} source files)`,
 );

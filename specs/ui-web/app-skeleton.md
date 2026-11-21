@@ -42,10 +42,10 @@ It has no backend and makes no network requests other than loading its own files
    it stops at the first failing step:
    1. checks that `apps/web/package.json`, `node` and `npm` exist (a clear message otherwise);
    2. `npm ci` (lockfile only; `.npmrc` sets `ignore-scripts`, so no dependency script runs);
-   3. `npm run licenses`: every package in `package-lock.json`, shipped or build-only, has a
-      CONSTITUTION 10 license, both in the lockfile and in its installed `package.json`
-      (an `A OR B` expression passes if one option does). Code that a package bundles inside
-      its own files is not seen; the known cases are listed in ADR 0002 item 5 (#50);
+   3. `npm run licenses` (specs/tooling/licenses.md): the production tree (reached from
+      `dependencies`) uses the strict CONSTITUTION 10 list, and test/build tools may also use
+      the tool-only licenses. Both the lockfile and each installed `package.json` are checked,
+      and shipped sources may import only `dependencies` (ADR 0002 item 5);
    4. `npm run typecheck` (`tsc --noEmit`, strict; `src/` without Node types, tests and
       config with them), `npm run lint` (`biome ci --error-on-warnings`, including
       `noDangerouslySetInnerHtml` and `noGlobalEval`);
@@ -82,9 +82,8 @@ matching `e2e.web.[a-z0-9_]+`, so `e2e.json` needs no escaping.
   isn't to the app's own origin.
 - Dropped files never reach the browser's own viewer (Behavior 2).
 - Dependencies are pinned exactly in `package-lock.json`; install scripts never run; licenses
-  are checked on every CI run. Build tooling was chosen to keep every package inside the
-  allowlist; third-party code bundled inside Playwright, Vite and Rollup is not, and waits
-  for the owner's ruling (ADR 0002 item 5, #50).
+  are checked on every CI run: the strict list for the production tree, and the tool-only
+  licenses too for test/build tools (CONSTITUTION 10, ADR 0002 item 5).
 - `<meta name="referrer" content="no-referrer">`.
 - Not possible with a meta CSP on GitHub Pages: `frame-ancestors` (clickjacking). Nothing in
   the skeleton acts on a click without a document; revisit when the app can save files.
@@ -92,8 +91,8 @@ matching `e2e.web.[a-z0-9_]+`, so `e2e.json` needs no escaping.
 ## Accessibility
 `lang="en"`, one `main` landmark, `h1`/`h2` headings, the disabled button stays in the tab
 order with its reason as accessible description (tested). Contrast follows the wireframe
-tokens. An automated WCAG audit (accessibility.md §5 names axe-core) is not in this harness:
-axe-core is MPL-2.0, outside CONSTITUTION 10; see ops/proposals/test-only-licenses.md.
+tokens. An automated WCAG audit (accessibility.md §5 names axe-core) is not in this harness yet.
+axe-core (MPL-2.0) is now allowed as a test tool (#50); adding it is its own issue.
 
 ## Platforms
 Web only. The macOS skeleton is #13. `cargo xtask ci linux` also runs on macOS for local

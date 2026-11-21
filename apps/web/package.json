@@ -14,7 +14,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "e2e": "playwright test",
-    "licenses": "node scripts/check-licenses.mjs"
+    "licenses": "node --test scripts/licenses.test.mjs && node scripts/check-licenses.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
