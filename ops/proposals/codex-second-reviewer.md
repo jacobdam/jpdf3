@@ -1,6 +1,6 @@
 # Proposal: Codex as a second reviewer (trial), Opus review unchanged
 
-Status: proposed by the owner's interactive session, 2026-11-21; revised after four TICK §4 review
+Status: proposed by the owner's interactive session, 2026-11-21; revised after five TICK §4 review
 rounds (see "Review record" at the end). Touches protected paths (`CONSTITUTION.md`,
 `ops/driver/`, `.claude/settings.json`, `.claude/hooks/`), so the owner applies it with signed
 commits.
@@ -16,7 +16,7 @@ Evidence that review matters and is worth diversifying, not cutting:
 - The Opus reviewer catches real defects: 5 resource-limit bugs in session 3; the stack overflow
   without the clamp and the unbudgeted 2 GiB claim in PR #108; 7 of 34 build sessions needed a
   re-review after fixes (`ops/journal/2026-11-20.md`, `2026-11-21.md`). This proposal's own review
-  found 12 major issues across four rounds.
+  found 13 major issues across five rounds.
 - Usage, sessions 2026-11-20 08:57 → 2026-11-21 13:58 UTC (37 sessions, list-price equivalent
   from `ops/logs/*.jsonl` and the per-agent transcripts): writing 68% ($121), PR review 21% ($37),
   audit 0001 7% ($12.7), retro 2%. Codex itself runs on a separate (OpenAI) subscription; on the
@@ -92,9 +92,9 @@ with `python3`. macOS only (`stat -f`, `mv -h`, `chflags`), like the driver.
 # target/scratch/ (plain names, no symlinks or hard links), and every write goes through a rename
 # inside that directory, so bad arguments can't make it read or write anything else. (A same-user
 # process that deliberately races the checks is out of scope: it can write files directly anyway.)
-# Codex reviews a plain export of HEAD (`git archive` into its own fresh git repo, no symlinks,
-# sealed corpus manifest left out) in sandbox workspace-write with the network, ChatGPT apps and
-# plugins off, strict config and a scrubbed environment.
+# Codex reviews a plain export of HEAD (`git archive`, checked byte for byte, in its own fresh git
+# repo, no symlinks, sealed corpus manifest left out) in sandbox workspace-write with the network,
+# ChatGPT apps and plugins off, strict config and a scrubbed environment.
 # Output: <out>.json (codex-review.schema.json plus status/reason) and <out>.log (Codex's log).
 # Exit codes: 2 = usage error (nothing written). Otherwise 0, always: on any failure the output
 # is {"status":"unavailable","reason":...}.
@@ -198,19 +198,40 @@ PROMPT="$(mktemp .codex-review-tmp.prompt.XXXXXX)" || fail "mktemp"
 SRC="$(mktemp -d .codex-review-tmp.src.XXXXXX)" || fail "mktemp"
 # A plain export of HEAD, sealed manifest excluded (CONSTITUTION 13), in its own fresh git repo:
 # git commands inside it stop there instead of walking up into this worktree's repository.
-# export-ignore/export-subst attributes would let a PR hide or rewrite files in the export.
-! git -C "$TOP" grep -qE 'export-(ignore|subst)' HEAD -- .gitattributes '*/.gitattributes' \
-  || fail "export-ignore/export-subst in .gitattributes"
-git -C "$TOP" archive --format=tar HEAD | tar -x -C "$SRC" --exclude 'ops/judge/corpus/exam.tsv' \
+# Git commands here run without the owner's git config, hooks or templates.
+XGIT=(env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+  git -c core.hooksPath=/dev/null -c init.templateDir= -c core.fsmonitor=false -c commit.gpgsign=false
+  -c core.attributesFile=/dev/null -c user.name=export -c user.email=export@invalid)
+"${XGIT[@]}" -C "$TOP" archive --format=tar HEAD | tar -x -C "$SRC" --exclude 'ops/judge/corpus/exam.tsv' \
   || fail "export failed"
 rm -f -- "$SRC/ops/judge/corpus/exam.tsv"
 # A committed symlink could point Codex's reads (and this script's mkdir) outside the export.
 [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
-# -f: also tracked files a committed .gitignore matches. The owner's git config, hooks and
-# templates stay out of these unsandboxed git commands.
-XGIT=(env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-  git -c core.hooksPath=/dev/null -c init.templateDir= -c core.fsmonitor=false -c commit.gpgsign=false
-  -c user.name=export -c user.email=export@invalid)
+# Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
+# rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
+/usr/bin/python3 -I - "$TOP" "$SCR/$SRC" <<'PY' || fail "export differs from HEAD (attributes?)"
+import hashlib, os, subprocess, sys
+top, src = sys.argv[1].encode(), sys.argv[2].encode()
+tree = subprocess.run(["git", "-C", top, "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
+                      capture_output=True, check=True).stdout
+want = {}
+for rec in tree.split(b"\0"):
+    if rec:
+        meta, path = rec.split(b"\t", 1)
+        if meta.split()[1] != b"blob":
+            sys.exit(1)  # a submodule: not supported
+        want[path] = meta.split()[2]
+want.pop(b"ops/judge/corpus/exam.tsv", None)
+have = {}
+for root, _, files in os.walk(src):
+    for f in files:
+        p = os.path.join(root, f)
+        with open(p, "rb") as fh:
+            data = fh.read()
+        have[os.path.relpath(p, src)] = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest().encode()
+sys.exit(0 if have == want else 1)
+PY
+# -f: also tracked files a committed .gitignore matches.
 ( cd "$SRC" && "${XGIT[@]}" init -q && "${XGIT[@]}" add -A -f \
   && "${XGIT[@]}" commit -q --no-verify -m "export of HEAD" ) >/dev/null 2>&1 || fail "export repo failed"
 mkdir -p "$SRC/target/tmp" || fail "mkdir"
@@ -333,21 +354,27 @@ commit messages and `jq . target/scratch/codex-12.json` all pass. It is a **trip
 accidental direct use, not a sandbox** (see Risks).
 
 It is a small one-pass shell tokenizer, not a regex: it splits the command into simple commands
-(at `; & |`, newlines, parentheses, `$( )` and backticks, also inside double quotes; single quotes
-literal; quotes and backslashes removed), then skips `VAR=value` words, keywords and wrappers with
-their options, and looks inside `bash -c '…'` (three levels) and after find's `-exec`. Each
-character is read once and each command start looks at a bounded number of words, so the cost is
-linear by construction. (Rounds 2–4 found a quadratic and then an exponential case in successive
-regex versions; the tokenizer replaces them.) The inert text is computed once and shared with the
-cmux check.
+(at `; & |`, newlines, parentheses, `{`, `$( )` and backticks, also inside double quotes; single
+quotes literal; quotes and backslashes removed; redirection targets dropped; heredoc bodies
+skipped), then skips `VAR=value` words, keywords and wrappers with their options, and looks inside
+`bash -c '…'` and `eval …` (three levels) and after find's `-exec`. It works on the original case
+and compares lowercased words, so uppercase options (`xargs -I`, `sudo -H`) parse correctly. Each
+tokenizer pass reads each character once, each command start looks at a bounded number of words,
+and all nested texts (`bash -c`, `eval`) draw on one budget of 4× the command plus 4 KiB, so the
+total work is linear; running out of budget blocks. (Rounds 2–4 found a quadratic and then an
+exponential case in successive regex versions, and round 5 a 125× recursion blow-up in the first
+tokenizer; the budget bounds that.) The inert text is computed once and shared with the cmux check.
 
 The diff below applies to the current `guard.py` (`git apply --check` passes). With it,
-`--selftest` passes 140/140 (the 86 existing cases and 54 new ones) plus the new timing check
-(thirteen 300 kB adversarial inputs that contain "codex", each under 2 s; each takes 0.03–0.2 s), in
-about 1.5 s overall. Run it from a checkout where the patched guard.py is committed (an existing
-case checks for modified protected paths). Full-hook times on 300 kB inputs are within 0.2 s of
-the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*100000`: 0.28 s vs
-0.66 s). 200 000 random shell-like inputs raised no exception.
+`--selftest` passes 161/161 (the 86 existing cases and 75 new ones) plus the new timing check
+(sixteen adversarial inputs of about 300 kB that contain "codex", including `bash -c` behind four
+`-exec` at each of three levels; each under 2 s, measured 0.03–0.2 s), in about 1.7 s overall. Run
+it from a checkout where the patched guard.py is committed (an existing case checks for modified
+protected paths). Full-hook times, patched vs current: `"((codexx"*37500` 1.50 s vs 1.36 s;
+`";a="*100000` 0.29 s vs 0.66 s; `"$("*150000` 0.23 s vs 1.39 s; the nested `-exec`/`bash -c`
+input (300 kB) 0.43 s vs 0.35 s. On 1 MB inputs `codex_command` alone takes at most 0.65 s. 300 000
+random shell-like inputs raised no exception (an exception would make the hook exit 1 and fail
+open).
 
 ```diff
 --- a/.claude/hooks/guard.py
@@ -360,61 +387,67 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
  
  REPO = "jacobdam/jpdf3"
  PROTECTED = (
-@@ -24,7 +25,180 @@
+@@ -24,7 +25,249 @@
      "deny.toml", "supply-chain/", "clippy.toml", ".cargo/", ".config/nextest.toml",
      ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
  )
 -SECRET_READ = ("/.ssh/", "/.config/gh/")
 +SECRET_READ = ("/.ssh/", "/.config/gh/", "/.codex/")
-+# Codex tripwire: does a (lowercased) Bash command run `codex` as a command? A small one-pass shell
-+# tokenizer instead of a regex, so the cost is linear by construction (no backtracking). It finds
-+# the command word of every simple command (after ; & | newline ( ) $( ) and backticks, also inside
-+# double quotes), skipping VAR=value words, keywords (then, do, !, { ...) and wrappers with their
-+# options (sudo -u x, timeout -s KILL 5, env -i, xargs -0, npx, pnpm dlx ...), and looks inside
-+# `bash -c '...'` and after find's -exec. Quotes and backslashes are removed first, so `co''dex` and
-+# `\codex` count. Not a sandbox: `c=codex; $c`, `echo codex | sh` and other launchers still pass
-+# (see ops/proposals/codex-second-reviewer.md, Risks).
++# Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
++# instead of a regex, so there is no backtracking. It finds the command word of every simple command
++# (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
++# words, keywords, redirections, heredoc bodies and wrappers with their options (sudo -u x,
++# timeout -s KILL 5, env -i, xargs -I {}, npx -y, pnpm dlx ...), and looks inside `bash -c '...'`,
++# `eval ...` and after find's -exec. Quotes and backslashes are removed, so `co''dex` and `\codex`
++# count. Recursion shares one character budget (4x the command + 4 KiB), so the total work stays
++# linear; running out of budget blocks. Not a sandbox: `c=codex; $c`, `echo codex | sh` and other
++# launchers still pass (see ops/proposals/codex-second-reviewer.md, Risks).
 +CODEX_WRAPPERS = {  # wrapper -> its single-letter options that take a separate argument
 +    "sudo": "ughpcCDrtU", "doas": "uC", "env": "uCS", "exec": "a", "nohup": "", "command": "",
 +    "builtin": "", "time": "", "nice": "n", "timeout": "sk", "gtimeout": "sk", "caffeinate": "tw",
-+    "xargs": "ILnPsdEa", "npx": "p", "bunx": "", "pnpm": "", "dlx": "", "coproc": "", "stdbuf": "ioe",
++    "xargs": "ILnPsdEa", "npx": "p", "bunx": "", "npm": "", "yarn": "", "pnpm": "", "dlx": "",
++    "coproc": "", "stdbuf": "ioe",
 +}
 +CODEX_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
-+CODEX_KEYWORDS = ("then", "do", "else", "elif", "if", "while", "until", "eval", "!", "{", "}")
++CODEX_KEYWORDS = ("then", "do", "else", "elif", "if", "while", "until", "function", "!", "{", "}")
 +CODEX_MAX_WORDS = 64  # words looked at per command start; bounds the work per start
-+_CODEX_ASSIGN = re.compile(r"[a-z_][a-z0-9_]*\+?=")
++_CODEX_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 +
 +
 +def _codex_commands(s):
 +    """Split shell text into simple commands: lists of words with quotes and backslashes removed.
 +    One pass; `$(`/backtick substitutions are nested commands (state saved on a stack), single
-+    quotes are literal, `#` at a word start begins a comment."""
-+    cmds, words, cur, started = [], [], [], False
-+    mode, stack = "n", []  # mode: n = unquoted, d = inside "...", s = inside '...'
++    quotes are literal, `#` at a word start begins a comment, redirection targets are dropped and
++    heredoc bodies are skipped."""
++    cmds, words, cur, started, skip = [], [], [], False, False
++    mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
 +    i, n = 0, len(s)
 +
 +    def flush_word():
-+        nonlocal cur, started
-+        if started:
++        nonlocal cur, started, skip
++        if started and not skip:
 +            words.append("".join(cur))
++        if started:
++            skip = False
 +        cur, started = [], False
 +
 +    def flush_cmd():
-+        nonlocal words
++        nonlocal words, skip
 +        flush_word()
 +        if words:
 +            cmds.append(words)
 +        words = []
++        skip = False
 +
 +    def open_sub(closer):
-+        nonlocal words, cur, started, mode
-+        stack.append((closer, mode, words, cur, started))
-+        words, cur, started, mode = [], [], False, "n"
++        nonlocal words, cur, started, mode, skip
++        stack.append((closer, mode, words, cur, started, skip))
++        words, cur, started, mode, skip = [], [], False, "n", False
 +
 +    def close_sub():
-+        nonlocal words, cur, started, mode
++        nonlocal words, cur, started, mode, skip
 +        flush_cmd()
-+        _, mode, words, cur, _ = stack.pop()
++        _, mode, words, cur, _, skip = stack.pop()
 +        started = True
 +
 +    while i < n:
@@ -467,11 +500,50 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +            started = True
 +            i = j
 +            continue
++        elif c in "<>" or (c == "&" and s.startswith("&>", i)):
++            if started and "".join(cur).isdigit():
++                cur, started = [], False  # a file descriptor number: 2>&1
++            flush_word()
++            j = i
++            while j < n and s[j] in "<>&|":
++                j += 1
++            op = s[i:j]
++            if j < n and op.endswith("&") and (s[j].isdigit() or s[j] == "-"):
++                while j < n and (s[j].isdigit() or s[j] == "-"):
++                    j += 1
++            elif op in ("<<", "<<-"):
++                if j < n and s[j] == "-":
++                    op, j = "<<-", j + 1
++                while j < n and s[j] in " \t":
++                    j += 1
++                k = j
++                while k < n and s[k] not in " \t\n;&|<>()":
++                    k += 1
++                delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
++                heredocs.append((delim, op == "<<-"))
++                j = k
++            else:
++                skip = True  # the next word is the redirection target
++            i = j
++            continue
 +        elif c in ";&|\n":
 +            flush_cmd()
++            if c == "\n" and heredocs:
++                j = i + 1
++                for delim, tabs in heredocs:
++                    while j < n:
++                        e = s.find("\n", j)
++                        e = n if e < 0 else e
++                        line = s[j:e]
++                        j = e + 1
++                        if (line.lstrip("\t") if tabs else line) == delim:
++                            break
++                heredocs = []
++                i = j
++                continue
 +        elif c == "(":
 +            flush_cmd()
-+            stack.append(("g", mode, None, None, False))
++            stack.append(("g", mode, None, None, False, False))
 +        elif c == ")":
 +            if stack and stack[-1][0] == ")":
 +                close_sub()
@@ -479,8 +551,6 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +                if stack and stack[-1][0] == "g":
 +                    stack.pop()
 +                flush_cmd()
-+        elif c in "<>":
-+            flush_word()
 +        else:
 +            cur.append(c)
 +            started = True
@@ -494,23 +564,33 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +    return cmds
 +
 +
-+def _codex_runs(words, i, depth, limit=CODEX_MAX_WORDS):
++def _codex_runs(words, i, budget, depth, limit=CODEX_MAX_WORDS):
 +    """True if the simple command starting at words[i] runs codex (looking at most `limit` words)."""
 +    end = min(len(words), i + limit)
 +    while i < end:
 +        w = words[i]
-+        base = w.rsplit("/", 1)[-1]
-+        if base == "codex":
++        low = w.lower()
++        base = low.rsplit("/", 1)[-1]
++        if base.split("@", 1)[0] == "codex" and not base.startswith("@"):
 +            return True
-+        if w in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
++        if low == "eval":
++            return _codex_nested(" ".join(words[i + 1:end]), budget, depth)
++        if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
 +            i += 1
 +        elif base in CODEX_SHELLS:
-+            i += 1
-+            while i < end and words[i].startswith("-") and words[i] != "-":
++            i, want_c = i + 1, False
++            while i < end and words[i][:1] in "-+" and len(words[i]) > 1:
 +                opt = words[i]
 +                i += 1
-+                if not opt.startswith("--") and "c" in opt and i < len(words):
-+                    return depth < 3 and codex_command(words[i], depth + 1)
++                if opt == "--":
++                    break
++                if opt.startswith("--"):
++                    continue
++                want_c = want_c or "c" in opt
++                if opt[-1] in "oO":
++                    i += 1  # -o pipefail, -O extglob
++            if want_c:
++                return i < len(words) and _codex_nested(words[i], budget, depth)
 +        elif base in CODEX_WRAPPERS:
 +            argopts = CODEX_WRAPPERS[base]
 +            i += 1
@@ -519,8 +599,10 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +                i += 1
 +                if opt == "--":
 +                    break
-+                if len(opt) == 2 and opt[1] in argopts:
-+                    i += 1
++                letters = opt[1:]
++                if not opt.startswith("--") and letters[-1:] in tuple(argopts) and all(
++                        ch not in argopts for ch in letters[:-1]):
++                    i += 1  # -u x, -iu x
 +            if base in ("timeout", "gtimeout") and i < end and words[i][:1].isdigit():
 +                i += 1
 +        else:
@@ -528,34 +610,48 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +    return False
 +
 +
-+def codex_command(low, depth=0):
-+    """True if the lowercased command `low` runs codex (linear time)."""
-+    if "codex" not in low.replace("'", "").replace('"', "").replace("\\", ""):
-+        return False
-+    for words in _codex_commands(low):
-+        if _codex_runs(words, 0, depth):
++def _codex_nested(text, budget, depth):
++    """Check text run by `bash -c` or `eval`, charging the shared budget; out of budget blocks."""
++    budget[0] -= len(text) + 1
++    if budget[0] < 0 or depth >= 3:
++        return budget[0] < 0
++    return _codex_check(text, budget, depth + 1)
++
++
++def _codex_check(text, budget, depth):
++    for words in _codex_commands(text):
++        if _codex_runs(words, 0, budget, depth):
 +            return True
 +        for j, w in enumerate(words):
-+            if w in ("-exec", "-execdir", "-ok") and _codex_runs(words, j + 1, depth, 8):
++            if w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8):
 +                return True
 +    return False
++
++
++def codex_command(cmd):
++    """True if the Bash command `cmd` runs codex. Linear: one tokenizer pass per text, and nested
++    texts (bash -c, eval) draw on one budget of 4x the command plus 4 KiB."""
++    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "").lower()
++    if "codex" not in flat:
++        return False
++    return _codex_check(cmd, [4 * len(cmd) + 4096], 0)
  # Every issue/PR/comment the agent writes starts with this tag. The agent shares the owner's
  # GitHub account; ops/driver/owner-issues.sh treats only UNTAGGED owner text as instructions.
  TAG = "\U0001F916 jpdf-agent"
-@@ -142,8 +316,11 @@
+@@ -142,8 +385,11 @@
      # The cmux socket has no password (owner's choice), so this block is the only barrier between
      # an agent and the owner's other terminal tabs. The word may appear only as quoted, inert
      # title/body text of a gh post; anywhere else (incl. bash -c, $(...), grep) it is blocked.
 -    if re.search(r"\bcmux\b", strip_inert_text(cmd, post_text).lower()):
-+    inert = strip_inert_text(cmd, post_text).lower()
-+    if re.search(r"\bcmux\b", inert):
++    inert = strip_inert_text(cmd, post_text)
++    if re.search(r"\bcmux\b", inert.lower()):
          raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
 +    if codex_command(inert):
 +        raise Block("run Codex only through ops/driver/codex-review.sh (fixed sandbox flags)")
      if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
          raise Block("scripting keystrokes into other apps is not allowed")
      if re.search(r"\bsecurity\s+(find-|dump-keychain|export)", c):
-@@ -378,6 +555,60 @@
+@@ -378,6 +624,81 @@
      R = lambda p: os.path.join(root, p)  # noqa: E731
      cases = [
          # (tool, input, should_block)
@@ -596,6 +692,23 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +        ("Bash", {"command": "find . -exec codex exec {} +"}, True),
 +        ("Bash", {"command": "npx @openai/codex exec"}, True),
 +        ("Bash", {"command": "pnpm dlx @openai/codex exec"}, True),
++        ("Bash", {"command": "xargs -I {} codex exec {}"}, True),
++        ("Bash", {"command": "xargs -P 4 codex exec"}, True),
++        ("Bash", {"command": "env -C x codex exec"}, True),
++        ("Bash", {"command": "sudo -u me -H codex exec"}, True),
++        ("Bash", {"command": "sudo -iu me codex exec"}, True),
++        ("Bash", {"command": "bash -euo pipefail -c 'codex exec'"}, True),
++        ("Bash", {"command": "bash -c -- 'codex exec'"}, True),
++        ("Bash", {"command": "eval 'codex exec'"}, True),
++        ("Bash", {"command": "npx -y @openai/codex@0.171.0 exec"}, True),
++        ("Bash", {"command": "npm exec @openai/codex"}, True),
++        ("Bash", {"command": "yarn dlx @openai/codex"}, True),
++        ("Bash", {"command": ">log codex exec"}, True),
++        ("Bash", {"command": "2>&1 codex exec"}, True),
++        ("Bash", {"command": "function f { codex exec; }"}, True),
++        ("Bash", {"command": "coproc foo { codex exec; }"}, True),
++        ("Bash", {"command": "c\\\nodex exec"}, True),
++        ("Bash", {"command": "cat > target/scratch/b.md <<'EOF'\ndon't touch x\nEOF\ncodex exec - < target/scratch/b.md"}, True),
 +        ("Read", {"file_path": os.path.join(HOME, ".codex/auth.json")}, True),
 +        ("Bash", {"command": "ops/driver/codex-review.sh target/scratch/review-1.md target/scratch/codex-1.json"}, False),
 +        ("Bash", {"command": "./ops/driver/codex-review.sh a b"}, False),
@@ -613,10 +726,14 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +        ("Bash", {"command": "git log --grep codex"}, False),
 +        ("Bash", {"command": "ls ~/.codex-review-notes ${HOME}/codex.txt"}, False),
 +        ("Bash", {"command": "jq . target/scratch/codex-12.json  # codex output"}, False),
++        ("Bash", {"command": "git commit -m \"$(cat <<'EOF'\nfix x\n\nCodex found the overflow; Opus agreed.\nFound by Codex (codex) review.\nEOF\n)\""}, False),
++        ("Bash", {"command": "cat <<EOF > notes.md\n(codex) finding\nfoo; codex bar\nEOF\nls"}, False),
++        ("Bash", {"command": "python3 - <<'EOF'\ncodex = 1\nEOF"}, False),
++        ("Bash", {"command": "cargo test 2>&1 | grep codex"}, False),
          ("Write", {"file_path": R("ops/judge/verdict.py"), "content": "x"}, True),
          ("Edit", {"file_path": R("CONSTITUTION.md"), "old_string": "a", "new_string": "b"}, True),
          ("Write", {"file_path": R(".claude/settings.local.json"), "content": "{}"}, True),
-@@ -475,6 +706,17 @@
+@@ -475,6 +796,22 @@
          if blocked != should:
              failures += 1
              print("FAIL: %s %s -> blocked=%s, expected %s" % (tool, json.dumps(ti)[:100], blocked, should))
@@ -624,7 +741,12 @@ the current guard's (for example `"((codexx"*37500`: 1.49 s vs 1.37 s; `";a="*10
 +    # doesn't skip them (the tokenizer reads the whole command before checking).
 +    pads = ("(" * 300000, "$(" * 150000, "`" * 300000, ";a=" * 100000, "a=b " * 75000,
 +            "/codex " * 43000, "((codexx" * 37500, "sudo -x " * 37500, "bash -c " * 37500,
-+            "'codex' " * 37500, "\\" * 300000, "${" * 150000, "-exec sudo " * 27000)
++            "'codex' " * 37500, "\\" * 300000, "${" * 150000, "-exec sudo " * 27000,
++            "<<a\n" * 75000, "> " * 150000)
++    nested = "a " * 50000 + "echo codex"  # bash -c behind four -exec at each of three levels
++    for _ in range(3):
++        nested = "sudo -exec sudo -exec sudo -exec sudo -exec bash -c " + shlex.quote(nested)
++    pads += (nested,)
 +    for pad in pads:
 +        t0 = time.monotonic()
 +        codex_command("echo " + pad + " codex")
@@ -726,10 +848,12 @@ and after the "what broken implementation still passes?" paragraph:
   - the watchdog runs in its own process group and stops Codex even if the script's whole group is
     killed; leftovers of a killed run (reserved `.codex-review-tmp.*` names) are removed by the
     first run that starts more than 60 min later;
-  - `export-ignore`/`export-subst` attributes (which would let a PR hide or rewrite files in the
-    export) are refused; tracked files matched by a committed `.gitignore` are still committed in
-    the export repo; caller `GIT_*` variables are unset, and the export's git commands run without
-    the owner's git config, hooks or templates.
+  - the export is checked byte for byte against HEAD's blobs (same paths, same SHA-1), so
+    attributes that drop or rewrite files during `git archive` (`export-ignore`, `export-subst`,
+    `working-tree-encoding`, `ident`, `eol`, filters, also from `.git/info/attributes`) end the run
+    as `unavailable`; tracked files matched by a committed `.gitignore` are still committed in the
+    export repo; caller `GIT_*` variables are unset, and the export's git commands run without the
+    owner's git config, attributes file, hooks or templates.
 - **Residual read exposure.** The sandbox restricts writes and network, not reads. Codex can read
   any file the macOS user can read: relative paths out of the export (`../../../ops/judge/corpus/…`
   reaches the worker's checkout), the main checkout's git objects (the sealed manifest's history),
@@ -738,16 +862,21 @@ and after the "what broken implementation still passes?" paragraph:
   between Codex and those reads; the amended rule 2 makes such a read a clear breach. The Claude
   agent has the same read exposure today through its own Bash.
 - **The guard is a tripwire.** It stops accidental direct use: `codex exec …`, env prefixes
-  (including quoted values), wrappers and their options (`sudo -u x`, `timeout -s KILL -k 5 10`,
-  `exec -a x`, `env -u X`, `nice`, `xargs`, `coproc`, `stdbuf`, `npx`, `pnpm dlx`, `bash -c`),
-  subshells, `$( )` and backticks (also after an assignment or inside double quotes), `case` arms,
-  `find -exec`, and quoting tricks (`co''dex`, `\codex`). These still pass: variables
-  (`c=codex; $c`), pipes into a shell (`echo codex | sh`), other launchers (`script`, `parallel`,
-  `watch`, `launchctl submit`), `env -S "codex …"`, `bash -c` nested more than three levels, more
-  than 64 words of wrappers before the command (8 after `-exec`), renamed binaries and
-  `python3 -c "os.system(...)"`. That is the same exposure the agent's Bash and `python3` already
-  have. The settings deny `Bash(codex:*)` adds a second layer for the plain form. Known false
-  positives: a heredoc line that starts with "codex ", and `command -v codex`.
+  (including quoted values), redirections before the command (`2>&1 codex`), wrappers and their
+  options (`sudo -iu x -H`, `timeout -s KILL -k 5 10`, `exec -a x`, `env -u X`, `nice`, `xargs -I {}`,
+  `coproc`, `stdbuf`, `npx -y @openai/codex@<version>`, `npm exec`, `pnpm dlx`, `yarn dlx`,
+  `bash -euo pipefail -c`, `bash -c --`, `eval`), subshells, `{ …; }` and function bodies,
+  `$( )` and backticks (also after an assignment or inside double quotes), `case` arms,
+  `find -exec`, and quoting tricks (`co''dex`, `\codex`, a backslash-newline inside the word).
+  These still pass: variables (`c=codex; $c`), `$'codex'`, ``c``odex``, pipes into a shell
+  (`echo codex | sh`), other launchers (`script`, `parallel`, `watch`, `launchctl submit`),
+  `env -S "codex …"`, `bash -c` or `eval` nested more than three levels, more than 64 words of
+  wrappers before the command (8 after `-exec`), `$(` or backticks inside an unquoted heredoc body,
+  renamed binaries and `python3 -c "os.system(...)"`. That is the same exposure the agent's Bash
+  and `python3` already have. The settings deny `Bash(codex:*)` adds a second layer for the plain
+  form. Known false positives: `command -v codex`, and a `case` pattern line that starts with
+  `codex)`; heredoc bodies (commit messages, notes, Python) are skipped, so lines in them don't
+  count.
 - **Hooks fail open on timeout (existing, not caused by this proposal).** `.claude/settings.json`
   sets no hook `timeout`, and a hook that times out doesn't block. The current guard is already
   quadratic on some inputs (`"a=b "*75000`, 300 kB: 5.7 s; 600 kB: 22.5 s, measured by the round 3
@@ -786,7 +915,7 @@ and after the "what broken implementation still passes?" paragraph:
    - dry-run from a PR worktree: write a short brief to `target/scratch/b.md`, run
      `ops/driver/codex-review.sh target/scratch/b.md target/scratch/o.json`, and check that
      `o.json` has `status: ok`; that `o.log` shows a `cargo nextest run` that built offline (no
-     `.package-cache` lock error); that no `codex-src.*` directory is left; and that an attempt to
+     `.package-cache` lock error); that no `.codex-review-tmp.*` entry is left; and that an attempt to
      write outside the export (ask for it in the brief) fails.
 3. Close this proposal when the retro 0002 decision is recorded.
 
@@ -864,14 +993,31 @@ OpenAI. 3 major, 6 minor; all fixed:
   "codex".
 - **Minor:** the `VAR=value` stripping also swallowed `$(`, backticks, `;` and `&&`, so
   `out=$(codex exec …)`, ``out=`codex …` ``, `x=1;codex` and `a=b&&codex` passed (now blocked, with
-  self-tests); `git archive` honours in-tree `export-ignore`/`export-subst` (now refused);
+  self-tests); `git archive` honours in-tree `export-ignore`/`export-subst` (refused in round 4;
+  replaced by the byte check in round 5);
   `git add -A` dropped tracked files matched by a committed `.gitignore` (now `-f`); the stale
   cleanup's glob deleted user files like `codex-notes.backup` (reserved prefix now).
 - **Nits:** the export's git commands inherited the caller's git environment and config (now
   scrubbed); more Codex features were on (now disabled); the stale-cleanup claim and the owner-step
   variable list (corrected).
 
-**Re-tested after round 4** (fake codex in a throwaway repo under `target/scratch/`, `/bin/bash`
+**Round 5.** A fifth fresh reviewer tested version 5 (no `codex exec`). 1 major, 4 minor, 2 nits;
+all fixed:
+- **Major:** the tokenizer recursed into the same `bash -c` text from every `-exec` that could reach
+  it, 5 times per level over 3 levels (125×): 300 kB took 14.4 s in the hook, 1 MB 44 s. Fixed:
+  one shared budget for all nested texts (now 0.43 s at 300 kB; out of budget blocks), and the
+  input is in the timing self-test.
+- **Minor:** the input was lowercased before tokenizing, so `xargs -I {} codex`, `xargs -P 4`,
+  `env -C x` and `sudo -u me -H codex` passed (now case-preserving); realistic forms passed:
+  `bash -euo pipefail -c`, `bash -c --`, `eval '…'`, `npx -y @openai/codex@<version>`, `npm exec`,
+  `yarn dlx`, `>log codex`, `2>&1 codex`, `sudo -iu me`, `function f { codex; }` (all now caught,
+  with self-tests); heredoc bodies were tokenized, which blocked ordinary commit messages and notes
+  and let an apostrophe in a quoted heredoc hide a later real call (bodies are now skipped up to
+  their delimiter); the attribute check was a denylist (`working-tree-encoding`, `ident`, `eol`,
+  filters and `.git/info/attributes` still changed the export; now a byte-for-byte check).
+- **Nits:** the owner step's temp name; a backslash-newline inside the word skipped the fast path.
+
+**Re-tested after round 5** (fake codex in a throwaway repo under `target/scratch/`, `/bin/bash`
 3.2.57; the harness is not committed). Earlier rounds' checks, all still passing:
 - ok run, absolute paths, and non-JSON output each give the right `status`/`reason`; the prompt
   starts with the preamble; the export has no manifest, and inside it `git rev-parse
@@ -886,7 +1032,8 @@ OpenAI. 3 major, 6 minor; all fixed:
   process group the watchdog still stops Codex, and the next run removes the leftovers.
 
 - round 4: a tracked file matched by `.gitignore` is in the export repo's `git ls-files` with a clean
-  `git status`; an `export-ignore` attribute ends as `unavailable`; a caller `GIT_DIR` pointing at
+  `git status`; `export-ignore`, `export-subst` and `working-tree-encoding=UTF-16` attributes each
+  end as `unavailable` (byte check); a caller `GIT_DIR` pointing at
   another repo is ignored; aged user files named `codex-notes.backup` and `codex-12.json.triage`
   survive the stale cleanup.
 
