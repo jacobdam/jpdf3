@@ -225,6 +225,9 @@ fn template_and_trace_must_be_regular_files() {
         "specs/TRACE.md: cannot read: a symlink (not followed)",
         "specs/TRACE.md: symlink not followed; specs must be regular files",
     ] {
-        assert!(err.lines().any(|l| l == line), "missing {line:?} in:\n{err}");
+        assert!(
+            err.lines().any(|l| l == line),
+            "missing {line:?} in:\n{err}"
+        );
     }
 }
