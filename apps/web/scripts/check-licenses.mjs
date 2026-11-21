@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { check } from "./licenses-lib.mjs";
+import { check, sourceExtensionOk } from "./licenses-lib.mjs";
 
 // The app directory: apps/web, or the first argument (used by the integration test).
 const root = process.argv[2]
@@ -42,9 +42,21 @@ for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFi
     sourceProblems.push(`${rel}: symlinks in src/ are not allowed`);
     continue;
   }
-  if (!/\.([cm]?[jt]sx?|css|html)$/.test(entry.name)) continue;
+  if (entry.isDirectory()) {
+    // A directory named like a source file (`dir.ts`) would confuse an import of it.
+    if (sourceExtensionOk(entry.name)) sourceProblems.push(`${rel}: not a regular file`);
+    continue;
+  }
   if (!entry.isFile()) {
-    if (entry.isDirectory()) sourceProblems.push(`${rel}: not a regular file`);
+    sourceProblems.push(`${rel}: not a regular file`);
+    continue;
+  }
+  // Fail closed: Vite bundles `./a.mod` or `./c.JS` as JavaScript and `.pcss` as CSS, and
+  // the scan would never read them. Extend the scan before adding an extension.
+  if (!sourceExtensionOk(entry.name)) {
+    sourceProblems.push(
+      `${rel}: only lower-case .js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html files are allowed in src/`,
+    );
     continue;
   }
   if (!`${realpathSync(full)}${sep}`.startsWith(`${realSrc}${sep}`)) {
@@ -73,8 +85,33 @@ for (const name of readdirSync(root)) {
 }
 const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
 // Plain, quoted, computed (`["alias"]:`) and shorthand (`{ alias }`) keys.
+// Also library entries, emitted chunks, preprocessor injections, and the hooks that edit
+// the config or the options (`config`, `configResolved`, `options`) or inject text.
+const GUARDED = [
+  "alias",
+  "publicDir",
+  "root",
+  "input",
+  "resolveId",
+  "resolveDynamicImport",
+  "load",
+  "transform",
+  "lib",
+  "entry",
+  "emitFile",
+  "additionalData",
+  "config",
+  "configResolved",
+  "options",
+  "banner",
+  "footer",
+  "intro",
+  "outro",
+  "renderChunk",
+  "generateBundle",
+];
 for (const m of viteConfig.matchAll(
-  /\b(alias|publicDir|root|input|resolveId|load|transform)\b["'\]]{0,2}\s*[:(,}]/g,
+  new RegExp(String.raw`\b(${GUARDED.join("|")})\b["'\]]{0,2}\s*[:(,}]`, "g"),
 )) {
   problems.push(
     `vite.config.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`,

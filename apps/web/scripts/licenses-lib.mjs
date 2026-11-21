@@ -24,6 +24,26 @@ export const TOOL_EXTRA = new Set(["MPL-2.0", "BlueOak-1.0.0", "CC0-1.0", "0BSD"
  */
 export const CC_BY_DATA = new Set(["caniuse-lite"]);
 
+/**
+ * The npm registry tarball URL for `name@version`, or null if either is missing. The CC-BY
+ * data allowance holds only for a lockfile entry resolved from exactly this URL, so a git or
+ * tarball fork that takes a listed name doesn't inherit it.
+ */
+export function registryTarball(name, version) {
+  if (typeof name !== "string" || typeof version !== "string" || version === "") return null;
+  const base = name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
+  return `https://registry.npmjs.org/${name}/-/${base}-${version}.tgz`;
+}
+
+/**
+ * Source files Vite may bundle that the scan reads: lower-case `.js .jsx .mjs .cjs .ts .tsx
+ * .mts .cts .css .html`. Every other file under src/ is refused (Vite parses `./a.mod` or
+ * `./c.JS` as JavaScript and `.pcss` as CSS, and the scan would never read them).
+ */
+export function sourceExtensionOk(fileName) {
+  return /\.(?:[cm]?[jt]sx?|css|html)$/.test(fileName);
+}
+
 /** Package name from a lockfile path such as `node_modules/a/node_modules/@s/b`. */
 export function nameOf(path) {
   const i = path.lastIndexOf("node_modules/");
@@ -123,11 +143,26 @@ const Q = "[\"'`]";
 // `import("x")` and ``import(`x`)`` (comments allowed in the gaps), CSS `@import "x"` and any
 // CSS `url(x)`. In HTML files also every `src=` and `href=`. Over-matching (an import-like
 // string in a comment) only adds a false alarm.
-const IMPORT_RES = [
-  new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${Q}([^"'\`]+)${Q}`, "g"),
-  /\burl\(\s*["'`]?([^"'`)\s]+)/g,
+// In CSS and HTML files matching is case-insensitive (CSS function names, at-rules and HTML
+// attribute names are); in JS it is not, so `new URL(x)` isn't read as CSS `url(x)`.
+const importRes = (flags) => [
+  new RegExp(String.raw`\b(?:from|import)${GAP}(?:\(${GAP})?${Q}([^"'\`]+)${Q}`, flags),
+  new RegExp(String.raw`\burl\(\s*["'\`]?([^"'\`)\s]+)`, flags),
 ];
-const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/g];
+const IMPORT_RES = importRes("g");
+const MARKUP_RES = importRes("gi");
+const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/gi];
+// CSS `image-set("x.png" 1x)`: Vite rewrites its plain strings like url().
+const IMAGE_SET_RE = /\bimage-set\(((?:[^()]|\([^()]*\))*)\)/gi;
+const QUOTED_RE = /["']([^"']+)["']/g;
+// Anywhere in the text, not only in import forms: a string naming a path into a package.
+const PACKAGE_PATH_RE = /node_modules|\/@fs\/|\/@id\//i;
+// `import.meta` other than `import.meta.env`: Vite turns `import.meta.glob(…)` and
+// `new URL(…, import.meta.url)` into imports the scan can't follow.
+const IMPORT_META_RE = new RegExp(
+  String.raw`\bimport${GAP}\.${GAP}meta\b(?!${GAP}\.${GAP}env\b)`,
+  "i",
+);
 
 /**
  * One problem string for a specifier in shipped source `file` (a path relative to the app
@@ -140,7 +175,7 @@ const HTML_RES = [/\b(?:src|href)\s*=\s*["']?([^"'\s>]+)/g];
  *   left to the CSP and E2E checks; in JS import forms `#x` is a subpath import and refused.
  */
 export function importProblem(file, spec, deps, fragmentsOk = false) {
-  if (/node_modules|\/@fs\/|\/@id\//.test(spec)) {
+  if (PACKAGE_PATH_RE.test(spec)) {
     return `${file}: imports ${spec}, a path into node_modules (use the package name)`;
   }
   // `#x` is a fragment in CSS url() and HTML, but a subpath import in JS.
@@ -169,12 +204,39 @@ export function importProblem(file, spec, deps, fragmentsOk = false) {
 export function checkImports(sources, rootManifest, problems) {
   const deps = new Set(keys(rootManifest.dependencies));
   for (const { file, text } of sources) {
-    const res = file.endsWith(".html") ? [...IMPORT_RES, ...HTML_RES] : IMPORT_RES;
+    const specs = [];
+    const html = file.endsWith(".html");
+    const res = html
+      ? [...MARKUP_RES, ...HTML_RES]
+      : file.endsWith(".css")
+        ? MARKUP_RES
+        : IMPORT_RES;
     for (const [i, re] of res.entries()) {
-      for (const m of text.matchAll(re)) {
-        const problem = importProblem(file, m[1], deps, i > 0);
-        if (problem !== null) problems.push(problem);
+      for (const m of text.matchAll(re)) specs.push([m[1], i > 0]);
+    }
+    if (file.endsWith(".css")) {
+      for (const m of text.matchAll(IMAGE_SET_RE)) {
+        // `type("image/png")` names a MIME type, not a file.
+        const args = m[1].replace(/\btype\(\s*["'][^"']*["']\s*\)/gi, "");
+        for (const q of args.matchAll(QUOTED_RE)) specs.push([q[1], true]);
       }
+    }
+    let packagePath = false;
+    for (const [spec, fragmentsOk] of specs) {
+      const problem = importProblem(file, spec, deps, fragmentsOk);
+      if (problem === null) continue;
+      if (PACKAGE_PATH_RE.test(spec)) packagePath = true;
+      problems.push(problem);
+    }
+    // Strings outside the import forms (`import.meta.glob("/node_modules/x")`, a computed
+    // specifier, a comment): one problem per file unless an import already reported it.
+    if (!packagePath && PACKAGE_PATH_RE.test(text)) {
+      problems.push(`${file}: names a path into node_modules (/@fs/, /@id/); not allowed in src/`);
+    }
+    if (IMPORT_META_RE.test(text)) {
+      problems.push(
+        `${file}: uses import.meta other than import.meta.env (glob, url), which the scan can't follow`,
+      );
     }
   }
 }
@@ -206,7 +268,11 @@ export function check({ lock, rootManifest: rawRoot, manifests, sources }) {
     // must not inherit it: the real names have to agree with the path.
     const pathName = nameOf(path);
     const realNames = [pkg.name, manifest?.name].filter((n) => n !== undefined);
-    const name = realNames.every((n) => n === pathName) ? pathName : null;
+    const sameName = realNames.every((n) => n === pathName);
+    // The CC-BY allowance also needs the registry tarball for that name and version.
+    const fromRegistry =
+      typeof pkg.resolved === "string" && pkg.resolved === registryTarball(pathName, pkg.version);
+    const name = sameName && fromRegistry ? pathName : null;
     // Reachable from `dependencies` (dev flags ignored), or not marked dev in the lockfile
     // (the owner's rule for #50): either one puts the package under the strict list.
     const prod = production.has(path) || pkg.dev !== true;

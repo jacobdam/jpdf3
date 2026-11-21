@@ -5,7 +5,15 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { bareRoot, check, licenseOk, nameOf, resolve } from "./licenses-lib.mjs";
+import {
+  bareRoot,
+  check,
+  licenseOk,
+  nameOf,
+  registryTarball,
+  resolve,
+  sourceExtensionOk,
+} from "./licenses-lib.mjs";
 
 // A small tree: app depends on `ui`, which depends on `util` and has an optional peer `peer`.
 // `tool` is a devDependency with its own nested `util`.
@@ -35,6 +43,13 @@ function tree(overrides = {}) {
 }
 
 const problems = (overrides) => check(tree(overrides)).problems;
+
+// A lockfile entry resolved from the npm registry (the CC-BY allowance requires it).
+const fromRegistry = (name, extra = {}) => ({
+  version: "1.0.1",
+  resolved: registryTarball(name, "1.0.1"),
+  ...extra,
+});
 
 test("the clean tree passes and counts production packages", () => {
   const r = check(tree());
@@ -211,12 +226,20 @@ test("scoped names resolve and CC-BY data is matched by package name", () => {
   assert.equal(nameOf("node_modules/caniuse-lite"), "caniuse-lite");
   const ok = problems({
     packages: {
-      "node_modules/tool/node_modules/caniuse-lite": { license: "CC-BY-4.0", dev: true },
+      "node_modules/tool/node_modules/caniuse-lite": fromRegistry("caniuse-lite", {
+        license: "CC-BY-4.0",
+        dev: true,
+      }),
     },
   });
   assert.deepEqual(ok, []);
   const bad = problems({
-    packages: { "node_modules/@x/caniuse-lite": { license: "CC-BY-4.0", dev: true } },
+    packages: {
+      "node_modules/@x/caniuse-lite": fromRegistry("@x/caniuse-lite", {
+        license: "CC-BY-4.0",
+        dev: true,
+      }),
+    },
   });
   assert.equal(bad.length, 2);
 });
@@ -370,13 +393,13 @@ test("edges are the union of the lockfile entry and the installed manifest", () 
 
 test("an npm alias doesn't inherit the CC-BY data allowance", () => {
   // Only the lockfile names the real package; the installed manifest looks right.
-  const evil = { license: "CC-BY-4.0", dev: true, name: "evil-code" };
+  const evil = fromRegistry("caniuse-lite", { license: "CC-BY-4.0", dev: true, name: "evil-code" });
   const lockOnly = problems({
     packages: { "node_modules/caniuse-lite": evil },
     manifests: { "node_modules/caniuse-lite": { license: "CC-BY-4.0", name: "caniuse-lite" } },
   });
   assert.equal(lockOnly.length, 2, lockOnly.join("\n"));
-  const real = { license: "CC-BY-4.0", dev: true };
+  const real = fromRegistry("caniuse-lite", { license: "CC-BY-4.0", dev: true });
   const p = problems({
     packages: { "node_modules/caniuse-lite": real },
     manifests: { "node_modules/caniuse-lite": { ...real, name: "evil-code" } },
@@ -387,6 +410,37 @@ test("an npm alias doesn't inherit the CC-BY data allowance", () => {
     manifests: { "node_modules/caniuse-lite": { ...real, name: "caniuse-lite" } },
   });
   assert.deepEqual(ok, []);
+});
+
+test("the CC-BY data allowance needs the registry tarball for that name and version", () => {
+  assert.equal(
+    registryTarball("caniuse-lite", "1.0.1"),
+    "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.1.tgz",
+  );
+  assert.equal(registryTarball("@s/b", "2.0.0"), "https://registry.npmjs.org/@s/b/-/b-2.0.0.tgz");
+  assert.equal(registryTarball("x", ""), null);
+  assert.equal(registryTarball("x", undefined), null);
+  const real = fromRegistry("caniuse-lite", { license: "CC-BY-4.0", dev: true });
+  const reg = "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.1.tgz";
+  for (const fork of [
+    { resolved: "git+ssh://git@github.com/evil/caniuse-lite.git#abc" },
+    { resolved: "https://evil.example/caniuse-lite-1.0.1.tgz" },
+    { resolved: `${reg}?x` },
+    { resolved: "https://registry.npmjs.org/evil/-/evil-1.0.1.tgz" },
+    { resolved: undefined },
+    { version: "9.9.9" },
+    { version: undefined },
+  ]) {
+    const pkg = { ...real, ...fork };
+    const p = problems({
+      packages: { "node_modules/caniuse-lite": pkg },
+      manifests: { "node_modules/caniuse-lite": { license: "CC-BY-4.0" } },
+    });
+    // The lockfile and the installed manifest both fail without the allowance.
+    assert.equal(p.length, 2, JSON.stringify(fork));
+  }
+  // The registry pin is about the CC-BY allowance only; other licenses don't need it.
+  assert.deepEqual(problems({ packages: { "node_modules/x": { license: "MIT", dev: true } } }), []);
 });
 
 test("paths into node_modules, template literals and CSS imports are scanned", () => {
@@ -425,6 +479,116 @@ test("paths into node_modules, template literals and CSS imports are scanned", (
     { file: "index.html", text: '<a href="#top">x</a><script src="./src/m.ts"></script>' },
   ];
   assert.deepEqual(problems({ sources: ok }), []);
+});
+
+test("import.meta (other than env) and package paths in any string are refused (#112)", () => {
+  const one = (file, text) => {
+    const p = problems({ sources: [{ file, text }] });
+    assert.equal(p.length, 1, `${text}\n${p.join("\n")}`);
+    return p[0];
+  };
+  // The audit's proofs: both rules fire.
+  for (const text of [
+    'const m = import.meta.glob("/node_modules/tool/index.js", { eager: true });',
+    'const u = new URL("../node_modules/tool/x.js", import.meta.url);',
+  ]) {
+    const p = problems({ sources: [{ file: "src/main.tsx", text }] });
+    assert.equal(p.length, 2, p.join("\n"));
+    assert.match(p[0], /src\/main\.tsx: names a path into node_modules/);
+    assert.match(p[1], /src\/main\.tsx: uses import\.meta other than/);
+  }
+  for (const text of [
+    'const m = import.meta.glob("./x/*.ts");',
+    "const m = import.meta.globEager('./x/*.ts');",
+    'const u = new URL("./worker.ts", import.meta.url);',
+    'const g = import.meta["glob"];',
+    "const g = import . meta . glob;",
+    "const g = import /* c */ .meta\n.glob;",
+    "const g = import.meta?.glob;",
+    "const m = import.meta;",
+    "const e = import.meta.environment;",
+  ]) {
+    assert.match(one("src/a.ts", text), /uses import\.meta other than import\.meta\.env/, text);
+  }
+  for (const text of [
+    "const mode = import.meta.env.MODE;",
+    "const mode = import.meta /* c */ .env.DEV;",
+    'const e = import.meta.env["BASE_URL"];',
+  ]) {
+    assert.deepEqual(problems({ sources: [{ file: "src/a.ts", text }] }), [], text);
+  }
+  // JS `new URL(x)` is not CSS `url(x)`.
+  assert.deepEqual(problems({ sources: [{ file: "src/a.ts", text: "new URL(href);" }] }), []);
+  // A path into node_modules anywhere in the text, not only in import forms.
+  for (const [file, text] of [
+    ["src/a.ts", 'const p = "/node_modules/tool/x.js";'],
+    ["src/a.ts", "const p = `../NODE_MODULES/tool/x.js`;"],
+    ["src/a.ts", 'fetch("/@fs/home/u/x.js");'],
+    ["src/a.ts", "// see /@id/tool"],
+    ["src/a.css", "a { --x: '/node_modules/tool/x.png'; }"],
+    ["index.html", "<script>const p = '/node_modules/tool/x.js';</script>"],
+  ]) {
+    assert.match(one(file, text), /names a path into node_modules/, text);
+  }
+  // An import that names node_modules is reported once, by the import form.
+  assert.match(
+    one("src/a.ts", 'import x from "../node_modules/tool/index.js"; // node_modules'),
+    /imports \.\.\/node_modules\/tool\/index\.js, a path into node_modules/,
+  );
+});
+
+test("CSS forms are matched case-insensitively, and image-set strings are scanned", () => {
+  for (const text of [
+    "a { background: URL(tool/x.png); }",
+    "a { background: Url('tool/x.png'); }",
+    '@IMPORT "tool/x.css";',
+    '@Import url("tool/x.css");',
+    'a { background: image-set("tool/x.png" 1x); }',
+    "a { background: -webkit-image-set('tool/x.png' 1x); }",
+    'a { background: IMAGE-SET("./ok.png" 1x, "tool/x.png" 2x); }',
+    'a { background: image-set("tool/x.png" type("image/png")); }',
+    'a { background: image-set("./a.png" TYPE("image/png"), "tool/x.png"); }',
+  ]) {
+    assert.equal(problems({ sources: [{ file: "src/a.css", text }] }).length, 1, text);
+  }
+  const ok =
+    'a { background: image-set("./a.png" 1x type("image/avif"), url(./b.png) 2x, "#f" 3x); }';
+  assert.deepEqual(problems({ sources: [{ file: "src/a.css", text: ok }] }), []);
+  // In JS, image-set strings are not imports (only CSS files get that scan).
+  const js = "const s = 'image-set(\"x.png\" 1x)';";
+  assert.deepEqual(problems({ sources: [{ file: "src/a.ts", text: js }] }), []);
+});
+
+test("only lower-case scanned source extensions are allowed", () => {
+  for (const name of ["a.js", "a.jsx", "a.mjs", "a.cjs", "a.ts", "a.tsx", "a.mts", "a.cts"]) {
+    assert.equal(sourceExtensionOk(name), true, name);
+  }
+  for (const name of ["a.css", "a.html", "a.d.ts", "dir/x.tsx"]) {
+    assert.equal(sourceExtensionOk(name), true, name);
+  }
+  for (const name of [
+    "a.mod",
+    "c.JS",
+    "c.Ts",
+    "x.CSS",
+    "x.pcss",
+    "x.postcss",
+    "x.sss",
+    "x.scss",
+    "x.less",
+    "x.styl",
+    "x.json",
+    "x.svg",
+    "x.vue",
+    "x.wasm",
+    "x.htm",
+    "x.ts.bak",
+    "README",
+    ".DS_Store",
+    "ts",
+  ]) {
+    assert.equal(sourceExtensionOk(name), false, name);
+  }
 });
 
 test("a hostile root manifest is reported, not thrown", () => {
@@ -502,6 +666,39 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     assert.match(r.stderr, /src\/dir\.ts: not a regular file/);
     rmSync(join(dir, "src", "dir.ts"), { recursive: true });
 
+    // #112: Vite bundles `./a.mod` and `./c.JS` as JS and `.pcss` as CSS; refuse them.
+    write("src/main.tsx", 'import "ui"; import "./a.mod"; import "./c.JS"; import "./s.pcss";');
+    write("src/a.mod", 'import "tool";');
+    write("src/c.JS", 'import "tool";');
+    write("src/s.pcss", '@import "tool/x.css";');
+    write("src/deep/README", "");
+    mkdirSync(join(dir, "src", "assets.d"));
+    r = run();
+    assert.equal(r.status, 1);
+    for (const f of ["src/a.mod", "src/c.JS", "src/s.pcss", "src/deep/README"]) {
+      assert.match(r.stderr, new RegExp(`${f.replace(/\./g, "\\.")}: only lower-case`), f);
+    }
+    // A plain directory is fine; it's not a source file.
+    assert.doesNotMatch(r.stderr, /assets\.d/);
+    assert.match(r.stderr, /4 problem\(s\)/);
+    for (const f of ["a.mod", "c.JS", "s.pcss", "deep/README"]) rmSync(join(dir, "src", f));
+    rmSync(join(dir, "src", "assets.d"), { recursive: true });
+    write("src/main.tsx", 'import "ui";');
+    // The audit's other proof, end to end.
+    write("src/g.ts", 'import.meta.glob("/node_modules/tool/index.js", { eager: true });');
+    r = run();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /src\/g\.ts: names a path into node_modules/);
+    assert.match(r.stderr, /src\/g\.ts: uses import\.meta other than/);
+    rmSync(join(dir, "src", "g.ts"));
+    // Anything that isn't a regular file or directory (here a FIFO) is refused.
+    if (spawnSync("mkfifo", [join(dir, "src", "pipe")]).status === 0) {
+      r = run();
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /src\/pipe: not a regular file/);
+      rmSync(join(dir, "src", "pipe"));
+    }
+
     write("package.json", JSON.stringify({ dependencies: { ui: "1" }, imports: { "#t": "tool" } }));
     r = run();
     assert.equal(r.status, 1);
@@ -547,6 +744,49 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
       assert.match(r.stderr, new RegExp(`uses ${key},`), key);
     }
     assert.equal(r.stderr.match(/uses transform,/g).length, 1);
+    rmSync(join(dir, "public"), { recursive: true });
+
+    // #112: library entries, emitted chunks, preprocessor injections, config and output hooks.
+    const more = [
+      "lib",
+      "entry",
+      "emitFile",
+      "additionalData",
+      "config",
+      "configResolved",
+      "options",
+      "banner",
+      "footer",
+      "intro",
+      "outro",
+      "renderChunk",
+      "generateBundle",
+      "resolveDynamicImport",
+    ];
+    for (const key of more) {
+      for (const cfg of [`{ ${key}: 1 }`, `{ ${key}() {} }`, `{ "${key}": 1 }`, `{ ${key} }`]) {
+        write("vite.config.ts", `export default ${cfg};`);
+        r = run();
+        assert.equal(r.status, 1, cfg);
+        assert.match(r.stderr, new RegExp(`uses ${key},`), cfg);
+      }
+    }
+    write(
+      "vite.config.ts",
+      "export default { build: { lib: { entry: 'x' } }, css: { preprocessorOptions: { scss: { additionalData: '@import \"tool\";' } } }, plugins: [{ buildStart() { this.emitFile({ type: 'chunk', id: 'tool' }); } }] };",
+    );
+    r = run();
+    assert.equal(r.status, 1);
+    for (const key of ["lib", "entry", "additionalData", "emitFile"]) {
+      assert.match(r.stderr, new RegExp(`uses ${key},`), key);
+    }
+    // No false alarms on names that merely contain a guarded word.
+    write(
+      "vite.config.ts",
+      "import { defineConfig } from 'vite'; export default defineConfig({ build: { libX: 1, entryFileNames: 'a', rollupOptions: { onwarn() {} } }, optionsX: 1 });",
+    );
+    r = run();
+    assert.equal(r.status, 0, r.stderr);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -558,6 +798,8 @@ test("index.html src and href attributes are scanned", () => {
     '<link rel="stylesheet" href="tool/x.css">',
     "<script type=module src=/vendor/x.js></script>",
     '<link href="../x.css">',
+    '<SCRIPT TYPE="module" SRC="tool"></SCRIPT>',
+    '<style>@IMPORT "tool/x.css";</style>',
   ]) {
     assert.equal(problems({ sources: [{ file: "index.html", text }] }).length, 1, text);
   }

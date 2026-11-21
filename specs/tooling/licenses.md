@@ -9,8 +9,9 @@ Status: implemented
 `npm run licenses` in `apps/web` first runs the unit tests (`node --test
 scripts/licenses.test.mjs`), then `scripts/check-licenses.mjs`. That script reads
 `package-lock.json`, `package.json`, every installed `node_modules/<path>/package.json`,
-`index.html`, `vite.config.ts`, the app directory's file names and every `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html`
-file (or symlink) under `src/`, recursively. An optional argument names another app
+`index.html`, `vite.config.ts`, the app directory's file names and every file under `src/`,
+recursively (only lower-case `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` files are
+allowed there; see item 6). An optional argument names another app
 directory (used by the integration test). The
 logic is in `scripts/licenses-lib.mjs`, pure functions over that data. It never runs package
 code and has no dependencies.
@@ -36,7 +37,9 @@ code and has no dependencies.
      metadata can't tell data from code, so each name is a reviewed decision. The name comes
      from the lockfile path, and the lockfile's and the manifest's `name` (when present)
      must agree with it, so an npm alias (`"caniuse-lite": "npm:other@1"`) doesn't inherit
-     the allowance.
+     the allowance. The lockfile entry must also be `resolved` from exactly
+     `https://registry.npmjs.org/<name>/-/<base>-<version>.tgz` (its own `version`), so a
+     git or tarball fork that takes a listed name doesn't inherit it either (#112).
    - An expression is a single SPDX id or `A OR B …`, which passes if any option passes for
      that tree. `AND`, `WITH`, parentheses, non-strings and a missing license fail.
      Matching is exact and case-sensitive (`mit` fails).
@@ -46,13 +49,23 @@ code and has no dependencies.
 4. **Shipped imports.** These forms are scanned in the shipped sources:
    - `import … from "x"`, `export … from "x"`, `import "x"`, `import("x")` and
      ``import(`x`)``, with comments allowed between the keyword and the specifier;
-   - CSS `@import "x"` and any CSS `url(x)`;
+   - CSS `@import "x"`, any CSS `url(x)` and every quoted string inside CSS `image-set(…)`
+     except `type("…")` MIME types;
    - in HTML files, every `src=` and `href=` attribute.
+   - In `.css` and `.html` files these match case-insensitively (`URL(x)`, `@IMPORT`,
+     `SRC=`), because CSS and HTML are; in JS they match case-sensitively, so `new URL(x)`
+     is not read as a CSS `url(x)`.
    - Every bare specifier must name a package in the root `dependencies`. Root
      `optionalDependencies` and `peerDependencies` are not enough. Scoped names use two
      segments.
-   - Any specifier containing `node_modules`, `/@fs/` or `/@id/` is refused: a path into a
-     package bypasses its name.
+   - Any specifier containing `node_modules`, `/@fs/` or `/@id/` (any case) is refused: a
+     path into a package bypasses its name. **Any text** in a shipped source that contains
+     one of them is refused too (one problem per file unless an import form already
+     reported it), so computed specifiers and Vite-only forms can't name a package path
+     (#112).
+   - `import.meta` is refused in every form except `import.meta.env` (comments allowed in
+     the gaps). Vite turns `import.meta.glob(…)` and `new URL(…, import.meta.url)` into
+     imports the scan can't follow (#112).
    - A relative or root-absolute path must resolve inside `src/` (from the importing file's
      directory; `/` is the app directory). Files outside `src/` aren't scanned, so
      `../vendor/x.ts` could import a tool package.
@@ -63,8 +76,12 @@ code and has no dependencies.
 5. **Bundle guards.** These change what gets bundled, and the import scan can't follow
    them:
    - Vite copies `public/` verbatim.
-   - These config keys: `alias`, `publicDir`, `root`, `input`.
-   - Plugin hooks `resolveId`, `load` and `transform`.
+   - These config keys: `alias`, `publicDir`, `root`, `input`, library builds (`lib`,
+     `entry`) and preprocessor injections (`additionalData`).
+   - Plugin hooks that resolve, load or transform modules (`resolveId`,
+     `resolveDynamicImport`, `load`, `transform`, `renderChunk`, `generateBundle`), emit
+     chunks (`emitFile`), edit the config or Rollup options (`config`, `configResolved`,
+     `options`) or inject text (`banner`, `footer`, `intro`, `outro`).
    - Another `vite.config.*` file, which Vite loads before `.ts`.
    - Plugins imported from another module, which hide their hooks.
 
@@ -75,11 +92,20 @@ code and has no dependencies.
      shorthand (`{ alias }`).
 
    This is a text match, so it is advisory until #99 checks Rollup's real module graph.
-   For example, `vite build --config x` bypasses it.
-6. **Source files.** Files under `src/` with a source extension are scanned. Symlinks
-   anywhere in `src/` are refused, because Vite resolves a symlinked module's imports from
-   its real location. Any file whose real path is outside `src/` is refused too. A
-   directory with a source-file name is reported.
+   It can't see, for example: `vite build --config x`; a key built at run time
+   (`{ [k]: v }` with `k = "al" + "ias"`); `transformIndexHtml` (allowed, our CSP plugin
+   uses it) returning a `<script src>` tag; plugin code that reads a file itself
+   (`fs.readFileSync` into a string); environment-specific config (`environments.*`) and
+   hooks not listed above.
+6. **Source files.** Every regular file under `src/` must have a lower-case
+   `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` extension, and all of them are
+   scanned. Any other file is refused (fail closed, #112): Vite parses `./a.mod` or
+   `./c.JS` as JavaScript and `.pcss`/`.postcss`/`.sss` (and `.scss`/`.less`/`.styl` with a
+   preprocessor) as CSS, and the scan would never read them. Images, JSON and other assets
+   need a scan extension first. Symlinks anywhere in `src/` are refused, because Vite
+   resolves a symlinked module's imports from its real location. Any file whose real path
+   is outside `src/` is refused too. A directory with a source-file name, and anything that
+   is neither a regular file nor a directory (a FIFO), is reported.
 
 ## Persistence
 Not applicable. Output goes to stderr: `licenses: ok (N packages, P production, I installed,
@@ -114,6 +140,18 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
   - One that drops root `optionalDependencies` fails the root-optional test.
   - One that allows CC-BY-4.0 by license alone fails the CC-BY tests. These include a
     scoped `@x/caniuse-lite` look-alike and an npm alias.
+  - One that filters extensions instead of refusing unknown ones (the audit 0002 bypass), or
+    matches them case-insensitively, fails the integration test's `a.mod`, `c.JS`,
+    `s.pcss` and `README` cases and the extension unit test. One that skips the
+    `import.meta` rule, or doesn't exempt `import.meta.env`, fails the `import.meta` test;
+    one that checks `node_modules` only in import forms, or case-sensitively, fails the
+    any-text cases (`import.meta.glob("/node_modules/…")`, `` `../NODE_MODULES/…` ``). One
+    that matches CSS case-sensitively, or JS case-insensitively (`new URL(href)`), or
+    skips `image-set` or its `type()` strip, fails the CSS test. One that grants CC-BY
+    without the exact registry tarball fails the fork cases (git, other host, query
+    suffix, other name, missing or different version). Each new guard key is checked in
+    four spellings, with false-positive controls (`libX`, `entryFileNames`, `optionsX`,
+    `defineConfig`). Each of these mutations was applied by hand and failed the suite.
   - The integration test runs the real script on a fixture app directory. It covers nested
     `src/` directories and `.cts` files. It refuses a symlinked file, a symlinked directory
     (and the files under it), a source-named directory, the `imports` field, foreign
@@ -145,8 +183,10 @@ set), so cycles terminate (tested). Resolution walks up at most the depth of the
   - `vite.config.ts`, `csp.ts` and `e2e/` aren't scanned for imports. They run at build or
     test time, and `src/` can't import them (they're outside `src/`).
   - The import scan is a regular expression. Over-matching (an import-like string in a
-    comment) only adds a false alarm. It misses computed specifiers (``import(`${x}`)``,
-    `new URL(x, import.meta.url)`) and `require`. Review has to catch those in `src/`.
+    comment) only adds a false alarm. It misses computed bare specifiers
+    (``import(`${x}`)``, which Vite leaves to run time and so doesn't bundle) and
+    `require`. `import.meta.glob` and `new URL(…, import.meta.url)` are refused outright.
+    Review has to catch the rest in `src/` until #99.
 
 ## Accessibility
 Not applicable.
@@ -159,7 +199,7 @@ Node ≥ 22.12 (the `engines` field); uses `node:test`, `fs.readdirSync({ recurs
 About 0.1 s for 186 packages plus about 0.1 s of tests.
 
 ## Tests
-`apps/web/scripts/licenses.test.mjs` (33 tests, `node:test`, one of them an integration
+`apps/web/scripts/licenses.test.mjs` (37 tests, `node:test`, one of them an integration
 test of `check-licenses.mjs` on a fixture directory under the git-ignored
 `node_modules/.cache/`), run by every `npm run
 licenses`, so on every `cargo xtask ci linux` run.
