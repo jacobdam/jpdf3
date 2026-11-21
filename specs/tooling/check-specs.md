@@ -79,7 +79,17 @@ Not applicable (read-only tool).
 
 ## Limits
 Runs on repository files written by the agent, not on user input. Still, no `unwrap`/panicking
-index (workspace lints); files above 1 MiB are reported as a problem and not parsed; directory
+index (workspace lints); files above 1 MiB are reported as a problem and not parsed; a file
+is opened only if it is a regular file (not followed if a symlink; a FIFO or device, which would
+block the open or never end, is reported as `cannot read: not a regular file`), its size is
+checked on the open file, and the read stops one byte past 1 MiB, so a file that grows after the
+check is reported, never read whole (#83). A file swapped for a FIFO between the type check and
+the open is not covered (the open would block; closing it needs `O_NONBLOCK` with per-target
+flag values); a swap to a symlink in that window is followed. The walk reports any other non-regular, non-directory entry named `*.md` (FIFO,
+socket, device) the same way, since the judge's glob would match it. Identical problem lines
+are merged (a FIFO `_TEMPLATE.md` is flagged by the walk and by the by-name read), and the count
+is of distinct lines. This covers `_TEMPLATE.md` and `TRACE.md`, which are
+read by name, not found by the walk. Directory
 walks do not follow symlinks; a symlink under `specs/` is reported as a problem (the judge
 would follow it, so skipping it silently could hide a spec). Files are selected by name ending
 in `.md` (so a file named exactly `.md` counts, as in the judge's glob), and a directory whose
@@ -105,5 +115,10 @@ Linear in the size of `specs/`; well under a second for the expected hundreds of
   sections), journey field validation (each rule above, good and bad), TRACE cross-checks.
 - Fixture trees `xtask/tests/fixtures/{good,bad}/specs/`, checked end to end by
   `xtask/tests/check_specs.rs`, including the exit code; a temp tree built at test time covers
-  symlinks, non-UTF-8, the 1 MiB limit, nested journey files and supersede loops.
+  symlinks, non-UTF-8, the 1 MiB limit, nested journey files and supersede loops; another
+  (unix) has a FIFO `_TEMPLATE.md`, a FIFO `area/hidden.md` and a symlinked `TRACE.md`, which
+  must be reported within a 30 s deadline. A unit test caps the read: exactly the limit passes,
+  one byte more and an endless reader fail. That `read_text` applies the cap after its size
+  check (a file that grows between the fstat and the read) has no end-to-end test, since the
+  growth can't be timed.
 - The real repository passes `cargo xtask check-specs`.

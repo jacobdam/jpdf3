@@ -70,6 +70,12 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   the diff from a scratch copy and test that copy, with a harness that refuses to run if the stubbing failed
   ([journal](journal/2026-11-21.md), PR #127).
 
+- Testing code that signals process groups (watchdogs, group kills) → never let a test feed a value that could
+  become `kill -- -1` (`1`, `01`), even "to check the guard refuses it". Write only ids of sleepers you spawned in
+  their own group; test the guard with the kill command textually swapped for `echo` (assert the swap happened). Prove
+  each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
+  4 rounds running ([journal](journal/2026-11-21.md), PR #133).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).

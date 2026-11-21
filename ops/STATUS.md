@@ -4,18 +4,21 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #131 (#82): tooling fetch hardening. Auto-merge goes on after ai-review; if still open, check its CI (rule c).
+- PR #133 (#83 part 1): subprocess hygiene. Auto-merge is on after ai-review; if it is still open, check its CI
+  (rule c). #83 stays open for #132 (items 3, 4).
 
 ## Last session
-- **#82** (rule d): git hardening shared by jpdf-arlington and jpdf-corpus (deadline + group kill, all `GIT_*`
-  scrubbed, no hooks/askpass/gc, HTTPS only, cache must be plain dirs and files with allow-listed config) and
-  bounded corpus downloads (no redirects, size + 1 cap, FIFO-safe). 3 review rounds, all posted on the PR.
+- **#83 1/2** (rule d): the bench starts a `/bin/sh` watchdog in its own process group, which kills the running
+  engine's group when the bench dies (Ctrl-C, TERM, KILL). An engine's group is also killed after it exits normally.
+  Also: `npm ci --ignore-scripts`; check-specs refuses FIFOs and symlinks and caps reads; macos `capture` writes stdin
+  on a thread. 6 review rounds, all posted on the PR. Follow-ups: #132 (cargo-fuzz provenance, nested bundles) and
+  #134 (a per-run group holder to close the pid-reuse windows).
 
 ## Previous session
-- **#124** (rule a, PR #129 merged): every AI review round and its triage are posted on the PR.
+- **#82** (rule d, PR #131 merged): git and curl hardening for jpdf-arlington and jpdf-corpus.
 
 ## Next step (suggested order, TICK letters)
-1. d (security) issues, lowest number first: **#83, #106, #107, #109, #113, #114, #116, #117, #122**.
+1. d (security) issues, lowest number first: **#106, #107, #109, #113, #114, #116, #117, #122, #132, #134**.
    - **#99 soon after:** the text scan is advisory; the license property needs Rollup's module graph.
    - **Before #16 admits any adapter:** the suites (#116, #117, #122) and the decoder contracts (#106).
 2. **#76**: harness honesty. The judge relies on it.

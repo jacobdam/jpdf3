@@ -76,8 +76,29 @@ Status: implemented
    runs in its own process group (`process_group(0)`). At the limit, the whole group gets
    SIGKILL (`kill -s KILL -- -PGID`, the `/bin/sh` builtin, so no `kill` binary is needed)
    and the child is reaped, so a wrapper script's children
-   can't outlive it and skew later runs. Children that leave the group on purpose are out
-   of scope.
+   can't outlive it and skew later runs. When a child exits on its own, its group also
+   gets SIGKILL (right after the reap: std can't wait without reaping, so the group id stays
+   reserved only while a member is left; if none is, the kill finds nothing unless the id
+   was reused within the few milliseconds the `/bin/sh` group kill takes to start), so a background child an engine leaves behind
+   dies too (#83).
+   **Watchdog.** Before any engine runs, the bench starts one `/bin/sh` watchdog in its own
+   process group, or refuses to run (I/O error, exit 1). The bench writes each engine's
+   group id to the watchdog's stdin when the engine starts and `-` once its group is gone.
+   At end of input, which comes whenever the bench exits (Ctrl-C, SIGTERM, SIGKILL, a
+   panic), the watchdog kills the last registered group. Ctrl-C reaches only the
+   terminal's foreground group, so the engine (own group) and the watchdog (own group)
+   don't get it; the watchdog is what stops the engine. After a child exits on its own,
+   `-` is written right after the reap and before the group kill, so a bench killed during
+   that kill can't make the watchdog signal a reused id (a background child may then
+   survive: the group kill takes one `/bin/sh` spawn, milliseconds). After a timeout, `-` is
+   written before the reap, while the zombie leader still reserves the id (unless the
+   bench itself dies between the group kill and `-`: init then reaps the leader). These
+   windows, plus spawn → registration and a normal exit's reap → `-`, are microseconds
+   wide and not covered; #134 tracks closing them with a per-run group holder. Only lines `2`..`9999999` without leading zeros kill
+   (`kill -- -1`, also written `-01`, would hit every process of the user; `-0` is the
+   watchdog's own group).
+   The watchdog holds one group, so runs never overlap (the bench is sequential).
+   Children that leave the group on purpose are out of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
    per-file times of `ok` measurements (nearest-rank p95; `null` when no file is `ok`).
    **Ratio** per operation and reference engine: the geometric mean over files where both
@@ -143,7 +164,10 @@ judge fetches it, in CI. `--corpus` is only ever given those tier directories.
 Corpus PDFs are hostile, but the bench never parses them: it only passes paths to external
 programs, with arguments as an argv list (no shell). Report strings are JSON-escaped (file
 names can hold any character). The bench runs only `--cli`, `mutool`, `pdfium_test`, `git`
-(for `revision`), `/bin/sh` (group kill) and `sysctl` on macOS.
+(for `revision`), `/bin/sh` (group kill and the watchdog) and `sysctl` on macOS. The
+watchdog's stdin pipe is close-on-exec, so engines never hold it open (which would keep the
+watchdog from seeing the bench exit). It reads only numbers the bench wrote; any other line
+kills nothing.
 
 ## Accessibility
 Not applicable (CLI tool).
@@ -153,8 +177,9 @@ macOS and Linux. Windows is out of scope (the judge runs Linux; development is o
 
 ## Performance
 The generated sample with defaults is 4 files × 4 operations × up to 2 engines × 6 runs ≈ 200
-process starts, a few seconds. The tool's overhead per run is one spawn plus polling the
-child every 0.2 ms.
+process starts, a few seconds. The tool's overhead per run is the engine's spawn, polling it every 0.2 ms,
+one `/bin/sh` spawn for the group kill after it exits (outside the timed span), and two
+short writes to the watchdog.
 
 ## Tests
 `tools/bench/tests/bench.rs` and unit tests in the crate:
@@ -165,6 +190,20 @@ child every 0.2 ms.
   the timeout fires no earlier than the limit and less than 3 s after it. The test warms the script up first; a
   run that times out before the wrapper wrote its child's pid proves nothing, so it
   retries at 3, 6, 12 and 24 s and fails only if no attempt got that far (#75);
+- an engine that exits 0 leaving `sleep 30 &` behind: that child is gone within 2 s;
+- the watchdog script alone (unit test) against a `sleep` in its own group: end of input
+  after its id kills it; after `<id>`, `-` it survives; a later id replaces an earlier one
+  (a second sleeper with the earlier id survives); lines other than digits (`-<id>`, `<id>x`)
+  kill nothing. Only the sleepers' ids are written, never `1`;
+- the watchdog's id guard, with `kill` replaced by `echo` (so no signal is sent): `2`,
+  `12345`, `9999999` reach the kill; empty input, `-`, `0`, `1`, `00`, `01`, `012345`,
+  `10000000`, `4294967297`, `12x`, `-12`, ` 12` and `<id>`,`-` don't;
+- a recorder (test builds only) sees `probe` register the group, unregister it, then kill
+  the group for a normal exit, and for a timeout register, kill the group, unregister, then
+  reap, in that order;
+- the bench under Ctrl-C (SIGINT to its process group), SIGTERM and SIGKILL while an engine
+  runs: the engine's grandchild (in the engine's group) is gone within 5 s. Without the
+  watchdog, or with the watchdog in the bench's group, the INT case fails;
 - ratio direction and unit: fake jpdf (~200 ms) against fake mutool (~50 ms) must give a
   ratio > 1.5 and per-file `ms` ≥ 150 (a µs value would be ~200 000). A probe whose output
   isn't a mutool version line records `version: null`;
