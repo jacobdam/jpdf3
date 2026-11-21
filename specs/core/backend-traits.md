@@ -313,11 +313,10 @@ program-byte and glyph limits.
     - its output length doesn't match its header, a sample is at or above
       `2^source_bits`, or a bitmap padding bit is set;
     - its tolerance is above `max_lossy_tolerance(source_bits)` for JPEG and lossy JPEG
-      2000: 1 below 8 bits, 2 for 8–12 bits, then `2^(source_bits − 11)` (32 for 16 bits).
-      The cap doesn't grow with the sample range, so a 12-bit decoder working at 8-bit
-      precision (errors up to 15) fails. Lossless JPEG 2000 (`lossy: false`), JBIG2 and
+      2000: 1 below 8 bits, 2 otherwise. The cap doesn't grow with the sample range, so a
+      12- or 16-bit decoder working at lower precision (errors up to 15) fails. Lossless JPEG 2000 (`lossy: false`), JBIG2 and
       CCITT need tolerance 0;
-    - it is flat: **each component's** samples must span at least half the largest value
+    - it is flat: **each colour component's** samples (an alpha channel may be flat) must span at least half the largest value
       (`max(1, (2^source_bits − 1) / 2)`, exactly: 127 passes and 126 fails for 8 bits),
       and bitmaps need black and white pixels. A constant decoder could otherwise pass a
       loose tolerance or a blank page, and a grey RGB or K-free CMYK fixture would hide
@@ -335,18 +334,21 @@ program-byte and glyph limits.
     `rows` rows matching (same tolerance and mean bound). A decoder that errors on every
     truncated input, salvages a blank image or calls it `Complete` fails.
   - **Options must matter** (`image.option_coverage`, `image.option_used`):
-    - JPEG fixtures (3 or 4 components) must include: `color_transform` `Some(true)`;
-      `Some(false)`; an explicit value on an image without APP14 or contradicting its
-      APP14 flag; a 3-component image without APP14 or `color_transform` (converted by
-      default); a CMYK image with APP14 transform 2 (YCCK) and no `color_transform`; and a
-      4-component image with an explicit value.
+    - JPEG fixtures (3 or 4 components) must include: `Some(true)` on an image whose
+      implied transform is false (APP14 0, or 4 components without APP14); `Some(false)` on
+      an image with APP14 transform 1 or 2; a 3-component image without APP14 or
+      `color_transform` (converted by default); a CMYK image with APP14 transform 2 (YCCK)
+      and no `color_transform`; and a 4-component image with an explicit value. The first
+      two make the fixture decode itself prove that an explicit value overrides the implied
+      one in both directions.
     - Each such fixture is decoded again with the opposite of the transform it gets (the
       explicit value, else the implied one: the APP14 flag, else 3 components convert).
-      That must give `Ok` with different pixels: changing the transform never makes a JPEG
-      undecodable, so an error would hide an adapter that refuses the option instead of
-      applying it. Without an explicit value, decoding with the implied value must
-      reproduce the fixture, so an adapter that reads a missing `/ColorTransform` as false
-      fails.
+      That must give `Ok`, `Complete`, valid output with the fixture's header, and
+      different pixels: changing the transform never makes a JPEG undecodable, so an error
+      or a broken image would hide an adapter that refuses the option instead of applying
+      it. Without an explicit value, decoding with the implied value must reproduce the
+      fixture (a consistency check of the fixture; an adapter that reads a missing
+      `/ColorTransform` as false fails the fixture decode itself).
     - JBIG2: a fixture with globals. Decoding it without them must not give the expected
       bitmap.
     - CCITT: fixtures with K < 0, K = 0 and K ≥ 2 (K = 1 makes every line 1-D, so it
@@ -681,9 +683,11 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     - fail, blank or call `Complete` every truncated input (`image.salvage`, for JPEG, JPEG
       2000 and CCITT);
     - ignore ColorTransform (with the APP14-agreeing fixtures alone, only the flips and the
-      coverage rule catch it), refuse a ColorTransform that contradicts APP14 instead of
-      applying it, read a missing ColorTransform as false, ignore JBIG2 globals, K and
-      EncodedByteAlign (`image.option_used`);
+      coverage rules catch it), ignore JBIG2 globals, K and EncodedByteAlign
+      (`image.option_used`);
+    - refuse, blank or break a ColorTransform that contradicts APP14 instead of applying it,
+      or read a missing ColorTransform as false (`image.fixture_decodes` on the overriding
+      or default fixtures, plus `image.option_used` for refused and broken flips);
     - CCITT: no parameter checks before decoding, `Columns` only, or `Columns × Rows` in
       u32 (`image.ccitt_param_limits`); a panic on K `i32::MIN`
       (`image.ccitt_extreme_params`).
@@ -694,7 +698,8 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
     cap, a lossless JPX tolerance of 1, salvage cuts at 0, at the input length or with 0 or
     too many rows, flat salvaged rows, a CCITT salvage without `Rows`), the flatness
     threshold at its exact boundary and per component, the shortest passing salvage cut
-    and one byte less, a 12-bit image at 8-bit precision against the cap, missing coverage
+    and one byte less, a salvage of every row (rows equal to the height), a flat alpha
+    channel accepted, a 12-bit image at 8-bit precision against the cap, missing coverage
     of each option rule (K = 1 not counting as 2-D) and of salvage, a single orientation, a
     JPX fixture set without a sub-8-bit image, and 16-bit tolerance.
   - `crypto`: table-backed and FNV hashers; real RC4 plus a fake CBC block cipher, with
