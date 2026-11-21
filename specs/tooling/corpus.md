@@ -46,7 +46,7 @@ the `wide` shards are the follow-up issue
 4. **Allowed hosts:** `raw.githubusercontent.com` and `gitlab.freedesktop.org`. A manifest row
    with any other host, or `http:`, is a parse error.
 5. **`jpdf-corpus build regress [--cache DIR]`** fetches each source's pinned commit with
-   `git fetch --depth 1 --no-tags <url> <commit>` into the bare repository
+   `git fetch --no-write-fetch-head --depth 1 --no-tags <url> <commit>` into the bare repository
    `<cache>/git/<name>.git` (once; later runs are offline) and keeps it with the ref
    `refs/jpdf/pinned`, through the same `jpdf_arlington::fetch::ensure_pinned` as Arlington
    (cache checks included), then runs `git fsck --full --strict --no-dangling` (git objects are

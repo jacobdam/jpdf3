@@ -61,7 +61,7 @@ const POLL: Duration = Duration::from_millis(10);
 /// How long [`run`] waits for git's pipes to close after it exited.
 const PIPE_GRACE: Duration = Duration::from_secs(5);
 
-/// Entries [`check_cache`] walks under `objects` and `refs`. A cache holds one shallow
+/// Entries [`check_cache`] walks in the cache. A cache holds one shallow
 /// commit, packed: a few dozen entries (loose objects of a stray run: at most 256 fan-out
 /// directories plus their files).
 const MAX_CACHE_ENTRIES: usize = 100_000;
@@ -85,9 +85,10 @@ pub fn load_pinned(cache_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, Error> {
 /// Makes sure the bare repository `repo` holds `commit`, fetching it once from `url` with
 /// `git fetch --depth 1 --no-tags`, and keeps it alive with `pin_ref`. Creates `repo` (and
 /// its parents) if the path does not exist. An existing path is checked first: it, its
-/// `objects` and `refs` must be real directories (no symlink, no gitfile) with no symlink or
-/// special file anywhere below `objects` and `refs`; it must be a bare repository whose own
-/// config holds only [`CACHE_CONFIG_KEYS`] and which has none of [`FOREIGN_LINKS`]. Callers verify the content afterwards (`git fsck` plus their pins).
+/// `objects` and `refs` must be real directories (no symlink, no gitfile), with nothing but
+/// directories and regular files anywhere inside; it must be a bare repository whose own
+/// config holds only [`CACHE_CONFIG_KEYS`] and which has none of [`FOREIGN_LINKS`].
+/// Callers verify the content afterwards (`git fsck` plus their pins).
 /// Shared by `jpdf-corpus` (specs/tooling/corpus.md item 5).
 pub fn ensure_pinned(repo: &Path, url: &str, commit: &str, pin_ref: &str) -> Result<(), Error> {
     if !repo.exists() {
@@ -114,7 +115,16 @@ pub fn ensure_pinned(repo: &Path, url: &str, commit: &str, pin_ref: &str) -> Res
     if git(repo, &["cat-file", "-e", &commit_ref]).is_err() {
         git(
             repo,
-            &["fetch", "--quiet", "--depth", "1", "--no-tags", url, commit],
+            &[
+                "fetch",
+                "--quiet",
+                "--no-write-fetch-head",
+                "--depth",
+                "1",
+                "--no-tags",
+                url,
+                commit,
+            ],
         )?;
     }
     // Keep the commit reachable (also for caches made before the ref existed).
@@ -149,12 +159,12 @@ fn check_cache(repo: &Path) -> Result<(), Error> {
             }
         }
     }
-    // git follows symlinks deeper down too (`refs/jpdf -> elsewhere` receives the pin ref,
-    // `objects/pack -> elsewhere` the fetched pack), so nothing under them may be one.
+    // git follows symlinks anywhere in the repository (`refs/jpdf` receives the pin ref,
+    // `objects/pack` the fetched pack, `logs/…` a reflog line, `FETCH_HEAD` and `shallow`
+    // are rewritten), and `git init --bare --template=` makes only directories and regular
+    // files, so the whole cache must be just that.
     let mut budget = MAX_CACHE_ENTRIES;
-    for top in ["objects", "refs"] {
-        check_tree(&repo.join(top), &mut budget).map_err(unusable)?;
-    }
+    check_tree(repo, &mut budget).map_err(unusable)?;
     for name in FOREIGN_LINKS {
         if std::fs::symlink_metadata(repo.join(name)).is_ok() {
             return Err(unusable(format!("it has {name}")));

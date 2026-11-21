@@ -530,7 +530,7 @@ fn caches_that_point_elsewhere_are_refused() {
         );
     }
     // Deeper links: git would write the pin ref or the fetched pack through them.
-    for (i, sub) in ["refs/jpdf", "objects/pack"].iter().enumerate() {
+    for (i, sub) in ["refs/jpdf", "objects/pack", "logs"].iter().enumerate() {
         let (_, repo, _) = fixture_cache(&format!("pin-deep-{i}"));
         let target = repo.join(sub);
         let real = repo.with_file_name("deep-real");
@@ -547,6 +547,32 @@ fn caches_that_point_elsewhere_are_refused() {
             "{sub}: {e}"
         );
         assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0, "{sub}");
+    }
+    // Files git rewrites through a symlink: the reflog of the pin ref (written even with
+    // `logAllRefUpdates` off, since it exists), `FETCH_HEAD` and `shallow`.
+    for (i, file) in ["logs/refs/jpdf/pinned", "FETCH_HEAD", "shallow"]
+        .iter()
+        .enumerate()
+    {
+        let (_, repo, _) = fixture_cache(&format!("pin-file-{i}"));
+        let victim = repo.with_file_name("victim");
+        std::fs::write(&victim, "untouched\n").unwrap();
+        let link = repo.join(file);
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        let e = fetch::ensure_pinned(&repo, UNUSED_URL, &commit, fetch::PIN_REF)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("is not a regular file or directory (symlinks are refused)"),
+            "{file}: {e}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "untouched\n",
+            "{file}"
+        );
     }
     // Control: the foreign repository itself is a fine cache.
     fetch::ensure_pinned(&foreign, UNUSED_URL, &commit, fetch::PIN_REF).unwrap();

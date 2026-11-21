@@ -21,16 +21,18 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
      SHA-1 explicitly, since the pins are SHA-1 ids whatever git's default becomes).
    - An existing path is checked before any other git call. It is refused, with an error
      asking to delete it, if it or its `objects` or `refs` is not a real directory (a
-     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if anything below
-     `objects` or `refs` is neither a real directory nor a regular file (git follows a
-     `refs/jpdf` or `objects/pack` symlink too; the walk visits at most 100 000 entries), if
-     it has `commondir`, `objects/info/alternates` or
+     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if anything inside
+     it is neither a real directory nor a regular file (git writes through symlinks at
+     `refs/jpdf`, `objects/pack`, `logs/…`, `FETCH_HEAD` and `shallow`; `git init --bare
+     --template=` makes only directories and regular files; the walk visits at most 100 000
+     entries), if it has `commondir`, `objects/info/alternates` or
      `objects/info/http-alternates` (links to another object store or config), if
      `git config --local --name-only --list` (which doesn't follow `include.path`) names any
      key other than `core.repositoryformatversion`, `core.filemode`, `core.bare`,
      `core.ignorecase`, `core.precomposeunicode` and `core.symlinks` (what `git init --bare`
      writes), or if `git --git-dir` does not accept it as a bare repository.
-   - If the pinned commit is missing it runs `git fetch --depth 1 --no-tags <url> <COMMIT>`
+   - If the pinned commit is missing it runs `git fetch --no-write-fetch-head --depth 1
+     --no-tags <url> <COMMIT>`
      and keeps it alive with the ref `refs/jpdf/pinned` (once; later runs are offline).
 
    Then `load_verified`:
@@ -256,8 +258,9 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
     mutations, #82, and the review of #131): the exact `-c` list is asserted in order (so a
     typo in `protocol.https.allow` or the low-speed pair fails), and an HTTPS fetch from a
     closed local port must fail at the connection, not as "not allowed"; a gitfile, a
-    symlinked cache, symlinked `objects`/`refs`, and symlinks at `refs/jpdf` and
-    `objects/pack` are refused and nothing is written through them; the walk budget passes
+    symlinked cache, symlinked `objects`/`refs`, and symlinks at `refs/jpdf`,
+    `objects/pack`, `logs`, `logs/refs/jpdf/pinned`, `FETCH_HEAD` and `shallow` are refused
+    and nothing is written through them (round 3 of the review of #131); the walk budget passes
     at exactly its count and fails one past it; the "did not close" group kill has its own
     test; a planted `reference-transaction` hook must not fire on `update-ref`,
     with a control proving plain git runs it; each refused config key and link file, one at
@@ -303,7 +306,8 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   (with a plain-git control that runs it), each foreign config key and link file is refused,
   local/`file://`/`ext::` fetches fail as "not allowed" and leave no hooks directory;
   links elsewhere (gitfile, symlinked cache, symlinked `objects`/`refs`, symlinked
-  `refs/jpdf` and `objects/pack`) are refused; HTTPS reaches the connection ("unable to
+  `refs/jpdf`, `objects/pack`, `logs`, and symlinked `logs/refs/jpdf/pinned`, `FETCH_HEAD`
+  and `shallow` files) are refused; HTTPS reaches the connection ("unable to
   access", not "not allowed").
 - `tools/arlington/src/fetch.rs` unit tests (unix): the deadline kills a command and its
   background child that holds stdout open (within 2–15 s of a 2 s deadline); output past the
