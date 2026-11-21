@@ -303,6 +303,105 @@ fn page_limit_is_enforced() {
     );
 }
 
+/// A catalog holding `arrays` nested arrays.
+fn nested_pdf(arrays: usize) -> Vec<u8> {
+    let deep = format!(
+        "<< /Type /Catalog /Pages 2 0 R /X {}{} >>",
+        "[".repeat(arrays),
+        "]".repeat(arrays)
+    );
+    let objs = [deep, "<< /Type /Pages /Kids [] /Count 0 >>".to_string()];
+    build(b"%PDF-1.7\n", 1, &objs, "").0
+}
+
+/// Limits may come from Swift or JS. A depth of 10^7 must not reach the recursive parser: on
+/// the old code 100,000 nested arrays overflowed the stack and aborted the test process.
+#[test]
+fn caller_limits_cannot_loosen_the_defaults() {
+    let loose = Limits {
+        max_nesting_depth: 10_000_000,
+        max_objects_per_parse: usize::MAX,
+        lex_budget_factor: usize::MAX,
+        ..Limits::default()
+    };
+    // The document keeps the clamped limits for later operations.
+    let doc = Document::open(&minimal_pdf(1), &loose).map_err(|e| e.to_string());
+    assert_eq!(doc.map(|d| d.limits().clone()), Ok(Limits::default()));
+    assert_eq!(
+        Document::open(&nested_pdf(100_000), &loose).map(|d| d.page_count()),
+        Err(EngineError::LimitExceeded("nesting depth"))
+    );
+    // Exact boundary with the loose limits: the catalog dictionary is level 1, so 255 arrays
+    // reach the default depth of 256 and open; one more is refused.
+    let default_depth = Limits::default().max_nesting_depth;
+    assert_eq!(
+        Document::open(&nested_pdf(default_depth - 1), &loose).map(|d| d.page_count()),
+        Ok(0)
+    );
+    assert_eq!(
+        Document::open(&nested_pdf(default_depth), &loose).map(|d| d.page_count()),
+        Err(EngineError::LimitExceeded("nesting depth"))
+    );
+}
+
+/// The base file plus `updates` incremental sections, each re-pointing object 1 at the original
+/// catalog, chained by `/Prev`: `updates + 1` cross-reference sections in total.
+fn prev_chain_pdf(updates: usize) -> Vec<u8> {
+    let prefix = b"%PDF-1.7\n";
+    let (mut file, mut prev) = build(prefix, 1, &page_objects(1), "");
+    for _ in 0..updates {
+        let xref_at = file.len();
+        file.extend(
+            format!(
+                "xref\n1 1\n{:010} 00000 n\r\ntrailer\n<< /Size 4 /Root 1 0 R /Prev {prev} >>\nstartxref\n{xref_at}\n%%EOF\n",
+                prefix.len()
+            )
+            .as_bytes(),
+        );
+        prev = xref_at;
+    }
+    file
+}
+
+/// A second clamped field, end to end: the caller's `max_xref_sections` can't exceed the
+/// default either, so `open` passes the defaults as the ceiling for more than the depth.
+#[test]
+fn caller_xref_section_limit_is_clamped() {
+    let loose = Limits {
+        max_xref_sections: usize::MAX,
+        ..Limits::default()
+    };
+    let max = Limits::default().max_xref_sections;
+    assert_eq!(
+        Document::open(&prev_chain_pdf(max - 1), &loose).map(|d| d.page_count()),
+        Ok(1)
+    );
+    assert_eq!(
+        Document::open(&prev_chain_pdf(max), &loose).map(|d| d.page_count()),
+        Err(EngineError::LimitExceeded("cross-reference sections"))
+    );
+}
+
+/// Clamping keeps tighter caller limits: a depth below the default still binds.
+#[test]
+fn caller_limits_can_tighten_the_defaults() {
+    let tight = Limits {
+        max_nesting_depth: 11,
+        ..Limits::default()
+    };
+    assert_eq!(
+        Document::open(&nested_pdf(10), &tight).map(|d| d.page_count()),
+        Ok(0)
+    );
+    // The document keeps the tighter limits, not the defaults.
+    let kept = Document::open(&nested_pdf(10), &tight).map(|d| d.limits().clone());
+    assert_eq!(kept, Ok(tight.clone()));
+    assert_eq!(
+        Document::open(&nested_pdf(11), &tight).map(|d| d.page_count()),
+        Err(EngineError::LimitExceeded("nesting depth"))
+    );
+}
+
 #[test]
 fn empty_and_garbage_input_are_errors() {
     assert!(open(b"").is_err());
