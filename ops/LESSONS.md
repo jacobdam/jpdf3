@@ -173,6 +173,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   (an error or a blank image differs too), so require fixtures where the explicit value overrides the
   implied one in every direction, and cap tolerances independently of the sample depth
   ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, PR #123, audit 0001).
+- Checking a backend-reported count whose unit the backend chooses (operations, work) → an absolute lower bound is
+  covered by any flat rate (per sample, per input byte). Measure a difference between two inputs with the same output
+  and at least the same length. Before the first review, replace each new check term with `true` once and confirm a
+  self-test fails; reviewers found an unpinned term in 4 of 6 rounds ([journal](journal/2026-11-21.md), PR #135).
 - Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
   so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
   checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).

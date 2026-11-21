@@ -44,6 +44,12 @@ pub struct Limits {
     pub max_image_pixels: u64,
     /// Width or height of one decoded image, in pixels.
     pub max_image_dimension: u32,
+    /// Peak bytes one image decode may hold at once, output included (JPEG, JPEG 2000, JBIG2,
+    /// CCITT; specs/core/decode-work-limits.md). It is the decode term of the 2 GiB budget.
+    pub max_decode_working_bytes: u64,
+    /// Operations one image decode may perform: at least one per output sample, plus work that
+    /// produces no output (tiles, layers, scans, symbol instances). CPU bound per call.
+    pub max_decode_ops: u64,
     /// Components (channels, including alpha) per decoded image pixel. ISO 32000-2 Annex C
     /// limits DeviceN to 32 colorants; one more allows an alpha channel (`SMaskInData`).
     pub max_image_components: u16,
@@ -94,6 +100,8 @@ impl Limits {
             max_retained_bytes_per_document,
             max_image_pixels,
             max_image_dimension,
+            max_decode_working_bytes,
+            max_decode_ops,
             max_image_components,
             max_font_program_bytes,
             max_font_glyphs,
@@ -126,6 +134,9 @@ impl Limits {
                 .min(ceiling.max_retained_bytes_per_document),
             max_image_pixels: (*max_image_pixels).min(ceiling.max_image_pixels),
             max_image_dimension: (*max_image_dimension).min(ceiling.max_image_dimension),
+            max_decode_working_bytes: (*max_decode_working_bytes)
+                .min(ceiling.max_decode_working_bytes),
+            max_decode_ops: (*max_decode_ops).min(ceiling.max_decode_ops),
             max_image_components: (*max_image_components).min(ceiling.max_image_components),
             max_font_program_bytes: (*max_font_program_bytes).min(ceiling.max_font_program_bytes),
             max_font_glyphs: (*max_font_glyphs).min(ceiling.max_font_glyphs),
@@ -157,6 +168,8 @@ impl Limits {
             max_image_pixels: self.max_image_pixels,
             max_image_dimension: self.max_image_dimension,
             max_image_components: self.max_image_components,
+            max_working_bytes: self.max_decode_working_bytes,
+            max_ops: self.max_decode_ops,
         }
     }
 
@@ -200,6 +213,8 @@ impl Default for Limits {
             max_retained_bytes_per_document: 256 * 1024 * 1024,
             max_image_pixels: 100_000_000,
             max_image_dimension: 1 << 20,
+            max_decode_working_bytes: 256 * 1024 * 1024,
+            max_decode_ops: 1 << 32,
             max_image_components: 33,
             max_font_program_bytes: 64 * 1024 * 1024,
             max_font_glyphs: u16::MAX,
@@ -216,7 +231,9 @@ impl Default for Limits {
 
 /// The limits one backend call must enforce. Backends check them **before** allocating:
 /// output larger than `max_output_bytes`, or an image whose header exceeds a pixel, dimension
-/// or component limit, fails with [`crate::BackendError::LimitExceeded`].
+/// or component limit, fails with [`crate::BackendError::LimitExceeded`]. Image decoders also
+/// charge their working memory and operations before the allocation or work they cover, and
+/// report the totals in [`crate::Decoded::usage`] (specs/core/decode-work-limits.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodeLimits {
     /// Most bytes the call may return.
@@ -227,6 +244,12 @@ pub struct DecodeLimits {
     pub max_image_dimension: u32,
     /// Most components per pixel of a returned image.
     pub max_image_components: u16,
+    /// Most bytes an image decode may hold at once, output included
+    /// ([`crate::DecodeUsage::working_bytes`]). Inflate, Deflate and Cipher ignore it.
+    pub max_working_bytes: u64,
+    /// Most operations an image decode may perform ([`crate::DecodeUsage::ops`]). Inflate,
+    /// Deflate and Cipher ignore it.
+    pub max_ops: u64,
 }
 
 impl Default for DecodeLimits {
@@ -302,6 +325,22 @@ mod tests {
     }
 
     #[test]
+    fn decode_limits_copy_the_work_budgets() {
+        let limits = Limits {
+            max_decode_working_bytes: 7,
+            max_decode_ops: 8,
+            ..Limits::default()
+        };
+        let d = limits.decode_limits(3);
+        assert_eq!((d.max_working_bytes, d.max_ops), (7, 8));
+        // The document budget lowers only the output cap.
+        assert_eq!(d.max_output_bytes, 3);
+        let d = Limits::default().decode_limits(0);
+        assert_eq!(d.max_working_bytes, 256 * 1024 * 1024);
+        assert_eq!(d.max_ops, 1 << 32);
+    }
+
+    #[test]
     fn defaults_fit_a_32_bit_usize() {
         let limits = Limits::default();
         assert!(u32::try_from(limits.max_decoded_bytes_per_stream).is_ok());
@@ -362,6 +401,8 @@ mod tests {
             max_retained_bytes_per_document: w,
             max_image_pixels: w,
             max_image_dimension: u32::from(v),
+            max_decode_working_bytes: w,
+            max_decode_ops: w,
             max_image_components: v,
             max_font_program_bytes: n,
             max_font_glyphs: v,
@@ -394,6 +435,8 @@ mod tests {
             max_retained_bytes_per_document: u64::MAX,
             max_image_pixels: u64::MAX,
             max_image_dimension: u32::MAX,
+            max_decode_working_bytes: u64::MAX,
+            max_decode_ops: u64::MAX,
             max_image_components: u16::MAX,
             max_font_program_bytes: usize::MAX,
             max_font_glyphs: u16::MAX,
@@ -429,7 +472,7 @@ mod tests {
 
     #[test]
     fn clamping_uses_each_field_of_the_ceiling() {
-        // Every ceiling field distinct (1..=25), so clamping a field against a different
+        // Every ceiling field distinct (1..=27), so clamping a field against a different
         // ceiling field gives a wrong value even where two defaults coincide.
         let ceiling = Limits {
             max_file_size: 1,
@@ -447,6 +490,8 @@ mod tests {
             max_retained_bytes_per_document: 13,
             max_image_pixels: 14,
             max_image_dimension: 15,
+            max_decode_working_bytes: 26,
+            max_decode_ops: 27,
             max_image_components: 16,
             max_font_program_bytes: 17,
             max_font_glyphs: 18,
@@ -465,13 +510,17 @@ mod tests {
     #[test]
     fn charged_budgets_do_not_exceed_the_process_budget() {
         // The four budgeted terms (the file held in memory, what a document
-        // retains, one stream being decoded, one render's working memory) sum to at most the
-        // judge's 2 GiB address-space cap (PLAN §2.2). This is a ceiling on the budgeted terms
-        // only: the binary, stacks, the xref table and one parse's objects are not charged and
-        // have no headroom at these defaults (#109).
+        // retains, one decode's working memory or output, whichever is larger, and one
+        // render's working memory) sum to at most the judge's 2 GiB address-space cap
+        // (PLAN §2.2). This is a ceiling on the budgeted terms
+        // only: the binary, stacks, the xref table, one parse's objects and a filter chain's
+        // intermediate output feeding the image decoder are not charged and have no headroom
+        // at these defaults (#109).
         let l = Limits::default();
         let file = u64::try_from(l.max_file_size).unwrap_or(u64::MAX);
-        let stream = u64::try_from(l.max_decoded_bytes_per_stream).unwrap_or(u64::MAX);
+        let stream = u64::try_from(l.max_decoded_bytes_per_stream)
+            .unwrap_or(u64::MAX)
+            .max(l.max_decode_working_bytes);
         let total = file
             .saturating_add(l.max_retained_bytes_per_document)
             .saturating_add(stream)
