@@ -84,7 +84,9 @@ is opened only if it is a regular file (not followed if a symlink; a FIFO or dev
 block the open or never end, is reported as `cannot read: not a regular file`), its size is
 checked on the open file, and the read stops one byte past 1 MiB, so a file that grows after the
 check is reported, never read whole (#83). A file swapped for a FIFO between the type check and
-the open is not covered (the open would block; std has no portable non-blocking open). This covers `_TEMPLATE.md` and `TRACE.md`, which are
+the open is not covered (the open would block; closing it needs `O_NONBLOCK` with per-target
+flag values). The walk reports any other non-regular, non-directory entry named `*.md` (FIFO,
+socket, device) the same way, since the judge's glob would match it. This covers `_TEMPLATE.md` and `TRACE.md`, which are
 read by name, not found by the walk. Directory
 walks do not follow symlinks; a symlink under `specs/` is reported as a problem (the judge
 would follow it, so skipping it silently could hide a spec). Files are selected by name ending
@@ -112,7 +114,7 @@ Linear in the size of `specs/`; well under a second for the expected hundreds of
 - Fixture trees `xtask/tests/fixtures/{good,bad}/specs/`, checked end to end by
   `xtask/tests/check_specs.rs`, including the exit code; a temp tree built at test time covers
   symlinks, non-UTF-8, the 1 MiB limit, nested journey files and supersede loops; another
-  (unix) has a FIFO `_TEMPLATE.md` and a symlinked `TRACE.md`, which must be reported within a
-  30 s deadline. A unit test caps the read: exactly the limit passes, one byte more and an
+  (unix) has a FIFO `_TEMPLATE.md`, a FIFO `area/hidden.md` and a symlinked `TRACE.md`, which
+  must be reported within a 30 s deadline. A unit test caps the read: exactly the limit passes, one byte more and an
   endless reader fail.
 - The real repository passes `cargo xtask check-specs`.

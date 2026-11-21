@@ -233,6 +233,12 @@ fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect();
             files.push(parts.join("/"));
+        } else if !ft.is_file() && entry.file_name().to_string_lossy().ends_with(".md") {
+            // A FIFO, socket or device: the judge's glob matches it and would block or fail.
+            out.push(problem(
+                &rel_display(root, &path),
+                "cannot read: not a regular file",
+            ));
         }
     }
 }
@@ -249,7 +255,8 @@ fn read_text(path: &Path) -> Result<String, String> {
     // device would block the open or never end. The open file is checked again (fstat), and
     // the read is capped, so a file grown after the check can't flood us. Not covered: a
     // swap to a FIFO between the lstat and the open (the open would block); these are
-    // repository files, and std has no portable non-blocking open.
+    // repository files. Closing it needs `O_NONBLOCK` through `custom_flags`, with
+    // per-target flag values; not done.
     let link = fs::symlink_metadata(path).map_err(|e| format!("cannot read: {e}"))?;
     if !link.is_file() {
         return Err(not_regular(&link));

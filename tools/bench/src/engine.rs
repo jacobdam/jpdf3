@@ -194,7 +194,8 @@ pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Dura
 /// The child runs in its own process group. When it exits, and at a timeout, the whole
 /// group is killed, so a wrapper script's children can't outlive it and skew later runs.
 /// While it runs, the watchdog holds its group id, so a bench killed by a signal doesn't
-/// leave it running either (spec item 7). Captured stderr goes
+/// leave it running either (spec item 7). The watchdog holds one group, so runs must not
+/// overlap (the bench runs them one at a time). Captured stderr goes
 /// through a pipe read on a helper thread that stops reading at the cap (later writes get
 /// EPIPE), so a flooding program costs neither memory nor disk.
 pub fn probe(
@@ -340,8 +341,10 @@ fn watchdog() -> Option<&'static Mutex<ChildStdin>> {
 
 /// Tells the watchdog which group to kill if the bench dies now (`None`: no group). A
 /// failed write (the watchdog is gone) leaves the run unprotected but still correct.
+/// Only [`start_watchdog`] starts it: a bench that forgot to call it fails its tests
+/// instead of starting one lazily (or running unprotected if it can't start).
 fn watch(group: Option<u32>) {
-    if let Some(w) = watchdog() {
+    if let Some(Some(w)) = WATCHDOG.get() {
         let line = group.map_or_else(|| "-\n".to_string(), |g| format!("{g}\n"));
         // A poisoned lock only means another thread panicked mid-write; the pipe is fine.
         let mut pipe = w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

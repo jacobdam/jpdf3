@@ -126,5 +126,6 @@ tests:
   skipped is skip), worst status wins per ID, foreign and malformed tags ignored.
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
 lines), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
-tree copy, the install arguments (`--ignore-scripts`). `xtask/tests/check_specs.rs`: `ci linux` outside a
+tree copy. `xtask/tests/check_specs.rs` also runs `ci linux` with stub `node`/`npm` on PATH and
+`npm_config_ignore_scripts=false`; the install must receive `ci --ignore-scripts`. `xtask/tests/check_specs.rs`: `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs.

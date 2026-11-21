@@ -93,6 +93,7 @@ Status: implemented
    survive: the group kill takes one `/bin/sh` spawn, milliseconds). The windows between
    spawn and registration, and between the reap and `-`, are microseconds wide and not
    covered.
+   The watchdog holds one group, so runs never overlap (the bench is sequential).
    Children that leave the group on purpose are out of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
    per-file times of `ok` measurements (nearest-rank p95; `null` when no file is `ok`).

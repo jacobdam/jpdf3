@@ -196,6 +196,7 @@ fn template_and_trace_must_be_regular_files() {
     std::os::unix::fs::symlink(root.join("trace-target.md"), specs.join("TRACE.md")).unwrap();
     let made = Command::new("mkfifo")
         .arg(specs.join("_TEMPLATE.md"))
+        .arg(specs.join("area/hidden.md"))
         .status()
         .unwrap();
     assert!(made.success(), "mkfifo failed");
@@ -222,6 +223,7 @@ fn template_and_trace_must_be_regular_files() {
     assert_eq!(o.status.code(), Some(1), "{err}");
     for line in [
         "specs/_TEMPLATE.md: cannot read: not a regular file",
+        "specs/area/hidden.md: cannot read: not a regular file",
         "specs/TRACE.md: cannot read: a symlink (not followed)",
         "specs/TRACE.md: symlink not followed; specs must be regular files",
     ] {

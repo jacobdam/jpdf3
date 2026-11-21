@@ -265,13 +265,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn install_turns_scripts_off_on_the_command_line() {
-        // Checked by hand with npm 11: `npm_config_ignore_scripts=false npm config get
-        // ignore-scripts` prints false in apps/web despite .npmrc; with the flag, true.
-        assert_eq!(NPM_INSTALL, ["ci", "--ignore-scripts"]);
-    }
-
-    #[test]
     fn web_ids() {
         assert!(valid_web_id("e2e.web.app_start_empty"));
         assert!(valid_web_id("e2e.web.a1"));
