@@ -221,17 +221,19 @@ fn template_and_trace_must_be_regular_files() {
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(o.status.code(), Some(1), "{err}");
-    for line in [
-        "specs/_TEMPLATE.md: cannot read: not a regular file",
-        "specs/area/hidden.md: cannot read: not a regular file",
-        "specs/TRACE.md: cannot read: a symlink (not followed)",
-        "specs/TRACE.md: symlink not followed; specs must be regular files",
-    ] {
-        assert!(
-            err.lines().any(|l| l == line),
-            "missing {line:?} in:\n{err}"
-        );
-    }
+    // Exact list: the FIFO template is reported once (the walk and the by-name read agree),
+    // the symlinked TRACE.md twice (the link itself, and the file that wasn't read).
+    assert_eq!(
+        err.lines().collect::<Vec<_>>(),
+        [
+            "specs/TRACE.md: cannot read: a symlink (not followed)",
+            "specs/TRACE.md: symlink not followed; specs must be regular files",
+            "specs/_TEMPLATE.md: cannot read: not a regular file",
+            "specs/area/hidden.md: cannot read: not a regular file",
+            "check-specs: 4 problem(s)",
+        ],
+        "{err}"
+    );
 }
 
 #[cfg(unix)]

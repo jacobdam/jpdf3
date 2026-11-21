@@ -156,6 +156,8 @@ pub fn check(root: &Path) -> Vec<Problem> {
     }
 
     out.sort();
+    // A file read by name that the walk also flags (a FIFO `_TEMPLATE.md`) is reported once.
+    out.dedup();
     out
 }
 

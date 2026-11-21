@@ -79,7 +79,7 @@ Status: implemented
    can't outlive it and skew later runs. When a child exits on its own, its group also
    gets SIGKILL (right after the reap: std can't wait without reaping, so the group id stays
    reserved only while a member is left; if none is, the kill finds nothing unless the id
-   was reused within those microseconds), so a background child an engine leaves behind
+   was reused within the few milliseconds the `/bin/sh` group kill takes to start), so a background child an engine leaves behind
    dies too (#83).
    **Watchdog.** Before any engine runs, the bench starts one `/bin/sh` watchdog in its own
    process group, or refuses to run (I/O error, exit 1). The bench writes each engine's
@@ -90,9 +90,11 @@ Status: implemented
    don't get it; the watchdog is what stops the engine. After a child exits on its own,
    `-` is written right after the reap and before the group kill, so a bench killed during
    that kill can't make the watchdog signal a reused id (a background child may then
-   survive: the group kill takes one `/bin/sh` spawn, milliseconds). The windows between
-   spawn and registration, and between the reap and `-`, are microseconds wide and not
-   covered.
+   survive: the group kill takes one `/bin/sh` spawn, milliseconds). After a timeout, `-` is
+   written before the reap, while the zombie leader still reserves the id. The windows
+   between spawn and registration, and between a normal exit's reap and `-`, are
+   microseconds wide and not covered. Lines `0` and `1` never kill (`kill -- -1` would hit
+   every process of the user).
    The watchdog holds one group, so runs never overlap (the bench is sequential).
    Children that leave the group on purpose are out of scope.
 8. **Summary per operation and engine:** status counts; `median_ms` and `p95_ms` over the
@@ -188,8 +190,9 @@ short writes to the watchdog.
   retries at 3, 6, 12 and 24 s and fails only if no attempt got that far (#75);
 - an engine that exits 0 leaving `sleep 30 &` behind: that child is gone within 2 s;
 - the watchdog script alone (unit test) against a `sleep` in its own group: end of input
-  after its id kills it; after `<id>`, `-` it survives; a later id replaces an earlier one;
-  lines other than digits (`-1`, `<id>x`) kill nothing;
+  after its id kills it; after `<id>`, `-` it survives; a later id replaces an earlier one
+  (a second sleeper with the earlier id survives); lines other than digits (`-<id>`, `<id>x`)
+  kill nothing. Only the sleepers' ids are written, never `1`;
 - the bench under Ctrl-C (SIGINT to its process group), SIGTERM and SIGKILL while an engine
   runs: the engine's grandchild (in the engine's group) is gone within 5 s. Without the
   watchdog, or with the watchdog in the bench's group, the INT case fails;
