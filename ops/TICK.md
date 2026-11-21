@@ -140,7 +140,7 @@ still passes?** And for every limit: is there an exact-boundary test (at the lim
 past fails)?
 
 Tell it its round number K, and that its report is posted on the (public) PR as is, so it must
-stand alone and cite repo-relative paths only: one line per finding,
+stand alone and cite repo-relative paths only, with no preamble or header: one line per finding,
 `R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
 
 **Post every review on the PR** (owner, #124), so the owner can read it without the session log.
@@ -175,12 +175,13 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
     `sed -i`, `perl -i`): write it `un-safe` (until owner-todo #130 is applied);
   - the terminal-multiplexer name in any body that contains a `'` (such a body never counts as
-    inert text) (until owner-todo #130 is applied);
+    inert text); after #130, only in a post that is chained or has another quoted argument
+    (write labels and assignees bare);
   - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
   - git push text with force or delete flags, a `+` word, or main; `-R <other repo>`;
   - gh api writes to issue or comment endpoints, gh repo management, an admin merge, gh auth
     commands;
-  - a body line that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
+  - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
     `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
 
   Proposal: `ops/proposals/guard-inert-post-text.md`.

@@ -45,9 +45,10 @@ decision, noted in #130.
   word, shell metacharacter or non-ASCII character. Otherwise the rules see the full command
   (whitespace collapsed), as the keyword rule does today.
 - The cmux rule and the keyword rule both use `inert_view`.
-- **Tightening:** a post chained with anything (`gh pr comment ... && git status`) now always gets
-  the full view, so a quoted cmux mention in a chained post is blocked where it passes today.
-  TICK §4 already says one post per Bash command.
+- **Tightening:** a post chained with anything (`gh pr comment ... && git status`), or with any
+  quoted argument besides its titles and bodies (`--label 'needs human'`, `-a "@me"`), now always
+  gets the full view. So a quoted cmux mention in such a post is blocked where it passes today.
+  TICK §4 says one post per Bash command; write labels and assignees bare.
 
 The invariant: outside the stripped quoted words, only spaces and words that bash and zsh read
 literally remain. So the shell is in the unquoted state at each stripped word, reads it as one

@@ -11,7 +11,7 @@ Phase: bootstrap (pilot)
 - **#124** (rule a): TICK §4 posts each reviewer round verbatim as a PR comment, then a triage comment, and links
   the ai-review status to it; §6 posts audit reviews too. Guard proposal ops/proposals/guard-inert-post-text.md
   (owner-todo #130) lets review text pass verbatim without new bypasses (scratch copy: self-test 135/135, 27/27
-  mutants caught). 4 review rounds.
+  mutants caught). 5 review rounds.
 
 ## Previous session
 - **#125** (rule a, PR #127 merged): driver proposal (owner-todo #128) and TICK §0 "Leave nothing running".
