@@ -22,8 +22,9 @@ pub struct Decoded<T> {
     /// Whether the input was complete.
     pub status: DecodeStatus,
     /// What the call charged against [`DecodeLimits::max_working_bytes`] and
-    /// [`DecodeLimits::max_ops`]. Image decoders report it; Inflate, Deflate and Cipher don't
-    /// charge and report [`DecodeUsage::default`] (specs/core/decode-work-limits.md).
+    /// [`DecodeLimits::max_ops`]. Image decoders report it; [`Inflate`] doesn't charge and
+    /// reports [`DecodeUsage::default`] (the flate suite checks it). Deflate and Cipher return
+    /// plain bytes (specs/core/decode-work-limits.md).
     pub usage: DecodeUsage,
 }
 

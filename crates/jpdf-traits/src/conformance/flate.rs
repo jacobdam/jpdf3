@@ -3,8 +3,8 @@
 use super::vectors::{FLATE, dynamic_plaintext, hex};
 use super::{Boundary, Report, describe, guarded, narrow, pseudo_random, sample_offsets};
 use crate::{
-    BackendError, CompressionLevel, DecodeLimits, DecodeStatus, Decoded, Deflate, FlateFormat,
-    Inflate,
+    BackendError, CompressionLevel, DecodeLimits, DecodeStatus, DecodeUsage, Decoded, Deflate,
+    FlateFormat, Inflate,
 };
 
 const SUITE: &str = "flate";
@@ -87,6 +87,13 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
                 "flate.decode_vector",
                 is_complete(&result, &v.plain),
                 || format!("{} ({format:?}): {}", v.name, describe_decoded(&result)),
+            );
+            // Inflate doesn't charge work (specs/core/decode-work-limits.md): any Ok reports
+            // zero usage.
+            report.check(
+                "flate.no_usage",
+                !matches!(&result, Some(Ok(d)) if d.usage != DecodeUsage::default()),
+                || format!("{} ({format:?}): Inflate must report zero usage", v.name),
             );
 
             // Truncation: every strict prefix is truncated, never complete.
@@ -778,7 +785,6 @@ pub(crate) fn adler32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DecodeUsage;
     use crate::conformance::vectors::FLATE;
     use std::cell::Cell;
 
@@ -1070,6 +1076,27 @@ mod tests {
         let mut report = Report::new(SUITE);
         run_with(&mut report, imp, imp, &mini_vectors());
         report
+    }
+
+    #[test]
+    fn an_inflate_that_reports_usage_is_caught() {
+        struct Charging(Mini);
+        impl Inflate for Charging {
+            fn inflate(
+                &self,
+                input: &[u8],
+                format: FlateFormat,
+                limits: &DecodeLimits,
+            ) -> Result<Decoded<Vec<u8>>, BackendError> {
+                let mut d = self.0.inflate(input, format, limits)?;
+                d.usage.ops = 1;
+                Ok(d)
+            }
+        }
+        let imp = Charging(Mini::default());
+        let mut report = Report::new(SUITE);
+        run_with(&mut report, &imp, &imp.0, &mini_vectors());
+        assert_eq!(report.failed_checks(), vec!["flate.no_usage"], "{report}");
     }
 
     #[test]

@@ -159,7 +159,7 @@ pub fn run_jpeg(decoder: &dyn JpegDecoder, fixtures: &[JpegFixture]) -> Report {
             color_transform(&mut report, decoder, f, &spec);
         }
     }
-    work_coverage(&mut report, std::iter::once(heavy));
+    work_coverage(&mut report, heavy);
     let has = |pred: &dyn Fn(&JpegFixture) -> bool| fixtures.iter().any(pred);
     // Explicit values must override the implied transform in both directions, or an adapter
     // that reads one explicit value as "the codestream decides" passes.
@@ -329,7 +329,7 @@ pub fn run_jpeg2000(decoder: &dyn Jpeg2000Decoder, fixtures: &[Jpeg2000Fixture])
         let valid = run_fixture(&mut report, &spec, &decode);
         heavy |= valid && spec.heavy();
     }
-    work_coverage(&mut report, std::iter::once(heavy));
+    work_coverage(&mut report, heavy);
     salvage_coverage(&mut report, fixtures.iter().map(|f| f.salvage));
     let dims: Vec<(u32, u32)> = fixtures
         .iter()
@@ -391,7 +391,7 @@ pub fn run_jbig2(decoder: &dyn Jbig2Decoder, fixtures: &[Jbig2Fixture]) -> Repor
         fixtures.iter().any(|f| f.globals.is_some()),
         || "fixtures must include a page that uses JBIG2Globals".into(),
     );
-    work_coverage(&mut report, std::iter::once(heavy));
+    work_coverage(&mut report, heavy);
     let dims: Vec<(u32, u32)> = fixtures
         .iter()
         .map(|f| (f.expected.width, f.expected.height))
@@ -971,10 +971,10 @@ impl<R: Raster> FixtureSpec<'_, R> {
     }
 }
 
-/// At least one valid fixture must need work beyond its output (`heavy`: one flag per fixture,
-/// true when it is valid and [`FixtureSpec::heavy`]).
-fn work_coverage(report: &mut Report, mut heavy: impl Iterator<Item = bool>) {
-    report.check("image.work_fixture", heavy.any(|h| h), || {
+/// At least one valid fixture must need work beyond its output (`heavy`: whether any fixture
+/// is valid and [`FixtureSpec::heavy`]).
+fn work_coverage(report: &mut Report, heavy: bool) {
+    report.check("image.work_fixture", heavy, || {
         format!(
             "fixtures must include a valid one with an extra_work claim of at least \
              {HEAVY_WORK_FACTOR} × its output samples (work that produces no output: scans, \
@@ -1039,6 +1039,15 @@ fn fixture_problem<R: Raster>(spec: &FixtureSpec<'_, R>) -> Option<String> {
         }
         if w.lighter.as_slice() == spec.input {
             return Some("the extra_work lighter input is the fixture's own input".into());
+        }
+        // A longer heavy input would let a per-input-byte rate pass as extra work; pad the
+        // lighter stream (JPEG COM segment, JP2 free box, JBIG2 extension segment).
+        if w.lighter.len() < spec.input.len() {
+            return Some(format!(
+                "the extra_work lighter input ({} bytes) is shorter than the input ({} bytes)",
+                w.lighter.len(),
+                spec.input.len()
+            ));
         }
     }
     if let Some(s) = spec.salvage {
@@ -1321,8 +1330,9 @@ mod tests {
     /// ColorTransform says so, else when the APP14 flag is 1 or 2.
     ///
     /// Usage: working bytes are the output plus 64 ("tables"); operations are one per output
-    /// sample plus [`TOY_TRAILING_OPS`] per byte after the samples (stand-in for work that
-    /// produces no output).
+    /// sample plus [`TOY_OPS_PER_UNIT`] per unit of value in the bytes after the samples (a
+    /// "repeat count" standing in for work that produces no output; it depends on what the
+    /// bytes say, not on how many there are).
     ///
     /// Bitmaps (JBIG2, CCITT) are packed rows after the header. JBIG2 XORs them with the first
     /// globals byte, CCITT with a key from K and EncodedByteAlign ([`ccitt_key`]); padding
@@ -1378,6 +1388,9 @@ mod tests {
         /// Charges a flat 100 operations per output sample and nothing for the trailing-byte
         /// work (a per-sample overcount that covers any absolute bound).
         flat_ops_per_sample: bool,
+        /// Charges 256 operations per input byte instead of the trailing values (a per-byte
+        /// rate: a longer heavy input would cover any claim).
+        ops_per_input_byte: bool,
         /// Reports one operation more whenever `max_output_bytes` isn't the default.
         usage_from_output_limit: bool,
         /// CCITT: reports 0 working bytes for Group 4 without EncodedByteAlign (a stream only
@@ -1387,8 +1400,8 @@ mod tests {
         truncated_usage_over_limit: bool,
     }
 
-    /// Toy operations per byte after the samples.
-    const TOY_TRAILING_OPS: u64 = 256;
+    /// Toy operations per unit of trailing-byte value.
+    const TOY_OPS_PER_UNIT: u64 = 64;
 
     /// The toy CCITT key for K and EncodedByteAlign.
     fn ccitt_key(params: &CcittParams) -> u8 {
@@ -1566,9 +1579,15 @@ mod tests {
         ) -> Result<DecodeUsage, BackendError> {
             let over = BackendError::LimitExceeded("toy usage");
             let len = u64::try_from(len).map_err(|_| over.clone())?;
-            let trailing = u64::try_from(input.len().saturating_sub(5))
+            let start = usize::try_from(len)
                 .map_err(|_| over.clone())?
-                .saturating_sub(len);
+                .saturating_add(5);
+            let units: u64 = input
+                .get(start..)
+                .unwrap_or(&[])
+                .iter()
+                .map(|&b| u64::from(b))
+                .sum();
             let samples = if self.flat_ops_per_sample {
                 samples.checked_mul(100).ok_or(over.clone())?
             } else {
@@ -1576,8 +1595,13 @@ mod tests {
             };
             let extra = if self.ops_output_only || self.flat_ops_per_sample {
                 0
+            } else if self.ops_per_input_byte {
+                u64::try_from(input.len())
+                    .ok()
+                    .and_then(|n| n.checked_mul(256))
+                    .ok_or(over.clone())?
             } else {
-                trailing.checked_mul(TOY_TRAILING_OPS).ok_or(over.clone())?
+                units.checked_mul(TOY_OPS_PER_UNIT).ok_or(over.clone())?
             };
             let mut usage = DecodeUsage {
                 working_bytes: if self.working_without_output {
@@ -1768,16 +1792,17 @@ mod tests {
         (input, bitmap)
     }
 
-    /// Makes a fixture need heavy work: one trailing byte (which the toy charges
-    /// [`TOY_TRAILING_OPS`] for and otherwise ignores). The lighter input is the original, and
-    /// the claim is the toy's exact difference. Never use it on a fixture with a salvage cut
-    /// (the cut would fall in the trailing byte).
+    /// Makes a fixture need heavy work: a trailing "repeat count" byte of 4, which the toy
+    /// charges 4 × [`TOY_OPS_PER_UNIT`] = 256 for and otherwise ignores. The lighter input has
+    /// the same length with a count of 0, and the claim is the toy's exact difference. Never
+    /// use it on a fixture with a salvage cut (the cut would fall in the trailing byte).
     fn add_work(input: &mut Vec<u8>) -> Option<ExtraWork> {
-        let lighter = input.clone();
-        input.push(0x5a);
+        let mut lighter = input.clone();
+        lighter.push(0);
+        input.push(4);
         Some(ExtraWork {
             lighter,
-            min_extra_ops: TOY_TRAILING_OPS,
+            min_extra_ops: 4 * TOY_OPS_PER_UNIT,
         })
     }
 
@@ -2060,6 +2085,11 @@ mod tests {
                 flat_ops_per_sample: true,
                 ..Toy::default()
             },
+            // Same-length inputs: a per-byte rate gives no difference either.
+            Toy {
+                ops_per_input_byte: true,
+                ..Toy::default()
+            },
         ] {
             let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
             for report in [jpeg, jpx, jbig2] {
@@ -2125,8 +2155,8 @@ mod tests {
             .position(|f| f.extra_work.is_some())
             .unwrap();
         let samples = fixtures[heavy].expected.samples();
-        // The toy charges 256 for the trailing byte, so a claim of 4 × samples is true.
-        assert!(HEAVY_WORK_FACTOR * samples <= TOY_TRAILING_OPS);
+        // The toy charges 256 for the trailing count, so a claim of 4 × samples is true.
+        assert!(HEAVY_WORK_FACTOR * samples <= 4 * TOY_OPS_PER_UNIT);
         let set = |fixtures: &mut Vec<Jbig2Fixture>, n: u64| {
             if let Some(w) = fixtures[heavy].extra_work.as_mut() {
                 w.min_extra_ops = n;
@@ -2177,6 +2207,17 @@ mod tests {
             }
         });
         assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        // A lighter input shorter than the input is an invalid fixture.
+        let report = with(&|w| {
+            w.lighter.pop();
+        });
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.fixture_valid", "image.work_fixture"],
+            "{report}"
+        );
+        // One byte longer (padding) is fine: the toy ignores a second count of 0.
+        assert!(with(&|w| w.lighter.push(0)).passed());
         // A lighter input equal to the input is an invalid fixture (and then not heavy).
         let input = fixtures[heavy].input.clone();
         let report = with(&|w| w.lighter = input.clone());

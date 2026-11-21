@@ -30,10 +30,11 @@ The change has four parts.
    `max_working_bytes` and `max_ops`. Neither field shrinks with the document budget: that
    budget bounds the output total, and output is part of working memory anyway.
 2. **Usage report.** `Decoded<T>` gets a field `usage: DecodeUsage`, with
-   `working_bytes: u64` and `ops: u64`: what the call charged. Inflate, Deflate and Cipher don't
-   charge and report `DecodeUsage::default()` (both 0). Their working memory beyond the output is
-   a constant (window and tables), and their time is linear in input plus output, which other
-   limits already bound.
+   `working_bytes: u64` and `ops: u64`: what the call charged. Inflate doesn't charge and
+   reports `DecodeUsage::default()` (both 0); the flate suite checks it (`flate.no_usage`).
+   Deflate and Cipher return plain bytes, so they report nothing. All three have working
+   memory beyond the output that is a constant (window, tables, key schedule), and time linear
+   in input plus output, which other limits already bound.
 3. **Contract for `JpegDecoder`, `Jpeg2000Decoder`, `Jbig2Decoder` and `CcittDecoder`:**
    1. `working_bytes` is the most bytes the call holds at once, by the backend's own nominal
       accounting, **including the output buffer**. So it is at least the output's byte length.
@@ -73,9 +74,11 @@ The change has four parts.
      the expected image with a valid result, and the input's reported ops exceed the lighter
      input's by at least `min_extra_ops`. Because the suite measures a difference between two
      decodes of the same output, a backend that charges only per output sample, however many
-     per sample, reports a difference of 0 and fails. A `lighter` equal to the input, or a
-     `min_extra_ops` above the default `max_decode_ops`, makes the fixture invalid
-     (`image.fixture_valid`).
+     per sample, reports a difference of 0 and fails. The lighter input must be at least as
+     long as the input (authors pad it: a JPEG COM segment, a JP2 `free` box, a JBIG2 extension
+     segment), so a flat rate per input byte gives no difference either. A `lighter` equal to
+     the input or shorter than it, or a `min_extra_ops` above the default `max_decode_ops`,
+     makes the fixture invalid (`image.fixture_valid`).
    - `image.work_fixture` (JPEG, JPEG 2000, JBIG2): at least one valid fixture has an
      extra-work claim of at least 4 × its output samples. It is a coverage rule on the fixture
      set; the decoder is judged by `image.extra_work`. CCITT is exempt (no field): its work is
@@ -115,9 +118,9 @@ still renders (specs/core/backend-traits.md, Errors).
     it. The real decode term is up to 512 MiB, so the 2 GiB sum understates it. The input is
     owned by `jpdf-filters`, which doesn't exist yet; charging intermediate filter outputs is
     added to #109's scope.
-- The toy decoder in the suite's tests charges one operation per output sample plus 256 per
-  trailing byte after the samples; its heavy fixtures' lighter input is the same stream
-  without the trailing byte. Its loops run over the input once, so they need no step cap.
+- The toy decoder in the suite's tests charges one operation per output sample plus 64 per
+  unit of value in the bytes after the samples (a "repeat count"); its heavy fixtures end in a
+  count of 4, and their lighter input is the same length with a count of 0. Its loops run over the input once, so they need no step cap.
 
 ## Security
 - Arithmetic: the suite computes sample counts as `u64` products with `saturating_mul`
@@ -136,11 +139,15 @@ still renders (specs/core/backend-traits.md, Errors).
   - count the features the fixtures exercise but skip others (count layers but not tiles).
     `image.extra_work` proves that some non-output work is counted, not all of it;
   - report a number that matches the rules but isn't what it really did, as long as it is
-    consistent across calls and its limit checks agree with it.
+    consistent across calls and its limit checks agree with it;
+  - enforce the work limits only when they are small (for example only below 2^31, or only
+    when a limit isn't its default). Every probe uses limits sized to a fixture, far below the
+    defaults, and no fixture needs more than the default budgets. Over-budget input at the
+    default limits is for the resource-limit harness (#25) and fuzzing (#17).
 - What it can't do and pass: ignore either limit, reject at the limit, use a built-in budget
   instead of the caller's (the 0 probe and the one-below probe), count fewer operations than
-  output samples, charge only per output sample (any flat rate), leave the output out of
-  working memory, report usage that changes with any limit, or return an `Ok` whose usage is
+  output samples, charge only per output sample or per input byte (any flat rate), leave the
+  output out of working memory, report usage that changes with any limit, or return an `Ok` whose usage is
   over its limits (option probes included).
 - What the tests can't see: allocations and time. #25 (2 GiB `RLIMIT_AS` harness, Linux) and
   the fuzz targets measure them.
@@ -153,14 +160,15 @@ Same on every platform. `u64` fields, so wasm32's 32-bit `usize` doesn't matter.
 
 ## Performance
 The checks add two boundary probes (three calls each) per fixture. The suite's run time grows
-by about the time of six decodes per fixture.
+by about the time of six decodes per fixture, seven for a fixture with an extra-work claim
+(its lighter input).
 
 ## Tests
 - `jpdf-traits` unit tests (limits): `decode_limits_copy_the_work_budgets`, the clamping
   tests, the budget test.
 - `jpdf-traits` image suite self-tests: a correct toy passes every suite; toys that ignore
   the work limits, reject at the limit, report limit-dependent usage, leave the output out of
-  working memory, count only output samples or a flat rate per sample, report over-limit usage
+  working memory, count only output samples, a flat rate per sample or a flat rate per input byte, report over-limit usage
   on truncated input, or report invalid usage only in an option probe each fail the named
   checks; a fixture set without a heavy-work fixture fails `image.work_fixture`; a wrong
   lighter input or an over-large claim fails `image.extra_work` or `image.fixture_valid`.
