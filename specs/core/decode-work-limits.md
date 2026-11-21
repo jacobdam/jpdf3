@@ -54,7 +54,9 @@ The change has four parts.
       that needs exactly the limit succeeds.
    4. Usage depends only on the input and the options, never on the limits. The same call
       under any limits that it fits reports the same usage, and every `Ok` result reports usage
-      within its limits. A `Truncated` result reports the work it did.
+      within its limits. A `Truncated` result reports the work it did, and the
+      samples it fills in (blank rows after the salvaged ones) count toward the per-sample
+      minimum like decoded ones.
 4. **Image suite checks** (`jpdf_traits::conformance::image`, every format):
    - `image.usage_valid`: for every fixture decoded at the default limits, `working_bytes` is
      at least the output's byte length, `ops` at least the output's sample count, and the
@@ -107,7 +109,9 @@ still renders (specs/core/backend-traits.md, Errors).
   - suite self-tests: a toy that ignores the new limits, one that rejects at the limit (`>=`),
     and ones that report usage depending on `max_ops`, `max_output_bytes`, or the pixel,
     dimension, component or working-bytes limit each fail those checks; one that reports
-    over-limit usage only at the default limits fails `image.usage_valid`;
+    over-limit usage (operations or working bytes) only at the default limits fails
+    `image.usage_valid`; one that reports 0 operations on the lighter input fails
+    `image.extra_work`;
   - `min_extra_ops`: the toy's exact difference passes, one more fails `image.extra_work`; at
     the default `max_decode_ops` the fixture is valid, one past is invalid; the heavy rule
     passes at exactly 4 × samples and fails one below (`image.work_fixture`);
@@ -129,8 +133,8 @@ still renders (specs/core/backend-traits.md, Errors).
 ## Security
 - Arithmetic: the suite computes sample counts as `u64` products with `saturating_mul`
   (`width × height × components`), and 4 × samples with `saturating_mul`; saturation can only
-  make a check stricter. The toy's charges use `checked_*` and fail with `LimitExceeded` on
-  overflow.
+  make a check stricter. The toy's charges use `checked_*` arithmetic (the trailing-count sum and the sample product
+  included) and fail with `LimitExceeded` on overflow.
 - What a broken decoder can still do and pass:
   - allocate more than it reports: the suite sees only the reported numbers, not allocations;
   - treat `max_working_bytes` as a second output cap (report the output length plus a
@@ -150,6 +154,8 @@ still renders (specs/core/backend-traits.md, Errors).
     while a few coded bytes can still cause unbounded work (a large overlapping JBIG2 symbol
     instance). The contract forbids it (work that produces no output counts by what it does);
     adapter review checks it, and #25 and #17 measure the time;
+  - skip charging on damaged input whose usage stays under the default budgets: the
+    truncated and mutated probes cap only the output, not the work (#137);
   - enforce the work limits only when they are small (for example only below 2^31, or only
     when a limit isn't its default). Every probe uses limits sized to a fixture, far below the
     defaults, and no fixture needs more than the default budgets. Over-budget input at the

@@ -1403,6 +1403,11 @@ mod tests {
         /// At exactly the default limits, skips the work checks and reports `max_ops + 1`
         /// operations.
         default_usage_over_limit: bool,
+        /// Like `default_usage_over_limit`, with `max_working_bytes + 1` working bytes.
+        default_working_over_limit: bool,
+        /// Reports 0 operations when the trailing repeat count is 0 (only the lighter inputs
+        /// of the heavy fixtures end that way).
+        lighter_usage_zero: bool,
         /// Reports one operation more whenever the pixel, dimension, component or working-bytes
         /// limit isn't the default.
         usage_from_other_limits: bool,
@@ -1504,7 +1509,10 @@ mod tests {
             }
             let body = &input[5..];
             let per_pixel = if packed { 1 } else { u64::from(components) };
-            let samples = u64::from(width) * u64::from(height) * per_pixel;
+            let samples = u64::from(width)
+                .checked_mul(u64::from(height))
+                .and_then(|p| p.checked_mul(per_pixel))
+                .ok_or(BackendError::LimitExceeded("toy samples"))?;
             let usage = self.charge(input, len, samples, limits)?;
             let mut samples = body[..body.len().min(len)].to_vec();
             if !packed && samples.iter().any(|&v| u32::from(v) >= 1 << source_bits) {
@@ -1604,8 +1612,8 @@ mod tests {
                 .get(start..)
                 .unwrap_or(&[])
                 .iter()
-                .map(|&b| u64::from(b))
-                .sum();
+                .try_fold(0u64, |acc, &b| acc.checked_add(u64::from(b)))
+                .ok_or(over.clone())?;
             let samples = if self.flat_ops_per_sample {
                 samples.checked_mul(100).ok_or(over.clone())?
             } else {
@@ -1640,6 +1648,13 @@ mod tests {
             if self.default_usage_over_limit && at_default {
                 usage.ops = limits.max_ops.saturating_add(1);
                 return Ok(usage);
+            }
+            if self.default_working_over_limit && at_default {
+                usage.working_bytes = limits.max_working_bytes.saturating_add(1);
+                return Ok(usage);
+            }
+            if self.lighter_usage_zero && input.len() > start && input.last() == Some(&0) {
+                usage.ops = 0;
             }
             if !self.ignore_work_limits
                 && (exceeds(usage.working_bytes, limits.max_working_bytes)
@@ -2158,6 +2173,31 @@ mod tests {
         for report in every_suite(&toy) {
             assert!(report.failed("image.usage_valid"), "{report}");
         }
+    }
+
+    #[test]
+    fn over_limit_working_bytes_at_the_default_limits_are_caught() {
+        let toy = Toy {
+            default_working_over_limit: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+        }
+    }
+
+    #[test]
+    fn under_reporting_on_the_lighter_input_is_caught() {
+        // ops 0 on the lighter input would inflate the difference past any claim.
+        let toy = Toy {
+            lighter_usage_zero: true,
+            ..Toy::default()
+        };
+        let [jpeg, jpx, jbig2, ccitt] = every_suite(&toy);
+        for report in [jpeg, jpx, jbig2] {
+            assert_eq!(report.failed_checks(), vec!["image.extra_work"], "{report}");
+        }
+        assert!(ccitt.passed(), "{ccitt}");
     }
 
     #[test]
