@@ -1396,6 +1396,14 @@ mod tests {
         /// CCITT: reports 0 working bytes for Group 4 without EncodedByteAlign (a stream only
         /// the option checks decode).
         ccitt_option_usage_zero: bool,
+        /// Reports one operation fewer than the output samples (and no trailing work).
+        ops_below_samples: bool,
+        /// JPEG: reports 0 working bytes for an explicit ColorTransform true on a 3-component
+        /// image without APP14 (only the "implied value" probe and one flip decode that way).
+        jpeg_option_usage_zero: bool,
+        /// JBIG2: reports 0 working bytes when the globals are missing or shorter than 4
+        /// bytes (only the "globals left out" probe and truncated globals decode that way).
+        jbig2_globals_usage_zero: bool,
         /// Reports `max_ops + 1` operations on truncated results.
         truncated_usage_over_limit: bool,
     }
@@ -1627,6 +1635,9 @@ mod tests {
             if self.usage_from_limits && limits.max_ops != DecodeLimits::default().max_ops {
                 usage.ops = usage.ops.saturating_sub(1);
             }
+            if self.ops_below_samples {
+                usage.ops = samples.saturating_sub(1);
+            }
             if self.usage_from_output_limit
                 && limits.max_output_bytes != DecodeLimits::default().max_output_bytes
             {
@@ -1668,7 +1679,15 @@ mod tests {
             options: &JpegOptions,
             limits: &DecodeLimits,
         ) -> Result<Decoded<DecodedImage>, BackendError> {
-            self.decode_image(input, limits, false, Some(options.color_transform))
+            let mut d = self.decode_image(input, limits, false, Some(options.color_transform))?;
+            if self.jpeg_option_usage_zero
+                && options.color_transform == Some(true)
+                && d.value.components == 3
+                && d.value.adobe_app14.is_none()
+            {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -1694,7 +1713,11 @@ mod tests {
                 Some(g) => g[0],
                 None => 0,
             };
-            self.decode_bitmap(input, limits, key)
+            let mut d = self.decode_bitmap(input, limits, key)?;
+            if self.jbig2_globals_usage_zero && globals.is_none_or(|g| g.len() < 4) {
+                d.usage.working_bytes = 0;
+            }
+            Ok(d)
         }
     }
 
@@ -2098,6 +2121,51 @@ mod tests {
             // CCITT needs no heavy-work fixture (linear work), so it passes.
             assert!(ccitt.passed(), "{ccitt}");
         }
+    }
+
+    #[test]
+    fn fewer_ops_than_output_samples_are_caught() {
+        let toy = Toy {
+            ops_below_samples: true,
+            ..Toy::default()
+        };
+        for report in every_suite(&toy) {
+            assert!(report.failed("image.usage_valid"), "{report}");
+            // Every Ok result is checked too, not only the fixture decode.
+            assert!(report.failed("image.truncated"), "{report}");
+            assert!(report.failed("image.mutated"), "{report}");
+        }
+    }
+
+    #[test]
+    fn invalid_usage_in_a_jpeg_or_jbig2_option_probe_is_caught() {
+        let report = jpeg(&Toy {
+            jpeg_option_usage_zero: true,
+            ..Toy::default()
+        });
+        assert!(!report.failed("image.usage_valid"), "{report}");
+        assert!(!report.failed("image.fixture_decodes"), "{report}");
+        // The implied-value probe of the fixture without ColorTransform has its own message.
+        assert!(
+            report
+                .failures()
+                .iter()
+                .any(|f| f.check == "image.option_used"
+                    && f.detail.contains("no ColorTransform must decode like")),
+            "{report}"
+        );
+        let report = run_jbig2(
+            &Toy {
+                jbig2_globals_usage_zero: true,
+                ..Toy::default()
+            },
+            &jbig2_fixtures(0x80),
+        );
+        assert_eq!(
+            report.failed_checks(),
+            vec!["image.option_used", "image.truncated_globals"],
+            "{report}"
+        );
     }
 
     #[test]

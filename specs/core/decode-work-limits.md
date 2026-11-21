@@ -31,7 +31,8 @@ The change has four parts.
    budget bounds the output total, and output is part of working memory anyway.
 2. **Usage report.** `Decoded<T>` gets a field `usage: DecodeUsage`, with
    `working_bytes: u64` and `ops: u64`: what the call charged. Inflate doesn't charge and
-   reports `DecodeUsage::default()` (both 0); the flate suite checks it (`flate.no_usage`).
+   reports `DecodeUsage::default()` (both 0); the flate suite checks it on the full-vector
+   decodes (`flate.no_usage`), not on truncated or bomb results.
    Deflate and Cipher return plain bytes, so they report nothing. All three have working
    memory beyond the output that is a constant (window, tables, key schedule), and time linear
    in input plus output, which other limits already bound.
@@ -76,7 +77,8 @@ The change has four parts.
      decodes of the same output, a backend that charges only per output sample, however many
      per sample, reports a difference of 0 and fails. The lighter input must be at least as
      long as the input (authors pad it: a JPEG COM segment, a JP2 `free` box, a JBIG2 extension
-     segment), so a flat rate per input byte gives no difference either. A `lighter` equal to
+     segment), so a flat rate over every input byte gives no difference either. A rate per
+     entropy-coded byte or per segment still can (see Security). A `lighter` equal to
      the input or shorter than it, or a `min_extra_ops` above the default `max_decode_ops`,
      makes the fixture invalid (`image.fixture_valid`).
    - `image.work_fixture` (JPEG, JPEG 2000, JBIG2): at least one valid fixture has an
@@ -140,13 +142,19 @@ still renders (specs/core/backend-traits.md, Errors).
     `image.extra_work` proves that some non-output work is counted, not all of it;
   - report a number that matches the rules but isn't what it really did, as long as it is
     consistent across calls and its limit checks agree with it;
+  - charge a flat rate per entropy-coded byte, marker segment or box, and nothing for the
+    work those bytes cause. The padding in the lighter input is skipped, not decoded, so the
+    heavy input's extra coded bytes give a positive difference and pass `image.extra_work`,
+    while a few coded bytes can still cause unbounded work (a large overlapping JBIG2 symbol
+    instance). The contract forbids it (work that produces no output counts by what it does);
+    adapter review checks it, and #25 and #17 measure the time;
   - enforce the work limits only when they are small (for example only below 2^31, or only
     when a limit isn't its default). Every probe uses limits sized to a fixture, far below the
     defaults, and no fixture needs more than the default budgets. Over-budget input at the
     default limits is for the resource-limit harness (#25) and fuzzing (#17).
 - What it can't do and pass: ignore either limit, reject at the limit, use a built-in budget
   instead of the caller's (the 0 probe and the one-below probe), count fewer operations than
-  output samples, charge only per output sample or per input byte (any flat rate), leave the
+  output samples, charge only per output sample or a flat rate over every input byte, leave the
   output out of working memory, report usage that changes with any limit, or return an `Ok` whose usage is
   over its limits (option probes included).
 - What the tests can't see: allocations and time. #25 (2 GiB `RLIMIT_AS` harness, Linux) and

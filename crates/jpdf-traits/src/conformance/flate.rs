@@ -88,8 +88,8 @@ fn run_with(report: &mut Report, inflate: &dyn Inflate, deflate: &dyn Deflate, v
                 is_complete(&result, &v.plain),
                 || format!("{} ({format:?}): {}", v.name, describe_decoded(&result)),
             );
-            // Inflate doesn't charge work (specs/core/decode-work-limits.md): any Ok reports
-            // zero usage.
+            // Inflate doesn't charge work (specs/core/decode-work-limits.md): the full-vector
+            // decodes must report zero usage. Other Ok results (truncated, bombs) aren't checked.
             report.check(
                 "flate.no_usage",
                 !matches!(&result, Some(Ok(d)) if d.usage != DecodeUsage::default()),
