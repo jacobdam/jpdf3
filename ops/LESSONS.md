@@ -1,9 +1,9 @@
 # Lessons learned (read at the start of every session; curated by retros, ≤ 60 entries)
 
 Format: **situation → what to do** (link to the journal entry or PR). Refine existing entries
-instead of adding near-duplicates. Retro 0001 promoted the guard, review-diff, `ai-review`
-order, sizing, arithmetic and conformance-suite lessons into ops/TICK.md and
-specs/_TEMPLATE.md; they are no longer listed here.
+instead of adding near-duplicates. Retro 0001 promoted the guard (force push, CLI writes),
+review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lessons into
+ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 ## Tooling & environment
 - Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
@@ -99,8 +99,9 @@ specs/_TEMPLATE.md; they are no longer listed here.
   ([journal](journal/2026-11-20.md), PR #51).
 
 ## Engine & security
-- Parsing hostile input (details beyond the template's Limits section) → charge a
-  per-document lexing budget per byte, keep a per-document object budget, reject overlapping
+- Parsing hostile input: per-object caps don't bound a document (overlapping objects/xref
+  sections re-parse the same bytes quadratically; several capped objects alive at once exceed
+  2 GiB) → design it in from the start: charge a per-document lexing budget per byte, keep a per-document object budget, reject overlapping
   objects by byte span, keep one parsed object alive at a time, and store xref entries
   compactly ([journal](journal/2026-11-20.md), PR #24).
 - Writing a conformance suite (details beyond the template's self-check) → lenient-read rules

@@ -21,7 +21,8 @@ Every error state and what the user sees.
 Which `Limits` apply; worst-case input sizes; time/memory bounds.
 Per-document budgets, not just per-object caps (overlapping or repeated input re-parses the
 same bytes). Every limit names its exact-boundary test: at the limit passes, one past fails.
-Every loop over input-derived geometry or counts has a step cap.
+Every loop over input-derived geometry or counts has a step cap, test toys in suites included
+(floats stop progressing: at 1e30, `pos + len == pos`).
 
 ## Security
 What could leak, be bypassed or be abused? Adversarial verification for security-sensitive
