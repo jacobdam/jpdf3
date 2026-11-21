@@ -31,7 +31,12 @@ pub struct ExpectedGlyph {
 /// subroutine fan-out bombs). With a `control_glyph`, the program must load, the control
 /// glyph must outline successfully (proving the hostile path is reachable), and each listed
 /// glyph must fail with `LimitExceeded` or `Malformed`. Without one, the load or each listed
-/// glyph must fail that way.
+/// glyph must fail that way. A program that loads must report its declared `outline_format`.
+///
+/// Per-format coverage counts only programs that prove their format: the program loads as
+/// its declared format and its control glyph outlines, so the listed glyphs sit on a path
+/// the backend really reaches. A program that fails to load proves nothing (junk fails to
+/// load too).
 /// A backend that recurses without a bound overflows the stack, which aborts the test
 /// process: that is a failure too, just not one the report can list.
 #[derive(Debug, Clone, PartialEq)]
@@ -74,20 +79,45 @@ pub struct FontFixture {
     /// Named glyphs, checked both ways ([`FontFace::glyph_name`] and
     /// [`FontFace::glyph_by_name`]).
     pub names: Vec<(GlyphId, String)>,
-    /// CID lookups: CID, expected glyph.
+    /// CID lookups: CID, expected glyph. Every CID the suite asks about (0–63 and these)
+    /// that is not listed must give `None`, so a fixture that is not CID-keyed lists none.
     pub cids: Vec<(u16, Option<GlyphId>)>,
     /// Expected built-in encoding.
     pub builtin_encoding: BuiltinEncoding,
+    /// Glyphs with a known lower bound `n` (at least 1) on the operations their outline needs
+    /// (charstring operators executed plus composite components visited, as
+    /// [`FontFace::outline`] counts them): each outlines at the default limits and fails
+    /// with `LimitExceeded` when `max_outline_ops` is `n - 1`. Coverage needs one glyph with
+    /// a bound of at least [`HEAVY_OPS`] per outline format (a composite for TrueType).
+    pub min_ops: Vec<(GlyphId, u32)>,
     /// Largest allowed difference, in font units, for advances, metrics and outline
     /// coordinates (backends may evaluate charstring arithmetic in different precisions).
     /// Finite, between 0 and 1.
     pub tolerance: f32,
 }
 
+/// The smallest `min_ops` bound that counts for coverage: high enough that a backend counting
+/// one operation per glyph, or only subroutine calls, or nothing for composite components,
+/// fails the check.
+pub const HEAVY_OPS: u32 = 100;
+
+/// Every container and outline pairing a PDF can embed (ISO 32000-2 §9.9, Table 124).
+const ENGINE_PAIRINGS: [(FontProgram, OutlineFormat); 4] = [
+    (FontProgram::Sfnt, OutlineFormat::TrueType),
+    (FontProgram::Sfnt, OutlineFormat::Cff),
+    (FontProgram::Sfnt, OutlineFormat::Cff2),
+    (FontProgram::BareCff, OutlineFormat::Cff),
+];
+
+/// `cmap` subtables asked about on every face, listed or not (an unlisted one must answer
+/// `None`).
+const STANDARD_CMAPS: [(u16, u16); 5] = [(3, 1), (3, 0), (1, 0), (0, 3), (3, 10)];
+
 /// Runs every check against a [`FontEngine`]. The fixtures must cover TrueType, CFF and CFF2
-/// outlines (each with a curve: `QuadTo` for TrueType, `CurveTo` for CFF and CFF2), both
-/// [`FontProgram`] containers, mapped `cmap` lookups in (3,1), (3,0) and (1,0), a mapped
-/// CID and a CFF custom encoding. At least one hostile program is required.
+/// outlines (each with a curve: `QuadTo` for TrueType, `CurveTo` for CFF and CFF2), every
+/// container and outline pairing (sfnt with each format, bare CFF), a [`HEAVY_OPS`] `min_ops`
+/// glyph per format, mapped `cmap` lookups in (3,1), (3,0) and (1,0), a mapped CID and a CFF
+/// custom encoding. Hostile programs must prove every outline format (see [`HostileFont`]).
 pub fn run_font_engine(
     engine: &dyn FontEngine,
     fixtures: &[FontFixture],
@@ -103,16 +133,19 @@ pub fn run_font_engine(
             .iter()
             .any(|x| x.cmap.iter().any(|(c, _, g)| *c == id && g.is_some()))
     };
-    let covered = [
+    let formats = [
         OutlineFormat::TrueType,
         OutlineFormat::Cff,
         OutlineFormat::Cff2,
-    ]
-    .iter()
-    .all(|f| has_curve(fixtures, *f))
-        && [FontProgram::Sfnt, FontProgram::BareCff]
-            .iter()
-            .all(|p| fixtures.iter().any(|x| x.program == *p))
+    ];
+    let covered = formats
+        .iter()
+        .all(|f| has_curve(fixtures, *f) && has_heavy(fixtures, *f))
+        && ENGINE_PAIRINGS.iter().all(|(p, o)| {
+            fixtures
+                .iter()
+                .any(|x| x.program == *p && x.outline_format == *o)
+        })
         && mapped(3, 1)
         && mapped(3, 0)
         && mapped(1, 0)
@@ -124,43 +157,42 @@ pub fn run_font_engine(
                 && matches!(x.builtin_encoding, BuiltinEncoding::Custom(_))
         });
     report.check("font.fixture_coverage", covered, || {
-        "fixtures must cover TrueType, CFF and CFF2 outlines with curves, Sfnt and BareCff \
-         programs, mapped cmap lookups in (3,1), (3,0) and (1,0), a mapped CID and a CFF \
-         custom encoding"
-            .into()
+        format!(
+            "fixtures must cover TrueType, CFF and CFF2 outlines with curves and a min_ops \
+             glyph of at least {HEAVY_OPS} each, the pairings {ENGINE_PAIRINGS:?}, mapped cmap \
+             lookups in (3,1), (3,0) and (1,0), a mapped CID and a CFF custom encoding"
+        )
     });
     for f in fixtures {
         let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
             guarded(|| exercise_load(engine.load(data, f.program, limits), q))
         };
-        run_fixture(&mut report, f, &load);
+        run_fixture(&mut report, f, f.program == FontProgram::Sfnt, &load);
     }
+    let mut proven = Vec::new();
     for h in hostile {
         let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
             guarded(|| exercise_load(engine.load(data, h.program, limits), q))
         };
-        run_hostile(&mut report, h, &load);
+        proven.extend(run_hostile(
+            &mut report,
+            h,
+            h.program == FontProgram::Sfnt,
+            &load,
+        ));
     }
     for program in [FontProgram::Sfnt, FontProgram::BareCff] {
         let empty = guarded(|| engine.load(&[], program, &FontLimits::default()).err());
         empty_input(&mut report, empty);
     }
-    common(
-        &mut report,
-        fixtures,
-        hostile,
-        &[
-            OutlineFormat::TrueType,
-            OutlineFormat::Cff,
-            OutlineFormat::Cff2,
-        ],
-    );
+    common(&mut report, fixtures, &proven, &formats);
     report
 }
 
 /// Runs every check against a [`Type1Parser`]. Every fixture must expect
-/// [`OutlineFormat::Type1`], one must have a `CurveTo`, and one must have a
-/// [`BuiltinEncoding::Custom`] encoding. At least one hostile program is required.
+/// [`OutlineFormat::Type1`], one must have a `CurveTo`, one a [`BuiltinEncoding::Custom`]
+/// encoding and one a [`HEAVY_OPS`] `min_ops` glyph. A hostile program must prove the
+/// format (see [`HostileFont`]).
 pub fn run_type1(
     parser: &dyn Type1Parser,
     fixtures: &[FontFixture],
@@ -171,29 +203,29 @@ pub fn run_type1(
         .iter()
         .all(|f| f.outline_format == OutlineFormat::Type1)
         && has_curve(fixtures, OutlineFormat::Type1)
+        && has_heavy(fixtures, OutlineFormat::Type1)
         && fixtures
             .iter()
             .any(|f| matches!(f.builtin_encoding, BuiltinEncoding::Custom(_)));
     report.check("font.fixture_coverage", covered, || {
-        "every Type 1 fixture must expect OutlineFormat::Type1, one must have a CurveTo, and \
-         one must have a custom built-in encoding"
-            .into()
+        format!(
+            "every Type 1 fixture must expect OutlineFormat::Type1, one must have a CurveTo, \
+             one a custom built-in encoding and one a min_ops glyph of at least {HEAVY_OPS}"
+        )
     });
+    let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
+        guarded(|| exercise_load(parser.load(data, limits), q))
+    };
     for f in fixtures {
-        let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
-            guarded(|| exercise_load(parser.load(data, limits), q))
-        };
-        run_fixture(&mut report, f, &load);
+        run_fixture(&mut report, f, false, &load);
     }
+    let mut proven = Vec::new();
     for h in hostile {
-        let load = |data: &[u8], limits: &FontLimits, q: &Questions| {
-            guarded(|| exercise_load(parser.load(data, limits), q))
-        };
-        run_hostile(&mut report, h, &load);
+        proven.extend(run_hostile(&mut report, h, false, &load));
     }
     let empty = guarded(|| parser.load(&[], &FontLimits::default()).err());
     empty_input(&mut report, empty);
-    common(&mut report, fixtures, hostile, &[OutlineFormat::Type1]);
+    common(&mut report, fixtures, &proven, &[OutlineFormat::Type1]);
     report
 }
 
@@ -208,6 +240,14 @@ fn has_curve(fixtures: &[FontFixture], format: OutlineFormat) -> bool {
             OutlineFormat::TrueType => matches!(s, PathSegment::QuadTo(..)),
             _ => matches!(s, PathSegment::CurveTo(..)),
         })
+}
+
+/// Whether a fixture of `format` has a `min_ops` glyph with a bound of at least [`HEAVY_OPS`].
+fn has_heavy(fixtures: &[FontFixture], format: OutlineFormat) -> bool {
+    fixtures
+        .iter()
+        .filter(|f| f.outline_format == format)
+        .any(|f| f.min_ops.iter().any(|(_, n)| *n >= HEAVY_OPS))
 }
 
 /// Drops a `LineTo` back to the contour's start (within `tolerance`) right before `Close`
@@ -261,6 +301,7 @@ struct Probe {
     ascender: Option<f32>,
     descender: Option<f32>,
     builtin_encoding: BuiltinEncoding,
+    cmap_subtables: Vec<CmapId>,
     queries: Queries,
 }
 
@@ -287,6 +328,10 @@ struct Questions {
     limits: FontLimits,
     glyphs: Vec<GlyphId>,
     cmap: Vec<(CmapId, u32)>,
+    /// Glyphs whose names are asked (besides the standard and listed glyphs).
+    named: Vec<GlyphId>,
+    /// Names looked up with `glyph_by_name`, all of them (besides up to 128 names the face
+    /// returned).
     names: Vec<String>,
     cids: Vec<u16>,
 }
@@ -321,7 +366,21 @@ fn exercise_load(
                 .map(|c| (*id, c)),
         );
     }
-    let mut names: Vec<String> = q.names.clone();
+    // Standard subtables the face does not list, which must answer `None`.
+    for (platform_id, encoding_id) in STANDARD_CMAPS {
+        let id = CmapId {
+            platform_id,
+            encoding_id,
+        };
+        if !cmap_subtables.contains(&id) {
+            cmap.extend((0..=255u32).map(|c| (id, c)));
+        }
+    }
+    let mut named = glyphs.clone();
+    named.extend(q.named.iter().copied());
+    named.sort_unstable();
+    named.dedup();
+    let mut found: Vec<String> = Vec::new();
     let queries = Queries {
         advances: glyphs.iter().map(|&g| (g, face.advance(g))).collect(),
         outlines: glyphs
@@ -332,12 +391,14 @@ fn exercise_load(
             .iter()
             .map(|&(id, code)| (id, code, face.cmap_lookup(id, code)))
             .collect(),
-        names: glyphs
+        names: named
             .iter()
             .map(|&g| {
                 let name = face.glyph_name(g);
-                if let Some(n) = &name {
-                    names.push(n.clone());
+                if let Some(n) = &name
+                    && found.len() < 128
+                {
+                    found.push(n.clone());
                 }
                 (g, name)
             })
@@ -351,9 +412,11 @@ fn exercise_load(
             .map(|c| (c, face.cid_to_glyph(c)))
             .collect(),
     };
-    let by_name = names
-        .into_iter()
-        .take(128)
+    let by_name = q
+        .names
+        .iter()
+        .cloned()
+        .chain(found)
         .map(|n| {
             let g = face.glyph_by_name(&n);
             (n, g)
@@ -367,6 +430,7 @@ fn exercise_load(
         ascender: metrics.ascender,
         descender: metrics.descender,
         builtin_encoding: face.builtin_encoding(),
+        cmap_subtables,
         queries: Queries { by_name, ..queries },
     })
 }
@@ -389,8 +453,9 @@ impl Probe {
     }
 
     /// The first broken invariant, if any: numbers finite, matrix invertible, glyph ids in
-    /// range, out-of-range ids rejected, glyph and point counts within `limits`.
-    fn invariant_violation(&self, limits: &FontLimits) -> Option<String> {
+    /// range, out-of-range ids rejected, glyph and point counts within `limits`, and the
+    /// promised empty answers (`sfnt` is false for bare CFF and Type 1 programs).
+    fn invariant_violation(&self, limits: &FontLimits, sfnt: bool) -> Option<String> {
         let count = self.glyph_count;
         if count == 0 || count > limits.max_glyphs {
             return Some(format!(
@@ -453,6 +518,30 @@ impl Probe {
             .any(|(_, _, g)| *g == Some(GlyphId(0)))
         {
             return Some("cmap_lookup returned glyph 0 (unmapped)".into());
+        }
+        if !sfnt && !self.cmap_subtables.is_empty() {
+            return Some(format!(
+                "a program that is not sfnt reports cmap subtables {:?}",
+                self.cmap_subtables
+            ));
+        }
+        if let Some((id, code, g)) = self
+            .queries
+            .cmap
+            .iter()
+            .find(|(id, _, g)| g.is_some() && !self.cmap_subtables.contains(id))
+        {
+            return Some(format!(
+                "cmap {id:?} is not listed by cmap_subtables but maps {code:#x} to {g:?}"
+            ));
+        }
+        if self.outline_format != OutlineFormat::Cff
+            && let Some((cid, g)) = self.queries.cids.iter().find(|(_, g)| g.is_some())
+        {
+            return Some(format!(
+                "a {:?} face maps CID {cid} to {g:?} (only CID-keyed CFF has CIDs)",
+                self.outline_format
+            ));
         }
         if let Some((g, _)) = self
             .queries
@@ -520,10 +609,11 @@ fn empty_input(report: &mut Report, empty: Option<Option<BackendError>>) {
 }
 
 /// Fixture-independent checks.
+/// `proven` holds the declared format of every hostile program that proved it.
 fn common(
     report: &mut Report,
     fixtures: &[FontFixture],
-    hostile: &[HostileFont],
+    proven: &[OutlineFormat],
     formats: &[OutlineFormat],
 ) {
     report.check("font.has_fixtures", !fixtures.is_empty(), || {
@@ -536,16 +626,23 @@ fn common(
             .any(|f| f.glyphs.iter().any(|g| g.outline.point_count() > 0)),
         || "fixtures must expect at least one glyph with points (for the point limit)".into(),
     );
-    let covered = formats
-        .iter()
-        .all(|f| hostile.iter().any(|h| h.outline_format == *f));
+    let covered = formats.iter().all(|f| proven.contains(f));
     report.check("font.has_hostile_fixtures", covered, || {
-        format!("hostile programs must cover every outline format: {formats:?}")
+        format!(
+            "every outline format in {formats:?} needs a hostile program that loads as that \
+             format with a control glyph that outlines; proven: {proven:?}"
+        )
     });
 }
 
-/// A hostile program never panics and is rejected the way [`HostileFont`] describes.
-fn run_hostile(report: &mut Report, h: &HostileFont, load: &LoadFn<'_>) {
+/// A hostile program never panics and is rejected the way [`HostileFont`] describes. Returns
+/// the declared format when the program proved it (see [`HostileFont`]).
+fn run_hostile(
+    report: &mut Report,
+    h: &HostileFont,
+    sfnt: bool,
+    load: &LoadFn<'_>,
+) -> Option<OutlineFormat> {
     let full = FontLimits::default();
     let mut glyphs = h.glyphs.clone();
     glyphs.extend(h.control_glyph);
@@ -578,7 +675,12 @@ fn run_hostile(report: &mut Report, h: &HostileFont, load: &LoadFn<'_>) {
             let control_failed = h
                 .control_glyph
                 .filter(|g| !matches!(p.outline(*g), Some(Ok(_))));
-            if let Some(g) = out_of_range {
+            if p.outline_format != h.outline_format {
+                Some(format!(
+                    "declared {:?} but loaded as {:?}",
+                    h.outline_format, p.outline_format
+                ))
+            } else if let Some(g) = out_of_range {
                 Some(format!(
                     "glyph {} is not below glyph_count {}",
                     g.0, p.glyph_count
@@ -596,22 +698,30 @@ fn run_hostile(report: &mut Report, h: &HostileFont, load: &LoadFn<'_>) {
                             p.outline(*g)
                         )
                     })
-                    .or_else(|| p.invariant_violation(&full))
+                    .or_else(|| p.invariant_violation(&full, sfnt))
             }
         }
     };
     report.check("font.hostile", problem.is_none(), || {
         format!("{}: {}", h.name, problem.clone().unwrap_or_default())
     });
+    // Proof is about the program, not the backend's verdict on it: it loaded as the declared
+    // format and its control glyph outlined, so the listed glyphs sit on a reachable path.
+    let proved = !h.glyphs.is_empty()
+        && matches!(&result, Some(Ok(p)) if p.outline_format == h.outline_format
+            && h.control_glyph.is_some_and(|g| matches!(p.outline(g), Some(Ok(_)))));
+    proved.then_some(h.outline_format)
 }
 
-fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
+/// `sfnt` is false for bare CFF and Type 1 programs (which promise no `cmap` subtables).
+fn run_fixture(report: &mut Report, f: &FontFixture, sfnt: bool, load: &LoadFn<'_>) {
     let name = &f.name;
     let full = FontLimits::default();
     let questions = Questions {
         limits: full,
         glyphs: f.glyphs.iter().map(|g| g.glyph).collect(),
         cmap: f.cmap.iter().map(|(id, code, _)| (*id, *code)).collect(),
+        named: f.names.iter().map(|(g, _)| *g).collect(),
         names: f.names.iter().map(|(_, n)| n.clone()).collect(),
         cids: f.cids.iter().map(|(c, _)| *c).collect(),
     };
@@ -621,12 +731,16 @@ fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
         && f.glyphs
             .iter()
             .all(|g| g.glyph.0 < f.glyph_count && g.outline.is_well_formed())
+        && f.min_ops
+            .iter()
+            .all(|(g, n)| g.0 < f.glyph_count && *n >= 1)
         && f.tolerance.is_finite()
         && (0.0..=1.0).contains(&f.tolerance);
     report.check("font.fixture_valid", valid, || {
         format!(
-            "{name}: glyph_count is 0, an expected glyph is out of range or malformed, or the \
-             tolerance is not between 0 and 1"
+            "{name}: glyph_count is 0, an expected or min_ops glyph is out of range, an \
+             expected outline is malformed, a min_ops bound is 0, or the tolerance is not \
+             between 0 and 1"
         )
     });
     if !valid {
@@ -643,7 +757,7 @@ fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
         format!("{name}: {}", mismatch.clone().unwrap_or_default())
     });
     let violation = match &result {
-        Some(Ok(p)) => p.invariant_violation(&full),
+        Some(Ok(p)) => p.invariant_violation(&full, sfnt),
         _ => None,
     };
     report.check("font.invariants", violation.is_none(), || {
@@ -789,6 +903,45 @@ fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
         );
     }
 
+    // Known lower bounds on operations: each glyph passes at the default limits and fails one
+    // below its bound, so counting too little (one per glyph, nothing for composite
+    // components) is caught where the check at 0 above cannot see it.
+    for &(g, bound) in &f.min_ops {
+        for (limit, want_ok) in [
+            (full.max_outline_ops, true),
+            (bound.saturating_sub(1), false),
+        ] {
+            let q = Questions {
+                limits: FontLimits {
+                    max_outline_ops: limit,
+                    ..full
+                },
+                glyphs: vec![g],
+                ..Questions::default()
+            };
+            let result = ask(&f.data, &full, &q);
+            let outline = match &result {
+                Some(Ok(p)) => p.outline(g).cloned(),
+                _ => None,
+            };
+            let ok = if want_ok {
+                matches!(outline, Some(Ok(_)))
+            } else {
+                matches!(outline, Some(Err(BackendError::LimitExceeded(_))))
+            };
+            report.check("font.outline_ops_limit", ok, || {
+                format!(
+                    "{name}: glyph {} (needs at least {bound} operations) with max_outline_ops \
+                     {limit}: got {:?}",
+                    g.0,
+                    outline
+                        .as_ref()
+                        .map(|r| r.as_ref().map(Outline::point_count))
+                )
+            });
+        }
+    }
+
     // Truncated and mutated programs: no panic, and every answer from a face that loads keeps
     // the invariants. Small limits keep runaway output visible and the run fast.
     let most_points = f
@@ -811,7 +964,7 @@ fn run_fixture(report: &mut Report, f: &FontFixture, load: &LoadFn<'_>) {
         match result {
             None => Some("panicked".into()),
             Some(Err(_)) => None,
-            Some(Ok(p)) => p.invariant_violation(&capped),
+            Some(Ok(p)) => p.invariant_violation(&capped, sfnt),
         }
     };
     for cut in sample_offsets(len, 128) {
@@ -955,6 +1108,18 @@ fn fixture_mismatch(p: &Probe, f: &FontFixture) -> Option<String> {
         if got != *want {
             return Some(format!("CID {cid}: {got:?}, expected {want:?}"));
         }
+    }
+    // A CID the fixture does not list is unmapped (and every CID is, for a program that is
+    // not CID-keyed).
+    if let Some((cid, g)) = p
+        .queries
+        .cids
+        .iter()
+        .find(|(c, g)| g.is_some() && !f.cids.iter().any(|(listed, _)| listed == c))
+    {
+        return Some(format!(
+            "CID {cid}: {g:?}, but the fixture does not list it (expected None)"
+        ));
     }
     None
 }
