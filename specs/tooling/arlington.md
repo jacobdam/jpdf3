@@ -81,8 +81,9 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
      id and within the file cap, creates `DIR` (and missing parents), writes `DIR/tsv/<files>`,
      both notice files and `DIR/.gitattributes`, then loads `DIR` back through item 9.
      The files go into a sibling staging directory `DIR.staging-<pid>`, which is loaded back
-     through item 9 and only then renamed to `DIR`; on any failure it is removed and `DIR` is
-     not created. Prints `wrote DIR (N files, git ids match the pins)`. File names come from
+     through item 9 and only then renamed to `DIR`. An existing staging path is refused and
+     left alone; on a failure after the staging directory was created, it is removed and
+     `DIR` is not created. Prints `wrote DIR (N files, git ids match the pins)`. File names come from
      the verified tree and are all checked before anything is created: an empty name, a `/`
      or `\`, a leading `.`, or a name not ending in `.tsv` is refused.
 7. **`cargo xtask arlington`** loads the vendored copy (item 9, offline), writes
@@ -111,7 +112,8 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    3. lists `tsv/`; every entry must be a regular file (symlinks and directories refused)
       with a UTF-8 name ending in `.tsv`;
    4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
-      regular file, so a swap to a FIFO or device after the first check is refused;
+      regular file, so a swap to a device after the first check is refused (a swap to a FIFO
+      can still block `open`; that only hangs a local run, out of scope like the cache);
    5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
@@ -123,12 +125,17 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
 
    SHA-1 (`sha1.rs`) is our own implementation of FIPS 180-4 §6.1, `std` only.
 10. **Use** (owner condition on #60): tests and tools only. A test enforces it:
-    - in the resolved graph (`cargo tree -e normal,build -i jpdf-arlington`), no package
-      under `crates/` or `bindings/` depends on `jpdf-arlington`, directly or transitively
-      (dev-dependencies are allowed);
-    - no file under `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web/src` or
-      `apps/macos` (outside `tests`/`Tests`/`node_modules` directories) contains
-      "arlington" in any case.
+    - in the resolved graph (`cargo tree --workspace --target all --all-features -e
+      normal,build -i jpdf-arlington`), no package under `crates/` or `bindings/` depends on
+      `jpdf-arlington`, directly or transitively, on any target or feature; a positive control
+      requires `xtask` (a known dependent) to appear with the same path prefix;
+    - no file under `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web` or
+      `apps/macos` (outside `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`,
+      `dist` and `target` directories) contains "arlington" in any case; each of those roots
+      except `bindings/` must exist.
+    So dev-dependencies are usable only from `tests/` integration tests, not from
+    `#[cfg(test)]` modules in `src/`, and engine sources can't mention Arlington even in
+    comments.
     Changing that needs the owner.
 
 ## Persistence

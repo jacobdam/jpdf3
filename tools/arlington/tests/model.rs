@@ -702,6 +702,9 @@ fn no_shipped_crate_uses_the_arlington_data() {
         .args([
             "tree",
             "--workspace",
+            "--target",
+            "all",
+            "--all-features",
             "--locked",
             "--offline",
             "-e",
@@ -722,6 +725,11 @@ fn no_shipped_crate_uses_the_arlington_data() {
         .iter()
         .map(|d| format!("{}/", root.join(d).display()))
         .collect();
+    // Positive control: a known dependent shows up with the same path prefix.
+    assert!(
+        tree.contains(&format!("({})", root.join("xtask").display())),
+        "{tree}"
+    );
     for line in tree.lines() {
         assert!(
             !shipped.iter().any(|d| line.contains(d.as_str())),
@@ -737,11 +745,17 @@ fn no_shipped_crate_uses_the_arlington_data() {
             let p = e.path();
             let name = e.file_name();
             let ft = e.file_type().unwrap();
-            if ft.is_dir()
-                && !["tests", "Tests", "node_modules", "target"]
-                    .iter()
-                    .any(|n| name == *n)
-            {
+            let skip = [
+                "tests",
+                "Tests",
+                "JPDFUITests",
+                "e2e",
+                "scripts",
+                "node_modules",
+                "dist",
+                "target",
+            ];
+            if ft.is_dir() && !skip.iter().any(|n| name == *n) {
                 walk(&p, out);
             } else if ft.is_file() {
                 out.push(p);
@@ -756,13 +770,17 @@ fn no_shipped_crate_uses_the_arlington_data() {
         walk(&c.path().join("src"), &mut files);
         files.push(c.path().join("build.rs"));
     }
-    for d in ["bindings", "apps/web/src", "apps/macos"] {
-        walk(&repo_root().join(d), &mut files);
+    for d in ["bindings", "apps/web", "apps/macos"] {
+        let dir = repo_root().join(d);
+        assert!(d == "bindings" || dir.is_dir(), "{d} is missing");
+        walk(&dir, &mut files);
     }
-    assert!(
-        files.iter().any(|f| f.ends_with("lib.rs")),
-        "no sources found"
-    );
+    for want in ["lib.rs", "vite.config.ts", "index.html"] {
+        assert!(
+            files.iter().any(|f| f.ends_with(want)),
+            "{want} not scanned"
+        );
+    }
     let hits: Vec<_> = files
         .iter()
         .filter(|f| {
@@ -876,4 +894,45 @@ fn write_dir_checks_names_first() {
         .to_string();
     assert!(e.contains("bad notice name"), "{e}");
     assert!(!out.exists());
+}
+
+/// The staging directory: removed after a failed load-back, and an existing one (another
+/// run's) is refused and left alone.
+#[test]
+fn vendoring_cleans_up_only_its_own_staging() {
+    let files = jpdf_arlington::read_dir(&fixtures()).unwrap();
+    let (_, tree, license, notice) = fixture_vendored("stage-pins");
+    let notices = vec![
+        ("LICENSE", b"fixture license\n".to_vec()),
+        ("NOTICE.txt", b"fixture notice\n".to_vec()),
+    ];
+    let pins = vendor::Pins {
+        tree: &tree,
+        license: &license,
+        notice: &notice,
+    };
+    let base = scratch("stage");
+    let out = base.join("data");
+    let staged = base.join(format!("data.staging-{}", std::process::id()));
+    // Load-back fails (wrong tree pin) after the staging directory was written.
+    let wrong = vendor::Pins {
+        tree: &license,
+        ..pins
+    };
+    let e = vendor::vendor_files(&files, &notices, wrong, &out).unwrap_err();
+    assert!(e.to_string().contains("tsv is tree"), "{e}");
+    assert!(!out.exists() && !staged.exists());
+    // Someone else's staging directory is refused and kept.
+    std::fs::create_dir(&staged).unwrap();
+    std::fs::write(staged.join("marker"), "keep").unwrap();
+    let e = vendor::vendor_files(&files, &notices, pins, &out).unwrap_err();
+    assert!(e.to_string().contains("exists; delete it first"), "{e}");
+    assert!(staged.join("marker").is_file() && !out.exists());
+    // Control: with the path free, the same call succeeds and leaves no staging behind.
+    std::fs::remove_dir_all(&staged).unwrap();
+    assert_eq!(
+        vendor::vendor_files(&files, &notices, pins, &out).unwrap(),
+        3
+    );
+    assert!(out.join("tsv/Leaf.tsv").is_file() && !staged.exists());
 }

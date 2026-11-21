@@ -1,6 +1,7 @@
 //! Fetching the pinned Arlington commit (specs/tooling/arlington.md, "Pinning"; ADR 0006, ADR 0007).
 //!
-//! The data is vendored in `tools/arlington/data` (ADR 0007); this module is the bump path. `git` fetches exactly one commit into a bare cache
+//! The data is vendored in `tools/arlington/data` (ADR 0007); this module is the bump
+//! path. `git` fetches exactly one commit into a bare cache
 //! repository. Before reading, we run `git fsck --full --strict` (git re-hashes every object,
 //! so a corrupted or swapped object file is caught), check the commit and `tsv/latest` tree
 //! ids against the pins below, check every blob's size, and only then read the blobs. Git

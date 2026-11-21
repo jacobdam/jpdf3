@@ -170,7 +170,8 @@ fn check_top_level(dir: &Path, tsv: &Path) -> Result<(), Error> {
 
 /// Reads at most `cap` bytes; a larger file is a limit error, and no read goes past the cap.
 /// The path must not be a symlink, and the opened file must be a regular file (checked again
-/// on the open handle, so a swap to a FIFO or device after the first check is refused).
+/// on the open handle, so a swap to a device after the first check is refused; a swap to a
+/// FIFO can still block `open`, which only hangs a local run).
 fn read_capped(path: &Path, name: &str, cap: usize) -> Result<Vec<u8>, Error> {
     let io = |source| Error::Io {
         path: path.display().to_string(),
@@ -204,9 +205,8 @@ pub fn vendor_pinned(cache_dir: &Path, out: &Path) -> Result<usize, Error> {
 }
 
 /// [`vendor_pinned`] from an existing repository `git_dir` and explicit pins: verifies it
-/// ([`fetch::load_verified`]), reads the notice files by their pinned blob ids, writes a
-/// sibling staging directory, loads it back through [`load_checked`], and only then renames
-/// it to `out`. On any failure the staging directory is removed and `out` is not created.
+/// ([`fetch::load_verified`]), reads the notice files by their pinned blob ids, and hands
+/// them to [`vendor_files`].
 pub fn vendor_from(
     git_dir: &Path,
     commit: &str,
@@ -219,13 +219,29 @@ pub fn vendor_from(
     for (name, id) in [("LICENSE", pins.license), ("NOTICE.txt", pins.notice)] {
         notices.push((name, fetch::read_pinned_blob(git_dir, commit, name, id)?));
     }
+    vendor_files(&files, &notices, pins, out)
+}
+
+/// Writes the files into a sibling staging directory `<out>.staging-<pid>`, loads it back
+/// through [`load_checked`] against `pins`, and only then renames it to `out`. If the staging
+/// path already exists, nothing is written or removed. If anything fails after this call has
+/// created the staging directory, the staging directory is removed; `out` is never created.
+pub fn vendor_files(
+    files: &[(String, Vec<u8>)],
+    notices: &[(&str, Vec<u8>)],
+    pins: Pins<'_>,
+    out: &Path,
+) -> Result<usize, Error> {
+    refuse_existing(out)?;
     let file_name = out
         .file_name()
         .ok_or_else(|| Error::Vendor(format!("{} has no file name", out.display())))?;
     let mut staged_name = file_name.to_os_string();
     staged_name.push(format!(".staging-{}", std::process::id()));
     let staged = out.with_file_name(staged_name);
-    let result = write_dir(&staged, &files, &notices)
+    // Checked on its own, so an existing staging path (another run's) is never removed.
+    refuse_existing(&staged)?;
+    let result = write_dir(&staged, files, notices)
         .and_then(|()| load_checked(&staged, pins, Caps::DEFAULT))
         .and_then(|loaded| {
             refuse_existing(out)?;
@@ -236,7 +252,6 @@ pub fn vendor_from(
             Ok(loaded.len())
         });
     if result.is_err() {
-        // Only ever a directory this call created (write_dir refuses an existing path).
         let _ = std::fs::remove_dir_all(&staged);
     }
     result
