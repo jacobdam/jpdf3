@@ -35,6 +35,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
   the session's shell) ([journal](journal/2026-11-21.md), PR #59).
 
+- The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, even in a heredoc writing markdown →
+  write such files with Write/Edit. Never `cat > file` without a heredoc (it waits on stdin until the 2 min
+  timeout) ([journal](journal/2026-11-21.md), PR #104).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
@@ -134,6 +138,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   enclosing `.git`, check before creating directories, and re-check subdirectories for
   symlinks. Write new manifest/data parsers against the judge's real files first (smoke
   lists one blob twice) ([journal](journal/2026-11-21.md), PR #65).
+- Proving "rejected before reading" (size, type) without measuring memory → make the test file mode 0200: an
+  implementation that opens first fails with EACCES instead of the limit error. Skip only that half as root.
+  FIFO/device inputs need a hang timeout in the test, not a plain `output()` ([journal](journal/2026-11-21.md), PR #104).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
 - The workspace denies `as` casts in tests too → convert floats with a bit-setting helper

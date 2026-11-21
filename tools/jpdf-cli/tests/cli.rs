@@ -330,10 +330,14 @@ fn oversized_file_is_rejected_before_opening() -> io::Result<()> {
     let over = write_only_sparse(max + 1)?;
     let at = write_only_sparse(max)?;
     let o = cli(&["info", over.to_str().unwrap()])?;
-    let at_o = cli(&["info", at.to_str().unwrap()])?;
     // Running as root, permissions don't stop the open: the ordering proof below needs a
-    // normal user, but the limit message must hold either way.
+    // normal user (as root the CLI would read 512 MiB), but the limit message holds either way.
     let enforced = std::fs::File::open(&at).is_err();
+    let at_o = if enforced {
+        Some(cli(&["info", at.to_str().unwrap()])?)
+    } else {
+        None
+    };
     std::fs::remove_file(&over)?;
     std::fs::remove_file(&at)?;
     assert_eq!(code(&o), Some(2), "{o:?}");
@@ -342,8 +346,8 @@ fn oversized_file_is_rejected_before_opening() -> io::Result<()> {
         "jpdf-cli: limit exceeded: file size\n"
     );
     assert!(o.stdout.is_empty());
-    assert_eq!(code(&at_o), Some(2), "{at_o:?}");
-    if enforced {
+    if let Some(at_o) = at_o {
+        assert_eq!(code(&at_o), Some(2), "{at_o:?}");
         let err = String::from_utf8_lossy(&at_o.stderr);
         assert!(
             err.starts_with("jpdf-cli: cannot read ") && err.contains("ermission denied"),
