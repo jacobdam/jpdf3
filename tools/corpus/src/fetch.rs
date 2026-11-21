@@ -14,6 +14,8 @@ use crate::sha1::{Sha1, hex};
 pub const ATTEMPTS: u32 = 3;
 /// Allowed `--jobs` range.
 pub const MAX_JOBS: usize = 32;
+/// Bytes of curl's stderr kept for the error message.
+const MAX_STDERR: u64 = 64 * 1024;
 
 /// How to fetch.
 #[derive(Debug, Clone)]
@@ -138,9 +140,16 @@ enum VerifyError {
 /// checks its length and git blob id.
 fn verify(path: &Path, e: &Entry) -> Result<(), VerifyError> {
     let io = |x: std::io::Error| VerifyError::Io(x.to_string());
-    let mut file = std::fs::File::open(path)
-        .map_err(io)?
-        .take(e.size.saturating_add(1));
+    // Only a regular file: opening a FIFO planted in the cache would block forever.
+    let not_file = || VerifyError::Io("not a regular file".into());
+    if !std::fs::metadata(path).map_err(io)?.is_file() {
+        return Err(not_file());
+    }
+    let file = std::fs::File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(not_file());
+    }
+    let mut file = file.take(e.size.saturating_add(1));
     let mut h = Sha1::new();
     h.update(format!("blob {}\0", e.size).as_bytes());
     let mut buf = [0u8; 64 * 1024];
@@ -230,8 +239,19 @@ fn fetch_one(e: &Entry, dir: &Path, opts: &Options) -> Outcome {
     Outcome::Failed(last)
 }
 
+/// Runs curl with the body on stdout and copies at most `size + 1` bytes of it into `part`,
+/// which must not exist yet (`create_new`, so a planted file or symlink is never written
+/// through). curl < 8.4 doesn't enforce `--max-filesize` without a Content-Length; the cap
+/// here does. On overflow curl is killed and the result is curl's exit 63 (integrity).
+/// Redirects fail (`--max-redirs 0`, curl exit 47): no source host redirects, and a
+/// redirect target's host was never checked.
 fn run_curl(opts: &Options, e: &Entry, part: &Path) -> Result<(), (Option<i32>, String)> {
-    let out = Command::new(&opts.curl)
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(part)
+        .map_err(|x| (None, format!("creating {}: {x}", part.display())))?;
+    let mut child = Command::new(&opts.curl)
         // `-q` must come first: it stops curl from reading a .curlrc.
         .args([
             "-q",
@@ -244,7 +264,7 @@ fn run_curl(opts: &Options, e: &Entry, part: &Path) -> Result<(), (Option<i32>, 
             "--show-error",
             "--location",
             "--max-redirs",
-            "5",
+            "0",
             "--connect-timeout",
             "30",
             "--max-time",
@@ -252,21 +272,56 @@ fn run_curl(opts: &Options, e: &Entry, part: &Path) -> Result<(), (Option<i32>, 
             "--max-filesize",
         ])
         .arg(e.size.to_string())
-        .arg("--output")
-        .arg(part)
         .arg("--url")
         .arg(encode_url(&e.url))
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .map_err(|x| (None, format!("cannot run {}: {x}", opts.curl.display())))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        let code = out.status.code();
-        let mut msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stderr = child.stderr.take().map(|pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut pipe = pipe;
+            let _ = (&mut pipe).take(MAX_STDERR).read_to_end(&mut buf);
+            // Drain the rest, so a chatty curl never blocks on a full stderr pipe.
+            let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+            buf
+        })
+    });
+    let cap = e.size.saturating_add(1);
+    let copied = match child.stdout.take() {
+        Some(out) => std::io::copy(&mut out.take(cap), &mut file),
+        None => Ok(0),
+    };
+    let overflow = matches!(copied, Ok(n) if n >= cap);
+    if overflow {
+        // More than the manifest size: stop curl instead of draining the rest.
+        let _ = child.kill();
+    }
+    let status = child.wait();
+    let stderr = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
+    if overflow {
+        // Reported like curl's own exit 63 (an integrity failure, no retry), with the count
+        // of bytes that reached `part`.
+        let copied = copied.unwrap_or(0);
+        return Err((
+            Some(63),
+            format!(
+                "size is more than {}, expected {} (stopped after {copied} bytes)",
+                e.size, e.size
+            ),
+        ));
+    }
+    let status = status.map_err(|x| (None, format!("curl: {x}")))?;
+    if !status.success() {
+        let code = status.code();
+        let mut msg = String::from_utf8_lossy(&stderr).trim().to_string();
         msg.truncate(msg.floor_char_boundary(300));
-        Err((code, format!("curl exit {code:?}: {msg}")))
+        return Err((code, format!("curl exit {code:?}: {msg}")));
+    }
+    match copied {
+        Ok(_) => Ok(()),
+        Err(x) => Err((None, format!("writing {}: {x}", part.display()))),
     }
 }

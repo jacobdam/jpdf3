@@ -20,16 +20,18 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
-/// A curl stand-in: serves `<dir>/serve/<last URL segment>`, logs each argv line to
-/// `<dir>/log`. Names starting with `fail` exit 22, `big` exit 63, and `flaky` fail once.
+/// A curl stand-in: writes `<dir>/serve/<last URL segment>` to stdout, logs each argv line
+/// to `<dir>/log`. Names starting with `fail` exit 22, `big` exit 63, `flaky` fail once, and
+/// `flood` write without end (an old curl that ignores `--max-filesize` without a
+/// Content-Length).
 #[cfg(test)]
 fn fake_curl(dir: &Path) -> PathBuf {
     let script = format!(
         r#"#!/bin/sh
 echo "$*" >> '{d}/log'
-out=; url=
+url=
 while [ $# -gt 0 ]; do
-  case "$1" in --output) out=$2; shift;; --url) url=$2; shift;; esac
+  case "$1" in --url) url=$2; shift;; esac
   shift
 done
 name=${{url##*/}}
@@ -37,8 +39,9 @@ case "$name" in
   fail*) echo "could not resolve" >&2; exit 22;;
   big*) exit 63;;
   flaky*) if [ ! -f '{d}/flaked' ]; then touch '{d}/flaked'; exit 7; fi;;
+  flood*) exec yes;;
 esac
-cp '{d}/serve/'"$name" "$out" || exit 22
+cat '{d}/serve/'"$name" || exit 22
 "#,
         d = dir.display()
     );
@@ -100,6 +103,9 @@ fn downloads_verifies_and_reuses() {
             "{line}"
         );
         assert!(line.contains("--max-filesize "), "{line}");
+        // Redirects fail instead of reaching an unchecked host; the body goes to stdout.
+        assert!(line.contains(" --max-redirs 0 "), "{line}");
+        assert!(!line.contains("--output"), "{line}");
     }
     assert!(
         log.contains("--url https://raw.githubusercontent.com/o/r/c/b%20c.pdf"),
@@ -165,6 +171,61 @@ fn wrong_bytes_are_integrity_failures() {
     let log = std::fs::read_to_string(d.join("log")).unwrap();
     assert_eq!(log.lines().count(), 4, "{log}");
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// A body without end is cut at the manifest size + 1 byte: an integrity failure, no hang,
+/// nothing left behind (curl < 8.4 doesn't enforce `--max-filesize` without Content-Length).
+#[test]
+fn an_endless_body_is_cut_at_the_size() {
+    let d = scratch("flood");
+    let curl = fake_curl(&d);
+    let entries = [entry("flood.pdf", b"%PDF-1.7 short")];
+    let out = d.join("out");
+    let start = std::time::Instant::now();
+    let r = fetch(&entries, &out, &opts(curl));
+    assert!(
+        start.elapsed() < Duration::from_secs(30),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(r.integrity.len(), 1, "{r:?}");
+    assert!(
+        r.integrity[0]
+            .contains("flood.pdf: size is more than 14, expected 14 (stopped after 15 bytes)"),
+        "{r:?}"
+    );
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// A FIFO (or any non-file) in place of a cached `<blob>.pdf` is not opened (that would
+/// block forever); the file is downloaded again and replaces it.
+#[test]
+fn a_fifo_in_the_cache_is_replaced_not_read() {
+    let d = scratch("fifo");
+    let curl = fake_curl(&d);
+    let bytes = b"%PDF-1.7 fifo";
+    std::fs::write(d.join("serve/f.pdf"), bytes).unwrap();
+    let entries = vec![entry("f.pdf", bytes)];
+    let out = d.join("out");
+    let dst = out.join(format!("{}.pdf", entries[0].blob));
+    let st = std::process::Command::new("mkfifo")
+        .arg(&dst)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (e2, o2) = (entries.clone(), out.clone());
+    std::thread::spawn(move || {
+        let _ = tx.send(fetch(&e2, &o2, &opts(curl)));
+    });
+    let r = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("fetch blocked on the FIFO");
+    assert_eq!((r.cached, r.downloaded), (0, 1), "{r:?}");
+    assert!(std::fs::metadata(&dst).unwrap().is_file());
+    assert_eq!(std::fs::read(&dst).unwrap(), bytes);
     std::fs::remove_dir_all(&d).unwrap();
 }
 

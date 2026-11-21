@@ -170,6 +170,12 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
   so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
   checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).
+- Running git on a cache a stranger could plant (`--cache DIR`) → git writes through a symlink at any path it
+  touches (refs, packs, reflogs, FETCH_HEAD, shallow), follows gitfiles, runs hooks and config programs. Require
+  the whole cache to be plain directories and regular files, allow-list its config keys, and put every setting on
+  the `-c` command line; naming dangerous paths took 3 review rounds ([journal](journal/2026-11-21.md), PR #131).
+- Hand mutation with sed → if the mutated literal also appears in the test's expected value, sed rewrites both
+  and the mutant "survives"; replace only the first occurrence and check which line changed (PR #131).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,

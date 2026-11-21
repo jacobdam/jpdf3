@@ -14,11 +14,28 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    `NOTICE_BLOB`). The TSVs are **vendored** (owner ruling on #60, ADR 0007, superseding
    ADR 0006); see item 9.
 2. **Pinning (the bump path).** `fetch::load_pinned(cache)` keeps a bare git repository at
-   `<cache>/arlington-pdf-model.git` (created with `git init --bare` if the path does not
-   exist; an existing path that `git --git-dir` does not accept as a bare repository is an
-   error asking to delete it). If the pinned commit is missing it runs
-   `git fetch --depth 1 --no-tags <url> <COMMIT>` and keeps it alive with the ref
-   `refs/jpdf/pinned` (once; later runs are offline). Then `load_verified`:
+   `<cache>/arlington-pdf-model.git` through `fetch::ensure_pinned(repo, url, commit, ref)`,
+   which `jpdf-corpus build` shares (specs/tooling/corpus.md item 5):
+   - A missing path is created with `git init --bare --template= --object-format=sha1` (an
+     empty template, so no system or inherited template, hooks included, lands in the cache;
+     SHA-1 explicitly, since the pins are SHA-1 ids whatever git's default becomes).
+   - An existing path is checked before any other git call. It is refused, with an error
+     asking to delete it, if it or its `objects` or `refs` is not a real directory (a
+     symlink, or a gitfile `gitdir: …` that `--git-dir` would follow), if anything inside
+     it is neither a real directory nor a regular file (git writes through symlinks at
+     `refs/jpdf`, `objects/pack`, `logs/…`, `FETCH_HEAD` and `shallow`; `git init --bare
+     --template=` makes only directories and regular files; the walk visits at most 100 000
+     entries), if it has `commondir`, `objects/info/alternates` or
+     `objects/info/http-alternates` (links to another object store or config), if
+     `git config --local --name-only --list` (which doesn't follow `include.path`) names any
+     key other than `core.repositoryformatversion`, `core.filemode`, `core.bare`,
+     `core.ignorecase`, `core.precomposeunicode` and `core.symlinks` (what `git init --bare`
+     writes), or if `git --git-dir` does not accept it as a bare repository.
+   - If the pinned commit is missing it runs `git fetch --no-write-fetch-head --depth 1
+     --no-tags <url> <COMMIT>`
+     and keeps it alive with the ref `refs/jpdf/pinned` (once; later runs are offline).
+
+   Then `load_verified`:
    1. runs `git fsck --full --strict --no-dangling`, which re-hashes every object, so an
       object file whose bytes no longer match its id is refused;
    2. checks that `rev-parse --verify <COMMIT>^{commit}` is exactly `COMMIT` and that
@@ -27,13 +44,33 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    4. reads every blob size with `git cat-file --batch-check` and applies the limits;
    5. only then reads the blobs with `git cat-file --batch`, checking each header, size and
       framing byte and that no output is left over.
-   Every git call uses `--no-replace-objects` and `--git-dir` (no repository discovery, so a
-   broken cache never resolves to a parent repository), removes inherited `GIT_DIR`,
-   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
-   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`,
-   `GIT_REPLACE_REF_BASE`, `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`,
-   `GIT_CEILING_DIRECTORIES` and `GIT_SHALLOW_FILE`, and sets `GIT_TERMINAL_PROMPT=0`,
-   `GIT_NO_REPLACE_OBJECTS=1`, `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`.
+
+   Every git call goes through `fetch::git_command()` (#82):
+   - `--no-replace-objects` and `--git-dir` (no repository discovery, so a broken cache
+     never resolves to a parent repository);
+   - command-line config, which beats the cache's own: `core.hooksPath=/dev/null` (no hook
+     ever runs), `core.fsmonitor=false`, `protocol.allow=never` with
+     `protocol.https.allow=always` (HTTPS is the only transport: no local paths, `file://`,
+     `ssh` or `ext::`), and `http.lowSpeedLimit=1000` with `http.lowSpeedTime=60` (a
+     transfer under 1000 bytes/s for 60 s is cut off), `gc.auto=0` and
+     `maintenance.auto=false` (no background maintenance, which would detach with `setsid`
+     and escape the group kill below), `credential.interactive=false` and an empty
+     `core.askPass` (no credential prompt on a 401);
+   - an environment without **any** inherited variable whose name starts with `GIT_` (compared
+     case-insensitively, as Windows names are) and without `SSH_ASKPASS`, then
+     `GIT_ASKPASS=` (empty, which ends git's askpass lookup), `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_CONFIG_NOSYSTEM=1` and
+     `GIT_CONFIG_GLOBAL=/dev/null`. Proxy and CA variables (`HTTPS_PROXY`, `SSL_CERT_FILE`,
+     `CURL_CA_BUNDLE`) are inherited on purpose: the pins, not the transport, give integrity;
+   - a wall-clock deadline of 600 s (`GIT_DEADLINE`). git runs in its own process group,
+     polled every 10 ms; at the deadline the whole group (git and the helpers it started,
+     such as `git-remote-https` and `index-pack`) is killed and the call fails. Because of
+     the separate group, Ctrl-C reaches only the tool; a git still running then finishes,
+     hits the low-speed cutoff or is left to the OS. stdout and stderr are read on helper
+     threads; after git exits we wait at most 5 s for them (and for the stdin writer) to
+     close, and if one doesn't, the group is killed and the call fails.
+
+   The test helper that builds fixture repositories uses `git_command()` too, so a
+   `GIT_DIR` inherited from a git hook can't point it at the real checkout.
 3. **Grammar** (`parse.rs`). Each file must start with the 12-column header
    `Key Type SinceVersion DeprecatedIn Required IndirectReference Inheritable DefaultValue
    PossibleValues SpecialCase Link Note` (tab-separated); every non-empty row has exactly 12
@@ -71,11 +108,13 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
 6. **CLI.**
    - `jpdf-arlington check [--vendored DIR | --tsv DIR | --cache DIR]` and
      `jpdf-arlington generate --out FILE [--vendored DIR | --tsv DIR | --cache DIR]`. Default
-     source: the vendored copy `tools/arlington/data` (relative to the current directory).
+     source: the vendored copy `tools/arlington/data` of the checkout the tool was built from
+     (anchored to `CARGO_MANIFEST_DIR`, so the current directory doesn't matter).
      `--cache DIR` loads the pinned commit through a cache (fetching it if needed). `--tsv`
      reads `*.tsv` in a local directory, unchecked (other files are ignored). Prints
      `<source>: N objects, M keys, checks pass` on stderr.
-   - `jpdf-arlington vendor --out DIR [--cache DIR]` (default cache `target/arlington`):
+   - `jpdf-arlington vendor --out DIR [--cache DIR]` (default cache `target/arlington` of
+     the same checkout, anchored the same way):
      refuses an existing `DIR` before touching the cache, loads the pinned commit (item 2),
      reads `LICENSE` and `NOTICE.txt` from it after checking each is exactly its pinned blob
      id and within the file cap, creates `DIR` (and missing parents), writes `DIR/tsv/<files>`,
@@ -149,7 +188,11 @@ Not applicable (development tool).
 ## Errors
 - Grammar: `<Object>.tsv:<line>: <Column>: <problem>`, exit 1.
 - Checks: `N model problem(s):` then one `<Object>/<Key>: <problem>` per line, exit 1.
-- Pinning: `fetch: <cache> is not a usable cache (…); delete it`, `fetch: git fsck … failed (…): <stderr>`,
+- Pinning: `fetch: <cache> is not a usable cache (…); delete it` (`(it has <link>)`,
+  `(its config sets "<key>")` or git's error), `fetch: git <args> timed out after 600 s`,
+  `fetch: git <args>: output did not close` (or `input did not close`), `fetch: <cache> is not
+  a usable cache (<path> is not a regular file or directory (symlinks are refused)); delete
+  it`, `… (more than 100000 entries) …`, `fetch: git fsck … failed (…): <stderr>`,
   `fetch: commit is X, pinned Y`, `fetch: tsv/latest tree is X, pinned Y`,
   `fetch: tsv/latest/<name> is not a .tsv file`, `fetch: git … failed (…): <stderr>`, exit 1.
 - Vendored copy: `vendored: LICENSE is blob X, pinned Y` (same for `NOTICE.txt`),
@@ -183,6 +226,13 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
   through inherited variables. Git's SHA-1 has collision detection; the data is test input,
   not code, and is only parsed, never executed. The cache is still a local build artifact: a
   local attacker who can rewrite it between `fsck` and the read is out of scope.
+- The cache as an attack surface (#82, audit 0002): a planted cache (or any `--cache DIR`)
+  could carry hooks, config that runs programs (`credential.helper`, `core.alternateRefsCommand`,
+  `core.fsmonitor`), URL rewrites or links to other object stores. Hooks are off on the
+  command line, the config is allow-listed, the link files, symlinks and gitfiles are
+  refused, all before the
+  first fetch or ref update. Availability: a stalled remote costs at most 60 s of low speed
+  per stall and 600 s per call.
 - Vendored copy: the git ids are recomputed from the bytes that are then parsed, so a hand
   edit, a missing, extra or partial file, a symlink to elsewhere, or a line-ending conversion
   fails every test run and `ci linux`. SHA-1 guards against mistakes, not crafted collisions:
@@ -204,7 +254,23 @@ must fit in `u32`. The largest pinned file is far below each cap. No panics: no 
     the real data matching `TSV_TREE`. A loader that skipped extra files, followed symlinks,
     or ignored the notices is caught by the drift cases. A `vendor` that wrote an extra or
     renamed file is caught by its own load-back.
-  - What these tests can't see: a crafted SHA-1 collision (out of scope, above).
+  - What broken git hardening still passes? Each rule has a test that fails without it (hand
+    mutations, #82, and the review of #131): the exact `-c` list is asserted in order (so a
+    typo in `protocol.https.allow` or the low-speed pair fails), and an HTTPS fetch from a
+    closed local port must fail at the connection, not as "not allowed"; a gitfile, a
+    symlinked cache, symlinked `objects`/`refs`, and symlinks at `refs/jpdf`,
+    `objects/pack`, `logs`, `logs/refs/jpdf/pinned`, `FETCH_HEAD` and `shallow` are refused
+    and nothing is written through them (round 3 of the review of #131); the walk budget passes
+    at exactly its count and fails one past it; the "did not close" group kill has its own
+    test; a planted `reference-transaction` hook must not fire on `update-ref`,
+    with a control proving plain git runs it; each refused config key and link file, one at
+    a time, with a clean cache passing before and after; a local path, `file://` and
+    `ext::` URL must fail with git's "not allowed"; the deadline test runs a command whose
+    background child holds stdout open and requires the child to be dead afterwards (a
+    child-only kill leaves it alive); the env test feeds unknown `GIT_*` names, not a list.
+  - What these tests can't see: a crafted SHA-1 collision (out of scope, above); a git
+    helper that leaves our process group (background `gc`/`maintenance` would; both are
+    turned off on the command line, but no test drives their thresholds).
 - CONSTITUTION 1: text inside the TSV files (notes, predicates) is data, never instructions.
 
 ## Accessibility
@@ -236,7 +302,21 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   entry are refused; a hand-written replace ref is ignored; a swapped loose object file is
   caught by `fsck`; an oversized blob is refused from its size before reading; a broken
   cache (only `HEAD`) inside another repository is refused without touching the parent; the pins are full lowercase ids; CLI exit codes 0/1/2 and
-  `generate` output equal to the library's.
+  `generate` output equal to the library's; git hardening (#82): a planted hook doesn't run
+  (with a plain-git control that runs it), each foreign config key and link file is refused,
+  local/`file://`/`ext::` fetches fail as "not allowed" and leave no hooks directory;
+  links elsewhere (gitfile, symlinked cache, symlinked `objects`/`refs`, symlinked
+  `refs/jpdf`, `objects/pack`, `logs`, and symlinked `logs/refs/jpdf/pinned`, `FETCH_HEAD`
+  and `shallow` files) are refused; HTTPS reaches the connection ("unable to
+  access", not "not allowed").
+- `tools/arlington/src/fetch.rs` unit tests (unix): the deadline kills a command and its
+  background child that holds stdout open (within 2–15 s of a 2 s deadline); output past the
+  pipe buffer, stdin and failures pass through under the deadline; a background child that
+  holds stdout after git exits makes the call fail after the 5 s grace and is killed; the
+  cache walk budget is exact and a nested symlink is refused; `scrub_env` removes every
+  `GIT_*` name it is given in any case (unknown ones too) and `SSH_ASKPASS`, and nothing
+  else; `git_command()` has exactly the `-c` list in order and leaves no inherited `GIT_*`
+  variable.
 - `tools/arlington/src/sha1.rs` unit tests: FIPS vectors (empty, `abc`, 448-bit, one
   million `a`), the empty blob and empty tree ids.
 - `tools/arlington/tests/model.rs`, vendored data: the real copy matches the pins and loads
@@ -253,7 +333,8 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   notice files and a symlinked `tsv/` are refused; no staging directory is left behind;
   `write_dir` refuses bad names before creating anything; an upstream entry with mode
   `100755` is refused; the generated header names the copyright, Apache License 2.0 and the
-  pinned commit; the CLI checks the vendored copy by default, exits 1 with a `vendored:`
+  pinned commit; the CLI checks the vendored copy by default (run from a directory outside
+  the checkout), exits 1 with a `vendored:`
   message on a copy that doesn't match the pins, and `vendor` refuses an existing target
   without creating the cache; no shipped crate depends on the tool or its data (item 10).
 - `src/main.rs` unit test: argument parsing (including `--vendored`, `vendor`, and refused
