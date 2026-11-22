@@ -51,11 +51,17 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Posting review text with `gh pr comment` (TICK §4) → the guard scans the whole command, so the terminal-multiplexer
   name in a commit message or a python one-liner, a push command naming main, or `gh repo`/admin-merge text in a body
   all block. Use Write/Edit for scripts, reword the token, and disclose it. A body with an apostrophe (`'\''`) is never
-  treated as inert ([journal](journal/2026-11-21.md), PR #129).
+  treated as inert ([journal](journal/2026-11-21.md), PR #129). Separately, Claude Code's own safety check refuses a
+  long post whose single-quoted body holds `$` + quote (`$'\''`) or `$$`+brace; split the post or space the token and
+  disclose it ([journal](journal/2026-11-22.md), PR #183).
 - Proposing a guard/hook change that "skips quoted text" → shlex is not the shell: `#` comments, zsh `=word`, newlines
   inside quoted text and duplicated copies elsewhere in the command all differ. Allowlist the remainder word by word,
   pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH).
-  It took 4 review rounds ([journal](journal/2026-11-21.md), PR #129).
+  It took 4 review rounds ([journal](journal/2026-11-21.md), PR #129). The same holds for a rule built on the guard's
+  own shell tokenizer: each round found a new misread (`${...}`, heredoc delimiters, backticks) and PR #183 hit the
+  cap. Design fail-closed from the start (a "couldn't read it the shell's way" marker the rule blocks on), never
+  compare counts between two parsers, and keep a fix that needs a parser out of a small finding's PR
+  ([journal](journal/2026-11-22.md), PR #183).
 
 - Writing a shell check from grep/awk exit codes → BSD grep exits 2 on an ERE with an empty alternative (`(a|)$`),
   so `! grep -v …` passes everything: accept only the exact success code (`(( $? == 1 ))` for `grep -qv`) and test a
