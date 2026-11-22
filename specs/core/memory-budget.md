@@ -125,25 +125,30 @@ the 2 GiB unused.
     and their buffers, which a parse allocates in the middle of its own scratch memory). Until then the peak is an
     estimate that accounts for one earlier phase, not a proven bound, and a peak under 2 GiB
     does not certify that a run fits.
-  - **Gate:** no decode or raster phase runs on the jpdf-cli path until one of these holds
-    (#146): (a) #25 runs the cross-phase pattern above through the jpdf-cli path being
+  - **Gate:** no decode or raster phase runs on the jpdf-cli path for unrestricted input until
+    one of these holds (#146): (a) the structural fix above lands, covering both index storage
+    and payloads, so stranded heap is bounded by construction; or (b) a runtime budget that the
+    engine enforces rejects work (with a typed `LimitExceeded`) before the process's address
+    space would pass the cap. A measurement alone does not open the gate: one workload can't
+    show that another, reaching the same sizes in a different order, reuses as many holes.
+    Either way, regression evidence is also required: #25 runs the cross-phase pattern above through the jpdf-cli path being
     enabled, exercising **every** phase that path runs, each one after the heap the preceding
     phases left (e.g. parse, then decode, then raster, if raster is enabled), at the default
     limits under `RLIMIT_AS` = 2 GiB as the judge runs `jpdf-cli`, and the process neither
     crashes nor fails an allocation, and its measured peak address space stays at or below
-    `peak()`; or (b) the structural fix above lands, covering both index storage and payloads.
-    The run must also show that each phase reached its stress allocations in that order: it
+    `peak()`. The run must also show that each phase reached its stress allocations in that order: it
     records the allocation sizes each phase reached (e.g. the decoder's working buffers at
     `max_decode_working_bytes`), and a phase that ended early (a limit rejection before its
     buffers, a fallback, a skipped phase) is not evidence. A measurement that finds the process
-    over the limit doesn't open the gate. A passing run validates only the workloads and phases
-    it ran: enabling another phase on the jpdf-cli path needs a new run that includes it. Today
+    over the limit blocks the gate. A passing run validates only the workloads and phases it
+    ran: enabling another phase on the jpdf-cli path needs a new run that includes it. Today
     parse is the only phase on that path; parse after parse can build up holes the same way
     (already true before #146), which the same measurement covers.
   - **Tripwire:** tools/jpdf-cli/tests/phase_gate.rs fails, naming #146, as soon as jpdf-cli's
     normal or build dependency graph (`cargo tree` with every feature and every target) holds
     any crate beyond the parse-only set (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax,
-    jpdf-traits); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
+    jpdf-traits), or any package that doesn't resolve to its workspace directory (a fork with an
+    allowed name, a registry crate); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
     jpdf-syntax package (not only `src`; `target` and the test file itself skipped) name a
     decode or raster entry point (the decode, raster and font limit builders, `check_scene`,
     the codec, image, cipher, font and rasterizer traits and methods, `inflate`, `FlateDecode`);

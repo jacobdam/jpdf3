@@ -179,4 +179,27 @@ fn jpdf_cli_links_only_parse_crates_until_the_146_gate_opens() {
          satisfied before a decode or raster phase reaches the jpdf-cli path; then update \
          PARSE_ONLY in this test"
     );
+    // Identity, not only the name: every package resolves to its workspace directory, so a
+    // fork that keeps an allowed name (or a registry crate, which has no path) fails.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let name = line.split_whitespace().next().unwrap_or_default();
+        let path = line
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(p, _)| p);
+        let want = if name == "jpdf-cli" {
+            root.to_path_buf()
+        } else {
+            root.join("../../crates").join(name)
+        };
+        let same = path.is_some_and(|p| {
+            std::path::Path::new(p).canonicalize().ok() == want.canonicalize().ok()
+                && want.canonicalize().is_ok()
+        });
+        assert!(
+            same,
+            "{line}: not the workspace package (#146 gate, specs/core/memory-budget.md)"
+        );
+    }
 }
