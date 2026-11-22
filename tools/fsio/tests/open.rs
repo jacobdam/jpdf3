@@ -22,7 +22,19 @@ fn scratch(name: &str) -> PathBuf {
 fn flags_are_known_on_ci_targets() {
     if cfg!(target_os = "macos") {
         assert_eq!(jpdf_fsio::OPEN_FLAGS, Some(0x0004));
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    } else if cfg!(all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "riscv64",
+            target_arch = "powerpc64",
+            target_arch = "s390x"
+        )
+    )) {
+        // Every listed architecture, so the FIFO tests never skip on one of them.
         assert_eq!(jpdf_fsio::OPEN_FLAGS, Some(0o4000 | 0o400));
     }
 }

@@ -1250,7 +1250,7 @@ fn shipped_scan_finds_links_copies_and_names() {
     assert_eq!(files.len(), 6, "{files:#?}");
 
     type Plant = fn(&Path, &Path, &[u8]);
-    let cases: [(&str, Plant, &str); 7] = [
+    let cases: [(&str, Plant, &str); 8] = [
         (
             "link",
             |r, tsv, _| std::os::unix::fs::symlink(tsv, r.join("crates/a/src/data.tsv")).unwrap(),
@@ -1299,6 +1299,18 @@ fn shipped_scan_finds_links_copies_and_names() {
                 std::fs::write(r.join("apps/web/src/test-results/x.ts"), "// Arlington\n").unwrap();
             },
             "apps/web/src/test-results/x.ts: names Arlington",
+        ),
+        (
+            "word-src-playwright-report",
+            |r, _, _| {
+                std::fs::create_dir_all(r.join("apps/web/src/playwright-report")).unwrap();
+                std::fs::write(
+                    r.join("apps/web/src/playwright-report/x.ts"),
+                    "// Arlington\n",
+                )
+                .unwrap();
+            },
+            "apps/web/src/playwright-report/x.ts: names Arlington",
         ),
     ];
     for (name, plant, want) in cases {
@@ -1359,19 +1371,28 @@ fn shipped_scan_finds_links_copies_and_names() {
         .iter()
         .enumerate()
     {
-        let root = tree(&format!("scan-root-file-{i}"));
-        std::fs::remove_dir_all(root.join(r)).unwrap();
-        std::fs::write(root.join(r), "placeholder\n").unwrap();
-        let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
-        assert_eq!(
-            hits,
-            [format!(
-                "{}: not a directory (symlinks are refused)",
-                root.join(r).display()
-            )],
-            "{r}"
-        );
-        std::fs::remove_dir_all(root).unwrap();
+        for link in [false, true] {
+            let root = tree(&format!("scan-root-file-{i}-{link}"));
+            if link {
+                // A symlink to the same, clean directory moved aside.
+                let real = root.join(format!("real-{i}"));
+                std::fs::rename(root.join(r), &real).unwrap();
+                std::os::unix::fs::symlink(&real, root.join(r)).unwrap();
+            } else {
+                std::fs::remove_dir_all(root.join(r)).unwrap();
+                std::fs::write(root.join(r), "placeholder\n").unwrap();
+            }
+            let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
+            assert_eq!(
+                hits,
+                [format!(
+                    "{}: not a directory (symlinks are refused)",
+                    root.join(r).display()
+                )],
+                "{r} link={link}"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     let root = tree("scan-bindings-file");
     std::fs::write(root.join("bindings"), "placeholder\n").unwrap();

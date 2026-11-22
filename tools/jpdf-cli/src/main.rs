@@ -258,7 +258,8 @@ fn check_metadata(path: &Path, meta: &Metadata, max: usize) -> Result<usize, Fai
 
 /// Reads at most `max` bytes. Non-regular files (FIFOs, devices, directories) and files larger
 /// than `max` are rejected from `stat` before the file is opened, so nothing is read. The open
-/// never blocks where `jpdf_fsio::OPEN_FLAGS` is set; the opened file is checked again (the path may have been swapped), and the
+/// never waits for a FIFO writer where `jpdf_fsio::OPEN_FLAGS` is set; the opened file is
+/// checked again (the path may have been swapped), and the
 /// read stops after `max + 1` bytes in case the file grows while we read it.
 fn read_limited(path: &Path, max: usize) -> Result<Vec<u8>, Failure> {
     let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));

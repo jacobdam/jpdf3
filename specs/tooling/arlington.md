@@ -153,7 +153,7 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
       regular file, so a swap to a device or FIFO after the first check is refused (the open
       is non-blocking where `jpdf_fsio::OPEN_FLAGS` is set, specs/tooling/fsio.md, so a FIFO
-      can't block it there);
+      can't make it wait for a writer there);
    5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
@@ -355,8 +355,9 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
   `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
   `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
-  directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlinked
-  `apps`, and the per-file cap one byte below the largest file gives exactly its one finding
+  directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlink
+  to a clean directory in place of each of the first four, the word under
+  `apps/web/src/test-results` and `apps/web/src/playwright-report`, and the per-file cap one byte below the largest file gives exactly its one finding
   (at that file's size: none), and an endless source read through the cap stops with the cap
   error after exactly cap + 1 bytes (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
   copy and link inside skipped directories give none; files below the app roots

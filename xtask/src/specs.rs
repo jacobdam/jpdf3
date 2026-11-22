@@ -281,7 +281,7 @@ fn read_text(path: &Path) -> Result<String, String> {
     // Only a regular file is opened: a symlink isn't followed (like the walk), and a FIFO or
     // device would block the open or never end. The open file is checked again (fstat), and
     // the read is capped, so a file grown after the check can't flood us. A swap to a FIFO
-    // between the lstat and the open doesn't block where `jpdf_fsio::OPEN_FLAGS` is set
+    // between the lstat and the open doesn't wait for a writer where `jpdf_fsio::OPEN_FLAGS` is set
     // (macOS, the common Linux architectures): the open is non-blocking
     // (`jpdf_fsio::open_nonblocking`) and the fstat refuses it. Not covered: a swap to a
     // symlink in that window is followed (the fstat then sees whatever it points to).

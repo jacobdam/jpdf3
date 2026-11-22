@@ -77,7 +77,7 @@ pub fn read_dir(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, Error> 
         }
         let path = entry.path();
         // Bounded read: a file that grows after `metadata` still can't exceed the cap. The
-        // open never blocks where `jpdf_fsio::OPEN_FLAGS` is set
+        // open never waits for a FIFO writer where `jpdf_fsio::OPEN_FLAGS` is set
         // (specs/tooling/fsio.md), and the opened handle must still be a
         // regular file, so a FIFO swapped in after the entry check is refused.
         let mut bytes = Vec::new();

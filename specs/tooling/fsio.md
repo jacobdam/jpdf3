@@ -22,7 +22,9 @@ file whose type they have just checked (#115 items 2 and 5, audit 0002).
   opened handle (`File::metadata`, an `fstat`) and refuses anything but a regular file.
 
 Callers (each keeps its own type checks, caps and errors). Every "doesn't block" for them, here
-and in their specs, holds only where `OPEN_FLAGS` is set; elsewhere their opens are plain:
+and in their specs, means only that a FIFO open doesn't wait for a writer, and holds only where
+`OPEN_FLAGS` is set; elsewhere their opens are plain. `O_NONBLOCK` doesn't make other slow
+opens return (a stalled network or FUSE filesystem still blocks):
 - `jpdf-cli` `read_limited` (specs/cli/jpdf-cli.md, "Reading FILE" step 2);
 - `jpdf-arlington` `vendor.rs` `read_capped` (specs/tooling/arlington.md item 9 step 4);
 - `jpdf-arlington` `read_dir` (the `--tsv` source; the opened handle must still be a regular
@@ -85,8 +87,8 @@ macOS and Linux as above; other unix targets and Windows open with plain flags.
 One flag on an open; nothing measurable.
 
 ## Tests
-- `tools/fsio/tests/open.rs`: `flags_are_known_on_ci_targets` (the exact values on macOS and
-  Linux x86_64); `regular_files_read_normally` (200 000 bytes read back whole; a missing path is
+- `tools/fsio/tests/open.rs`: `flags_are_known_on_ci_targets` (the exact values on macOS and every
+  listed Linux architecture, so the FIFO tests can't skip there); `regular_files_read_normally` (200 000 bytes read back whole; a missing path is
   `NotFound`); `open_never_blocks_on_a_fifo` (a FIFO with no writer opens within 10 s and its
   handle is not a regular file; skipped where `OPEN_FLAGS` is `None`; on a timeout the
   blocked reader thread is left to end with the test process, so nothing can hold up the
