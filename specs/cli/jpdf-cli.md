@@ -98,7 +98,8 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   Scaling it with the page count is a follow-up;
 - `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
   bound; the reference look-ahead never decodes strings).
-- `max_xref_entries` 10 000 000 across all sections;
+- `max_xref_entries` 4 194 304 (2^22) across all sections (lowered from 10 000 000 by #109 so
+  the entry table and the overlap map fit the memory budget, specs/core/memory-budget.md);
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
 - `max_pages` 1 000 000 kids;
 - no overlapping indirect objects or xref sections: each parsed section's and resolved object's

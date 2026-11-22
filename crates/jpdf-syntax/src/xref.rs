@@ -13,10 +13,11 @@ use crate::object::{Dict, ObjRef, Object};
 /// in the last lines; real files often carry trailing junk, so read leniently.
 const STARTXREF_WINDOW: usize = 64 * 1024;
 
-/// One xref entry (ISO 32000-2 §7.5.4), packed into 12 bytes so 10M entries cost ~120 MB.
+/// One xref entry (ISO 32000-2 §7.5.4), packed into 12 bytes so the default 4M entries cost
+/// 48 MiB (144 MiB at the growth peak; specs/core/memory-budget.md).
 /// Offsets fit in `u32` because files are far below 4 GiB (`Limits::max_file_size`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Entry {
+pub(crate) struct Entry {
     num: u32,
     offset: u32,
     generation: u16,
@@ -414,9 +415,41 @@ mod tests {
         );
     }
 
+    /// The default entry limit at its exact boundary: a subsection header declaring 4 194 304
+    /// entries passes the count check (it then fails on the missing first entry, at byte 14),
+    /// one more is refused before any entry is read. Two subsections are summed.
+    #[test]
+    fn default_entry_limit_is_exact() {
+        let l = Limits::default();
+        assert_eq!(l.max_xref_entries, 4_194_304);
+        let at = b"xref\n0 4194304\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
+        assert_eq!(
+            XrefDocument::parse(at, &l).map(|_| ()),
+            Err(malformed("invalid xref entry", 14))
+        );
+        let past = b"xref\n0 4194305\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
+        assert_eq!(
+            XrefDocument::parse(past, &l).map(|_| ()),
+            Err(SyntaxError::LimitExceeded("cross-reference entries"))
+        );
+        // Two subsections: 1 + 4 194 303 is at the limit, 1 + 4 194 304 one past.
+        let head = b"xref\n0 1\n0000000000 65535 f\r\n1 ";
+        let summed = |count: &str| {
+            let mut f = head.to_vec();
+            f.extend(count.as_bytes());
+            f.extend(b"\ntrailer\n<<>>\nstartxref\n0\n%%EOF");
+            XrefDocument::parse(&f, &l).map(|_| ())
+        };
+        assert_eq!(summed("4194303"), Err(malformed("invalid xref entry", 38)));
+        assert_eq!(
+            summed("4194304"),
+            Err(SyntaxError::LimitExceeded("cross-reference entries"))
+        );
+    }
+
     #[test]
     fn xref_entries_stay_compact() {
-        // Memory bound: 10M entries must stay near 120 MB (2 GiB address-space limit).
+        // Memory bound: the budget (crate::budget) multiplies this size; it is pinned there too.
         assert_eq!(std::mem::size_of::<Entry>(), 12);
     }
 

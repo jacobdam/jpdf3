@@ -105,7 +105,8 @@ an uncached object too often still fails with `LimitExceeded("bytes lexed per do
     measured).
   - What the tests can't see: real allocator overhead and fragmentation. The cost counts
     capacities, not allocator headers, so actual RSS can exceed `retained_bytes()` by a small
-    factor for many tiny objects. The 2 GiB budget accounting (#109) covers the headroom.
+    factor for many tiny objects. The 256 MiB reserve in specs/core/memory-budget.md (#109) covers
+    that overhead.
 
 ## Accessibility
 Not applicable (no UI).

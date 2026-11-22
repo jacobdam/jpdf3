@@ -6,11 +6,13 @@
 // Input-derived arithmetic is checked; overflow panics in every profile (#77).
 #![deny(clippy::arithmetic_side_effects)]
 
+mod budget;
 mod error;
 mod lexer;
 mod object;
 mod xref;
 
+pub use budget::{MemoryBudget, PROCESS_BUDGET_BYTES, RESERVE_BYTES, SPAN_ENTRY_BYTES};
 pub use error::SyntaxError;
 pub use jpdf_traits::Limits;
 pub use object::{Dict, ObjRef, Object};

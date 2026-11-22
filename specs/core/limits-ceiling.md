@@ -34,13 +34,10 @@ and operations budget) and #107 (object resolve cache).
    (specs/core/resolve-cache.md, #107).
    - `max_decoded_bytes_per_document` (4 GiB) stays. It is a lifetime total (time bound against
      many small bombs), not a memory bound; its doc comment now says so and points here.
-   - Budgeted terms (today only the file size is checked; the rest bind future decoding,
-     rendering and caches): the file (512 MiB) + retained (256 MiB) + one decode's working
-     memory, output included (256 MiB, `max_decode_working_bytes` since #106,
-     specs/core/decode-work-limits.md) + one render's working memory (1 GiB) = exactly 2 GiB, the judge's
-     address-space cap. That is a ceiling on these four terms only. The binary, stacks, the
-     xref table (up to ~120 MiB), one parse's objects and strings, and decoder slack are not
-     charged, so the defaults leave **no headroom**. #109 adds a reserve and lowers a default.
+   - Budgeted terms: the full process budget, with every uncharged term and a 256 MiB
+     reserve, is specs/core/memory-budget.md (`jpdf_syntax::MemoryBudget`, #109). #109 lowered
+     `max_xref_entries` to 2^22, `max_raster_working_bytes` to 512 MiB and
+     `max_canvas_pixels` to 2^23 so the defaults fit with about 111 MiB to spare.
    - Charged by the object resolve cache only (specs/core/resolve-cache.md). Docs say the
      future face cache "must" charge it, through one counter shared with the object cache
      (#138).
@@ -77,7 +74,8 @@ give `LimitExceeded("nesting depth")` even with `max_nesting_depth = 10_000_000`
   specs/core/resolve-cache.md (`retained_budget_boundary_for_one_object`,
   `retained_budget_adds_up_across_objects`).
 - `charged_budgets_do_not_exceed_the_process_budget` checks the four budgeted terms sum to at
-  most 2 GiB; it can't see the uncharged terms (#109).
+  most 2 GiB; the full budget with the uncharged terms is checked in jpdf-syntax
+  (specs/core/memory-budget.md).
 
 ## Security
 - Trust boundary: the clamp sits in `Document::open`, today the only engine entry point, so a

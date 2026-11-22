@@ -203,7 +203,7 @@ impl Default for Limits {
             max_objects_per_parse: 2_000_000,
             max_objects_per_document: 20_000_000,
             max_string_bytes_per_parse: 64 * 1024 * 1024,
-            max_xref_entries: 10_000_000,
+            max_xref_entries: 1 << 22,
             max_xref_sections: 1024,
             max_pages: 1_000_000,
             lex_budget_factor: 4,
@@ -220,11 +220,11 @@ impl Default for Limits {
             max_font_glyphs: u16::MAX,
             max_outline_points: 1 << 17,
             max_outline_ops: 1 << 20,
-            max_canvas_pixels: 1 << 24,
+            max_canvas_pixels: 1 << 23,
             max_path_segments: 1 << 20,
             max_clip_depth: 64,
             max_layer_depth: 32,
-            max_raster_working_bytes: 1 << 30,
+            max_raster_working_bytes: 512 * 1024 * 1024,
         }
     }
 }
@@ -375,10 +375,10 @@ mod tests {
         // A full-size canvas with 4 layers and 32 clips stays within the working bytes.
         let r = RasterLimits::default();
         assert!(r.max_canvas_pixels * (4 * (1 + 4) + 32) <= r.max_working_bytes);
-        assert!(
-            r.max_working_bytes <= 1 << 30,
-            "half of the 2 GiB process budget"
-        );
+        // A quarter of the 2 GiB process budget (jpdf_syntax::MemoryBudget checks the sum).
+        assert_eq!(r.max_working_bytes, 512 * 1024 * 1024);
+        // The canvas default: 2^23 pixels, e.g. a 4096 x 2048 tile.
+        assert_eq!(r.max_canvas_pixels, 1 << 23);
     }
 
     /// Every field set to `v` (one literal, so a new field must be listed here too).
@@ -512,10 +512,9 @@ mod tests {
         // The four budgeted terms (the file held in memory, what a document
         // retains, one decode's working memory or output, whichever is larger, and one
         // render's working memory) sum to at most the judge's 2 GiB address-space cap
-        // (PLAN §2.2). This is a ceiling on the budgeted terms
-        // only: the binary, stacks, the xref table, one parse's objects and a filter chain's
-        // intermediate output feeding the image decoder are not charged and have no headroom
-        // at these defaults (#109).
+        // (PLAN §2.2). This is a coarse ceiling on the budgeted terms only; the full budget,
+        // with the xref table, spans, one parse, the decoder's input and a reserve, is
+        // `jpdf_syntax::MemoryBudget` (specs/core/memory-budget.md, #109).
         let l = Limits::default();
         let file = u64::try_from(l.max_file_size).unwrap_or(u64::MAX);
         let stream = u64::try_from(l.max_decoded_bytes_per_stream)
