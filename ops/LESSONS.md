@@ -266,7 +266,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   before round 1, walk every allocation the caller will make (decryption, each filter stage, the shrink copy, the final
   contiguous slice) and say for each whether it is capped, charged by capacity, or an uncharged estimate. PR #186
   drew such majors in each of rounds 1 to 4 (capacity, intermediates, decryption, shrink copy, cipher capacity)
-  ([journal](journal/2026-11-22.md), PR #186).
+  ([journal](journal/2026-11-22.md), PR #186). But keep those rules abstract ("only a size the engine computed and
+  checked"). Filter-specific examples (`/DL`, predictor rows, join buffers) belong in the caller's PR: in PR #232 each
+  added example drew a new false-statement major, through the final check
+  ([journal](journal/2026-11-22.md), PR #232).
 - Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
   resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
   spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control
