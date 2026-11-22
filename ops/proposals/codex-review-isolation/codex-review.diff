@@ -1,0 +1,169 @@
+--- a/ops/driver/codex-review.sh
++++ b/ops/driver/codex-review.sh
+@@ -6,7 +6,8 @@
+ # inside that directory, so bad arguments can't make it read or write anything else. (A same-user
+ # process that deliberately races the checks is out of scope: it can write files directly anyway.)
+ # Codex reviews a plain export of HEAD (`git archive`, checked byte for byte, in its own fresh git
+-# repo, no symlinks, sealed corpus manifest left out) in sandbox workspace-write with the network,
++# repo, no symlinks, sealed corpus manifest left out) under a permission profile that lets its
++# commands read only the export and the toolchain and write only the export, with the network,
+ # ChatGPT apps and plugins off, strict config and a scrubbed environment.
+ # Output: <out>.json (codex-review.schema.json plus status/reason) and <out>.log (Codex's log).
+ # Exit codes: 2 = usage error (nothing written). Otherwise 0, always: on any failure the output
+@@ -44,8 +45,18 @@
+ [[ ! -d "$OUT" && ! -d "$LOG" ]] || usage "<out> or its .log is a directory"
+ # Leftovers of a run that was killed outright (SIGKILL), once older than any run can last.
+ # Temp files use the reserved prefix .codex-review-tmp. so this can't match anything else.
+-find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60 \
+-  -exec chflags -R nouchg {} + -exec chmod -R u+w {} + -exec rm -rf {} + 2>/dev/null
++# rmtree <path>: delete a tree Codex could write to. Only directories get u+w (a directory can't be
++# hard-linked); files keep their mode and flags: chmod or chflags on a file Codex hard-linked in from
++# elsewhere on the volume would change that outside file (AS.55). Unlinking needs no file permission.
++# A file Codex made immutable (uchg) stays behind, and the run says so.
++rmtree() {
++  [[ -n "$1" && ( -e "$1" || -L "$1" ) ]] || return 0
++  find "$1" -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
++  rm -rf -- "$1" 2>/dev/null || echo "codex-review: could not remove all of target/scratch/$1" >&2
++}
++# NUL-separated, so a name with spaces or glob characters stays one path (no word splitting).
++while IFS= read -r -d '' d; do rmtree "$d"; done \
++  < <(find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60 -print0)
+ 
+ pid=""; dog=""; SRC=""; PROMPT=""; TMARK=""; RAW=""; TLOG=""; T=""
+ put() {   # put <name> <tmpfile>: rename into place (replaces a link instead of following it)
+@@ -70,7 +81,7 @@
+ cleanup() {
+   [[ -n "$dog" ]] && kill -TERM "$dog" 2>/dev/null
+   reap
+-  [[ -n "$SRC" ]] && { chflags -R nouchg "$SRC"; chmod -R u+w "$SRC"; rm -rf -- "$SRC"; } 2>/dev/null
++  [[ -n "$SRC" ]] && rmtree "$SRC"
+   local f; for f in "$PROMPT" "$TMARK" "$RAW" "$TLOG" "$T"; do [[ -n "$f" ]] && rm -f -- "$f"; done
+ }
+ trap cleanup EXIT
+@@ -115,10 +126,18 @@
+ XGIT=(env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+   git -c core.hooksPath=/dev/null -c init.templateDir= -c core.fsmonitor=false -c commit.gpgsign=false
+   -c core.attributesFile=/dev/null -c user.name=export -c user.email=export@invalid)
++# A committed symlink could point Codex's reads, or a path operation of this script, outside the
++# export (CX.2: a symlinked ancestor directory of the excluded manifest). Refuse it before anything
++# is extracted, so no path below $SRC is touched while a link could be on it.
++"${XGIT[@]}" -C "$TOP" ls-tree -r -z --full-tree HEAD | /usr/bin/python3 -I -c '
++import sys
++recs = [r for r in sys.stdin.buffer.read().split(b"\0") if r]
++sys.exit(1 if not recs or any(r.split(b" ", 1)[0] == b"120000" for r in recs) else 0)' \
++  || fail "HEAD contains symlinks (or ls-tree failed)"
+ "${XGIT[@]}" -C "$TOP" archive --format=tar HEAD | tar -x -C "$SRC" --exclude 'ops/judge/corpus/exam.tsv' \
+   || fail "export failed"
+-rm -f -- "$SRC/ops/judge/corpus/exam.tsv"
+-# A committed symlink could point Codex's reads (and this script's mkdir) outside the export.
++# No rm of the excluded path here: --exclude keeps it out, and the byte check below fails if it is
++# there. Belt and braces for the check above: no symlink may exist in the export.
+ [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
+ # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
+ # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
+@@ -153,12 +172,72 @@
+   PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
+   TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
+ # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
++# This runs with the driver's permissions, so nothing the reviewed branch or a session controls may
++# configure it (CX.3):
++# - cargo reads .cargo/config.toml from the export and from every directory above it. .cargo/ in
++#   HEAD must be origin/main's tree (it is protected, CONSTITUTION 12); above the export, a .cargo
++#   may exist only in this worktree (it is HEAD's) and the main checkout (protected, synced to main
++#   by the driver), both clean (no local changes, untracked or ignored files), and in $HOME (cargo's
++#   own home). Any other one (target/,
++#   target/scratch/, .claude/worktrees/, which sessions can write) fails the run.
++# - rustup takes the toolchain from the first toolchain file it finds upward, and a `path` entry
++#   there would run a toolchain binary of anyone's choice. The export must have a rust-toolchain.toml
++#   that pins only an exact channel, components, targets and profile, and RUSTUP_TOOLCHAIN (which
++#   wins over every toolchain file and directory override) is set to that channel.
++# Not covered: a session that moves the local ref refs/remotes/origin/main (git update-ref) can make
++# a changed .cargo/ look like main's; and ~/.cargo (its config.toml, the cargo/rustup proxies in
++# ~/.cargo/bin on PATH) is writable by sessions, as it was before this check. Both need a deliberately
++# hostile local process (see the top); the guard doesn't protect ~/.cargo.
++XG=("${XGIT[@]}" -C "$TOP")
++[[ "$("${XG[@]}" rev-parse -q --verify HEAD:.cargo 2>/dev/null)" == \
++   "$("${XG[@]}" rev-parse -q --verify refs/remotes/origin/main:.cargo 2>/dev/null)" ]] \
++  || fail ".cargo/ differs from origin/main"
++[[ -z "$("${XG[@]}" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
++  || fail "this worktree's .cargo/ has local changes"
++MAIN="$(common "$TOP")"; [[ "${MAIN##*/}" == .git ]] && MAIN="${MAIN%/*}" || fail "main checkout not found"
++[[ -z "$("${XGIT[@]}" -C "$MAIN" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
++  || fail "the main checkout's .cargo/ has local changes"
++HOMEP="$(cd "$HOME" && pwd -P)" || fail "HOME"
++d="$SCR"
++while :; do
++  if [[ -e "$d/.cargo" || -L "$d/.cargo" ]]; then
++    [[ "$d" == "$TOP" || "$d" == "$MAIN" || "$d" == "$HOMEP" ]] || fail "a .cargo in ${d#"$TOP/"} (above the export)"
++  fi
++  [[ "$d" == / ]] && break
++  d="$(dirname -- "$d")"
++done
++[[ ! -e "$SRC/rust-toolchain" && ! -L "$SRC/rust-toolchain" ]] || fail "legacy rust-toolchain file in HEAD"
++[[ -f "$SRC/rust-toolchain.toml" ]] || fail "no rust-toolchain.toml in HEAD"
++# grep -v exits 1 only when every line matches; 0 (a line that doesn't) and 2 (an error) both fail.
++grep -qvE \
++  '^(\[toolchain\]|channel = "[0-9]+\.[0-9]+\.[0-9]+"|(components|targets) = \[( *"[a-z0-9_-]+",?)* *\]|profile = "(minimal|default|complete)"|#.*)?$' \
++  "$SRC/rust-toolchain.toml"
++(( $? == 1 )) || fail "rust-toolchain.toml has entries beyond channel/components/targets/profile"
++CHANNEL="$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "$SRC/rust-toolchain.toml")"
++[[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "rust-toolchain.toml needs exactly one exact channel"
++BASE_ENV+=(RUSTUP_TOOLCHAIN="$CHANNEL")
+ run_limited "$FETCH_LIMIT" "${BASE_ENV[@]}" /bin/sh -c 'cd "$1" && exec cargo fetch --locked -q' _ "$SCR/$SRC" \
+   > /dev/null 2>&1 < /dev/null
+ rc=$?
+ [[ -e "$TMARK" ]] && fail "cargo fetch timeout after ${FETCH_LIMIT}s"
+ (( rc == 0 )) || fail "cargo fetch failed ($rc)"
+ 
++# Codex's commands may read only the export (its workspace, writable), the platform paths of
++# `:minimal`, and the read-only toolchain: rustup toolchains, cargo's binaries and crate cache, and
++# Homebrew. Everything else is denied by `:root`, so the sealed manifest in the main checkout,
++# ~/.codex (auth), ~/.ssh, ~/.cargo/credentials.toml, ~/jpdf-corpus and ~/jpdf-research are
++# unreadable (AS.52, CX.1; CONSTITUTION 1.2, 13). `--sandbox workspace-write` limited writes and
++# network only. A permission profile replaces the legacy sandbox flags (Codex: "either
++# default_permissions and [permissions], or sandbox_mode / sandbox_workspace_write, but not both"),
++# so none of them may appear here. Profiles are Beta in Codex; --strict-config makes an unknown key a
++# failed run ("unavailable"), never a silently wider sandbox.
++q() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }   # TOML basic string
++FS_POLICY="{ \":root\" = \"deny\", \":minimal\" = \"read\", \":slash_tmp\" = \"deny\""
++for r in "$HOME/.rustup/toolchains" "$HOME/.rustup/settings.toml" "$HOME/.cargo/bin" \
++         "$HOME/.cargo/registry" /opt/homebrew; do
++  FS_POLICY+=", $(q "$r") = \"read\""
++done
++FS_POLICY+=" }"
+ RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
+ TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
+ run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
+@@ -168,10 +247,10 @@
+   --disable apps --disable plugins --disable shell_snapshot --disable hooks \
+   --disable computer_use --disable browser_use --disable browser_use_external \
+   --disable in_app_browser --disable image_generation \
+-  --sandbox workspace-write \
+-  -c sandbox_workspace_write.network_access=false \
+-  -c sandbox_workspace_write.exclude_slash_tmp=true \
+-  -c sandbox_workspace_write.exclude_tmpdir_env_var=true \
++  -c default_permissions='"jpdf-review"' \
++  -c permissions.jpdf-review.extends='":workspace"' \
++  -c permissions.jpdf-review.filesystem="$FS_POLICY" \
++  -c permissions.jpdf-review.network.enabled=false \
+   -c web_search=disabled \
+   -C "$SCR/$SRC" \
+   --output-schema "$SCHEMA" \
+@@ -182,7 +261,14 @@
+ 
+ [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
+ (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
+-jq -e '(.verdict | type == "string") and (.findings | type == "array")' "$RAW" >/dev/null 2>&1 \
+-  || fail "output not schema JSON (see target/scratch/$LOG)"
+-T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq '. + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
++# The schema's shape, checked here too (CX.16): Codex enforcing --output-schema is not ours to rely on.
++# -s: the file must hold exactly one JSON value (jq -e alone judges only the last of several).
++OUT_CHECK='length == 1 and (.[0] | type == "object" and (keys == ["findings", "verdict"])
++  and (.verdict | type == "string") and (.findings | type == "array") and all(.findings[];
++    type == "object" and (keys == ["detail", "file", "fix", "line", "severity", "title"])
++    and (.severity | IN("blocker", "major", "minor", "nit"))
++    and (.line == null or (.line | type == "number" and . == floor))
++    and ([.file, .title, .detail, .fix] | all(type == "string"))))'
++jq -s -e "$OUT_CHECK" "$RAW" >/dev/null 2>&1 || fail "output not schema JSON (see target/scratch/$LOG)"
++T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq -s '.[0] + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
+   || fail "write failed"
