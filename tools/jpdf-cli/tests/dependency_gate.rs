@@ -41,9 +41,12 @@ fn workspace_root() -> PathBuf {
 
 /// Whether the text inside a line's outer parentheses holds a Cargo marker at its token
 /// boundary: `(proc-macro)` comes before the source (`proc-macro) (<path>`), `(*)` and any
-/// `(proc-macro)` after it (`<path>) (*`, `<path>) (proc-macro`).
+/// `(proc-macro)` after it (`<path>) (*`, `<path>) (proc-macro`), or a marker alone where a
+/// registry package has no source (`proc-macro`, `*`; S4.2).
 fn has_marker(inner: &str) -> bool {
-    inner.starts_with("proc-macro) (")
+    inner == "proc-macro"
+        || inner == "*"
+        || inner.starts_with("proc-macro) (")
         || inner.ends_with(") (*")
         || inner.ends_with(") (proc-macro")
 }
@@ -159,8 +162,9 @@ fn resolved(roots: &[&str]) -> Result<Vec<Pkg>, String> {
     resolved_in(&workspace_root().join("Cargo.toml"), roots)
 }
 
-/// `resolved` for the workspace at `manifest` (the fixture control uses its own).
-fn resolved_in(manifest: &Path, roots: &[&str]) -> Result<Vec<Pkg>, String> {
+/// The one `cargo tree` command every graph test runs; `tree_args_are_exactly_these` reads its
+/// arguments back with `Command::get_args` (S4.1).
+fn tree_command(manifest: &Path, roots: &[&str]) -> Command {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut cmd = Command::new(cargo);
     cmd.arg("tree").arg("--manifest-path").arg(manifest);
@@ -168,7 +172,12 @@ fn resolved_in(manifest: &Path, roots: &[&str]) -> Result<Vec<Pkg>, String> {
         cmd.args(["-p", r]);
     }
     cmd.args(TREE_ARGS);
-    let out = cmd
+    cmd
+}
+
+/// `resolved` for the workspace at `manifest` (the fixture control uses its own).
+fn resolved_in(manifest: &Path, roots: &[&str]) -> Result<Vec<Pkg>, String> {
+    let out = tree_command(manifest, roots)
         .output()
         .map_err(|e| format!("running cargo tree: {e}"))?;
     if !out.status.success() {
@@ -235,10 +244,15 @@ fn control_a_real_graph_outside_the_list_is_reported() {
 
 #[test]
 fn tree_args_are_exactly_these() {
+    let cmd = tree_command(Path::new("/m/Cargo.toml"), &["a", "b"]);
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     assert_eq!(
-        TREE_ARGS.join(" "),
-        "-e normal,build --all-features --target all --prefix none --no-dedupe --format {p} \
-         --charset ascii --color never --locked --offline"
+        args.join(" "),
+        "tree --manifest-path /m/Cargo.toml -p a -p b -e normal,build --all-features --target all \
+         --prefix none --no-dedupe --format {p} --charset ascii --color never --locked --offline"
     );
 }
 
@@ -427,6 +441,9 @@ mod synthetic {
                 format!("jpdf-syntax v0.0.0 ({p}) (*)"),
                 format!("jpdf-syntax v0.0.0 ({p}) (proc-macro)"),
                 format!("jpdf-syntax v0.0.0 (proc-macro) ({p})"),
+                // S4.2: a registry proc-macro or deduplicated line has a marker and no source.
+                "serde_derive v1.0.217 (proc-macro)".to_owned(),
+                "serde v1.0.217 (*)".to_owned(),
             ] {
                 assert!(parse_tree(&c).is_err(), "accepted {c:?}");
             }

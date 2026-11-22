@@ -27,7 +27,8 @@ instruction, step 2).
   parentheses, a Cargo marker) is an error, and so is an output with no packages: a format change
   fails the gate instead of passing it. Markers are recognized at their token boundaries
   (`has_marker`): the text inside the outer parentheses starting with `proc-macro) (` (Cargo prints
-  `(proc-macro)` before the source) or ending with `) (*` or `) (proc-macro`. Such a line is never
+  `(proc-macro)` before the source) or ending with `) (*` or `) (proc-macro`, or exactly
+  `proc-macro` or `*` (a registry package's marker with no source, S4.2). Such a line is never
   resolved as a path (round 2, S2.2: a directory named `jpdf-syntax) (*` that is a symlink to
   `crates/jpdf-syntax` would otherwise pass). A clean graph never matches: an allowed source is
   absolute (so it doesn't start with `proc-macro`) and ends in its crate directory's name, whatever
@@ -48,8 +49,10 @@ instruction, step 2).
     from holding crates the CLI no longer uses: removing a dependency means removing its entry.
   - `control_a_real_graph_outside_the_list_is_reported`: the same command on `xtask` reports
     `xtask`, `jpdf-arlington` and `jpdf-testgen`, and not the allowed `jpdf-fsio`.
-  - `tree_args_are_exactly_these`: the command's arguments after the roots are pinned as one string,
-    so no flag can be dropped or narrowed (`--target all` to a set of triples, R3.1).
+  - `tree_args_are_exactly_these`: every graph test runs the command `tree_command` builds; this
+    test reads that command's arguments back (`Command::get_args`) and compares them as one string,
+    so no flag can be dropped or narrowed (`--target all` to a set of triples, R3.1, S4.1) at the
+    call site either.
   - `control_cargo_tree_failure_is_an_error`: an unknown `-p` package is `cargo tree failed`.
   - `control_flags_reach_features_other_targets_and_build_edges`: the same command on a fixture
     workspace written under `CARGO_TARGET_TMPDIR` (lockfile from `cargo generate-lockfile
