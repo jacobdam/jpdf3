@@ -81,7 +81,7 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 - A second-reviewer major saying "not proven" → state the limitation and file an issue; don't build enforcement
   tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major every round,
-  9 to 14). See ops/proposals/review-round-cap.md ([journal](journal/2026-11-22.md), PR #151).
+  9 to 14). Now a TICK §4 triage rule (ADR 0010) ([journal](journal/2026-11-22.md), PR #151).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
