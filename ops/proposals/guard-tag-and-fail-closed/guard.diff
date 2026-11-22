@@ -1,0 +1,363 @@
+--- a/.claude/hooks/guard.py
++++ b/.claude/hooks/guard.py
+@@ -2,8 +2,10 @@
+ """PreToolUse guard for jpdf agent sessions. PROTECTED (CONSTITUTION rule 12).
+ 
+ First layer only: CI (the judge, incl. owner-signed protected changes) is the real enforcement.
+-Exit 0 = allow, exit 2 = block (reason on stderr). Any crash exits 1, which does NOT block,
+-so a guard bug can never lock a session.
++Exit 0 = allow, exit 2 = block (reason on stderr). Fails closed: unreadable input or any crash
++also exits 2 and names the error, because Claude Code treats any other exit code as a
++non-blocking hook error (#162, AS.53). A guard bug blocks the calls that trigger it; the owner
++works around one with JPDF_OWNER=1. A hook timeout still fails open (Claude Code's choice).
+ 
+ Owner override: start Claude with JPDF_OWNER=1 in the environment. Agents can't set it,
+ because hooks inherit the Claude process environment, not a Bash command's environment.
+@@ -26,6 +28,9 @@
+     ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
+ )
+ SECRET_READ = ("/.ssh/", "/.config/gh/", "/.codex/")
++# The same directories as a path component of a Bash word: ~/.ssh, $HOME/.codex/auth.json, .ssh/x,
++# <~/.ssh/id, -i=~/.ssh/k. Not ~/.codex-notes or x.ssh.
++_SECRET_WORD = re.compile(r"(?:^|[/~<>=:])(?:\.ssh|\.codex|\.config/gh)(?:/|$)")
+ # Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
+ # instead of a regex, so there is no backtracking. It finds the command word of every simple command
+ # (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
+@@ -54,6 +59,7 @@
+     heredoc bodies are skipped."""
+     cmds, words, cur, started, skip = [], [], [], False, False
+     mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
++    arith = 0  # open (( / $(( frames: inside one, << is a shift, never a heredoc (#162, CX.5)
+     i, n = 0, len(s)
+ 
+     def flush_word():
+@@ -126,6 +132,9 @@
+             j = s.find("\n", i)
+             i = n if j < 0 else j
+             continue
++        elif c == "$" and i + 1 < n and s[i + 1] in "'\"":
++            i += 1  # $'...' and $"..." quote like '...' and "..." (escapes inside $'...' aren't decoded)
++            continue
+         elif c == "$" and s.startswith("${", i):
+             j = s.find("}", i)
+             j = n if j < 0 else j + 1
+@@ -153,8 +162,8 @@
+                 while k < n and s[k] not in " \t\n;&|<>()":
+                     k += 1
+                 delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
+-                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
+-                    cur.append(op)  # arithmetic shift (1<<3, $((1 << n))), not a heredoc
++                if arith or delim[:1].isdigit() or delim[:1] in ("", "$", "("):
++                    cur.append(op)  # arithmetic shift (1<<3, $((a << b))), not a heredoc
+                     started = True
+                     i = j
+                     continue
+@@ -181,20 +190,23 @@
+                 continue
+         elif c == "(":
+             flush_cmd()
+-            stack.append(("g", mode, None, None, False, False))
++            # the second ( of (( or $((: arithmetic. Erring this way only scans more text as commands.
++            kind = "a" if i and s[i - 1] == "(" else "g"
++            arith += kind == "a"
++            stack.append((kind, mode, None, None, False, False))
+         elif c == ")":
+             if stack and stack[-1][0] == ")":
+                 close_sub()
+             else:
+-                if stack and stack[-1][0] == "g":
+-                    stack.pop()
++                if stack and stack[-1][0] in ("g", "a"):
++                    arith -= stack.pop()[0] == "a"
+                 flush_cmd()
+         else:
+             cur.append(c)
+             started = True
+         i += 1
+     while stack:
+-        if stack[-1][0] == "g":
++        if stack[-1][0] in ("g", "a"):
+             stack.pop()
+         else:
+             close_sub()
+@@ -202,17 +214,23 @@
+     return cmds
+ 
+ 
+-def _codex_runs(words, i, budget, depth, limit=CODEX_MAX_WORDS):
+-    """True if the simple command starting at words[i] runs codex (looking at most `limit` words)."""
++def _is_codex(words, i, depth):
++    base = words[i].lower().rsplit("/", 1)[-1]
++    return base.split("@", 1)[0] == "codex" and not base.startswith("@")
++
++
++def _codex_runs(words, i, budget, depth, limit=CODEX_MAX_WORDS, hit=_is_codex):
++    """True if the simple command starting at words[i] runs a command that `hit` matches (codex by
++    default), looking at most `limit` words."""
+     end = min(len(words), i + limit)
+     while i < end:
+         w = words[i]
+         low = w.lower()
+         base = low.rsplit("/", 1)[-1]
+-        if base.split("@", 1)[0] == "codex" and not base.startswith("@"):
++        if hit(words, i, depth):
+             return True
+         if low == "eval":
+-            return _codex_nested(" ".join(words[i + 1:end]), budget, depth)
++            return _codex_nested(" ".join(words[i + 1:end]), budget, depth, hit)
+         if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
+             i += 1
+         elif base in CODEX_SHELLS:
+@@ -228,7 +246,7 @@
+                 if opt[-1] in "oO":
+                     i += 1  # -o pipefail, -O extglob
+             if want_c:
+-                return i < len(words) and _codex_nested(words[i], budget, depth)
++                return i < len(words) and _codex_nested(words[i], budget, depth, hit)
+         elif base in CODEX_WRAPPERS:
+             argopts = CODEX_WRAPPERS[base]
+             i += 1
+@@ -248,20 +266,20 @@
+     return False
+ 
+ 
+-def _codex_nested(text, budget, depth):
++def _codex_nested(text, budget, depth, hit=_is_codex):
+     """Check text run by `bash -c` or `eval`, charging the shared budget; out of budget blocks."""
+     budget[0] -= len(text) + 1
+     if budget[0] < 0 or depth >= 3:
+         return True  # too deep or too much nested text: block
+-    return _codex_check(text, budget, depth + 1)
++    return _codex_check(text, budget, depth + 1, hit)
+ 
+ 
+-def _codex_check(text, budget, depth):
++def _codex_check(text, budget, depth, hit=_is_codex):
+     for words in _codex_commands(text):
+-        if _codex_runs(words, 0, budget, depth):
++        if _codex_runs(words, 0, budget, depth, hit=hit):
+             return True
+         for j, w in enumerate(words):
+-            if j and w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8):
++            if j and w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8, hit):
+                 return True
+     return False
+ 
+@@ -455,6 +473,11 @@
+             toks = shlex.split(seg)
+         except ValueError:
+             toks = seg.split()
++        # Secrets the Read rule covers, named in a Bash word (cat ~/.codex/auth.json). A text match,
++        # like the cmux rule: a glob, a variable or a script that builds the path still passes. Words
++        # with whitespace (commit messages, post bodies) are prose, not paths (#162, AS.54).
++        if any(_SECRET_WORD.search(t) for t in toks if not re.search(r"\s", t)):
++            raise Block("reading credentials is not allowed (~/.ssh, ~/.config/gh, ~/.codex)")
+         while toks and ("=" in toks[0] and not toks[0].startswith("-")) or (toks and toks[0] in ("sudo", "env", "command", "nohup", "time")):
+             toks = toks[1:]
+         if not toks:
+@@ -498,11 +521,31 @@
+                "--web", "-w", "--template", "-T", "--recover"}
+ 
+ 
++_GH_POST = re.compile(r"\bgh\s+(issue|pr)\s+(%s)\b" % "|".join(sorted(GH_POST_VERBS["pr"] | GH_POST_VERBS["issue"])))
++
++
++def _gh_post_at(words, i):
++    """words[i] starts `gh <group> <post verb>` (any position, like the shlex scan below)."""
++    return (os.path.basename(words[i]) == "gh" and i + 2 < len(words)
++            and words[i + 2] in GH_POST_VERBS.get(words[i + 1], ()))
++
++
++def _gh_post_nested(words, i, depth):
++    return depth > 0 and _gh_post_at(words, i)
++
++
+ def check_gh_posts(cmd):
+-    """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's."""
+-    if not re.search(r"\bgh\s+(issue|pr)\s+(%s)\b" % "|".join(sorted(GH_POST_VERBS["pr"] | GH_POST_VERBS["issue"])), cmd):
++    """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's.
++
++    The shlex scan below checks the posts it sees. The shell tokenizer of the Codex tripwire then
++    counts the posts the shell would run, with quotes, backslashes and line continuations removed
++    and `;gh`, `(gh`, `$(gh`, backtick gh split off; any post the shlex scan missed, or any post
++    inside `bash -c`/`eval` text, blocks (#162, CX.4). A text match, not a sandbox: a variable
++    (`g=gh; $g ...`), a gh alias or another program that calls gh still passes."""
++    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "")
++    if not _GH_POST.search(flat):
+         return []
+-    texts = []
++    texts, checked = [], 0
+     try:
+         toks = shlex.split(cmd)
+     except ValueError:
+@@ -513,6 +556,7 @@
+         group, verb = toks[i + 1], toks[i + 2]
+         if verb not in GH_POST_VERBS.get(group, ()):
+             continue
++        checked += 1
+         if group == "pr" and verb == "review":
+             raise Block("PR reviews are not allowed (the account is the owner's); post the ai-review status instead")
+         bodies = []
+@@ -541,6 +585,10 @@
+             if not b.lstrip().startswith(TAG):
+                 raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
+         texts.extend(bodies)
++    shell_posts = sum(1 for words in _codex_commands(cmd) for j in range(len(words)) if _gh_post_at(words, j))
++    if shell_posts > checked or _codex_check(cmd, [2 * len(cmd) + 4096], 0, _gh_post_nested):
++        raise Block("write each gh post as one plain command: `gh issue|pr <verb> ... --body '%s ...'`, "
++                    "with gh unquoted and not inside $(...), backticks, bash -c or eval" % TAG)
+     return texts
+ 
+ 
+@@ -609,7 +657,11 @@
+         fp = ti.get("file_path") or ti.get("notebook_path") or ""
+         check_write_path(fp, cwd)
+         if tool == "Write":
+-            new, old = ti.get("content", ""), (open(fp).read() if os.path.isfile(fp) else "")
++            old = ""
++            if os.path.isfile(fp):
++                with open(fp, encoding="utf-8", errors="replace") as f:
++                    old = f.read()
++            new = ti.get("content", "")
+         elif tool == "Edit":
+             new, old = ti.get("new_string", ""), ti.get("old_string", "")
+         elif tool == "MultiEdit":
+@@ -627,21 +679,26 @@
+         check_bash(ti.get("command", ""), cwd)
+ 
+ 
++def run_hook(stdin):
++    """Exit code for one hook event read from stdin: 0 allow, 2 block. Fails closed (#162, AS.53)."""
++    try:
++        check(json.load(stdin))
++    except Block as b:
++        print("jpdf guard: BLOCKED: %s" % b, file=sys.stderr)
++        return 2
++    except Exception as e:  # any bug, incl. RecursionError and MemoryError (both are Exceptions)
++        print("jpdf guard: BLOCKED: guard error (%s: %s); the guard fails closed. Rephrase the call, "
++              "or file an issue if a plain call keeps failing." % (type(e).__name__, str(e)[:200]), file=sys.stderr)
++        return 2
++    return 0
++
++
+ def main():
+     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+         sys.exit(selftest())
+     if os.environ.get("JPDF_OWNER") == "1":
+         sys.exit(0)
+-    try:
+-        event = json.load(sys.stdin)
+-    except Exception:
+-        sys.exit(0)
+-    try:
+-        check(event)
+-    except Block as b:
+-        print("jpdf guard: BLOCKED: %s" % b, file=sys.stderr)
+-        sys.exit(2)
+-    sys.exit(0)
++    sys.exit(run_hook(sys.stdin))
+ 
+ 
+ # ---------------------------------------------------------------- self-test
+@@ -830,6 +887,45 @@
+         ("Bash", {"command": "gh pr review 5 --approve"}, True),
+         ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
+         ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
++        # #162 CX.4: every post the shell would run is checked, whatever the quoting
++        ("Bash", {"command": "\"gh\" issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "g\"\"h issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "g\\h issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "$'gh' issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "gh 'issue' \"comment\" 5 --body hi"}, True),
++        ("Bash", {"command": "gh issue \\\ncomment 5 --body hi"}, True),
++        ("Bash", {"command": "ls;gh issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "ls;gh issue comment 5 --body '%s x'" % TAG}, True),
++        ("Bash", {"command": "(gh issue comment 5 --body hi)"}, True),
++        ("Bash", {"command": "echo $(gh issue comment 5 --body '%s x')" % TAG}, True),
++        ("Bash", {"command": "echo `gh issue comment 5 --body hi`"}, True),
++        ("Bash", {"command": "bash -c 'gh issue comment 5 --body hi'"}, True),
++        ("Bash", {"command": "bash -c 'gh issue comment 5 --body \"%s x\"'" % TAG}, True),
++        ("Bash", {"command": "sh -c 'x=1; sudo gh issue create -t x -b y'"}, True),
++        ("Bash", {"command": "eval 'gh pr create -t x -b hi'"}, True),
++        ("Bash", {"command": "gh issue comment 5 --body '%s x'" % TAG}, False),
++        ("Bash", {"command": "{ gh issue comment 5 --body '%s x'; }" % TAG}, False),
++        ("Bash", {"command": "echo 'run gh issue comment 5 later'"}, False),
++        ("Bash", {"command": "git commit -m 'post with \"gh\" pr comment, never gh api'"}, False),
++        ("Bash", {"command": "grep -n 'gh issue comment' ops/TICK.md"}, False),
++        # #162 CX.5: inside (( )) and $(( )), << is a shift whatever its right operand
++        ("Bash", {"command": "x=$((a << b))\ncodex exec x"}, True),
++        ("Bash", {"command": "x=$((a<<b))\ncodex exec x"}, True),
++        ("Bash", {"command": "(( m = a << b ))\ncodex exec"}, True),
++        ("Bash", {"command": "echo \"$(( (a) << b ))\"\ncodex exec"}, True),
++        ("Bash", {"command": "x=$((a << b))\ncat <<EOF\ncodex exec\nEOF"}, False),
++        ("Bash", {"command": "x=$((a << b)); echo done"}, False),
++        # #162 AS.54: the Read secrets, named in Bash words
++        ("Bash", {"command": "cat ~/.codex/auth.json"}, True),
++        ("Bash", {"command": "cat ~/.ssh/id_ed25519"}, True),
++        ("Bash", {"command": "ls ~/.ssh"}, True),
++        ("Bash", {"command": "cat $HOME/.config/gh/hosts.yml"}, True),
++        ("Bash", {"command": "cd ~ && cat .codex/auth.json"}, True),
++        ("Bash", {"command": "cat ~/.co''dex/auth.json"}, True),
++        ("Bash", {"command": "wc -c <~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "git commit -m 'never read ~/.codex/auth.json'"}, False),
++        ("Bash", {"command": "ls docs/x.ssh ~/.codex-notes ~/.sshd"}, False),
++        ("Bash", {"command": "gh issue comment 5 --body '%s the guard blocks cat ~/.ssh/id now'" % TAG}, False),
+     ]
+     failures = 0
+     for tool, ti, should in cases:
+@@ -869,6 +965,55 @@
+         if got != want:
+             failures += 1
+             print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
++    # #162 AS.53: the hook fails closed. Bad input, a crash in check() and a non-UTF-8 file all block
++    # (exit 2); a plain call still passes. The non-UTF-8 Write is decided by the Rust rule, not a crash.
++    import contextlib
++    import io
++    import shutil
++    ls = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": root})
++    real_check = check
++
++    def crash(_event):
++        raise ValueError("selftest crash")
++
++    tmp = os.path.join(root, "target", "guard-selftest")  # git-ignored; not /tmp (#28)
++    shutil.rmtree(tmp, ignore_errors=True)
++    os.makedirs(tmp)
++    try:
++        bad_rs = os.path.join(tmp, "x.rs")
++        with open(bad_rs, "wb") as f:
++            f.write(b"fn f() {}\n// \xff\n")
++        kw = "un" + "safe"
++        write = lambda content: json.dumps({"tool_name": "Write", "cwd": tmp,  # noqa: E731
++                                            "tool_input": {"file_path": bad_rs, "content": content}})
++        hooks = [("not json", None, 2, "guard error"), ("[]", None, 2, "guard error"), (ls, None, 0, ""),
++                 (ls, crash, 2, "guard error"), (write("fn f() { %s { } }" % kw), None, 2, "CONSTITUTION 3"),
++                 (write("fn g() {}\n"), None, 0, "")]
++        for text, fn, want, said in hooks:
++            err = io.StringIO()
++            globals()["check"] = fn or real_check
++            try:
++                with contextlib.redirect_stderr(err):
++                    got = run_hook(io.StringIO(text))
++            finally:
++                globals()["check"] = real_check
++            cases.append(("run_hook", {"stdin": text[:40]}, want))
++            if got != want or said not in err.getvalue():
++                failures += 1
++                print("FAIL: run_hook(%r) -> %s %r, expected %s %r" % (text[:60], got, err.getvalue()[:80], want, said))
++    finally:
++        shutil.rmtree(tmp, ignore_errors=True)
++    # The gh post check stays linear too (shlex, one tokenizer pass, one shared nested budget).
++    for pad in ("gh issue comment 5 " * 15000, "bash -c 'gh issue comment 5' " * 10000,
++                "eval " * 60000 + "gh issue comment 5", "$((a<<b " * 40000 + "gh issue comment 5"):
++        t0 = time.monotonic()
++        try:
++            check_gh_posts(pad + " --body x")
++        except Block:
++            pass
++        if time.monotonic() - t0 > 2.0:
++            failures += 1
++            print("FAIL: check_gh_posts took %.1fs on %d chars" % (time.monotonic() - t0, len(pad)))
+     # The Codex check stays linear: 300 kB adversarial inputs that contain "codex", so the fast path
+     # doesn't skip them (the tokenizer reads the whole command before checking).
+     pads = ("(" * 300000, "$(" * 150000, "`" * 300000, ";a=" * 100000, "a=b " * 75000,
