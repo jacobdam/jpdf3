@@ -1,7 +1,9 @@
 //! jpdf-testgen — writes small PDFs whose cross-reference data is correct by construction, for
-//! fuzz seeds and fuzz templates. Spec: specs/tooling/fuzz.md.
+//! fuzz seeds, fuzz templates and the generated files of the engine, CLI and bench tests. Spec:
+//! specs/tooling/fuzz.md.
 //!
-//! Only test tooling uses this crate; the engine never depends on it. Inputs are trusted (our
+//! Only test tooling uses this crate: `jpdf-engine` and `jpdf-cli` take it as a dev-dependency
+//! (their tests), and no shipped code depends on it. Inputs are trusted (our
 //! own tests and fuzz targets), but nothing here panics on any input either, because fuzz
 //! targets feed it arbitrary bytes.
 #![forbid(unsafe_code)]

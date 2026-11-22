@@ -26,6 +26,7 @@ name = "jpdf-cli"
 version = "0.0.0"
 dependencies = [
  "jpdf-engine",
+ "jpdf-testgen",
 ]
 
 [[package]]
@@ -64,6 +65,7 @@ version = "0.0.0"
 dependencies = [
  "jpdf-cos",
  "jpdf-syntax",
+ "jpdf-testgen",
 ]
 
 [[package]]

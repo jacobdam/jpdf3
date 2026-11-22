@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 jpdf-syntax = { path = "../jpdf-syntax" }
 jpdf-cos = { path = "../jpdf-cos" }
+
+[dev-dependencies]
+jpdf-testgen = { path = "../../tools/jpdf-testgen" }

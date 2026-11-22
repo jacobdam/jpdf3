@@ -762,7 +762,7 @@ Identical on macOS (native) and the web (wasm32). Defaults fit a 32-bit `usize`.
   - `check_scene`: path validity, the working-bytes formula (stack peak, masks, images),
     huge image dimensions giving `InvalidArgument` instead of an overflow panic, depth
     counters that never saturate silently, pixel reads bounds-checked.
-- Unit tests for `Outline::point_count`, `control_box`, `is_well_formed`, `is_finite` and
+- Unit tests for `Outline::point_count`, `is_well_formed`, `is_finite` and
   `Limits::font_limits`.
 - Existing `jpdf-syntax`/`jpdf-engine` tests cover the moved `Limits` unchanged.
 - No E2E IDs (no UI).

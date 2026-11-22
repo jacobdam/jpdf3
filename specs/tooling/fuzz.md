@@ -22,7 +22,9 @@ Status: implemented
 3. **Seeds.** `tools/jpdf-testgen` (workspace crate, no dependencies) writes small PDFs whose
    xref offsets are correct by construction: 0/1/3-page files, a 2-update incremental file, a
    nested page tree, and a truncated file (`engine_open`); three chunk-format inputs
-   (`engine_objects`); `syntax_resolve` gets both sets. Seeds are generated, never committed: CONSTITUTION 18
+   (`engine_objects`); `syntax_resolve` gets both sets. The same generator writes the test files
+   of `crates/jpdf-engine/tests/open.rs`, `tools/jpdf-cli/tests/cli.rs` and the bench, as a
+   dev-dependency only (#86), so there is one copy of the xref writer. Seeds are generated, never committed: CONSTITUTION 18
    keeps PDFs out of the repo except minimized repros in `tests/regress/`. `fuzz/corpus/` and
    `fuzz/artifacts/` are git-ignored.
 4. **`cargo xtask fuzz [--short] [--seconds N] [--target NAME]`** writes the seeds into
