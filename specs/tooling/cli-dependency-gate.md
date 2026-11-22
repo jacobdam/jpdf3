@@ -24,16 +24,17 @@ bypassed; owner instruction, step 2).
   ASCII letters, digits, `.`, `-` and `+`; the source is everything between that ` (` and the
   line's final `)`, so a checkout path with parentheses in it (`/work/jpdf (copy)/…`) parses.
   Anything else (no version, an empty or malformed one, a name with a space, a source without
-  its parentheses) is an error, and so is an output with no packages: a format change fails the
-  gate instead of passing it. A marker before or after the source (Cargo prints
-  `(proc-macro)` before it, `(*)` after it) stays in the source text, which then fails the path
-  check below.
+  its parentheses, a source containing `) (`) is an error, and so is an output with no
+  packages: a format change fails the gate instead of passing it. `) (` is how a marker before
+  or after the source looks (Cargo prints `(proc-macro)` before it, `(*)` after it), so such a
+  line is never resolved as a path (round 2, S2.2: a directory named `jpdf-syntax) (*` that is a
+  symlink to `crates/jpdf-syntax` would otherwise pass). A checkout path containing `) (` fails
+  the gate (fail closed).
 - **Check:** every package must have an allowed name and a source that is an **absolute** path
   which, canonicalized, equals its allowed directory, canonicalized. A registry package (no
   source), a git package, a relative source (never resolved against the working directory; a
   git URL is a relative path on Unix), an allowed name at another crate's path or at a path
-  that doesn't exist, a marker before or after the source, and any other name are each one
-  violation line. A `..` detour that resolves to the right directory passes.
+  that doesn't exist, and any other name are each one violation line. A `..` detour that resolves to the right directory passes.
 - **Tests** (all in `dependency_gate.rs`):
   - `cli_graph_is_parse_only`: roots are all six allowed crates, so `--all-features` turns on
     every feature of each. A feature of `jpdf-engine` that pulls in a decoder is caught even if
@@ -48,16 +49,19 @@ bypassed; owner instruction, step 2).
   - `control_cargo_tree_failure_is_an_error`: an unknown `-p` package is `cargo tree failed`.
   - `control_flags_reach_features_other_targets_and_build_edges`: the same command on a
     fixture workspace written under `CARGO_TARGET_TMPDIR` (lockfile from `cargo
-    generate-lockfile --offline`) lists a feature-gated optional dependency of a second root, a
-    `cfg(windows)` dependency and a build-dependency; from the first root alone the optional one
+    generate-lockfile --offline`) lists, in one run, a feature-gated optional dependency of a
+    second root, a `cfg(windows)` and a `cfg(target_os = "linux")` dependency (no single target
+    or host has both, so `--target <one triple>` fails it too) and a build-dependency; from the
+    first root alone the optional one
     is not listed (why the gate takes every allowed crate as a root); after an edit to the
     fixture's manifest that its lockfile doesn't record, `cargo tree failed` (`--locked`). The
     fixture directory is removed after a pass.
   - Parser and checker cases on synthetic lines (`synthetic::`): path, registry and git lines;
     each rejected shape, including a missing or malformed version, with version near misses
-    (`0.0.0-rc.1+b2`); parentheses inside a path; every allowed crate at its path passes; each
-    kind of outsider, a marker suffix and a relative source that does name the allowed directory
-    from the test's working directory are each exactly one violation; one outsider among the
+    (`0.0.0-rc.1+b2`); markers before and after the source, also on the allowed path and through
+    a symlink alias that resolves to it (unix); parentheses inside a path; every allowed crate at
+    its path passes; each kind of outsider and a relative source that does name the allowed
+    directory from the test's working directory are each exactly one violation; one outsider among the
     six allowed crates is reported by name.
 
 Changing the gate: when #146 closes, the gate and this test go away (or the allowed set grows)
@@ -107,8 +111,8 @@ None of its own; each graph test runs one `cargo tree` (about 40 ms), the fixtur
   - The command's flags: no allowed crate has features or a target-limited dependency today,
     so the graph tests alone would pass without `--all-features`, `--target all` or the `build`
     edge kind. `control_flags_reach_features_other_targets_and_build_edges` pins all three on a
-    fixture workspace (dropping any one of them fails it on a non-Windows host, as CI is; checked
-    by hand on this branch). The same test pins `--locked`: after a manifest edit the lockfile
+    fixture workspace (dropping any one of them, or replacing `--target all` with a single
+    Windows or Linux triple, fails it on any host; checked by hand on this branch). The same test pins `--locked`: after a manifest edit the lockfile
     doesn't record, the command fails.
 - What the tests can't see: `--offline` needs every lockfile package's sources downloaded.
   Today the lockfile has no registry packages; once it has, CI builds the workspace before
@@ -132,4 +136,4 @@ About 40 ms per graph test locally.
 `synthetic::parser_rejects_unknown_shapes_and_empty_output`,
 `synthetic::checker_accepts_every_allowed_crate_at_its_path`, `synthetic::checker_rejects_each_kind_of_outsider`,
 `synthetic::checker_reports_one_outsider_among_allowed_crates`, `synthetic::parser_keeps_parentheses_inside_a_path`,
-`synthetic::checker_rejects_marker_suffixes`, `synthetic::checker_rejects_relative_sources`.
+`synthetic::parser_rejects_marker_shapes`, `synthetic::marker_line_through_a_symlink_alias_is_refused`, `synthetic::checker_rejects_relative_sources`.

@@ -43,9 +43,10 @@ fn workspace_root() -> PathBuf {
 /// skipped; any other line that is not `<name> v<version>[ (<source>)]` is an error, so an
 /// output format change fails the gate instead of passing it. The version starts with a digit
 /// and holds only ASCII alphanumerics, `.`, `-` and `+`. The source is everything between the
-/// ` (` after the version and the line's final `)`, so a path may contain parentheses; a
-/// marker before or after the source (`(proc-macro)` comes before it, `(*)` after it) stays in
-/// the source text, which is then not an absolute allowed path and fails the path check.
+/// ` (` after the version and the line's final `)`, so a path may contain parentheses, but not
+/// `) (`: that is how a marker before or after the source looks (`(proc-macro)` comes before
+/// it, `(*)` after it), and such a line is an error, never a path to resolve (S2.2: a directory
+/// named `x) (*` could alias an allowed one).
 fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
     let mut pkgs = Vec::new();
     for line in out.lines() {
@@ -75,7 +76,7 @@ fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
                 let inner = t
                     .strip_prefix('(')
                     .and_then(|t| t.strip_suffix(')'))
-                    .filter(|t| !t.is_empty())
+                    .filter(|t| !t.is_empty() && !t.contains(") ("))
                     .ok_or_else(|| format!("unparsable cargo tree line: {line:?}"))?;
                 Some(inner.to_owned())
             }
@@ -226,7 +227,8 @@ fn control_cargo_tree_failure_is_an_error() {
 }
 
 /// Writes a fixture workspace under `CARGO_TARGET_TMPDIR`: `root` depends on `mid`, which has
-/// an optional `opt` behind feature `f`; `root` has a `cfg(windows)` dependency `win` and a
+/// an optional `opt` behind feature `f`; `root` has a `cfg(windows)` dependency `win`, a
+/// `cfg(target_os = "linux")` dependency `lin` (no single target has both) and a
 /// build-dependency `bld`. Returns the root manifest path after generating its lockfile.
 fn fixture_workspace() -> std::io::Result<PathBuf> {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
@@ -247,7 +249,7 @@ fn fixture_workspace() -> std::io::Result<PathBuf> {
             ),
         )
     };
-    for leaf in ["opt", "win", "bld"] {
+    for leaf in ["opt", "win", "lin", "bld"] {
         pkg(leaf, "")?;
     }
     pkg(
@@ -259,6 +261,7 @@ fn fixture_workspace() -> std::io::Result<PathBuf> {
         "root",
         "build = \"build.rs\"\n\n[workspace]\n\n[dependencies]\nmid = { path = \"mid\" }\n\n\
          [target.'cfg(windows)'.dependencies]\nwin = { path = \"win\" }\n\n\
+         [target.'cfg(target_os = \"linux\")'.dependencies]\nlin = { path = \"lin\" }\n\n\
          [build-dependencies]\nbld = { path = \"bld\" }\n",
     )?;
     std::fs::write(dir.join("build.rs"), "fn main() {}\n")?;
@@ -275,14 +278,15 @@ fn fixture_workspace() -> std::io::Result<PathBuf> {
 }
 
 /// Control for the command's flags: on the fixture, the feature-gated optional dependency
-/// (`--all-features` with `mid` as a root), the `cfg(windows)` dependency (`--target all`) and
+/// (`--all-features` with `mid` as a root), the `cfg(windows)` and `cfg(target_os = "linux")`
+/// dependencies in one run (`--target all`: no single target or host has both) and
 /// the build-dependency (`-e build`) are each listed. Dropping any of those flags fails here.
 #[test]
 fn control_flags_reach_features_other_targets_and_build_edges() {
     let manifest = fixture_workspace().unwrap();
     let pkgs = resolved_in(&manifest, &["root", "mid"]).unwrap();
     let got = names(&pkgs);
-    for want in ["root", "mid", "opt", "win", "bld"] {
+    for want in ["root", "mid", "opt", "win", "lin", "bld"] {
         assert!(got.contains(want), "{want} not listed: {got:?}");
     }
     // Near miss: from `root` alone, `f` is off and `opt` is not listed (so the gate needs every
@@ -385,21 +389,45 @@ mod synthetic {
         );
     }
 
-    /// A marker before the source (Cargo prints `<name> v<ver> (proc-macro) (<path>)`) or after it
-    /// (`(*)`) becomes part of the source text, which is then not the allowed path: still one
-    /// violation, never a pass.
+    /// A marker before the source (Cargo prints `<name> v<ver> (proc-macro) (<path>)`) or after
+    /// it (`(*)`) is a parse error, on a dummy path and on the allowed path itself.
     #[test]
-    fn checker_rejects_marker_suffixes() {
-        let r = root();
-        let path = r.join("crates/jpdf-syntax").display().to_string();
-        for c in [
-            format!("jpdf-syntax v0.0.0 ({path}) (*)"),
-            format!("jpdf-syntax v0.0.0 ({path}) (proc-macro)"),
-            format!("jpdf-syntax v0.0.0 (proc-macro) ({path})"),
-        ] {
-            let pkgs = parse_tree(&c).unwrap();
-            assert_eq!(violations(&pkgs, &r).len(), 1, "accepted {c:?}");
+    fn parser_rejects_marker_shapes() {
+        let path = root().join("crates/jpdf-syntax").display().to_string();
+        for p in ["/x", path.as_str()] {
+            for c in [
+                format!("jpdf-syntax v0.0.0 ({p}) (*)"),
+                format!("jpdf-syntax v0.0.0 ({p}) (proc-macro)"),
+                format!("jpdf-syntax v0.0.0 (proc-macro) ({p})"),
+            ] {
+                assert!(parse_tree(&c).is_err(), "accepted {c:?}");
+            }
         }
+    }
+
+    /// S2.2: a directory literally named `jpdf-syntax) (*` that is a symlink to the allowed
+    /// directory must not make the `(*)` line pass. Control: the alias does resolve there.
+    #[cfg(unix)]
+    #[test]
+    fn marker_line_through_a_symlink_alias_is_refused() {
+        let r = root();
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("dependency-gate-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alias = dir.join("jpdf-syntax) (*");
+        let _ = std::fs::remove_file(&alias);
+        std::os::unix::fs::symlink(r.join("crates/jpdf-syntax"), &alias).unwrap();
+        assert_eq!(
+            alias.canonicalize().unwrap(),
+            r.join("crates/jpdf-syntax").canonicalize().unwrap()
+        );
+        let c = format!("jpdf-syntax v0.0.0 ({}/jpdf-syntax) (*)", dir.display());
+        let refused = match parse_tree(&c) {
+            Err(_) => true,
+            Ok(pkgs) => violations(&pkgs, &r).len() == 1,
+        };
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(refused, "accepted {c:?}");
     }
 
     /// A relative source (a git URL is one on Unix) is never resolved against the working
