@@ -73,8 +73,8 @@ It has no backend and makes no network requests other than loading its own files
    listed in `xtask/src/web.rs` `HARNESS_IDS`). If any step, including the Playwright run,
    failed, an ID is unknown or the journeys can't be read, every `pass` is written as
    `fail`. The web part passes only if every step passed, every ID is known, at least one
-   test ID was reported and every reported ID is `pass`. Every error is printed; the first
-   is the summary line.
+   test ID was reported and every reported ID is `pass`. Every error is printed: the later
+   ones first, then the first error, the summary, as the last `xtask: web:` line.
 
 ## Persistence
 None. The skeleton stores nothing (no localStorage, IndexedDB or cookies).
@@ -175,8 +175,8 @@ extensions), an unreadable file, a directory named `*.md` or a missing directory
 and the repository's journeys list no harness ID. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step
 writes a `pass` line writes it as `pass` when that step exits 0 and as `fail` when it exits 1,
 and when it also reports an ID no journey lists, both are written as `fail` and the run names it
-(also when the step failed too: the failed step is the summary line, the unknown ID is printed
-after it);
+(also when the step failed too: the unknown ID is printed first, then the failed step as the
+summary, the last `xtask: web:` line);
 `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs;
 `ci linux` with stub `node`/`npm` on PATH and `npm_config_ignore_scripts=false` must call the

@@ -342,13 +342,16 @@ fn ci_linux_writes_no_pass_when_playwright_fails() {
     // Both at once: the failed step is the summary, the unknown ID is still named.
     let (both_err, _) = run_lines("1", "e2e.web.a\\tpass\\ne2e.web.b\\tpass\\n");
     let _ = std::fs::remove_dir_all(&root);
+    let at = |needle: &str| both_err.find(needle);
+    let unknown =
+        at("xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b");
+    let summary = at("xtask: web: step `e2e` failed");
     assert!(
-        both_err.contains("xtask: web: step `e2e` failed")
-            && both_err.contains(
-                "xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b"
-            ),
+        unknown.is_some() && summary.is_some() && unknown < summary,
         "{both_err}"
     );
+    // The summary is the last web line.
+    assert_eq!(both_err.rfind("xtask: web: "), summary, "{both_err}");
     assert!(
         typo_err.contains(
             "xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b"
