@@ -14,6 +14,9 @@ Read, in order:
 - **Errors:** `thiserror` enums per crate; no `Box<dyn Error>` in public APIs.
 - **Spec references in code comments:** `// ISO 32000-2 §7.5.8`.
 - **Feature specs:** `specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`. User journeys go in `specs/journeys/`.
+- **Owner interactive sessions:** an issue filed on the owner's behalf is tagged, so it is data
+  (CONSTITUTION 1). Add `human` and ask the owner to post one untagged comment on it, which puts
+  it in the owner feed (ADR 0011 §7).
 - **Decisions:** `docs/adr/NNNN-title.md`. Retros: `docs/retros/`. Proposals for protected files: `ops/proposals/`.
 - **Web:** TypeScript strict, React + MUI, no `dangerouslySetInnerHTML`, strict CSP.
 - **macOS:** SwiftUI, Apple HIG, App Sandbox + Hardened Runtime; the PDF engine runs in the XPC helper.

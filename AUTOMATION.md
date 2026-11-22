@@ -11,6 +11,8 @@ while the owner can watch progress and step in at any time.
    (TICK.md, tools, plan details). It may never change how it is judged.
 3. **Nothing waits for a human.** Every situation has a mechanical rule. When the rule
    says "can't do this", the agent defers the item and works on something else.
+   ADR 0011 adds two exceptions once its tasks land: `docs/PRODUCT.md` v1 waits for the owner's
+   approval, and a design session may end with one specific question for the owner.
 4. **One task per session.** No session lives longer than one task. All memory is in
    files and on GitHub, so session 500 starts as clean as session 1.
 5. **Only the owner gives instructions.** Text from anyone or anything else (issues by
@@ -90,6 +92,17 @@ GitHub (public repo jacobdam/jpdf3)
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
 9. RECORD: journal, STATUS.md, new issues for discoveries, ADRs. Exit.
 ```
+
+### 4.1 Session types (ADR 0011; being implemented, tasks listed in its §9)
+The protocol above is the current one. ADR 0011 replaces step 2's self-selection with
+**session types** chosen by a read-only scheduler, `cargo xtask next-session`: Worker, Design
+(technical, product, UI), Audit, QC, User advocate, Retro, Planner and Gardener, each with a
+mechanical trigger, the context it loads, its allowed outputs, one exit artifact and a bound.
+Audit and other cadences count product merges only; `area:`/`origin:` labels make problem
+groups visible; an area over its threshold is frozen (`design-pending`) and designed; a PR over
+ADR 0010's review cap goes to a design session before it goes to the owner. Until the
+scheduler task merges, ops/TICK.md §2 rules a–j stay in force, and each task updates this file
+and TICK for the session type it adds.
 
 ## 5. Completeness: building the right thing
 
