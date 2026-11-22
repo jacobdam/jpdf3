@@ -193,8 +193,9 @@ working memory) and give up mostly speed (retained), the largest images (output 
   about 2165.84 MiB, over the 2 GiB. The term counts the allowance once, so the caller (the
   future `jpdf-filters` image path) takes `Limits::image_input_budget()` once per image
   decode and runs each input's filter chain one stage at a time:
-  - an input whose first stage reads a buffer of its own (the decrypted bytes of an encrypted
-    stream, a cached decoded stream) has that buffer charged before the first stage runs;
+  - decryption is a stage like the filters: the cipher call gets the capped `DecodeLimits` too,
+    and its output is charged like any stage output; a buffer the first stage reads that is
+    already allocated (a cached decoded stream) is charged before the first stage runs;
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
@@ -241,11 +242,12 @@ decoded string and name bytes fails with `LimitExceeded("string bytes in one obj
 A render target larger than 2^22 pixels, or over 256 MiB of working bytes, and a stream whose
 output passes 128 MiB, fail with `BackendError::LimitExceeded`. Once the image decode path
 exists, an image decode whose decoded input buffers (JBIG2 page data plus globals, with their
-intermediate stages) would hold more than 128 MiB at once fails with
-`BackendError::LimitExceeded` (#168): either the filter stage stops at the reduced cap (with
-its own message, e.g. `"output"`) or `ImageInputBudget::charge` refuses with `"decoded bytes
-of one image decode's inputs"`. Objects are charged more to the resolve cache than before
-(allocator chunks) and the cache is half as large (#146), so fewer stay cached; past the
+intermediate stages and decryption) would hold more than 128 MiB between stages fails with
+`BackendError::LimitExceeded` (#168): either a stage stops at the reduced cap (with its own
+message, e.g. `"output"`) or `ImageInputBudget::charge` refuses a capacity larger than what
+remains, with `"decoded bytes of one image decode's inputs"`. The copy a shrink may make is not
+refused (see the requirement above, #187). Objects are charged more to the resolve cache than
+before (allocator chunks) and the cache is half as large (#146), so fewer stay cached; past the
 budget they are re-parsed, with no error until the lexing budget runs out.
 
 ## Limits
