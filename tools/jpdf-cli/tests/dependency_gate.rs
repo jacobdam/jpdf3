@@ -44,7 +44,8 @@ fn workspace_root() -> PathBuf {
 /// output format change fails the gate instead of passing it. The version starts with a digit
 /// and holds only ASCII alphanumerics, `.`, `-` and `+`. The source is everything between the
 /// ` (` after the version and the line's final `)`, so a path may contain parentheses; a
-/// trailing marker such as `(*)` stays in the source text and then fails the path check.
+/// marker before or after the source (`(proc-macro)` comes before it, `(*)` after it) stays in
+/// the source text, which is then not an absolute allowed path and fails the path check.
 fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
     let mut pkgs = Vec::new();
     for line in out.lines() {
@@ -288,6 +289,23 @@ fn control_flags_reach_features_other_targets_and_build_edges() {
     // allowed crate as a root).
     let pkgs = resolved_in(&manifest, &["root"]).unwrap();
     assert!(!names(&pkgs).contains("opt"), "{pkgs:?}");
+    // `--locked`: a manifest edit the lockfile doesn't record (a new edge `mid` → `bld`) fails.
+    let mid = manifest.with_file_name("mid").join("Cargo.toml");
+    let text = std::fs::read_to_string(&mid).unwrap();
+    std::fs::write(
+        &mid,
+        text.replace(
+            "[dependencies]\n",
+            "[dependencies]\nbld = { path = \"../bld\" }\n",
+        ),
+    )
+    .unwrap();
+    let err = resolved_in(&manifest, &["root", "mid"]).unwrap_err();
+    assert!(err.starts_with("cargo tree failed"), "{err}");
+    // The fixture is removed only after a pass, so a failing run leaves it to inspect.
+    if let Some(dir) = manifest.parent() {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 // Parser and checker cases on synthetic output: each one should-fail case has a near miss that
@@ -367,13 +385,18 @@ mod synthetic {
         );
     }
 
-    /// A trailing marker (`(*)`, `(proc-macro)`) becomes part of the source text, which is then
-    /// not the allowed path: still one violation, never a pass.
+    /// A marker before the source (Cargo prints `<name> v<ver> (proc-macro) (<path>)`) or after it
+    /// (`(*)`) becomes part of the source text, which is then not the allowed path: still one
+    /// violation, never a pass.
     #[test]
     fn checker_rejects_marker_suffixes() {
         let r = root();
-        for marker in [" (*)", " (proc-macro)"] {
-            let c = line("jpdf-syntax", "crates/jpdf-syntax") + marker;
+        let path = r.join("crates/jpdf-syntax").display().to_string();
+        for c in [
+            format!("jpdf-syntax v0.0.0 ({path}) (*)"),
+            format!("jpdf-syntax v0.0.0 ({path}) (proc-macro)"),
+            format!("jpdf-syntax v0.0.0 (proc-macro) ({path})"),
+        ] {
             let pkgs = parse_tree(&c).unwrap();
             assert_eq!(violations(&pkgs, &r).len(), 1, "accepted {c:?}");
         }

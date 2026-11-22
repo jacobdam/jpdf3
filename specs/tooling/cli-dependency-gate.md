@@ -25,13 +25,14 @@ bypassed; owner instruction, step 2).
   line's final `)`, so a checkout path with parentheses in it (`/work/jpdf (copy)/…`) parses.
   Anything else (no version, an empty or malformed one, a name with a space, a source without
   its parentheses) is an error, and so is an output with no packages: a format change fails the
-  gate instead of passing it. A trailing marker such as `(*)` or `(proc-macro)` stays in the
-  source text, which then fails the path check below.
+  gate instead of passing it. A marker before or after the source (Cargo prints
+  `(proc-macro)` before it, `(*)` after it) stays in the source text, which then fails the path
+  check below.
 - **Check:** every package must have an allowed name and a source that is an **absolute** path
   which, canonicalized, equals its allowed directory, canonicalized. A registry package (no
   source), a git package, a relative source (never resolved against the working directory; a
   git URL is a relative path on Unix), an allowed name at another crate's path or at a path
-  that doesn't exist, a source with a marker after it, and any other name are each one
+  that doesn't exist, a marker before or after the source, and any other name are each one
   violation line. A `..` detour that resolves to the right directory passes.
 - **Tests** (all in `dependency_gate.rs`):
   - `cli_graph_is_parse_only`: roots are all six allowed crates, so `--all-features` turns on
@@ -49,7 +50,9 @@ bypassed; owner instruction, step 2).
     fixture workspace written under `CARGO_TARGET_TMPDIR` (lockfile from `cargo
     generate-lockfile --offline`) lists a feature-gated optional dependency of a second root, a
     `cfg(windows)` dependency and a build-dependency; from the first root alone the optional one
-    is not listed (why the gate takes every allowed crate as a root).
+    is not listed (why the gate takes every allowed crate as a root); after an edit to the
+    fixture's manifest that its lockfile doesn't record, `cargo tree failed` (`--locked`). The
+    fixture directory is removed after a pass.
   - Parser and checker cases on synthetic lines (`synthetic::`): path, registry and git lines;
     each rejected shape, including a missing or malformed version, with version near misses
     (`0.0.0-rc.1+b2`); parentheses inside a path; every allowed crate at its path passes; each
@@ -104,7 +107,9 @@ None of its own; each graph test runs one `cargo tree` (about 40 ms), the fixtur
   - The command's flags: no allowed crate has features or a target-limited dependency today,
     so the graph tests alone would pass without `--all-features`, `--target all` or the `build`
     edge kind. `control_flags_reach_features_other_targets_and_build_edges` pins all three on a
-    fixture workspace (dropping any one of them fails it; checked by hand on this branch).
+    fixture workspace (dropping any one of them fails it on a non-Windows host, as CI is; checked
+    by hand on this branch). The same test pins `--locked`: after a manifest edit the lockfile
+    doesn't record, the command fails.
 - What the tests can't see: `--offline` needs every lockfile package's sources downloaded.
   Today the lockfile has no registry packages; once it has, CI builds the workspace before
   running tests, so they are present. A local run without them fails with `cargo tree failed`
