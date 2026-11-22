@@ -225,10 +225,13 @@ working memory) and give up mostly speed (retained), the largest images (output 
     declare `/DL 134217728` and decode to ten bytes). Only a size the engine computed and
     checked against the limits may be reserved up front: the final stage's decoded image size
     in bytes, ceil(width × components × bits per component / 8) × height (rows padded to whole
-    bytes), after the image limits. A chunked output that must become one slice is copied into
-    a buffer whose length the caller charges with `charge` **before allocating it**, alongside
+    bytes; computed with checked arithmetic), after the image limits. A chunked output that
+    must become one slice is copied into a buffer whose length the caller charges with `charge` **before allocating it**, alongside
     the chunks still alive (any capacity beyond the request is charged right after, and the
-    buffer dropped if that doesn't fit); each chunk is released once dropped.
+    buffer dropped if that doesn't fit); each chunk is released once dropped. That buffer is
+    the stage's output and is already charged by its capacity, with no spare capacity, so the
+    caller doesn't pass it to `charge_output` (that would charge it twice and refuse later
+    stages early);
 
   So between stages every decoded buffer alive during the image decode is within the allowance.
   The copy that gives spare capacity back is inside the allowance too (#187): `charge_output`
