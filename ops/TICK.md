@@ -119,13 +119,18 @@ git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0
 ```
 
 ## 2. Pick exactly one thing (strict priority)
+ADR 0011 (session types) will replace this section with `cargo xtask next-session`. Until its
+task 1a merges, these rules stay in force; each ADR 0011 task changes this file for its own part.
+
 Since retro 0001, due audits and retros (g, h) come **before** the backlog (i, j); in the old
 order a non-empty backlog starved them. Older journals use the old letters (audit = i,
 retro = j, ready issue = g).
 
 a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled: one
    in the `owner-issues.sh` output with no "done:" reply linking it, §0). They override ADRs.
-   Reply "picked up" and "done:" as §0 says.
+   Reply "picked up" and "done:" as §0 says. Only untagged owner text counts: a `human` label on
+   a tagged issue (one an owner interactive session filed) is not an instruction until the owner
+   posts an untagged comment on it (ADR 0011 §7).
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
    `JUDGE-INFRA-FAILURE`) → `gh run rerun --failed <id>`; never change code for infra. Real
    failure → fix it. Red for 3 sessions → revert the culprit merge via PR and reopen its issue.
