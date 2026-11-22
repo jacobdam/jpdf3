@@ -6,7 +6,8 @@
 //!
 //! Limits: the graph check sees crates, not phases. Decode or raster code written inside an
 //! allowed crate is caught only if it names one of the backend entry points in
-//! `PHASE_ENTRY_POINTS` (a best-effort text scan); an in-crate decoder under another name passes.
+//! `PHASE_ENTRY_POINTS` or calls a method in `PHASE_METHOD_CALLS` (a best-effort text scan); an
+//! in-crate decoder under another name passes. Symlinked files and directories are skipped.
 //! Review of each PR against the gate covers that.
 
 use std::collections::BTreeSet;
@@ -62,7 +63,7 @@ const SCANNED: [&str; 4] = [
 /// Backend method calls, matched as call syntax (`.render(`) so prose and unrelated functions
 /// with the same word don't match. The receiver's type may be inferred (a factory's result), so
 /// only the call shows that a backend runs.
-const PHASE_METHOD_CALLS: [&str; 9] = [
+const PHASE_METHOD_CALLS: [&str; 10] = [
     ".decode(",
     ".render(",
     ".outline(",
@@ -72,16 +73,41 @@ const PHASE_METHOD_CALLS: [&str; 9] = [
     ".aes_cbc(",
     ".glyph_by_name(",
     ".cmap_lookup(",
+    ".load(",
 ];
 
-/// Every entry-point name and backend method call in `text`.
+/// `text` without `//` and `/* */` comments (a rough cut: it doesn't know string literals,
+/// which is why the scan also looks at the text with its comments kept).
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('/') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        if let Some(after) = tail.strip_prefix("//") {
+            rest = after.find('\n').map_or("", |j| &after[j..]);
+        } else if let Some(after) = tail.strip_prefix("/*") {
+            rest = after.find("*/").map_or("", |j| &after[j + 2..]);
+        } else {
+            out.push('/');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Every entry-point name and backend method call in `text`. A method call is matched with all
+/// whitespace removed, with and without comments, so `r.render\n    (` and
+/// `r.render /* x */ (` count too.
 fn phase_names_in(text: &str) -> Vec<&'static str> {
-    PHASE_ENTRY_POINTS
+    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (plain, uncommented) = (squash(text), squash(&strip_comments(text)));
+    let names = PHASE_ENTRY_POINTS.iter().filter(|n| text.contains(*n));
+    let calls = PHASE_METHOD_CALLS
         .iter()
-        .chain(PHASE_METHOD_CALLS.iter())
-        .copied()
-        .filter(|name| text.contains(name))
-        .collect()
+        .filter(|c| plain.contains(*c) || uncommented.contains(*c));
+    names.chain(calls).copied().collect()
 }
 
 #[test]
@@ -92,6 +118,18 @@ fn phase_scan_sees_method_calls_on_inferred_receivers() {
         phase_names_in("let d = make(); d.decode(data)"),
         vec![".decode("]
     );
+    assert_eq!(
+        phase_names_in("let out = r.render\n    (&scene, &limits);"),
+        vec![".render("]
+    );
+    assert_eq!(
+        phase_names_in("r . decode /* the page */ (data)"),
+        vec![".decode("]
+    );
+    assert_eq!(
+        phase_names_in("e.load // font\n (data, prog, &l)"),
+        vec![".load("]
+    );
     // Prose naming the word without a call is not flagged.
     assert!(phase_names_in("// we render the page later").is_empty());
 }
@@ -100,8 +138,10 @@ fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let (path, kind) = (entry.path(), entry.file_type()?);
-        // A directory symlink is not descended (it can point out of the package); a symlinked
-        // `.rs` file is still read.
+        // Symlinks are skipped: they can point out of the package (or nowhere).
+        if kind.is_symlink() {
+            continue;
+        }
         if kind.is_dir() {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
