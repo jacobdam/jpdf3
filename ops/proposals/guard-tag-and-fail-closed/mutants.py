@@ -20,11 +20,19 @@ MUTANTS = [
     ("nested hit at depth 0", "return depth > 0 and _gh_post_at(words, i)", "return _gh_post_at(words, i)"),
     ("fail open", "        return 2\n    return 0", "        return 0\n    return 0"),
     ("strict decode", 'encoding="utf-8", errors="replace"', 'encoding="utf-8"'),
-    ("no secret rule", "        if any(_SECRET_WORD.search(", "        if False and any(_SECRET_WORD.search("),
-    ("secret rule on prose", "for t in toks if not re.search(r\"\\s\", t)):", "for t in toks):"),
-    ("secret prefix narrowed", 'r"(?:^|[/~<>=:])(?:', 'r"(?:^|[/~])(?:'),
-    ("secret words not dequoted", "_SECRET_WORD.search(re.sub(r\"[\\\\'\\\"]\", \"\", t))", "_SECRET_WORD.search(t)"),
-    ("secret substring", '_SECRET_WORD = re.compile(r"(?:^|[/~<>=:])(?:\\.ssh|\\.codex|\\.config/gh)(?:/|$)")',
+    ("no secret rule", "    if secret_word(cmd):", "    if False:"),
+    ("secret rule on prose", 'for w in words if w and not re.search(r"\\s", w))', "for w in words if w)"),
+    ("secret prefix narrowed", 'r"(?:^|[/~=:])(?:', 'r"(?:^|[/~])(?:'),
+    ("secret no normpath", "_SECRET_WORD.search(posixpath.normpath(w))", "_SECRET_WORD.search(w)"),
+    ("secret targets dropped", "_codex_commands(cmd, True)", "_codex_commands(cmd)"),
+    ("secret raw prefilter", 'if not re.search(r"\\.(?:ssh|codex|config)", flat):',
+     'if not re.search(r"\\.(?:ssh|codex|config)", cmd):'),
+    ("${ swallowed", 'cur.append("${")  # scan on', 'cur.append(s[i:(s.find("}", i) + 1) or n]); i = (s.find("}", i) + 1 or n) - 2  # scan on'),
+    ("heredoc delim at blank", """elif s[k] in "'\\"":
+                        q = s[k]""",
+     """elif False:
+                        q = s[k]"""),
+    ("secret substring", '_SECRET_WORD = re.compile(r"(?:^|[/~=:])(?:\\.ssh|\\.codex|\\.config/gh)(?:/|$)")',
      '_SECRET_WORD = re.compile(r"(?:\\.ssh|\\.codex|\\.config/gh)")'),
 ]
 work = os.path.join(os.path.abspath(sys.argv[2]), "m", ".git")  # fake repo root: m/x/hooks/guard.py

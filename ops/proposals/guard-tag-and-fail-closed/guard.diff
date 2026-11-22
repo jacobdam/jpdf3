@@ -13,25 +13,44 @@
  
  Owner override: start Claude with JPDF_OWNER=1 in the environment. Agents can't set it,
  because hooks inherit the Claude process environment, not a Bash command's environment.
-@@ -26,6 +28,9 @@
+@@ -13,6 +15,7 @@
+ """
+ import json
+ import os
++import posixpath
+ import re
+ import shlex
+ import subprocess
+@@ -26,6 +29,9 @@
      ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
  )
  SECRET_READ = ("/.ssh/", "/.config/gh/", "/.codex/")
 +# The same directories as a path component of a Bash word: ~/.ssh, $HOME/.codex/auth.json, .ssh/x,
-+# <~/.ssh/id, -i=~/.ssh/k. Not ~/.codex-notes or x.ssh.
-+_SECRET_WORD = re.compile(r"(?:^|[/~<>=:])(?:\.ssh|\.codex|\.config/gh)(?:/|$)")
++# -oIdentityFile=.ssh/k, host:.ssh/x. Not ~/.codex-notes or x.ssh.
++_SECRET_WORD = re.compile(r"(?:^|[/~=:])(?:\.ssh|\.codex|\.config/gh)(?:/|$)")
  # Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
  # instead of a regex, so there is no backtracking. It finds the command word of every simple command
  # (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
-@@ -54,6 +59,7 @@
-     heredoc bodies are skipped."""
+@@ -47,13 +53,14 @@
+ _CODEX_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+ 
+ 
+-def _codex_commands(s):
++def _codex_commands(s, keep_targets=False):
+     """Split shell text into simple commands: lists of words with quotes and backslashes removed.
+-    One pass; `$(`/backtick substitutions are nested commands (state saved on a stack), single
+-    quotes are literal, `#` at a word start begins a comment, redirection targets are dropped and
+-    heredoc bodies are skipped."""
++    One pass; `$(`/backtick substitutions are nested commands (state saved on a stack), also
++    inside `${...}`; single quotes are literal, `#` at a word start begins a comment, redirection
++    targets are dropped (kept as words with keep_targets) and heredoc bodies are skipped."""
      cmds, words, cur, started, skip = [], [], [], False, False
      mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
 +    arith = 0  # open (( / $(( frames: inside one, << is a shift, never a heredoc (#162, CX.5)
      i, n = 0, len(s)
  
      def flush_word():
-@@ -126,6 +132,9 @@
+@@ -126,12 +133,13 @@
              j = s.find("\n", i)
              i = n if j < 0 else j
              continue
@@ -39,10 +58,32 @@
 +            i += 1  # $'...' and $"..." quote like '...' and "..." (escapes inside $'...' aren't decoded)
 +            continue
          elif c == "$" and s.startswith("${", i):
-             j = s.find("}", i)
-             j = n if j < 0 else j + 1
-@@ -153,8 +162,8 @@
-                 while k < n and s[k] not in " \t\n;&|<>()":
+-            j = s.find("}", i)
+-            j = n if j < 0 else j + 1
+-            cur.append(s[i:j])
++            cur.append("${")  # scan on: a $( or backtick inside ${x:-...} runs too (#162, R2.1)
+             started = True
+-            i = j
++            i += 2
+             continue
+         elif c in "<>" or (c == "&" and s.startswith("&>", i)):
+             if started and "".join(cur).isdigit():
+@@ -149,19 +157,27 @@
+                     op, j = "<<-", j + 1
+                 while j < n and s[j] in " \t":
+                     j += 1
+-                k = j
+-                while k < n and s[k] not in " \t\n;&|<>()":
++                k, q = j, ""  # the delimiter word ends at an unquoted, unescaped blank (#162, R2.2)
++                while k < n:
++                    if q:
++                        q = "" if s[k] == q else q
++                    elif s[k] in "'\"":
++                        q = s[k]
++                    elif s[k] == "\\" and k + 1 < n:
++                        k += 1
++                    elif s[k] in " \t\n;&|<>()":
++                        break
                      k += 1
                  delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
 -                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
@@ -52,7 +93,15 @@
                      started = True
                      i = j
                      continue
-@@ -181,20 +190,23 @@
+                 heredocs.append((delim, op == "<<-"))
+                 j = k
+             else:
+-                skip = True  # the next word is the redirection target
++                skip = not keep_targets  # the next word is the redirection target
+             i = j
+             continue
+         elif c in ";&|\n":
+@@ -181,20 +197,23 @@
                  continue
          elif c == "(":
              flush_cmd()
@@ -80,7 +129,7 @@
              stack.pop()
          else:
              close_sub()
-@@ -202,17 +214,23 @@
+@@ -202,17 +221,23 @@
      return cmds
  
  
@@ -108,7 +157,7 @@
          if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
              i += 1
          elif base in CODEX_SHELLS:
-@@ -228,7 +246,7 @@
+@@ -228,7 +253,7 @@
                  if opt[-1] in "oO":
                      i += 1  # -o pipefail, -O extglob
              if want_c:
@@ -117,7 +166,7 @@
          elif base in CODEX_WRAPPERS:
              argopts = CODEX_WRAPPERS[base]
              i += 1
-@@ -248,20 +266,20 @@
+@@ -248,22 +273,36 @@
      return False
  
  
@@ -142,21 +191,33 @@
 +            if j and w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8, hit):
                  return True
      return False
++
++
++def secret_word(cmd):
++    """True if a word of the Bash command, as the shell reads it, names a directory the Read rule
++    covers (~/.ssh, ~/.config/gh, ~/.codex) as a path component, after posixpath.normpath. Words
++    with whitespace (quoted prose such as post bodies and commit messages, single- or multi-line)
++    are skipped; redirection targets count; heredoc bodies and comments don't. A text match, like
++    the cmux rule: a glob, a variable, nested `bash -c` text or a script that builds the path still
++    passes (#162, AS.54)."""
++    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "")
++    if not re.search(r"\.(?:ssh|codex|config)", flat):
++        return False
++    return any(_SECRET_WORD.search(posixpath.normpath(w)) for words in _codex_commands(cmd, True)
++               for w in words if w and not re.search(r"\s", w))
  
-@@ -455,6 +473,12 @@
-             toks = shlex.split(seg)
-         except ValueError:
-             toks = seg.split()
-+        # Secrets the Read rule covers, named in a Bash word (cat ~/.codex/auth.json). A text match,
-+        # like the cmux rule: a glob, a variable or a script that builds the path still passes. Words
-+        # with whitespace (commit messages, post bodies) are prose, not paths. Quotes and backslashes
-+        # are removed first: the seg.split() fallback keeps them (#162, AS.54).
-+        if any(_SECRET_WORD.search(re.sub(r"[\\'\"]", "", t)) for t in toks if not re.search(r"\s", t)):
-+            raise Block("reading credentials is not allowed (~/.ssh, ~/.config/gh, ~/.codex)")
-         while toks and ("=" in toks[0] and not toks[0].startswith("-")) or (toks and toks[0] in ("sudo", "env", "command", "nohup", "time")):
-             toks = toks[1:]
-         if not toks:
-@@ -498,49 +522,81 @@
+ 
+ def codex_command(cmd):
+@@ -397,6 +436,8 @@
+         raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
+     # The full command, not the inert view: quoted gh text is never a command word to the
+     # tokenizer, and stripping it can be fooled (#130).
++    if secret_word(cmd):
++        raise Block("reading credentials is not allowed (~/.ssh, ~/.config/gh, ~/.codex)")
+     if codex_command(cmd):
+         raise Block("run Codex only through ops/driver/codex-review.sh (fixed sandbox flags)")
+     if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
+@@ -498,49 +539,81 @@
                 "--web", "-w", "--template", "-T", "--recover"}
  
  
@@ -274,7 +335,7 @@
      return texts
  
  
-@@ -609,7 +665,11 @@
+@@ -609,7 +682,11 @@
          fp = ti.get("file_path") or ti.get("notebook_path") or ""
          check_write_path(fp, cwd)
          if tool == "Write":
@@ -287,7 +348,7 @@
          elif tool == "Edit":
              new, old = ti.get("new_string", ""), ti.get("old_string", "")
          elif tool == "MultiEdit":
-@@ -627,21 +687,26 @@
+@@ -627,21 +704,26 @@
          check_bash(ti.get("command", ""), cwd)
  
  
@@ -324,7 +385,7 @@
  
  
  # ---------------------------------------------------------------- self-test
-@@ -830,6 +895,61 @@
+@@ -830,6 +912,77 @@
          ("Bash", {"command": "gh pr review 5 --approve"}, True),
          ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
          ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
@@ -354,6 +415,15 @@
 +        ("Bash", {"command": "bash -c 'gh issue comment 5 --body \"%s x\"'" % TAG}, True),
 +        ("Bash", {"command": "sh -c 'x=1; sudo gh issue create -t x -b y'"}, True),
 +        ("Bash", {"command": "eval 'gh pr create -t x -b hi'"}, True),
++        ("Bash", {"command": "echo ${x:-$(gh issue comment 5 --body hi)}"}, True),
++        ("Bash", {"command": "echo ${x:-`gh issue comment 5 --body hi`}"}, True),
++        ("Bash", {"command": "echo ${x:-$(gh issue comment 5 --body hi)} ; gh issue comment 6 --body '%s ok'" % TAG}, True),
++        ("Bash", {"command": "echo ${x:-$(codex exec x)}"}, True),
++        ("Bash", {"command": "cat <<'E F'\nx\nE F\nls;gh issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "cat <<E\\ F\nx\nE F\nls;gh issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "cat <<\"E F\"\nx\nE F\ncodex exec x"}, True),
++        ("Bash", {"command": "cat <<'E F'\ncodex exec x\nE F\nls"}, False),
++        ("Bash", {"command": "echo ${HOME} ${#x} ${x:-a} codex"}, False),
 +        ("Bash", {"command": "gh issue comment 5 --body '%s x'" % TAG}, False),
 +        ("Bash", {"command": "{ gh issue comment 5 --body '%s x'; }" % TAG}, False),
 +        ("Bash", {"command": "echo 'run gh issue comment 5 later'"}, False),
@@ -380,13 +450,20 @@
 +        ("Bash", {"command": "scp host:.ssh/id_rsa x"}, True),
 +        ("Bash", {"command": "cat ~/.co''dex/auth.json #'"}, True),
 +        ("Bash", {"command": "cat ~/.co\"dex/auth.json\" \"a;b\""}, True),
++        ("Bash", {"command": "cat ~/.co\\\ndex/auth.json"}, True),
++        ("Bash", {"command": "cat ~/.config//gh/hosts.yml"}, True),
++        ("Bash", {"command": "cat ~/.config/./gh/hosts.yml"}, True),
++        ("Bash", {"command": "cat 2>/dev/null <~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "gh issue comment 5 --body '%s round 2\n\nThe guard blocks ~/.codex/auth.json reads.'" % TAG}, False),
++        ("Bash", {"command": "gh issue comment 5 --body '%s x\nsee .ssh/ dir'" % TAG}, False),
++        ("Bash", {"command": "git commit -m \"$(cat <<'EOF'\nGuard: block cat ~/.ssh/id_rsa\nEOF\n)\""}, False),
 +        ("Bash", {"command": "git commit -m 'never read ~/.codex/auth.json'"}, False),
 +        ("Bash", {"command": "ls docs/x.ssh ~/.codex-notes ~/.sshd"}, False),
 +        ("Bash", {"command": "gh issue comment 5 --body '%s the guard blocks cat ~/.ssh/id now'" % TAG}, False),
      ]
      failures = 0
      for tool, ti, should in cases:
-@@ -869,6 +989,55 @@
+@@ -869,6 +1022,61 @@
          if got != want:
              failures += 1
              print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
@@ -439,6 +516,12 @@
 +        if time.monotonic() - t0 > 2.0:
 +            failures += 1
 +            print("FAIL: check_gh_posts took %.1fs on %d chars" % (time.monotonic() - t0, len(pad)))
++    for pad in (".ssh/x " * 50000, "${" * 150000 + " ~/.ssh", "<<'a b'\n" * 40000 + "~/.ssh"):
++        t0 = time.monotonic()
++        secret_word("cat " + pad)
++        if time.monotonic() - t0 > 2.0:
++            failures += 1
++            print("FAIL: secret_word took %.1fs on %d chars" % (time.monotonic() - t0, len(pad)))
      # The Codex check stays linear: 300 kB adversarial inputs that contain "codex", so the fast path
      # doesn't skip them (the tokenizer reads the whole command before checking).
      pads = ("(" * 300000, "$(" * 150000, "`" * 300000, ";a=" * 100000, "a=b " * 75000,
