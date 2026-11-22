@@ -19,13 +19,16 @@ instruction, step 2).
 - **Parse:** each non-blank line must be `<name> v<version>`, optionally followed by ` (<source>)`.
   The name has no whitespace; the version starts with a digit and holds only ASCII letters, digits,
   `.`, `-` and `+`; the source is everything between that ` (` and the line's final `)`, so a
-  checkout path with parentheses in it (`/work/jpdf (copy)/…`) parses. Anything else (no version, an
-  empty or malformed one, a name with a space, a source without its parentheses, a source containing
-  `) (`) is an error, and so is an output with no packages: a format change fails the gate instead
-  of passing it. `) (` is how a marker before or after the source looks (Cargo prints `(proc-macro)`
-  before it, `(*)` after it), so such a line is never resolved as a path (round 2, S2.2: a directory
-  named `jpdf-syntax) (*` that is a symlink to `crates/jpdf-syntax` would otherwise pass). A
-  checkout path containing `) (` fails the gate (fail closed).
+  checkout path with parentheses in it (`/work/jpdf (copy)/…`, `/work/jpdf (old) (copy)/…`)
+  parses. Anything else (no version, an empty or malformed one, a name with a space, a source
+  without its parentheses, a Cargo marker) is an error, and so is an output with no packages: a
+  format change fails the gate instead of passing it. Markers are recognized at their token
+  boundaries (`has_marker`): the text inside the outer parentheses starting with `proc-macro) (`
+  (Cargo prints `(proc-macro)` before the source) or ending with `) (*` or `) (proc-macro`. Such a
+  line is never resolved as a path (round 2, S2.2: a directory named `jpdf-syntax) (*` that is a
+  symlink to `crates/jpdf-syntax` would otherwise pass). A clean graph never matches: an allowed
+  source is absolute (so it doesn't start with `proc-macro`) and ends in its crate directory's
+  name, whatever the checkout path holds.
 - **Check:** every package must have an allowed name and a source that is an **absolute** path
   which, canonicalized, equals its allowed directory, canonicalized. A registry package (no source),
   a git package, a relative source (never resolved against the working directory; a git URL is a
@@ -56,7 +59,7 @@ instruction, step 2).
   - Parser and checker cases on synthetic lines (`synthetic::`): path, registry and git lines; each
     rejected shape, including a missing or malformed version, with version near misses
     (`0.0.0-rc.1+b2`); markers before and after the source, also on the allowed path and through a
-    symlink alias that resolves to it (unix); parentheses inside a path; every allowed crate at its
+    symlink alias that resolves to it (unix); parentheses (also `) (`) inside a path; every allowed crate at its
     path passes; each kind of outsider and a relative source that does name the allowed directory
     from the test's working directory are each exactly one violation; one outsider among the six
     allowed crates is reported by name.
