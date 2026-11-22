@@ -25,9 +25,11 @@ Status: implemented
    (`engine_objects`); `syntax_resolve` gets both sets. The same generator writes the test files
    of `crates/jpdf-engine/tests/open.rs` and `tools/jpdf-cli/tests/cli.rs` (a dev-dependency of
    jpdf-engine and jpdf-cli, #86) and the bench files (a normal dependency of the bench, xtask
-   and the fuzz targets, none of them shipped), so there is one copy of the well-formed file writer. Engine tests
-   that need hand-placed or broken sections (incremental updates, `/Prev` chains, overlapping
-   objects or sections) still write those files or sections inline. Seeds are generated, never committed: CONSTITUTION 18
+   and the fuzz targets, none of them shipped), so those test files no longer carry their own copy of it. Other
+   writers remain: engine tests that need hand-placed or broken sections (incremental updates,
+   `/Prev` chains, overlapping objects or sections) write those files or sections inline, and
+   the unit tests in `crates/jpdf-syntax/src/xref.rs` keep a private writer (`file`,
+   `with_xref`). Seeds are generated, never committed: CONSTITUTION 18
    keeps PDFs out of the repo except minimized repros in `tests/regress/`. `fuzz/corpus/` and
    `fuzz/artifacts/` are git-ignored.
 4. **`cargo xtask fuzz [--short] [--seconds N] [--target NAME]`** writes the seeds into
