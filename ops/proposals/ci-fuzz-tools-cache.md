@@ -58,8 +58,8 @@ the file.
 `NIGHTLY`. Because the fuzz-build cache has no `restore-keys`, each entry holds the output of
 one toolchain and one lockfile. The cost is a cold build (about 34 s, as today) on any run
 whose `fuzz/Cargo.lock` or `xtask/src/fuzz.rs` differs from every saved entry it can read:
-the first successful run after such a change, on `main` or in a PR (a PR's later runs read the
-entry its first run saved).
+every run after such a change until one succeeds and saves the entry (actions/cache saves only
+when the job succeeds), on `main` or in a PR (later runs of that PR then read it).
 
 ## Expected effect
 
