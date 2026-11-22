@@ -193,6 +193,8 @@ working memory) and give up mostly speed (retained), the largest images (output 
   about 2165.84 MiB, over the 2 GiB. The term counts the allowance once, so the caller (the
   future `jpdf-filters` image path) takes `Limits::image_input_budget()` once per image
   decode and runs each input's filter chain one stage at a time:
+  - an input whose first stage reads a buffer of its own (the decrypted bytes of an encrypted
+    stream, a cached decoded stream) has that buffer charged before the first stage runs;
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
@@ -202,14 +204,19 @@ working memory) and give up mostly speed (retained), the largest images (output 
   - then it drops the stage's input buffer and gives its charge back with
     `ImageInputBudget::release` (clamped to the allowance).
 
-  So every decoded buffer alive during the image decode is within the allowance at every
-  point. An input held in its own buffer is charged even when it is cached (a cached globals
-  stream is then counted in `retained` too: conservative). An input that borrows the file
-  bytes (no filter before the image filter, no encryption) holds no buffer and is not charged,
-  so the slices the decoder gets can be longer than 128 MiB together; the allowance bounds the
-  buffers, not the slices. Single-input decoders (DCT, JPX, CCITT) use the same budget with one charge. This is
-  a rule on a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call
-  site does not, so the review of the JBIG2 caller (M2) must check it.
+  So between stages every decoded buffer alive during the image decode is within the allowance.
+  The shrink itself may copy: for a moment the old buffer (at most what remained) and the new one
+  (its length) are both alive. That transient (up to the output's length on top of the allowance)
+  is not charged and no reserve item is sized for it (#187); glibc usually shrinks a large mapped buffer
+  in place (`mremap`), but nothing guarantees it, so the decode term is an estimate here too. An
+  input held in its own buffer is charged even when it is cached (a cached globals stream is then
+  counted in `retained` too: conservative). An input that borrows the file bytes (no filter before
+  the image filter, no encryption) holds no buffer and is not charged, so the slices the decoder
+  gets can be longer than 128 MiB together; the allowance bounds the buffers, not the slices.
+  Single-input decoders (DCT, JPX, CCITT) follow the same steps for every allocating stage of
+  their chain; at the backend call only the final input's charge is still live. This is a rule on
+  a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call site does not,
+  so the review of the JBIG2 caller (M2) must check it.
 - `jpdf-render` and rasterizer adapters: geometry memory that grows with input (flattened
   edges, curve subdivision, dash output up to `max_path_segments`, the display-list commands)
   counts within `max_raster_working_bytes`. `jpdf-render` passes the adapter the working-bytes
@@ -235,10 +242,10 @@ A render target larger than 2^22 pixels, or over 256 MiB of working bytes, and a
 output passes 128 MiB, fail with `BackendError::LimitExceeded`. Once the image decode path
 exists, an image decode whose decoded input buffers (JBIG2 page data plus globals, with their
 intermediate stages) would hold more than 128 MiB at once fails with
-`BackendError::LimitExceeded` (#168): from the filter stage the reduced cap stops (its own
-message, e.g. the output limit), or `"decoded bytes of one image decode's inputs"` from
-`ImageInputBudget::charge`. Objects are charged more to the resolve cache than before (allocator chunks) and the cache is half as large (#146), so fewer
-stay cached; past the budget they are re-parsed, with no error until the lexing budget runs
+`BackendError::LimitExceeded` (#168): either the filter stage stops at the reduced cap (with
+its own message, e.g. `"output"`) or `ImageInputBudget::charge` refuses with `"decoded bytes
+of one image decode's inputs"`. Objects are charged more to the resolve cache than before
+(allocator chunks) and the cache is half as large (#146), so fewer stay cached; past the budget they are re-parsed, with no error until the lexing budget runs
 out.
 
 ## Limits

@@ -285,7 +285,8 @@ impl Limits {
 /// It counts the buffers the caller allocates, not the slices the decoder gets. For each input
 /// the caller runs the filter chain one stage at a time with [`ImageInputBudget::cap`] applied
 /// to the stage's [`DecodeLimits`], so a stage fails with [`BackendError::LimitExceeded`] before
-/// it outgrows what the buffers still alive left. After a stage it shrinks the output
+/// it outgrows what the buffers still alive left (a buffer the first stage reads, such as
+/// decrypted bytes, is charged before it runs). After a stage it shrinks the output
 /// (`Vec::shrink_to_fit`) and charges its **capacity** with [`ImageInputBudget::charge`], then
 /// drops the stage's input buffer and gives its charge back with [`ImageInputBudget::release`].
 /// An input that borrows the file bytes (no filter before the image filter, no encryption)
@@ -330,8 +331,9 @@ impl ImageInputBudget {
     }
 
     /// Gives back the charge of a buffer the caller has dropped (the same `capacity` it
-    /// charged). What remains never grows past the allowance, so releasing more than was
-    /// charged cannot raise it.
+    /// charged). What remains never grows past the allowance, but below it an over-release (or
+    /// releasing a buffer still alive) gives back too much: the caller must release exactly
+    /// what it charged for a buffer it has dropped.
     pub fn release(&mut self, capacity: usize) {
         self.remaining = self.remaining.saturating_add(capacity).min(self.allowance);
     }
@@ -464,6 +466,8 @@ mod tests {
         };
         let mut budget = limits.image_input_budget();
         assert_eq!(budget.cap(tightened(1000)), tightened(100));
+        // Equal caps: unchanged.
+        assert_eq!(budget.cap(tightened(100)), tightened(100));
         assert_eq!(budget.charge(70), Ok(()));
         // The allowance binds.
         assert_eq!(budget.cap(tightened(1000)), tightened(30));
@@ -523,6 +527,19 @@ mod tests {
         assert_eq!(budget.charge(31), Err(LIMIT_ERROR));
         assert_eq!(budget.charge(30), Ok(()));
         assert_eq!(budget.remaining(), 0);
+        // A release with other charges still alive gives back exactly that charge: 30 + 20
+        // charged, the 30 dropped, so 80 remain (not the whole allowance).
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(30), Ok(()));
+        assert_eq!(budget.charge(20), Ok(()));
+        budget.release(30);
+        assert_eq!(budget.remaining(), 80);
+        assert_eq!(
+            budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes,
+            80
+        );
+        assert_eq!(budget.charge(81), Err(LIMIT_ERROR));
+        assert_eq!(budget.charge(80), Ok(()));
         // Over-release clamps at the allowance, from a full budget and from a partly used one.
         let mut budget = limits.image_input_budget();
         budget.release(5);
