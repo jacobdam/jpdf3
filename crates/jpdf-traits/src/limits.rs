@@ -200,7 +200,7 @@ impl Default for Limits {
         Self {
             max_file_size: 512 * 1024 * 1024,
             max_nesting_depth: 256,
-            max_objects_per_parse: 2_000_000,
+            max_objects_per_parse: 1 << 20,
             max_objects_per_document: 20_000_000,
             max_string_bytes_per_parse: 64 * 1024 * 1024,
             max_xref_entries: 1 << 22,

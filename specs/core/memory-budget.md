@@ -27,24 +27,31 @@ consumer.
 | xref table | persistent | `max_xref_entries × size_of::<Entry>() (12) × 3` | 144 MiB |
 | spans | persistent | `(max_xref_entries + max_xref_sections) × SPAN_ENTRY_BYTES (64)` | 256.06 MiB |
 | page walk | persistent | `max_pages × PAGE_WALK_BYTES (48)` | 45.78 MiB |
-| parse | phase | `(max_objects_per_parse × size_of::<(Vec<u8>, Object)>() (56) + max_string_bytes_per_parse) × 3` | 512.43 MiB |
+| parse | phase | `max_objects_per_parse × PARSE_OBJECT_BYTES (272) + max_string_bytes_per_parse × 3` | 464 MiB |
 | decode | phase | `max_decoded_bytes_per_stream + max_decode_working_bytes` | 512 MiB |
 | raster | phase | `max_raster_working_bytes` | 512 MiB |
 | reserve | fixed | itemized below | 256 MiB |
 
-Peak at the defaults: 1213.84 + 512.43 + 256 = 1982.27 MiB, which leaves about 65.7 MiB of
-the 2 GiB unused.
+Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 MiB of the
+2 GiB unused.
 
 - **Reserve, itemized** (`reserve_is_itemized`): binary and fixed mappings 64 MiB; thread
   stacks 32 MiB (main 8 MiB plus the engine thread, #114); one glibc thread arena 64 MiB
   (glibc reserves a 64 MiB heap region for each thread other than the main one, and
   `RLIMIT_AS` counts it); fragmentation and small bookkeeping 96 MiB. Per-allocation chunk
-  overhead is **not** in the reserve. Each term already charges it (retained) or bounds it
-  with its factor (the others).
+  overhead is **not** in the reserve: retained charges chunks, parse uses a per-object worst
+  case, and the other terms are large buffers. The stack and arena items are placeholders
+  until the resource-limit harness (#25) measures them. glibc maps 2 × 64 MiB to align a new
+  thread arena before trimming it, and a busy thread arena grows in 64 MiB sub-heaps that can
+  strand unused tails. So #114 must either keep large allocations off the engine thread's
+  arena (glibc serves requests above the mmap threshold, at most 32 MiB, with their own
+  mappings) or limit arenas (`M_ARENA_MAX`), and #25 must confirm the item.
 - **Retained is real memory.** The resolve cache charges every allocation as a glibc chunk:
   an 8-byte header, rounded up to 16, at least 32 bytes (`alloc_bytes`,
   specs/core/resolve-cache.md). Before #109 a dictionary of one-byte entries was charged
-  72 bytes per entry while glibc held 120.
+  72 bytes per entry while glibc held 120. Allocations at or above the mmap threshold
+  (128 KiB by default) are page-rounded instead: up to 4 080 bytes more each, at most about
+  8 MiB over a 256 MiB budget, inside the fragmentation reserve.
 - **Growth factor 3.** A `Vec` grown by pushing holds up to twice its length. While it
   reallocates, the old buffer (one length) and the new one (two lengths) are both alive. The
   xref table's stable sort runs after the growth, and its scratch buffer is at most one length,
@@ -61,9 +68,17 @@ the 2 GiB unused.
   16/7 buckets per kid at 9 bytes each, about 21) while it resolves each kid. That overlaps
   the parse phase, so it is persistent. The `/Pages` node itself is dropped once the kid
   references are extracted.
-- **Parse.** Each produced object costs at most one dictionary slot (56 bytes on 64-bit,
-  which is larger than an array slot of 32). String and name bytes are decoded into growing
-  buffers.
+- **Parse.** The parser builds every array and dictionary with `Vec::new()` + `push`, so a
+  container with one entry already holds 4 slots. The worst shape is nested one-entry
+  dictionaries: a 224-byte buffer (240-byte chunk) plus a 32-byte key chunk = 272 bytes for
+  one counted object (`PARSE_OBJECT_BYTES`). Bigger containers cost less per entry (a 56-byte
+  slot, 168 at the growth peak, plus a key chunk of at most 48). String and name bytes are
+  decoded into growing buffers (3 × at the growth peak; chunks of short strings are in the
+  per-object bound). `parse_object_bytes_bound_real_objects` parses five shapes and checks
+  the bound, and the nested shape holds exactly 272 bytes per dictionary.
+- **Trailer.** The stored trailer keeps only the first usable `/Root` and `/Size`, at most 2
+  entries in an exact buffer (`trim_trailer`). Before #109 it kept every duplicate: 2 M
+  `/Root 1 0 R` entries in a 22 MB trailer stayed alive for the document (about 173 MiB).
 - **Phases run one at a time.** A document parses an object, decodes a stream or renders a
   tile, never two at once, so only the largest phase counts. What a phase produces and is
   still alive in a later phase must be charged to `retained` (see the requirements). The model
@@ -72,6 +87,9 @@ the 2 GiB unused.
   them (future work in `jpdf-render` and the bindings).
 
 **New defaults** (lowered; CONSTITUTION 4 forbids only raising):
+- `max_objects_per_parse` 2 000 000 → 1 048 576 (2^20). At 272 bytes per object, 2 M objects
+  alone were 519 MiB. 2^20 still holds a flat `/Kids` array of `max_pages` (1 000 000)
+  references.
 - `max_xref_entries` 10 000 000 → 4 194 304 (2^22). The old value alone cost 360 MiB for the
   table and 640 MiB for the spans. 4M objects is far above real documents: a 512 MiB file with
   that many objects averages 128 bytes per object.
@@ -121,8 +139,11 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     4 194 304 passes the count check and fails on the missing first entry (`Malformed` at byte
     14). 4 194 305 is refused with the limit error before any entry is read. Across two
     subsections, 1 + 4 194 303 passes the count check and 1 + 4 194 304 is refused.
-  - The canvas and working-bytes checks (`check_scene`) keep their boundary tests in the
-    raster suite. Those tests take the limit as a parameter, so the new defaults change no test.
+  - `default_canvas_limit_is_exact` (raster.rs): `check_scene` with `RasterLimits::default()`
+    passes 2^23 pixels (4096 × 2048 and 2^23 × 1) and refuses 2^23 + 1. The parameterized
+    boundary tests in the raster suite are unchanged.
+  - `max_objects_per_parse`: the existing boundary test (`object_budget`, lexer.rs) takes the
+    limit as a parameter.
   - The retained-bytes boundary tests (`retained_budget_boundary_for_one_object`, at the cost
     and one byte less) compute the cost with `retained_cost`, so they cover the chunk model.
   - `defaults_fit_the_process_budget_with_the_reserve`: peak + 64 MiB ≤ 2 GiB at the
@@ -183,6 +204,9 @@ per allocation counted by `retained_cost`, which already walks the object once.
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `peak_is_persistent_plus_largest_phase_plus_reserve`.
 - crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`,
+  `parse_object_bytes_bound_real_objects`, `trailer_with_duplicate_keys_is_trimmed_to_two_entries`,
   `alloc_bytes_follow_glibc_chunks`, `retained_cost_counts_every_allocation` (new literals).
+- crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^23 pixels pass with
+  the default limits, 2^23 + 1 fail).
 - crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now uses
   `check_scene`'s full formula and pins 512 MiB working bytes and 2^23 canvas pixels.

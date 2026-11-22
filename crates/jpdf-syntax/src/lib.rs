@@ -12,7 +12,10 @@ mod lexer;
 mod object;
 mod xref;
 
-pub use budget::{MemoryBudget, PROCESS_BUDGET_BYTES, RESERVE_BYTES, SPAN_ENTRY_BYTES};
+pub use budget::{
+    MemoryBudget, PAGE_WALK_BYTES, PARSE_OBJECT_BYTES, PROCESS_BUDGET_BYTES, RESERVE_BYTES,
+    SPAN_ENTRY_BYTES,
+};
 pub use error::SyntaxError;
 pub use jpdf_traits::Limits;
 pub use object::{Dict, ObjRef, Object};

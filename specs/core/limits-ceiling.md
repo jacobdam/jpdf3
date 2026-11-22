@@ -37,7 +37,7 @@ and operations budget) and #107 (object resolve cache).
    - Budgeted terms: the full process budget, with every uncharged term and a 256 MiB
      reserve, is specs/core/memory-budget.md (`jpdf_syntax::MemoryBudget`, #109). #109 lowered
      `max_xref_entries` to 2^22, `max_raster_working_bytes` to 512 MiB and
-     `max_canvas_pixels` to 2^23 so the defaults fit with about 65 MiB to spare.
+     `max_canvas_pixels` to 2^23 so the defaults fit with about 66 MiB to spare (#109 also lowered `max_objects_per_parse` to 2^20).
    - Charged by the object resolve cache only (specs/core/resolve-cache.md). Docs say the
      future face cache "must" charge it, through one counter shared with the object cache
      (#138).

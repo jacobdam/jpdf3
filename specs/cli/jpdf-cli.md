@@ -90,8 +90,9 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   file of exactly 512 MiB passes the size check (the open then fails with "Permission
   denied"); 512 MiB + 1 is refused with the limit error without being opened;
 - `max_nesting_depth` 256 for arrays/dictionaries (stack-overflow guard);
-- `max_objects_per_parse` 2 000 000 objects produced while parsing one indirect object
-  (memory bound for huge arrays/dictionaries);
+- `max_objects_per_parse` 1 048 576 (2^20) objects produced while parsing one indirect object
+  (memory bound for huge arrays/dictionaries; lowered from 2 000 000 by #109 because a parsed
+  object can hold up to 272 bytes of allocator chunks, specs/core/memory-budget.md);
 - `max_objects_per_document` 20 000 000 objects across all parses (time bound: `[]` is 2 bytes
   but costs an allocation). This is the effective ceiling for very large documents: 1 M
   pages with > 20 objects per page dictionary exit 2 even though `max_pages` allows them.
@@ -120,10 +121,12 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
 
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
 packed into a sorted `Vec` of 12-byte records (newest entry per object number); the stored
-trailer keeps only `/Root` and `/Size`; the page-tree walk keeps at most one parsed object
-alive (catalog and `/Pages` are dropped once their references are extracted). With the
-per-object caps, peak memory ≈ file + 12 B × xref entries + one capped parse.
-Measured (Linux, release, real `ulimit -v 2097152` as in the judge): every adversarial file
+trailer keeps only the first usable `/Root` and `/Size` (at most 2 entries, since #109); the
+page-tree walk keeps at most one parsed object alive (catalog and `/Pages` are dropped once
+their references are extracted). The full peak-memory model, with every term and a reserve,
+is specs/core/memory-budget.md.
+Measured before #109 lowered the defaults (Linux, release, real `ulimit -v 2097152` as in the
+judge): every adversarial file
 from review — 512 MiB with 10 M xref entries and four maximal objects, 500 MiB nested
 strings, overlapping objects/sections, 600 kids sharing one 2 M-object body — finishes with
 exit 0 or 2 in ≤ 3.4 s (not true for every file: audit 0002 measured 6.84 s for one 510 MB

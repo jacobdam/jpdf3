@@ -278,19 +278,29 @@ fn overlaps(spans: &BTreeMap<usize, usize>, start: usize, end: Option<usize>) ->
 }
 
 /// Keeps only the trailer entries the engine reads (ISO 32000-2 §7.5.5, Table 15), so a hostile
-/// trailer full of junk does not stay in memory while the rest of the document is parsed.
+/// trailer full of junk does not stay in memory while the rest of the document is parsed. Keys
+/// are unique in a well-formed dictionary (§7.3.7); with duplicates, only the first usable
+/// `/Root` (a reference) and the first usable `/Size` (an integer) are kept, which is what
+/// `Dict::get` returned before, so the trimmed trailer holds at most 2 entries in an exact
+/// buffer (specs/core/memory-budget.md).
 fn trim_trailer(trailer: Dict) -> Dict {
-    Dict(
-        trailer
-            .0
-            .into_iter()
-            .filter(|(k, v)| match k.as_slice() {
-                b"Root" => matches!(v, Object::Ref(_)),
-                b"Size" => matches!(v, Object::Integer(_)),
-                _ => false,
-            })
-            .collect(),
-    )
+    let mut root = None;
+    let mut size = None;
+    for (k, v) in trailer.0 {
+        match (k.as_slice(), &v) {
+            (b"Root", Object::Ref(_)) if root.is_none() => root = Some((k, v)),
+            (b"Size", Object::Integer(_)) if size.is_none() => size = Some((k, v)),
+            _ => {}
+        }
+    }
+    let mut kept: Vec<(Vec<u8>, Object)> = Vec::new();
+    let n = usize::from(root.is_some()).saturating_add(usize::from(size.is_some()));
+    kept.reserve_exact(n);
+    kept.extend(root.into_iter().chain(size).map(|(mut k, v)| {
+        k.shrink_to_fit();
+        (k, v)
+    }));
+    Dict(kept)
 }
 
 /// ISO 32000-2 §7.5.5: the last `startxref` keyword and the byte offset after it.
@@ -460,6 +470,88 @@ mod tests {
             summed("4194304"),
             Err(SyntaxError::LimitExceeded("cross-reference entries"))
         );
+    }
+
+    /// A trailer with 10 000 duplicate `/Root` and `/Size` keys keeps 2 entries: the first
+    /// usable of each (a non-reference `/Root` and a non-integer `/Size` are skipped, as before),
+    /// in an exact buffer.
+    #[test]
+    fn trailer_with_duplicate_keys_is_trimmed_to_two_entries() {
+        let mut body = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n".to_vec();
+        let xref_at = body.len();
+        body.extend(
+            b"xref\n0 2\n0000000000 65535 f\r\n0000000009 00000 n\r\ntrailer\n<< /Root 7 /Size (x)",
+        );
+        for _ in 0..10_000 {
+            body.extend(b" /Root 1 0 R /Size 2 /Root 5 0 R /Size 9 /Junk 1");
+        }
+        body.extend(format!(" >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
+        let doc = XrefDocument::parse(&body, &Limits::default()).expect("parses");
+        let t = &doc.trailer().0;
+        assert_eq!(
+            t,
+            &vec![
+                (b"Root".to_vec(), Object::Ref(obj(1))),
+                (b"Size".to_vec(), Object::Integer(2)),
+            ]
+        );
+        assert_eq!(t.capacity(), 2);
+        assert!(t.iter().all(|(k, _)| k.capacity() == 4));
+    }
+
+    /// Objects and string bytes in `o` the way the parser counts them: every object once, and
+    /// string, name and key bytes.
+    fn parse_counts(o: &Object) -> (u64, u64) {
+        match o {
+            Object::String(s) | Object::Name(s) => (1, size_u64(s.len())),
+            Object::Array(items) => items.iter().fold((1, 0), |(n, b), item| {
+                let (n2, b2) = parse_counts(item);
+                (n.saturating_add(n2), b.saturating_add(b2))
+            }),
+            Object::Dict(d) => d.0.iter().fold((1, 0), |(n, b), (k, v)| {
+                let (n2, b2) = parse_counts(v);
+                (
+                    n.saturating_add(n2),
+                    b.saturating_add(size_u64(k.len())).saturating_add(b2),
+                )
+            }),
+            _ => (1, 0),
+        }
+    }
+
+    /// `budget::PARSE_OBJECT_BYTES` bounds what real parsed objects hold, as allocator chunks:
+    /// the worst shape (nested one-entry dictionaries) costs exactly 272 bytes per dictionary,
+    /// and other shapes stay below `objects × 272 + 3 × string bytes`.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn parse_object_bytes_bound_real_objects() {
+        use crate::budget::PARSE_OBJECT_BYTES;
+        let nested = [b"<</a ".repeat(200), b"null".to_vec(), b">>".repeat(200)].concat();
+        let many_names = [b"[".to_vec(), b"/a ".repeat(1000), b"]".to_vec()].concat();
+        let many_keys = [b"<<".to_vec(), b"/k 1 ".repeat(1000), b">>".to_vec()].concat();
+        let small_arrays = [b"[".to_vec(), b"[1] ".repeat(1000), b"]".to_vec()].concat();
+        let short_strings = [
+            b"[".to_vec(),
+            b"(abcdefghijklmnopqrstuv) ".repeat(500),
+            b"]".to_vec(),
+        ]
+        .concat();
+        let bodies = [nested, many_names, many_keys, small_arrays, short_strings];
+        let data = file(&bodies);
+        let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+        for n in 1..=5 {
+            let o = doc.resolve(obj(n)).expect("resolves");
+            let held = heap_bytes(&o);
+            let (objects, strings) = parse_counts(&o);
+            assert!(
+                held <= objects * PARSE_OBJECT_BYTES + 3 * strings,
+                "object {n}: {held} bytes for {objects} objects, {strings} string bytes"
+            );
+            if n == 1 {
+                // 200 dictionaries, each a 240-byte buffer chunk and a 32-byte key chunk.
+                assert_eq!((objects, held), (201, 200 * 272));
+            }
+        }
     }
 
     #[test]
@@ -739,16 +831,17 @@ mod tests {
 
         // Spare capacity counts everywhere: the dictionary buffer, keys and names (the parser
         // grows them by pushing, so real ones usually have some).
-        let mut key = Vec::with_capacity(10);
+        let mut key = Vec::with_capacity(40);
         key.push(b'K');
         let mut name = Vec::with_capacity(20);
         name.extend(b"Nm");
         let mut entries = Vec::with_capacity(5);
         entries.push((key, Object::Name(name)));
-        // 5 slots (280 bytes, a 288-byte chunk), key (32), name (32).
+        // 5 slots (280 bytes, a 288-byte chunk), key (capacity 40, a 48-byte chunk; its length
+        // 1 would be a 32-byte one), name (32).
         assert_eq!(
             retained_cost(&Object::Dict(Dict(entries))),
-            base + 288 + 32 + 32
+            base + 288 + 48 + 32
         );
         let mut name = Vec::with_capacity(40);
         name.push(b'N');

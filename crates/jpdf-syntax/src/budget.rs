@@ -4,7 +4,6 @@
 //! reserve for everything no limit charges.
 
 use crate::Limits;
-use crate::object::Object;
 use crate::xref::Entry;
 
 /// The judge's address-space limit for one `jpdf-cli` process.
@@ -42,6 +41,17 @@ pub const SPAN_ENTRY_BYTES: u64 = 64;
 /// each, about 21).
 pub const PAGE_WALK_BYTES: u64 = 48;
 
+/// Worst-case bytes one parsed object holds, string bytes aside. The parser builds every array
+/// and dictionary with `Vec::new()` + `push`, so a container with one entry already holds 4
+/// slots: a one-entry dictionary is a 224-byte buffer (a 240-byte chunk) plus its key (at
+/// least capacity 8, a 32-byte chunk) = 272 bytes for one counted object (the dictionary; its
+/// value is counted on its own). Larger containers cost less per entry: a dictionary slot is
+/// 56 bytes, 168 at the growth peak, plus a key chunk of at most 48 below 23 bytes of key
+/// (longer keys are within 3 × their string bytes). A short string or name object costs at
+/// most a 48-byte chunk plus its slot. Pinned by `parse_object_bytes_bound_real_objects`
+/// (xref.rs) on parsed objects.
+pub const PARSE_OBJECT_BYTES: u64 = 272;
+
 /// A growing `Vec` holds at most twice its length; while it reallocates, the old buffer (one
 /// length) and the new one (two lengths) are alive together. A stable sort's scratch buffer
 /// (at most one length) fits in the same factor, since it runs after the growth.
@@ -68,8 +78,8 @@ pub struct MemoryBudget {
     /// The page-tree walk (`max_pages` × [`PAGE_WALK_BYTES`]). It is alive while the kids are
     /// parsed, so it counts as persistent.
     pub page_walk: u64,
-    /// One parse: `max_objects_per_parse` objects, each at most a dictionary entry, plus
-    /// `max_string_bytes_per_parse` string and name bytes, both times the growth factor.
+    /// One parse: `max_objects_per_parse` objects at [`PARSE_OBJECT_BYTES`] each, plus
+    /// `max_string_bytes_per_parse` string and name bytes times the growth factor.
     pub parse: u64,
     /// One decode: the filter chain's output feeding the image decoder
     /// (`max_decoded_bytes_per_stream`) plus the decoder's own working memory, output
@@ -82,14 +92,14 @@ pub struct MemoryBudget {
 impl MemoryBudget {
     pub fn of(limits: &Limits) -> Self {
         let entry = size_u64(size_of::<Entry>());
-        let slot = size_u64(size_of::<(Vec<u8>, Object)>());
         let spans = size_u64(limits.max_xref_entries)
             .saturating_add(size_u64(limits.max_xref_sections))
             .saturating_mul(SPAN_ENTRY_BYTES);
         let parse = size_u64(limits.max_objects_per_parse)
-            .saturating_mul(slot)
-            .saturating_add(size_u64(limits.max_string_bytes_per_parse))
-            .saturating_mul(GROWTH_FACTOR);
+            .saturating_mul(PARSE_OBJECT_BYTES)
+            .saturating_add(
+                size_u64(limits.max_string_bytes_per_parse).saturating_mul(GROWTH_FACTOR),
+            );
         Self {
             file: size_u64(limits.max_file_size),
             retained: limits.max_retained_bytes_per_document,
@@ -134,6 +144,7 @@ fn size_u64(n: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Object;
 
     const MIB: u64 = 1 << 20;
 
@@ -144,6 +155,12 @@ mod tests {
     fn type_sizes_are_pinned() {
         assert_eq!(size_of::<Entry>(), 12);
         assert_eq!(size_of::<(Vec<u8>, Object)>(), 56);
+        assert_eq!(size_of::<Object>(), 32);
+        // The key of the span, page-walk and cache maps.
+        assert_eq!(size_of::<crate::ObjRef>(), 8);
+        assert_eq!(PARSE_OBJECT_BYTES, 272);
+        assert_eq!(PAGE_WALK_BYTES, 48);
+        assert_eq!(SPAN_ENTRY_BYTES, 64);
     }
 
     /// The reserve, item by item, as literals.
@@ -177,14 +194,14 @@ mod tests {
                 spans: 256 * MIB + 64 * 1024,
                 // 1 000 000 pages × 48 bytes.
                 page_walk: 48_000_000,
-                // (2 000 000 × 56 + 64 MiB) × 3.
-                parse: 336_000_000 + 192 * MIB,
+                // 1 048 576 × 272 + 64 MiB × 3.
+                parse: 272 * MIB + 192 * MIB,
                 decode: 512 * MIB,
                 raster: 512 * MIB,
             }
         );
         assert_eq!(b.persistent(), 1168 * MIB + 64 * 1024 + 48_000_000);
-        assert_eq!(b.largest_phase(), 336_000_000 + 192 * MIB);
+        assert_eq!(b.largest_phase(), 512 * MIB);
     }
 
     /// The defaults fit the judge's 2 GiB with the 256 MiB reserve, and with at least 64 MiB
@@ -266,7 +283,7 @@ mod tests {
             (
                 "objects/parse",
                 |l| l.max_objects_per_parse -= 1,
-                [0, 0, 0, 0, 0, 168, 0, 0],
+                [0, 0, 0, 0, 0, 272, 0, 0],
             ),
             ("objects/doc", |l| l.max_objects_per_document -= 1, [0; 8]),
             (

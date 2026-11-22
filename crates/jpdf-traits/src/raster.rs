@@ -605,6 +605,23 @@ mod tests {
         ]));
     }
 
+    /// The lowered default canvas (#109, specs/core/memory-budget.md) at its exact boundary:
+    /// 2^23 pixels pass with `RasterLimits::default()`, one pixel more fails.
+    #[test]
+    fn default_canvas_limit_is_exact() {
+        let l = RasterLimits::default();
+        assert!(check_scene(4096, 2048, &[], &l).is_ok());
+        assert!(check_scene(8_388_608, 1, &[], &l).is_ok());
+        assert_eq!(
+            check_scene(8_388_609, 1, &[], &l),
+            Err(BackendError::LimitExceeded("canvas pixels"))
+        );
+        assert_eq!(
+            check_scene(4097, 2048, &[], &l),
+            Err(BackendError::LimitExceeded("canvas pixels"))
+        );
+    }
+
     #[test]
     fn working_bytes_follow_the_formula() {
         let path = [PathSegment::MoveTo(p(0.0, 0.0))];
