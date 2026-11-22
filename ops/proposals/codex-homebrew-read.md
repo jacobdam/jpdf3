@@ -37,7 +37,7 @@ Grant Homebrew by named subdirectory, never the prefix itself:
 
 | Granted | Why the review needs it |
 |---|---|
-| `bin/`, `sbin/` | on the commands' `PATH` (`BASE_ENV`) |
+| `bin/` | on the commands' `PATH` (`BASE_ENV`) |
 | `Cellar/`, `opt/` | where those links resolve; programs load libraries by `opt/` install names |
 | `lib/`, `Frameworks/` | shared libraries; Homebrew Python lives in `Frameworks/Python.framework` |
 | `share/`, `libexec/`, `include/` | program data (terminfo, locale, helper scripts), headers |
@@ -45,8 +45,9 @@ Grant Homebrew by named subdirectory, never the prefix itself:
 
 Everything else in the prefix falls under `:root = deny`: `etc/`, `var/`, `Library/`, the dotfiles,
 other casks, and any directory Homebrew adds later (an allow list fails closed). A symlink from a
-granted directory into a denied one stays denied, because Seatbelt matches the resolved path (T6
-checks this on the real Codex). Header and comment now say what is readable.
+granted directory into a denied one is expected to stay denied, because Seatbelt matches the
+resolved path; not checked yet (T6 checks it on the real Codex). Granted trees do link into `etc/`,
+for example `Cellar/certifi/*/…/certifi/cacert.pem` and `Cellar/llvm@22/*/etc/clang`. Header and comment now say what is readable.
 
 On this machine (`test-policy.sh`, informational part): of the 523 entries in `/opt/homebrew/bin`,
 519 resolve inside the prefix; with the new list every one of them stays readable except 3 that
@@ -103,13 +104,13 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
  # so none of them may appear here. Profiles are Beta in Codex; --strict-config makes an unknown key a
  # failed run ("unavailable"), never a silently wider sandbox.
  q() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }   # TOML basic string
-+# Homebrew, by name and never the prefix itself: bin/ and sbin/ (PATH) link into Cellar/ and opt/;
++# Homebrew, by name and never the prefix itself: bin/ (on PATH, BASE_ENV) links into Cellar/ and opt/;
 +# programs load libraries from opt/, lib/ and Frameworks/ (Python); some read data from share/,
 +# libexec/ or include/. Of Caskroom/ only Codex's own cask (its bundled rg). A directory left out
 +# (etc/, var/, Library/, the prefix's dotfiles, any new one) stays denied, and so does a symlink
-+# from a granted directory into it (Seatbelt matches the resolved path; test plan T6 checks it).
++# from a granted directory into it (expected: Seatbelt matches the resolved path; test plan T6).
 +HB=/opt/homebrew
-+HB_READ=("$HB/bin" "$HB/sbin" "$HB/Cellar" "$HB/opt" "$HB/lib" "$HB/Frameworks" "$HB/share"
++HB_READ=("$HB/bin" "$HB/Cellar" "$HB/opt" "$HB/lib" "$HB/Frameworks" "$HB/share"
 +         "$HB/libexec" "$HB/include" "$HB/Caskroom/codex")
  FS_POLICY="{ \":root\" = \"deny\", \":minimal\" = \"read\", \":slash_tmp\" = \"deny\""
  for r in "$HOME/.rustup/toolchains" "$HOME/.rustup/settings.toml" "$HOME/.cargo/bin" \
@@ -124,10 +125,10 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
 
 ### Run by the session (static)
 - `ops/proposals/codex-homebrew-read/test-policy.sh <patched> ops/driver/codex-review.sh`: 3 passed,
-  0 failed. It pulls `q`, `HB`/`HB_READ` and `FS_POLICY` out of the script by their exact text,
+  0 failed. It pulls the block from `q()` to `FS_POLICY+=" }"` out of the script by its exact text,
   builds the policy with `HOME=/Users/u` and parses it as TOML (Python 3.14 `tomllib`):
   - the patched policy: `:root` deny, `:minimal` read, `:slash_tmp` deny; the read grants are
-    exactly the 4 rustup/cargo paths and the 10 Homebrew paths; `/opt/homebrew` itself absent; no
+    exactly the 4 rustup/cargo paths and the 9 Homebrew paths; `/opt/homebrew` itself absent; no
     grant equals or contains `/opt/homebrew/etc`, `etc/gnupg`, `var`, `var/log`, `Library`, `.git`,
     `.codex`, `Caskroom`, `Caskroom/claude-code@latest`, `~`, `~/.codex`, `~/.ssh`,
     `~/.cargo/credentials.toml`, `~/jpdf-corpus` or `~/jpdf-research`;
@@ -136,8 +137,11 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
   - against this machine: every `/opt/homebrew/bin` entry that resolves inside the prefix resolves
     into a granted directory, except the other casks (counted, by design).
 - Hand mutants of the patched script, each caught: `Caskroom/codex` → `Caskroom`; an extra `$HB`,
-  `$HB/etc` or `$HB/var/log`; `:slash_tmp` dropped; `$HB/sbin` dropped; `:root` = read;
-  `~/.cargo/registry` → `~/.cargo`; `HB=/opt/homebrew/` (double slash in every grant).
+  `$HB/etc` or `$HB/var/log`; `:slash_tmp` dropped; `$HB/lib` dropped; `:root` = read;
+  `~/.cargo/registry` → `~/.cargo`; `HB=/opt/homebrew/` (double slash in every grant);
+  `HB_READ+=("$HB")` on the line after the list (R1.2: the test builds the policy from one block,
+  `q()` through `FS_POLICY+=" }"`); a reflowed end marker (`FS_POLICY+="}"`): the test stops with
+  "markers not found" and evaluates nothing (R1.3; no `.codex-review-tmp.*` left behind).
 - `bash -n` on the patched script.
 
 ### For the owner, after applying (Codex runs only through the launcher)

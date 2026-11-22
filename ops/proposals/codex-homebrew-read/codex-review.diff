@@ -29,13 +29,13 @@
  # so none of them may appear here. Profiles are Beta in Codex; --strict-config makes an unknown key a
  # failed run ("unavailable"), never a silently wider sandbox.
  q() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }   # TOML basic string
-+# Homebrew, by name and never the prefix itself: bin/ and sbin/ (PATH) link into Cellar/ and opt/;
++# Homebrew, by name and never the prefix itself: bin/ (on PATH, BASE_ENV) links into Cellar/ and opt/;
 +# programs load libraries from opt/, lib/ and Frameworks/ (Python); some read data from share/,
 +# libexec/ or include/. Of Caskroom/ only Codex's own cask (its bundled rg). A directory left out
 +# (etc/, var/, Library/, the prefix's dotfiles, any new one) stays denied, and so does a symlink
-+# from a granted directory into it (Seatbelt matches the resolved path; test plan T6 checks it).
++# from a granted directory into it (expected: Seatbelt matches the resolved path; test plan T6).
 +HB=/opt/homebrew
-+HB_READ=("$HB/bin" "$HB/sbin" "$HB/Cellar" "$HB/opt" "$HB/lib" "$HB/Frameworks" "$HB/share"
++HB_READ=("$HB/bin" "$HB/Cellar" "$HB/opt" "$HB/lib" "$HB/Frameworks" "$HB/share"
 +         "$HB/libexec" "$HB/include" "$HB/Caskroom/codex")
  FS_POLICY="{ \":root\" = \"deny\", \":minimal\" = \"read\", \":slash_tmp\" = \"deny\""
  for r in "$HOME/.rustup/toolchains" "$HOME/.rustup/settings.toml" "$HOME/.cargo/bin" \

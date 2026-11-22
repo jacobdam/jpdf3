@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests the read policy the proposal gives Codex's commands (#191, audit 0004 AS.2). The HB_READ and
-# FS_POLICY lines are pulled out of a codex-review.sh by their exact text (so the test can't drift
-# from the diff) and built with a fake HOME.
+# Tests the read policy the proposal gives Codex's commands (#191, audit 0004 AS.2). The block from
+# `q()` to `FS_POLICY+=" }"` (HB, HB_READ and FS_POLICY) is pulled out of a codex-review.sh by its
+# exact text (so the test can't drift from the diff) and built with a fake HOME.
 #   ops/proposals/codex-homebrew-read/test-policy.sh <patched codex-review.sh> [<unpatched one>]
 # With the second argument it also checks that the unpatched script fails the "no grant covers a
 # denied Homebrew directory" check (the AS.2 bug), so the check can tell the two apart.
@@ -14,16 +14,20 @@ pass=0; failn=0
 ok() { if "$@"; then pass=$((pass+1)); else failn=$((failn+1)); echo "FAIL: $*"; fi; }
 rc_is() { local want="$1"; shift; "$@"; [[ $? -eq "$want" ]]; }
 extract() {   # extract <file> <first line prefix> <last line prefix>: the lines between, inclusive
-  local t; t="$(awk -v a="$2" -v b="$3" 'index($0,a)==1{on=1} on{print} on&&index($0,b)==1{exit}' "$1")"
+  # Both markers must be found: an end marker that a reflow lost would otherwise eval the rest of
+  # the file (R1.3). awk exits 3 when it reaches the end without the end marker.
+  local t; t="$(awk -v a="$2" -v b="$3" 'index($0,a)==1{on=1} on{print} on&&index($0,b)==1{done=1; exit}
+    END{exit done?0:3}' "$1")" || { echo "markers not found in $1: $2 ... $3" >&2; exit 2; }
   [[ -n "$t" ]] || { echo "not found in $1: $2" >&2; exit 2; }
   printf '%s\n' "$t"
 }
 policy() {   # policy <script>: prints the FS_POLICY it builds, with HOME=/Users/u
   local s="$1"
   ( HOME=/Users/u
-    eval "$(extract "$s" 'q() {' 'q() {')"
-    if grep -q '^HB=/opt/homebrew$' "$s"; then eval "$(extract "$s" 'HB=/opt/homebrew' '         "$HB/libexec"')"; fi
-    eval "$(extract "$s" 'FS_POLICY="{' 'FS_POLICY+=" }"')"
+    # One contiguous block from q() to the end of FS_POLICY, so no line between the pieces escapes
+    # the test (R1.2). Extract first, then eval: a failed extract stops here.
+    local b; b="$(extract "$s" 'q() {' 'FS_POLICY+=" }"')" || exit 2
+    eval "$b"
     printf '%s' "$FS_POLICY" )
 }
 
@@ -52,7 +56,7 @@ if mode == "strict":
     if not (t[":root"] == "deny" and t[":minimal"] == "read" and t[":slash_tmp"] == "deny"): fail(t)
     if not set(t.values()) <= {"read", "deny"}: fail(t)
     want_hb = {"/opt/homebrew/" + d for d in
-               ["bin", "sbin", "Cellar", "opt", "lib", "Frameworks", "share", "libexec", "include",
+               ["bin", "Cellar", "opt", "lib", "Frameworks", "share", "libexec", "include",
                 "Caskroom/codex"]}
     want = want_hb | {"/Users/u/.rustup/toolchains", "/Users/u/.rustup/settings.toml",
                       "/Users/u/.cargo/bin", "/Users/u/.cargo/registry"}
