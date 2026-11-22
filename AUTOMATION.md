@@ -388,6 +388,14 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 `/hold` waiting for `/release`, or a blocked review waiting for a decision. Sessions add it when
 the owner's turn starts and remove it when the owner's part is done (rules: ops/TICK.md §0).
 
+**Replies to owner instructions** (#173): every owner issue, comment, review comment, review body
+and command gets `🤖 jpdf-agent picked up <link>` when a session starts on it and
+`🤖 jpdf-agent done: <link>` with what changed and `waiting on owner: <action|nothing>` when it
+ends, in the same issue or PR conversation. No reply means not seen yet; "picked up" without
+"done:" means in progress or interrupted (the next session resumes it). Proposal
+`ops/proposals/owner-comment-tracking.md` makes `owner-issues.sh` fetch review comments and review
+bodies and keep each comment until a "done:" reply links it.
+
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.
 2. `/hold` on a PR → it becomes a draft (unmergeable) until `/release`.

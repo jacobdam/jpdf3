@@ -37,6 +37,22 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
     protected path needs the owner's signed commits, or the owner comment it waited for). The
     owner may also remove it.
   - Rules d and i skip issues labeled `owner-todo`: it is the owner's turn.
+- **Every owner instruction gets two replies** (owner, #173): an owner issue, a comment on an
+  issue or PR, an inline review comment, a review body, a command (`/hold`, `/release`). Both go in
+  that issue's or PR's conversation (`gh issue comment` / `gh pr comment`; an inline review comment
+  gets its replies on the PR conversation, since comment writes go only through those commands):
+  - when you start: `🤖 jpdf-agent picked up <link to the owner comment> (session <time>)`;
+  - when you finish: `🤖 jpdf-agent done: <link to the owner comment>` as the first line, then
+    what changed (commits, PRs, issues) and `waiting on owner: <action>` or
+    `waiting on owner: nothing`. If it waits on the owner, add `owner-todo` to the issue (or the
+    PR's issue, §0 above).
+
+  The link is the URL exactly as GitHub gives it (`…#issuecomment-N`, `…#discussion_rN`,
+  `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply. The proposed
+  feed (`ops/proposals/owner-comment-tracking.md`) drops a comment once a "done:" reply that starts
+  this way links it. An owner instruction with a "picked up" reply but no "done:" reply is
+  unfinished: the next session resumes it under rule a. Owner comments from before 2026-11-23
+  need no replies.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
@@ -90,8 +106,9 @@ Since retro 0001, due audits and retros (g, h) come **before** the backlog (i, j
 order a non-empty backlog starved them. Older journals use the old letters (audit = i,
 retro = j, ready issue = g).
 
-a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled).
-   They override ADRs. Reply on the issue with what you did.
+a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled: one
+   in the `owner-issues.sh` output with no "done:" reply linking it, §0). They override ADRs.
+   Reply "picked up" and "done:" as §0 says.
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
    `JUDGE-INFRA-FAILURE`) → `gh run rerun --failed <id>`; never change code for infra. Real
    failure → fix it. Red for 3 sessions → revert the culprit merge via PR and reopen its issue.
@@ -141,7 +158,7 @@ still come first). Do these in order, one per session:
 
 ## 3. Do the work
 1. **Claim:** `gh issue edit N --add-label in-progress --add-assignee @me` + comment
-   `claimed by session <time>`. Re-read the issue to confirm nobody else claimed it.
+   `claimed by session <time>` (for an owner issue, the §0 "picked up" reply is that comment). Re-read the issue to confirm nobody else claimed it.
 2. **Spec first** (`specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`, with every checklist
    section), then **failing tests**, then **code**. Answer the template's Security
    self-check and Limits boundary list in the spec **before** the review; they are the
