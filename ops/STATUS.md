@@ -31,8 +31,8 @@ Phase: bootstrap (pilot)
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
   #132, #134, #136, #137, #166.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
-  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #198: 2, PR #186: 4 +
-    final check (parked on one sentence).
+  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
+    final check (parked on one sentence), PR #198: 2.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).

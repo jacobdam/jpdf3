@@ -261,6 +261,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
+  should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
+  near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a
+  hand mutant per term ([journal](journal/2026-11-22.md), PR #198).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
