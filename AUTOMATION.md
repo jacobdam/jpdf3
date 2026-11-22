@@ -167,8 +167,8 @@ proves nothing, so identity comes from two other places:
   `ops/judge/allowed_signers`. The owner's signing key lives on the owner's laptop, out of
   the agent's reach. Code review can't do this job: GitHub forbids approving your own PR.
 
-**Owner flow for a protected change** (usually after an `ops/proposals/` file or an
-`owner-todo` issue), on the laptop:
+**Owner flow for a protected change** (usually after an `ops/proposals/` file merges and its
+issue gets `owner-todo`), on the laptop:
 ```sh
 git pull && git switch -c owner/<topic>
 JPDF_OWNER=1 claude              # or edit by hand; commits are signed (commit.gpgsign=true)
@@ -214,8 +214,8 @@ CI also **pins** protected config: before building PR code, it overwrites `deny.
 - **Judge health alarm:** the judge can break for reasons the agent can't fix: GitHub
   retiring an Action runtime, a runner image change, a pinned download disappearing.
   If the judge fails for **infrastructure** reasons (not our code) 3 times in a row:
-  1. the agent opens an `owner-todo` issue with the diagnosis and a ready-to-merge fix PR
-     (GitHub emails you)
+  1. the agent opens an issue with the diagnosis and a fix proposal PR, and labels it
+     `owner-todo` once the proposal is reviewed (GitHub emails you)
   2. it keeps working on things that don't need a green judge to merge: specs, local-only
      research, journeys, proposals, stacked branches
   3. if it's still unfixed after 7 days, the driver drops to 1 session per day, so it
@@ -383,6 +383,10 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 | weekly summary | a digest issue (GitHub emails it to you): progress, metrics trends, latest retro, ADRs, proposals, `owner-todo` items |
 | speed & forecast | in the digest: tasks/week, usage per merged PR, and a **forecast finish date per milestone** from the trailing 4-week rate. An alert fires if the forecast slips by more than 25% in a week |
 | live | on the Mac mini: `cmux tmux attach jpdf` (desktop notifications on halt, repeated failures, usage limits, judge alarm); remotely: `ssh mac-mini -t tmux attach -t jpdf` |
+
+**`owner-todo`** means "the owner can act right now" (#172): a merged proposal to apply, a
+`/hold` waiting for `/release`, or a blocked review waiting for a decision. Sessions add it when
+the owner's turn starts and remove it when the owner's part is done (rules: ops/TICK.md §0).
 
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.

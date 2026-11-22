@@ -21,6 +21,18 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   feed tells you apart, and the guard enforces it.
 - **Never edit protected paths** (CONSTITUTION 12). Change protected files only by writing
   `ops/proposals/<topic>.md`.
+- **`owner-todo` means "the owner can act right now"** (owner, #172), never "needs the owner
+  eventually". The owner reads the label list to see whose turn it is, so:
+  - File a finding that needs a protected change (audit, rule d, judge alarm) with its usual
+    labels and **without** `owner-todo`; work it like any issue and write the `ops/proposals/` file.
+  - When that proposal PR merges (judge alarm: once its review passes, §2 b), add `owner-todo`
+    to the issue (or to a new issue for the owner's part, if the PR closes it) and comment `ready for owner: apply ops/proposals/<x>.md,
+    test plan in §N`.
+  - When you park a PR waiting for the owner (a `/hold` waiting for `/release`, a `blocked`
+    review waiting for an owner decision), add `owner-todo` to its issue with a one-line note
+    on what the owner needs to do.
+  - Remove `owner-todo` once the owner's part is done (an owner-signed commit applying it, or
+    the owner comment it waited for). The owner may also remove it.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
@@ -73,11 +85,14 @@ b. **main is red.** Read the failing run. Infra failure (network, outage, a miss
    `JUDGE-INFRA-FAILURE`) → `gh run rerun --failed <id>`; never change code for infra. Real
    failure → fix it. Red for 3 sessions → revert the culprit merge via PR and reopen its issue.
    - **Judge alarm:** if the judge failed for infra reasons 3 runs in a row, open (or update) an
-     issue labeled `owner-todo` with the diagnosis and a fix in `ops/proposals/`, and write the
-     current epoch time to `ops/state/judge-alarm-since` (local state, not committed). Then
+     issue with the diagnosis, write the fix in `ops/proposals/`, and write the current epoch
+     time to `ops/state/judge-alarm-since` (local state, not committed). Then
      continue with work that doesn't need a merge. Delete that file once the judge is green.
+     The proposal PR can't merge while the judge is down, so add `owner-todo` (§0) as soon as
+     its `ai-review` is `success`, with `ready for owner: apply the proposal in PR #N`.
 c. **Your own open PR** failing CI or review → fix it. Max 3 CI fix attempts per PR. Then label
-   the issue `blocked`, write hypotheses and evidence on it, and close or park the PR. Review
+   the issue `blocked`, write hypotheses and evidence on it, and close or park the PR (a PR
+   parked for an owner decision also gets `owner-todo` on its issue, §0). Review
    rounds follow §4's cap (4 rounds, ADR 0010).
 d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`.** Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
@@ -248,8 +263,8 @@ Each round K runs in this order:
    - **anything** the final check reports (a fix that doesn't close its finding, a rejected
      dispute or regrade, a new blocker or major), or a fix diff over the size limit: turn the
      PR back into a draft (`gh pr ready N --undo`), label the issue `blocked`, comment the
-     ledger on it, post `ai-review` with `state=failure`, and leave the decision to the owner
-     (see K ≥ 6 above);
+     ledger on it, add `owner-todo` (§0), post `ai-review` with `state=failure`, and leave the
+     decision to the owner (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
 
 Mechanics (the guard wants one simple command with the text inline, no files):
@@ -290,7 +305,8 @@ leave the PR blocked.
 ## 5. Merge and record
 - **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
   into a draft (a workflow does it). Never mark a held PR ready or re-enable its auto-merge until
-  the owner comments `/release`; after `/release`, re-enable auto-merge. CI (`judge-verdict`) is the real gate. Read its summary on failure:
+  the owner comments `/release`. While a PR is held, its issue carries `owner-todo` (§0); after
+  `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
 - **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
   ```
@@ -317,8 +333,8 @@ leave the PR blocked.
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
   the last audit, plus a Codex security review of the same range (`ops/driver/codex-review.sh`,
-  brief = the security reviewer's brief in `target/scratch/`). Findings → issues; mark Codex
-  ones `(codex)`. Security findings get a `sev:*` label (ADR 0009; medium/low → M10), and the
+  brief = the security reviewer's brief in `target/scratch/`). Findings → issues (protected-file
+  findings without `owner-todo`, §0); mark Codex ones `(codex)`. Security findings get a `sev:*` label (ADR 0009; medium/low → M10), and the
   audit re-checks the labels of open `security` issues. Tell each reviewer what §4 tells its reviewer (public,
   repo-relative paths, one line per finding), with IDs `AS.<n>` (security) or `AC.<n>` (code).
   Post each report verbatim on the audit PR (draft it early) with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
@@ -332,7 +348,8 @@ leave the PR blocked.
   (XCUITest), and the same journeys in PDFgear. Screenshot each step (PDFgear shots →
   `~/jpdf-research/`, never the repo). A fresh vision reviewer scores ours against `specs/ui/`
   and Apple HIG/Material. Findings → `ux` issues; scores → `docs/ux-scores.md`.
-- **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; reconcile PLAN/STATUS/issues
+- **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; check every `owner-todo` label
+  against §0 (add or remove it); reconcile PLAN/STATUS/issues
   with reality; remove dead or duplicated code; refresh deps through admission; update
   `rust-toolchain.toml` to the latest stable.
 - **Record:** write `docs/audits/NNNN.md`.
