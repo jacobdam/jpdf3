@@ -554,6 +554,50 @@ mod tests {
         }
     }
 
+    /// The default `max_objects_per_parse` (2^20, lowered by #109) at its exact boundary: an
+    /// array and 2^20 - 1 integers (2^20 objects) parses, one integer more is refused.
+    #[test]
+    fn default_objects_per_parse_limit_is_exact() {
+        let l = Limits::default();
+        assert_eq!(l.max_objects_per_parse, 1 << 20);
+        let array = |n: usize| [b"[".to_vec(), b"1 ".repeat(n), b"]".to_vec()].concat();
+        let data = file(&[array((1 << 20) - 1), array(1 << 20)]);
+        let doc = XrefDocument::parse(&data, &l).expect("parses");
+        let at = doc.resolve(obj(1)).expect("2^20 objects parse");
+        assert_eq!(at.as_array().map(<[Object]>::len), Some((1 << 20) - 1));
+        drop(at);
+        assert_eq!(
+            doc.resolve(obj(2)).map(|_| ()),
+            Err(SyntaxError::LimitExceeded("objects in one parse"))
+        );
+    }
+
+    /// The lowered `max_objects_per_parse` still reaches `max_pages`: a `/Pages` dictionary
+    /// whose `/Kids` holds 1 000 000 references parses under the default limits (each `n g R`
+    /// counts as one object).
+    #[test]
+    fn flat_page_tree_at_max_pages_fits_one_parse() {
+        let l = Limits::default();
+        assert_eq!(l.max_pages, 1_000_000);
+        let body = [
+            b"<< /Type /Pages /Kids [".to_vec(),
+            b"2 0 R ".repeat(l.max_pages),
+            b"] /Count 1000000 >>".to_vec(),
+        ]
+        .concat();
+        let data = file(&[body]);
+        let doc = XrefDocument::parse(&data, &l).expect("parses");
+        let pages = doc
+            .resolve(obj(1))
+            .expect("a flat page tree at max_pages parses");
+        let kids = pages
+            .as_dict()
+            .and_then(|d| d.get(b"Kids"))
+            .and_then(Object::as_array)
+            .map(<[Object]>::len);
+        assert_eq!(kids, Some(1_000_000));
+    }
+
     #[test]
     fn xref_entries_stay_compact() {
         // Memory bound: the budget (crate::budget) multiplies this size; it is pinned there too.
@@ -843,6 +887,8 @@ mod tests {
             retained_cost(&Object::Dict(Dict(entries))),
             base + 288 + 48 + 32
         );
+        // Capacity 40 (a 48-byte chunk): capacities 1 to 24 all cost a 32-byte chunk, so a
+        // smaller one could not tell capacity from length.
         let mut name = Vec::with_capacity(40);
         name.push(b'N');
         assert_eq!(retained_cost(&Object::Name(name)), base + 48);

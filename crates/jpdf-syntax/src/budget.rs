@@ -347,6 +347,66 @@ mod tests {
         }
     }
 
+    /// Loose caller limits saturate every term instead of overflowing.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn loose_limits_saturate_every_term() {
+        let loose = Limits {
+            max_file_size: usize::MAX,
+            max_retained_bytes_per_document: u64::MAX,
+            max_xref_entries: usize::MAX,
+            max_xref_sections: usize::MAX,
+            max_pages: usize::MAX,
+            max_objects_per_parse: usize::MAX,
+            max_string_bytes_per_parse: usize::MAX,
+            max_decoded_bytes_per_stream: usize::MAX,
+            max_decode_working_bytes: u64::MAX,
+            max_raster_working_bytes: u64::MAX,
+            ..Limits::default()
+        };
+        let b = MemoryBudget::of(&loose);
+        assert_eq!(
+            b,
+            MemoryBudget {
+                file: u64::MAX,
+                retained: u64::MAX,
+                xref_table: u64::MAX,
+                spans: u64::MAX,
+                page_walk: u64::MAX,
+                parse: u64::MAX,
+                decode: u64::MAX,
+                raster: u64::MAX,
+            }
+        );
+        assert_eq!(b.peak(), u64::MAX);
+        // One field loose at a time: each product saturates on its own (a wrapping product
+        // would come out small).
+        let one = |f: fn(&mut Limits)| {
+            let mut l = Limits::default();
+            f(&mut l);
+            MemoryBudget::of(&l)
+        };
+        assert_eq!(
+            one(|l| l.max_xref_entries = usize::MAX).xref_table,
+            u64::MAX
+        );
+        assert_eq!(one(|l| l.max_xref_entries = usize::MAX).spans, u64::MAX);
+        assert_eq!(one(|l| l.max_xref_sections = usize::MAX).spans, u64::MAX);
+        assert_eq!(one(|l| l.max_pages = usize::MAX).page_walk, u64::MAX);
+        assert_eq!(
+            one(|l| l.max_objects_per_parse = usize::MAX).parse,
+            u64::MAX
+        );
+        assert_eq!(
+            one(|l| l.max_string_bytes_per_parse = usize::MAX).parse,
+            u64::MAX
+        );
+        assert_eq!(
+            one(|l| l.max_decode_working_bytes = u64::MAX).decode,
+            u64::MAX
+        );
+    }
+
     /// Only the largest phase counts, whichever it is, and the peak adds the reserve.
     #[test]
     fn peak_is_persistent_plus_largest_phase_plus_reserve() {

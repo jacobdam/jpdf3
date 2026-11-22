@@ -40,8 +40,12 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
   (glibc reserves a 64 MiB heap region for each thread other than the main one, and
   `RLIMIT_AS` counts it); fragmentation and small bookkeeping 96 MiB. Per-allocation chunk
   overhead is **not** in the reserve: retained charges chunks, parse uses a per-object worst
-  case, and the other terms are large buffers. The stack and arena items are placeholders
-  until the resource-limit harness (#25) measures them. glibc maps 2 × 64 MiB to align a new
+  case, and the other terms are large buffers. All three non-binary items (stacks, arena,
+  fragmentation) are placeholders until the resource-limit harness (#25) measures them. One
+  fragmentation case on today's path: cached objects sit in the brk heap between buffers the
+  same parse freed as its containers grew. Later allocations reuse those holes only if they
+  fit, so the stranded bytes are bounded by the cached container bytes (at most `retained`),
+  not by 96 MiB. #25 must measure this with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
   thread arena before trimming it, and a busy thread arena grows in 64 MiB sub-heaps that can
   strand unused tails. So #114 must either keep large allocations off the engine thread's
   arena (glibc serves requests above the mmap threshold, at most 32 MiB, with their own
@@ -148,8 +152,10 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
   - `default_canvas_limit_is_exact` (raster.rs): `check_scene` with `RasterLimits::default()`
     passes 2^23 pixels (4096 × 2048 and 2^23 × 1) and refuses 2^23 + 1. The parameterized
     boundary tests in the raster suite are unchanged.
-  - `max_objects_per_parse`: the existing boundary test (`object_budget`, lexer.rs) takes the
-    limit as a parameter.
+  - `default_objects_per_parse_limit_is_exact` (xref.rs): with the default limits, an array
+    plus 2^20 - 1 integers (2^20 objects) parses and one integer more is refused.
+    `flat_page_tree_at_max_pages_fits_one_parse` (xref.rs) parses a `/Pages` dictionary with
+    1 000 000 references under the defaults, so the lowered limit still reaches `max_pages`.
   - The retained-bytes boundary tests (`retained_budget_boundary_for_one_object`, at the cost
     and one byte less) compute the cost with `retained_cost`, so they cover the chunk model.
   - `defaults_fit_the_process_budget_with_the_reserve`: peak + 64 MiB ≤ 2 GiB at the
@@ -157,7 +163,9 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     eats into the reserve.
 - `MemoryBudget::of` and `alloc_bytes` use saturating arithmetic (`u64`), so loose caller limits
   (e.g. `usize::MAX`) give `u64::MAX`, never an overflow
-  (`peak_is_persistent_plus_largest_phase_plus_reserve`, `alloc_bytes_follow_glibc_chunks`).
+  (`loose_limits_saturate_every_term` calls `of` with every contributing field at its type
+  maximum, all at once and one at a time; `peak_is_persistent_plus_largest_phase_plus_reserve`
+  saturates `peak`; `alloc_bytes_follow_glibc_chunks` saturates `alloc_bytes`).
 
 ## Security
 - Threat: a hostile file that drives every limit to its maximum at once must not exhaust the
@@ -188,9 +196,8 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     not measured.
 - Known gap (#146): the phase model assumes heap reuse across phases (see Behavior). It holds
   today only because parse is the only phase on the jpdf-cli path.
-- Known gap (#113, PR #140): `max_string_bytes_per_parse` is not exact for names and odd hex
-  strings. The overshoot is bounded by the object count, and each such token is a small chunk
-  inside the 272-byte per-object bound, so the parse term still holds.
+- `max_string_bytes_per_parse` is exact for every token kind since #113 (merged into this
+  branch), which the parse term's `× 3` assumes.
 - Known gap: `read_capped` in jpdf-cli reserves the size from `stat`. A file that grows
   during the read (below `max_file_size`) makes `read_to_end` double the buffer, up to 3 ×
   `max_file_size` at the realloc peak. It needs a local attacker who can write to the file
@@ -200,7 +207,8 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
 Not applicable.
 
 ## Platforms
-`type_sizes_are_pinned`, `default_terms`, `each_term_follows_its_fields` and
+`type_sizes_are_pinned`, `default_terms`, `each_term_follows_its_fields`,
+`loose_limits_saturate_every_term`, `parse_object_bytes_bound_real_objects` and
 `retained_cost_counts_every_allocation` run on 64-bit targets only. On wasm32 the pointer and
 `Vec` sizes are smaller, so every term is smaller and the budget still fits.
 `defaults_fit_the_process_budget_with_the_reserve` runs on every target. The chunk model is
@@ -213,13 +221,15 @@ per allocation counted by `retained_cost`, which already walks the object once.
 ## Tests
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
-  `each_term_follows_its_fields`, `peak_is_persistent_plus_largest_phase_plus_reserve`.
+  `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,
+  `peak_is_persistent_plus_largest_phase_plus_reserve`.
 - crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`,
+  `default_objects_per_parse_limit_is_exact`, `flat_page_tree_at_max_pages_fits_one_parse`,
   `parse_object_bytes_bound_real_objects`, `trailer_with_duplicate_keys_is_trimmed_to_two_entries`,
-- crates/jpdf-traits/src/limits.rs: `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of
-  `max_pages` references plus 32 768 other objects fit in one parse).
   `alloc_bytes_follow_glibc_chunks`, `retained_cost_counts_every_allocation` (new literals).
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^23 pixels pass with
   the default limits, 2^23 + 1 fail).
 - crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now uses
-  `check_scene`'s full formula and pins 512 MiB working bytes and 2^23 canvas pixels.
+  `check_scene`'s full formula and pins 512 MiB working bytes and 2^23 canvas pixels;
+  `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of `max_pages` references plus
+  32 768 other objects fit in one parse).
