@@ -136,10 +136,13 @@ tests:
   matches) with the journey reporter: the passing probe alone reports
   `e2e.web.harness_probe` as `pass` and exits 0 (control); with a file whose `beforeAll`
   throws it exits non-zero and reports `fail`; with an unloadable file it exits non-zero
-  and reports no ID (Playwright 1.65 runs nothing then).
+  and reports no ID (Playwright 1.65 runs nothing then; a tripwire for that behavior, which
+  any reporter passes today).
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
 lines), a failed run downgrades every pass (and damaged results are an error and an empty set), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
-tree copy. `xtask/tests/check_specs.rs`: `ci linux` outside a
+tree copy. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step
+writes a `pass` line writes it as `pass` when that step exits 0 and as `fail` when it exits 1;
+`ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs;
 `ci linux` with stub `node`/`npm` on PATH and `npm_config_ignore_scripts=false` must call the
 install as `ci --ignore-scripts`.

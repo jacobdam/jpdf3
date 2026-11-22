@@ -269,7 +269,7 @@ fn remove_stale(path: &Path) -> Result<(), String> {
 }
 
 /// `cargo xtask ci macos`. Always writes `out/e2e.json` (empty or partial results when a step
-/// fails). Returns Err with the first failure.
+/// fails, with no `pass` if any step or check failed). Returns Err with the first failure.
 pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
     let out = fs::canonicalize(out).map_err(|e| format!("resolve {}: {e}", out.display()))?;
@@ -568,6 +568,10 @@ mod tests {
         let (r, e) = final_results(err("test"), read(&["read"]), Ok(()));
         assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
         assert_eq!(e, ["test", "read"]);
+        // xcodebuild test failed although every case mapped cleanly: still no pass.
+        let (r, e) = final_results(err("test"), read(&[]), Ok(()));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["test"]);
         // Only the Release check failed (#76 item 2): no pass, its error comes last.
         let (r, e) = final_results(Ok(()), read(&["read"]), err("release"));
         assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));

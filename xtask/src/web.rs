@@ -70,9 +70,9 @@ pub fn parse_results(text: &str) -> Result<BTreeMap<String, Status>, String> {
     Ok(out)
 }
 
-/// Turns every `pass` into `fail`. Used when the run itself failed: a test file that didn't
-/// load, a throwing hook or a failed release check can drop tests while another test with the
-/// same ID passes, so no ID from such a run counts as passing (#76).
+/// Turns every `pass` into `fail`. Used when the run itself failed (a step exited non-zero, a
+/// result couldn't be mapped, a check of the built app failed): such a run may have dropped
+/// tests of an ID that another test passed, so no ID from it counts as passing (#76).
 pub fn downgrade_passes(results: &mut BTreeMap<String, Status>) {
     for s in results.values_mut() {
         if *s == Status::Pass {

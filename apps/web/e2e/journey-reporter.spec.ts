@@ -101,17 +101,20 @@ test("the reporter downgrades on a failed run status and on any reported error",
 function probe(files: string[]): { code: number | null; tsv: string; log: string } {
   const dir = mkdtempSync(join(tmpdir(), "jpdf-probe-"));
   const file = join(dir, "r.tsv");
+  // Paths from this file's location, so the probe works wherever Playwright was started.
+  const web = join(import.meta.dirname, "..");
   try {
     const run = spawnSync(
       process.execPath,
       [
-        join("node_modules", "@playwright", "test", "cli.js"),
+        join(web, "node_modules", "@playwright", "test", "cli.js"),
         "test",
         "-c",
-        join("e2e", "harness-probe", "playwright.config.ts"),
+        join(web, "e2e", "harness-probe", "playwright.config.ts"),
         ...files,
       ],
       {
+        cwd: web,
         encoding: "utf8",
         timeout: 60_000,
         env: { ...process.env, JPDF_E2E_RESULTS: file, JPDF_PROBE_OUT: join(dir, "out"), CI: "1" },
@@ -140,9 +143,10 @@ test.describe("a real Playwright run with the journey reporter", () => {
 
   test("an unloadable spec file leaves no passing ID", () => {
     // Playwright 1.65 runs no test at all when a file fails to load, so the reporter writes
-    // no ID (and xtask fails on "no journey test ids"). Should a later Playwright run the
-    // other files, finalize() turns their passes into failures; the exact empty file pins
-    // today's behavior so such a change is noticed.
+    // no ID (and xtask fails on "no journey test ids"). This is a tripwire for that
+    // Playwright behavior, not a check of the reporter: any reporter passes it today. The
+    // downgrade itself is checked by the hook probe below and the onError unit test; the
+    // exact empty file makes a Playwright that starts running the other files fail here.
     const r = probe(["passing.probe", "unloadable.probe"]);
     expect(r.code, r.log).not.toBe(0);
     expect(r.tsv, r.log).toBe("");
