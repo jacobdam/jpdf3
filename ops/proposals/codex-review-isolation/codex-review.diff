@@ -10,7 +10,7 @@
  # ChatGPT apps and plugins off, strict config and a scrubbed environment.
  # Output: <out>.json (codex-review.schema.json plus status/reason) and <out>.log (Codex's log).
  # Exit codes: 2 = usage error (nothing written). Otherwise 0, always: on any failure the output
-@@ -44,8 +45,16 @@
+@@ -44,8 +45,18 @@
  [[ ! -d "$OUT" && ! -d "$LOG" ]] || usage "<out> or its .log is a directory"
  # Leftovers of a run that was killed outright (SIGKILL), once older than any run can last.
  # Temp files use the reserved prefix .codex-review-tmp. so this can't match anything else.
@@ -25,11 +25,13 @@
 +  find "$1" -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
 +  rm -rf -- "$1" 2>/dev/null || echo "codex-review: could not remove all of target/scratch/$1" >&2
 +}
-+for d in $(find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60); do rmtree "$d"; done
++# NUL-separated, so a name with spaces or glob characters stays one path (no word splitting).
++while IFS= read -r -d '' d; do rmtree "$d"; done \
++  < <(find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60 -print0)
  
  pid=""; dog=""; SRC=""; PROMPT=""; TMARK=""; RAW=""; TLOG=""; T=""
  put() {   # put <name> <tmpfile>: rename into place (replaces a link instead of following it)
-@@ -70,7 +79,7 @@
+@@ -70,7 +81,7 @@
  cleanup() {
    [[ -n "$dog" ]] && kill -TERM "$dog" 2>/dev/null
    reap
@@ -38,7 +40,7 @@
    local f; for f in "$PROMPT" "$TMARK" "$RAW" "$TLOG" "$T"; do [[ -n "$f" ]] && rm -f -- "$f"; done
  }
  trap cleanup EXIT
-@@ -115,10 +124,18 @@
+@@ -115,10 +126,18 @@
  XGIT=(env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
    git -c core.hooksPath=/dev/null -c init.templateDir= -c core.fsmonitor=false -c commit.gpgsign=false
    -c core.attributesFile=/dev/null -c user.name=export -c user.email=export@invalid)
@@ -59,33 +61,49 @@
  [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
  # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
  # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
-@@ -153,12 +170,51 @@
+@@ -153,12 +172,67 @@
    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
    TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
  # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
-+# This runs with the driver's permissions, so nothing the reviewed branch controls may configure it
-+# (CX.3): cargo reads .cargo/config.toml from the export and from every directory above it (this
-+# worktree's working copy included), and rustup reads the export's toolchain file (a `path` entry
-+# there would run a toolchain binary of the branch's choice). So: .cargo/ in HEAD must be origin/main's
-+# tree (it is protected, CONSTITUTION 12); this worktree's .cargo/ must be clean; no .cargo/ may sit in
-+# target/ or target/scratch/; and the toolchain file may only pin an exact channel, components,
-+# targets and profile. Directories above the worktree (the main checkout, $HOME) are the owner's.
++# This runs with the driver's permissions, so nothing the reviewed branch or a session controls may
++# configure it (CX.3):
++# - cargo reads .cargo/config.toml from the export and from every directory above it. .cargo/ in
++#   HEAD must be origin/main's tree (it is protected, CONSTITUTION 12); above the export, a .cargo
++#   may exist only in this worktree (and must be clean: it is HEAD's), the main checkout (protected,
++#   synced to main by the driver) and $HOME (cargo's own home). Any other one (target/,
++#   target/scratch/, .claude/worktrees/, which sessions can write) fails the run.
++# - rustup takes the toolchain from the first toolchain file it finds upward, and a `path` entry
++#   there would run a toolchain binary of anyone's choice. The export must have a rust-toolchain.toml
++#   that pins only an exact channel, components, targets and profile, and RUSTUP_TOOLCHAIN (which
++#   wins over every toolchain file and directory override) is set to that channel.
++# Not covered: a session that moves the local ref refs/remotes/origin/main (git update-ref) can make
++# a changed .cargo/ look like main's; that needs a deliberately hostile local process (see the top).
 +XG=("${XGIT[@]}" -C "$TOP")
 +[[ "$("${XG[@]}" rev-parse -q --verify HEAD:.cargo 2>/dev/null)" == \
 +   "$("${XG[@]}" rev-parse -q --verify refs/remotes/origin/main:.cargo 2>/dev/null)" ]] \
 +  || fail ".cargo/ differs from origin/main"
 +[[ -z "$("${XG[@]}" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
 +  || fail "this worktree's .cargo/ has local changes"
-+[[ ! -e "$TOP/target/.cargo" && ! -L "$TOP/target/.cargo" && ! -e "$SCR/.cargo" && ! -L "$SCR/.cargo" ]] \
-+  || fail "a .cargo/ in target/ or target/scratch/"
-+[[ ! -e "$SRC/rust-toolchain" ]] || fail "legacy rust-toolchain file in HEAD"
++MAIN="$(common "$TOP")"; [[ "${MAIN##*/}" == .git ]] && MAIN="${MAIN%/*}" || fail "main checkout not found"
++HOMEP="$(cd "$HOME" && pwd -P)" || fail "HOME"
++d="$SCR"
++while :; do
++  if [[ -e "$d/.cargo" || -L "$d/.cargo" ]]; then
++    [[ "$d" == "$TOP" || "$d" == "$MAIN" || "$d" == "$HOMEP" ]] || fail "a .cargo in ${d#"$TOP/"} (above the export)"
++  fi
++  [[ "$d" == / ]] && break
++  d="$(dirname -- "$d")"
++done
++[[ ! -e "$SRC/rust-toolchain" && ! -L "$SRC/rust-toolchain" ]] || fail "legacy rust-toolchain file in HEAD"
++[[ -f "$SRC/rust-toolchain.toml" ]] || fail "no rust-toolchain.toml in HEAD"
 +# grep -v exits 1 only when every line matches; 0 (a line that doesn't) and 2 (an error) both fail.
-+if [[ -e "$SRC/rust-toolchain.toml" ]]; then
-+  grep -qvE \
-+    '^(\[toolchain\]|channel = "[0-9]+\.[0-9]+\.[0-9]+"|(components|targets) = \[( *"[a-z0-9_-]+",?)* *\]|profile = "(minimal|default|complete)"|#.*)?$' \
-+    "$SRC/rust-toolchain.toml"
-+  (( $? == 1 )) || fail "rust-toolchain.toml has entries beyond channel/components/targets/profile"
-+fi
++grep -qvE \
++  '^(\[toolchain\]|channel = "[0-9]+\.[0-9]+\.[0-9]+"|(components|targets) = \[( *"[a-z0-9_-]+",?)* *\]|profile = "(minimal|default|complete)"|#.*)?$' \
++  "$SRC/rust-toolchain.toml"
++(( $? == 1 )) || fail "rust-toolchain.toml has entries beyond channel/components/targets/profile"
++CHANNEL="$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "$SRC/rust-toolchain.toml")"
++[[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "rust-toolchain.toml needs exactly one exact channel"
++BASE_ENV+=(RUSTUP_TOOLCHAIN="$CHANNEL")
  run_limited "$FETCH_LIMIT" "${BASE_ENV[@]}" /bin/sh -c 'cd "$1" && exec cargo fetch --locked -q' _ "$SCR/$SRC" \
    > /dev/null 2>&1 < /dev/null
  rc=$?
@@ -111,7 +129,7 @@
  RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
  TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
  run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
-@@ -168,10 +224,10 @@
+@@ -168,10 +242,10 @@
    --disable apps --disable plugins --disable shell_snapshot --disable hooks \
    --disable computer_use --disable browser_use --disable browser_use_external \
    --disable in_app_browser --disable image_generation \
@@ -126,18 +144,21 @@
    -c web_search=disabled \
    -C "$SCR/$SRC" \
    --output-schema "$SCHEMA" \
-@@ -182,7 +238,13 @@
+@@ -182,7 +256,14 @@
  
  [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
  (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
 -jq -e '(.verdict | type == "string") and (.findings | type == "array")' "$RAW" >/dev/null 2>&1 \
+-  || fail "output not schema JSON (see target/scratch/$LOG)"
+-T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq '. + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
 +# The schema's shape, checked here too (CX.16): Codex enforcing --output-schema is not ours to rely on.
-+jq -e 'type == "object" and (keys == ["findings", "verdict"]) and (.verdict | type == "string")
-+  and (.findings | type == "array") and all(.findings[];
++# -s: the file must hold exactly one JSON value (jq -e alone judges only the last of several).
++OUT_CHECK='length == 1 and (.[0] | type == "object" and (keys == ["findings", "verdict"])
++  and (.verdict | type == "string") and (.findings | type == "array") and all(.findings[];
 +    type == "object" and (keys == ["detail", "file", "fix", "line", "severity", "title"])
 +    and (.severity | IN("blocker", "major", "minor", "nit"))
 +    and (.line == null or (.line | type == "number" and . == floor))
-+    and ([.file, .title, .detail, .fix] | all(type == "string")))' "$RAW" >/dev/null 2>&1 \
-   || fail "output not schema JSON (see target/scratch/$LOG)"
- T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq '. + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
++    and ([.file, .title, .detail, .fix] | all(type == "string"))))'
++jq -s -e "$OUT_CHECK" "$RAW" >/dev/null 2>&1 || fail "output not schema JSON (see target/scratch/$LOG)"
++T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq -s '.[0] + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
    || fail "write failed"

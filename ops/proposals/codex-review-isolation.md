@@ -12,11 +12,11 @@ plan (§4) runs it before the change is trusted.
 | Finding | Where (main @ 51c0e46) | Fix in this proposal | How it was checked |
 |---|---|---|---|
 | AS.52, CX.1 (codex): Codex's commands can read any file the owner can: the sealed manifest in the main checkout, `~/.codex/auth.json`, `~/.ssh`, `~/jpdf-corpus`, `~/jpdf-research`. What it reads reaches OpenAI and can be posted on the PR (CONSTITUTION 1.2, 13). | `codex-review.sh:171` (`--sandbox workspace-write` limits writes and network, not reads) | Replace the legacy sandbox flags with a Codex permission profile: `:root` = deny, `:minimal` = read, the export = the writable workspace, plus read-only toolchain paths (§2). | Not run (§4 test plan T1–T4). Key names from the docs and the 0.171.0 binary. |
-| CX.2 (codex): a reviewed HEAD whose `ops/judge` (or `ops`, `ops/judge/corpus`) is a symlink makes the following `rm -f` delete a file of the manifest's name wherever the link points, before the symlink check runs. | `codex-review.sh:118-122` | Refuse any symlink (mode 120000) in HEAD's tree before extracting; drop the `rm -f` (the `--exclude` keeps the file out and the byte-for-byte check already fails if it is there). | **Reproduced** with a scratch repo (a probe file name): `git archive \| tar --exclude` exits 0, then the `rm -f` deleted the target file through the link. The new pre-check refuses that repo (T5). bsdtar itself refuses to extract *through* a symlink, so the `rm` was the only path. |
-| CX.3 (codex): `cargo fetch` runs outside the sandbox in the export, so a branch-controlled `.cargo/config.toml` (credential provider, source replacement) runs with the driver's permissions. Same for `rust-toolchain.toml`: rustup accepts a `path` entry, which would run a toolchain binary of the branch's choice. | `codex-review.sh:156` | Before the fetch: `.cargo/` in HEAD must have origin/main's tree id (it is protected); this worktree's `.cargo/` must be clean (cargo also reads configs from every directory above the export, the worktree included); no `.cargo/` in `target/` or `target/scratch/`; no legacy `rust-toolchain` file; `rust-toolchain.toml` may contain only `[toolchain]`, an exact `channel`, `components`, `targets`, `profile`, comments and blank lines. | Scratch tests T6: the repo's real file passes; `path = …`, `nightly`, CRLF and the legacy file fail. |
-| AS.55: `chflags -R nouchg` and `chmod -R u+w` before `rm -rf` change the mode of any same-volume file Codex hard-linked into the export (probe in audit 0003: a 0444 file became 0644). | `codex-review.sh:48`, `:73` | `rmtree`: give `u+w` to directories only (a directory can't be hard-linked; unlinking a file needs only a writable parent), never touch file modes or flags. A file Codex made immutable stays behind and the run says so on stderr. | Scratch test T7: the outside 0444 file stays 0444 and the read-only tree is gone; the old pass, run the same way, makes it 0644. |
-| CX.16 (codex): the output check accepts `findings: [null]`, findings without `severity`/`detail`, unknown severities, extra keys. | `codex-review.sh:185` | Check the schema's shape in jq: exact key sets, the severity enum, `line` an integer or null, string fields. | Scratch test T8: 3 valid shapes pass, 9 malformed ones fail. |
-| CX.11 (codex): a helper the CLI starts in its own session (setsid) survives a normal CLI exit: it has left the session's process group and, once the CLI is gone, is reparented to launchd, so neither the group kill nor the descendant list finds it. | `driver.sh:190` | Record `pid start-time` of every descendant at each poll; after the CLI exits (however it ends), signal each recorded process whose start time still matches, its descendants, and what is left of the session's group: TERM, KILL after 15 s, re-checking the start time before every signal. | Scratch test T9: a fake CLI starts a setsid helper and exits 0; the helper survives (the bug), then `stop_leftovers` stops it; a bystander recorded with a wrong start time is untouched; a TERM-ignoring helper is killed after the grace period. |
+| CX.2 (codex): a reviewed HEAD whose `ops/judge` (or `ops`, `ops/judge/corpus`) is a symlink makes the following `rm -f` delete a file of the manifest's name wherever the link points, before the symlink check runs. | `codex-review.sh:118-122` | Refuse any symlink (mode 120000) in HEAD's tree before extracting; drop the `rm -f` (the `--exclude` keeps the file out and the byte-for-byte check already fails if it is there). | **Reproduced** with a scratch repo (a probe file name): `git archive \| tar --exclude` exits 0, then the `rm -f` deleted the target file through the link. The new pre-check refuses that repo (tests §4). bsdtar itself refuses to extract *through* a symlink, so the `rm` was the only path. |
+| CX.3 (codex): `cargo fetch` runs outside the sandbox in the export, so a branch-controlled `.cargo/config.toml` (credential provider, `build.rustc`, source replacement) runs a program with the driver's permissions. Same for a toolchain file: rustup accepts a `path` entry, which runs a toolchain binary of the file writer's choice, and it searches every directory upward for one. | `codex-review.sh:156` | Before the fetch: `.cargo/` in HEAD must have origin/main's tree id (it is protected). Above the export, a `.cargo` may exist only in this worktree (which must be clean), the main checkout (protected, synced by the driver) and `$HOME`; one anywhere else (`target/`, `target/scratch/`, `.claude/worktrees/`, all writable by sessions) fails the run. The export must have a `rust-toolchain.toml` with only `[toolchain]`, one exact `channel`, `components`, `targets`, `profile`, comments and blank lines, and no legacy `rust-toolchain`; `RUSTUP_TOOLCHAIN` is set to that channel, which wins over every toolchain file and directory override. | Tests §4: the repo's real file passes; `path = …`, `nightly`, CRLF, two channels, no channel, no file and the legacy file fail; the walk accepts `.cargo` in the worktree, the main checkout and `$HOME`, and refuses it in `.claude/worktrees/`, `.claude/`, `target/`, `target/scratch/` and above the main checkout. Run on this machine's real layout, the walk accepts it. |
+| AS.55: `chflags -R nouchg` and `chmod -R u+w` before `rm -rf` change the mode of any same-volume file Codex hard-linked into the export (probe in audit 0003: a 0444 file became 0644). | `codex-review.sh:48`, `:73` | `rmtree`: give `u+w` to directories only (a directory can't be hard-linked; unlinking a file needs only a writable parent), never touch file modes or flags. A file Codex made immutable stays behind and the run says so on stderr. The leftover sweep reads `find -print0` NUL-separated, so a crafted entry name can't expand to other paths. | Tests §4: the outside 0444 file stays 0444 and the read-only tree is gone; the old pass on the same layout makes it 0644. Sweep: entries named `.codex-review-tmp.x *` and `.codex-review-tmp.x victim` are removed and nothing else (`victim`, the brief, a fresh temp entry) is. |
+| CX.16 (codex): the output check accepts `findings: [null]`, findings without `severity`/`detail`, unknown severities, extra keys. | `codex-review.sh:185` | Check the schema's shape in jq, in slurp mode: the file must hold exactly one JSON value (plain `jq -e` judges only the last of several), exact key sets, the severity enum, `line` an integer or null, string fields. The written output is that one object. | Tests §4: 3 valid shapes pass; 13 bad inputs fail, including two values (a malformed one first) and an empty file. |
+| CX.11 (codex): a helper the CLI starts in its own session (setsid) survives a normal CLI exit: it has left the session's process group and, once the CLI is gone, is reparented to launchd, so neither the group kill nor the descendant list finds it. | `driver.sh:190` | At each poll, record `pid|start-time` of every descendant of the CLI, in the driver's memory (a file the session can write would let it name any process). After the CLI exits (however it ends, the driver's own signal trap included), signal each recorded process whose start time still matches, its current descendants, and the session's group while it has members: TERM, KILL after 15 s, re-checking start times before every signal. Pids 0 and 1 and the driver itself are never recorded or entered. One `ps` snapshot per pass. | Tests §4: a fake CLI starts a setsid helper and exits 0; the helper survives (the bug), then is stopped; its child started after the last poll is stopped too; a bystander recorded with a wrong start time is untouched; a TERM-ignoring helper is killed after the grace period; records naming pid 1 (with launchd's real start time), 0, -1 and junk signal nothing (`kill` swapped for a recorder). |
 
 ## 2. The permission profile (AS.52, CX.1)
 
@@ -67,7 +67,14 @@ CLI, not the model's commands.
   launcher). T1–T4 must pass before the owner relies on it.
 - `:minimal` is not documented path by path. If it includes something sensitive, T3 shows it.
 - If `cargo test` inside the review needs a path outside the list, Codex's build fails (it reports
-  that it couldn't build), the review itself still runs. T4 checks the build.
+  that it couldn't build), the review itself still runs. T4 checks the build. Likely first failure:
+  cargo takes a lock in `~/.cargo/.package-cache` and updates `~/.cargo/.global-cache`, which the
+  profile doesn't grant. If T4 shows that, give the review a per-run `CARGO_HOME` inside the export
+  (a copy of `registry/` made by the launcher after `cargo fetch`) rather than granting write access
+  to `~/.cargo`.
+- The `.cargo/` trust anchor is the local ref `refs/remotes/origin/main`. A session that moves it
+  (`git update-ref`) can make a changed `.cargo/` look like main's; that is a deliberately hostile
+  local process, which the script's header already puts out of scope.
 - Codex's own built-in file tools, if any run in the CLI process rather than in the sandbox, are
   not covered by any sandbox setting. T2 asks for a read through a tool call, not only a shell
   command.
@@ -95,7 +102,7 @@ unchanged code.
  # ChatGPT apps and plugins off, strict config and a scrubbed environment.
  # Output: <out>.json (codex-review.schema.json plus status/reason) and <out>.log (Codex's log).
  # Exit codes: 2 = usage error (nothing written). Otherwise 0, always: on any failure the output
-@@ -44,8 +45,16 @@
+@@ -44,8 +45,18 @@
  [[ ! -d "$OUT" && ! -d "$LOG" ]] || usage "<out> or its .log is a directory"
  # Leftovers of a run that was killed outright (SIGKILL), once older than any run can last.
  # Temp files use the reserved prefix .codex-review-tmp. so this can't match anything else.
@@ -110,11 +117,13 @@ unchanged code.
 +  find "$1" -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null
 +  rm -rf -- "$1" 2>/dev/null || echo "codex-review: could not remove all of target/scratch/$1" >&2
 +}
-+for d in $(find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60); do rmtree "$d"; done
++# NUL-separated, so a name with spaces or glob characters stays one path (no word splitting).
++while IFS= read -r -d '' d; do rmtree "$d"; done \
++  < <(find . -maxdepth 1 -name '.codex-review-tmp.*' -mmin +60 -print0)
  
  pid=""; dog=""; SRC=""; PROMPT=""; TMARK=""; RAW=""; TLOG=""; T=""
  put() {   # put <name> <tmpfile>: rename into place (replaces a link instead of following it)
-@@ -70,7 +79,7 @@
+@@ -70,7 +81,7 @@
  cleanup() {
    [[ -n "$dog" ]] && kill -TERM "$dog" 2>/dev/null
    reap
@@ -123,7 +132,7 @@ unchanged code.
    local f; for f in "$PROMPT" "$TMARK" "$RAW" "$TLOG" "$T"; do [[ -n "$f" ]] && rm -f -- "$f"; done
  }
  trap cleanup EXIT
-@@ -115,10 +124,18 @@
+@@ -115,10 +126,18 @@
  XGIT=(env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
    git -c core.hooksPath=/dev/null -c init.templateDir= -c core.fsmonitor=false -c commit.gpgsign=false
    -c core.attributesFile=/dev/null -c user.name=export -c user.email=export@invalid)
@@ -144,33 +153,49 @@ unchanged code.
  [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
  # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
  # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
-@@ -153,12 +170,51 @@
+@@ -153,12 +172,67 @@
    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
    TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
  # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
-+# This runs with the driver's permissions, so nothing the reviewed branch controls may configure it
-+# (CX.3): cargo reads .cargo/config.toml from the export and from every directory above it (this
-+# worktree's working copy included), and rustup reads the export's toolchain file (a `path` entry
-+# there would run a toolchain binary of the branch's choice). So: .cargo/ in HEAD must be origin/main's
-+# tree (it is protected, CONSTITUTION 12); this worktree's .cargo/ must be clean; no .cargo/ may sit in
-+# target/ or target/scratch/; and the toolchain file may only pin an exact channel, components,
-+# targets and profile. Directories above the worktree (the main checkout, $HOME) are the owner's.
++# This runs with the driver's permissions, so nothing the reviewed branch or a session controls may
++# configure it (CX.3):
++# - cargo reads .cargo/config.toml from the export and from every directory above it. .cargo/ in
++#   HEAD must be origin/main's tree (it is protected, CONSTITUTION 12); above the export, a .cargo
++#   may exist only in this worktree (and must be clean: it is HEAD's), the main checkout (protected,
++#   synced to main by the driver) and $HOME (cargo's own home). Any other one (target/,
++#   target/scratch/, .claude/worktrees/, which sessions can write) fails the run.
++# - rustup takes the toolchain from the first toolchain file it finds upward, and a `path` entry
++#   there would run a toolchain binary of anyone's choice. The export must have a rust-toolchain.toml
++#   that pins only an exact channel, components, targets and profile, and RUSTUP_TOOLCHAIN (which
++#   wins over every toolchain file and directory override) is set to that channel.
++# Not covered: a session that moves the local ref refs/remotes/origin/main (git update-ref) can make
++# a changed .cargo/ look like main's; that needs a deliberately hostile local process (see the top).
 +XG=("${XGIT[@]}" -C "$TOP")
 +[[ "$("${XG[@]}" rev-parse -q --verify HEAD:.cargo 2>/dev/null)" == \
 +   "$("${XG[@]}" rev-parse -q --verify refs/remotes/origin/main:.cargo 2>/dev/null)" ]] \
 +  || fail ".cargo/ differs from origin/main"
 +[[ -z "$("${XG[@]}" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
 +  || fail "this worktree's .cargo/ has local changes"
-+[[ ! -e "$TOP/target/.cargo" && ! -L "$TOP/target/.cargo" && ! -e "$SCR/.cargo" && ! -L "$SCR/.cargo" ]] \
-+  || fail "a .cargo/ in target/ or target/scratch/"
-+[[ ! -e "$SRC/rust-toolchain" ]] || fail "legacy rust-toolchain file in HEAD"
++MAIN="$(common "$TOP")"; [[ "${MAIN##*/}" == .git ]] && MAIN="${MAIN%/*}" || fail "main checkout not found"
++HOMEP="$(cd "$HOME" && pwd -P)" || fail "HOME"
++d="$SCR"
++while :; do
++  if [[ -e "$d/.cargo" || -L "$d/.cargo" ]]; then
++    [[ "$d" == "$TOP" || "$d" == "$MAIN" || "$d" == "$HOMEP" ]] || fail "a .cargo in ${d#"$TOP/"} (above the export)"
++  fi
++  [[ "$d" == / ]] && break
++  d="$(dirname -- "$d")"
++done
++[[ ! -e "$SRC/rust-toolchain" && ! -L "$SRC/rust-toolchain" ]] || fail "legacy rust-toolchain file in HEAD"
++[[ -f "$SRC/rust-toolchain.toml" ]] || fail "no rust-toolchain.toml in HEAD"
 +# grep -v exits 1 only when every line matches; 0 (a line that doesn't) and 2 (an error) both fail.
-+if [[ -e "$SRC/rust-toolchain.toml" ]]; then
-+  grep -qvE \
-+    '^(\[toolchain\]|channel = "[0-9]+\.[0-9]+\.[0-9]+"|(components|targets) = \[( *"[a-z0-9_-]+",?)* *\]|profile = "(minimal|default|complete)"|#.*)?$' \
-+    "$SRC/rust-toolchain.toml"
-+  (( $? == 1 )) || fail "rust-toolchain.toml has entries beyond channel/components/targets/profile"
-+fi
++grep -qvE \
++  '^(\[toolchain\]|channel = "[0-9]+\.[0-9]+\.[0-9]+"|(components|targets) = \[( *"[a-z0-9_-]+",?)* *\]|profile = "(minimal|default|complete)"|#.*)?$' \
++  "$SRC/rust-toolchain.toml"
++(( $? == 1 )) || fail "rust-toolchain.toml has entries beyond channel/components/targets/profile"
++CHANNEL="$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "$SRC/rust-toolchain.toml")"
++[[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "rust-toolchain.toml needs exactly one exact channel"
++BASE_ENV+=(RUSTUP_TOOLCHAIN="$CHANNEL")
  run_limited "$FETCH_LIMIT" "${BASE_ENV[@]}" /bin/sh -c 'cd "$1" && exec cargo fetch --locked -q' _ "$SCR/$SRC" \
    > /dev/null 2>&1 < /dev/null
  rc=$?
@@ -196,7 +221,7 @@ unchanged code.
  RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
  TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
  run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
-@@ -168,10 +224,10 @@
+@@ -168,10 +242,10 @@
    --disable apps --disable plugins --disable shell_snapshot --disable hooks \
    --disable computer_use --disable browser_use --disable browser_use_external \
    --disable in_app_browser --disable image_generation \
@@ -211,20 +236,23 @@ unchanged code.
    -c web_search=disabled \
    -C "$SCR/$SRC" \
    --output-schema "$SCHEMA" \
-@@ -182,7 +238,13 @@
+@@ -182,7 +256,14 @@
  
  [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
  (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
 -jq -e '(.verdict | type == "string") and (.findings | type == "array")' "$RAW" >/dev/null 2>&1 \
+-  || fail "output not schema JSON (see target/scratch/$LOG)"
+-T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq '. + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
 +# The schema's shape, checked here too (CX.16): Codex enforcing --output-schema is not ours to rely on.
-+jq -e 'type == "object" and (keys == ["findings", "verdict"]) and (.verdict | type == "string")
-+  and (.findings | type == "array") and all(.findings[];
++# -s: the file must hold exactly one JSON value (jq -e alone judges only the last of several).
++OUT_CHECK='length == 1 and (.[0] | type == "object" and (keys == ["findings", "verdict"])
++  and (.verdict | type == "string") and (.findings | type == "array") and all(.findings[];
 +    type == "object" and (keys == ["detail", "file", "fix", "line", "severity", "title"])
 +    and (.severity | IN("blocker", "major", "minor", "nit"))
 +    and (.line == null or (.line | type == "number" and . == floor))
-+    and ([.file, .title, .detail, .fix] | all(type == "string")))' "$RAW" >/dev/null 2>&1 \
-   || fail "output not schema JSON (see target/scratch/$LOG)"
- T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq '. + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
++    and ([.file, .title, .detail, .fix] | all(type == "string"))))'
++jq -s -e "$OUT_CHECK" "$RAW" >/dev/null 2>&1 || fail "output not schema JSON (see target/scratch/$LOG)"
++T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq -s '.[0] + {status:"ok",reason:""}' "$RAW" > "$T" && put "$OUT" "$T" \
    || fail "write failed"
 ```
 
@@ -232,7 +260,7 @@ unchanged code.
 ```diff
 --- a/ops/driver/driver.sh
 +++ b/ops/driver/driver.sh
-@@ -144,10 +144,52 @@
+@@ -144,7 +144,73 @@
    done
    kill -KILL -- "-$pid" 2>/dev/null
    for p in $pids; do kill -KILL "$p" 2>/dev/null; done
@@ -240,74 +268,103 @@ unchanged code.
 +
 +# Session helpers that outlive the CLI (CX.11): a helper that calls setsid leaves the session's
 +# process group, and once the CLI exits it is reparented to launchd, so neither the group nor the
-+# descendant list finds it after a normal exit. track_tree records "pid start-time" for every
-+# descendant at each poll; stop_leftovers signals, after the CLI is gone, each recorded process
-+# whose start time still matches (so a reused pid is never hit), plus its own descendants and what
-+# is left of the session's group. A helper started and detached within one poll interval
-+# (POLL seconds) before the CLI exits is not seen; that gap is the residual risk.
-+start_time() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/  */ /g; s/ *$//'; }
-+track_tree() {  # track_tree <root pid> <file>
-+  local p st
-+  for p in $(descendants "$1"); do
-+    st=$(start_time "$p"); [[ -n "$st" ]] && printf '%s %s\n' "$p" "$st"
-+  done >> "$2"
++# descendant list finds it after a normal exit. track_tree records "pid|start-time" for every
++# descendant of the CLI at each poll, in the driver's memory (SESSION_PIDS; a file the session can
++# write would let it name any process). stop_leftovers signals, after the CLI is gone, each
++# recorded process whose start time still matches (so a reused pid is never hit), plus its current
++# descendants, and the session's group while it still has members. Every pass takes one `ps`
++# snapshot. A helper started and detached within one poll interval (POLL seconds) before the CLI
++# exits is not seen; that gap is the residual risk.
++SESSION_PIDS=""
++ps_snap() {  # "pid ppid start-time" for every process, start time as one space-separated string
++  ps -axo pid=,ppid=,lstart= 2>/dev/null |
++    awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { print $1, $2, $3, $4, $5, $6, $7 }'
 +}
-+stop_leftovers() {  # stop_leftovers <reaped leader pid> <file>
-+  local leader=$1 file=$2 p q st t alive i n=0
-+  local -a lp=() lst=()
-+  # Recorded processes still alive with the same start time, then their descendants (with the
-+  # start time seen now), so every signal below re-checks it and never hits a reused pid.
-+  while read -r p st; do
-+    [[ -n "$p" && "$(start_time "$p")" == "$st" ]] || continue
-+    for q in "$p" $(descendants "$p"); do
-+      st=$(start_time "$q"); [[ -n "$st" ]] && { lp[n]=$q; lst[n]=$st; n=$((n + 1)); }
-+    done
-+  done < <(sort -u "$file" 2>/dev/null)
-+  ours() { [[ "$(start_time "${lp[$1]}")" == "${lst[$1]}" ]]; }
-+  # A process group id is not reused while the group has members, so -leader is still ours.
-+  (( n == 0 )) && ! kill -0 -- "-$leader" 2>/dev/null && return 0
-+  log "stopping session leftovers: group $leader, pids ${lp[*]:-none}"
-+  kill -TERM -- "-$leader" 2>/dev/null
-+  for ((i = 0; i < n; i++)); do ours "$i" && kill -TERM "${lp[i]}" 2>/dev/null; done
++# On stdin, a snapshot. Prints "pid|start" for the descendants of the pids in $1 (space-separated),
++# and with $2 = self, for those pids too. Never pid 0 or 1, never the driver itself.
++tree_keys() {
++  awk -v roots="$1" -v self="${2:-}" -v me="$$" '
++    { start[$1] = $3 " " $4 " " $5 " " $6 " " $7; kids[$2] = kids[$2] " " $1 }
++    END {
++      n = 0; r = split(roots, x, " ")
++      for (i = 1; i <= r; i++) {
++        if (self == "self") q[++n] = x[i]
++        else { k = split(kids[x[i]], c, " "); for (j = 1; j <= k; j++) q[++n] = c[j] }
++      }
++      for (i = 1; i <= n; i++) {   # breadth first; pids 0 and 1 are never entered (0 is its own parent)
++        p = q[i]; if (p + 0 <= 1 || p == me || (p in seen) || !(p in start)) continue
++        seen[p] = 1; print p "|" start[p]
++        k = split(kids[p], c, " "); for (j = 1; j <= k; j++) q[++n] = c[j]
++      }
++    }'
++}
++track_tree() {  # track_tree <CLI pid>: add its current descendants to SESSION_PIDS
++  SESSION_PIDS=$( { [[ -n "$SESSION_PIDS" ]] && printf '%s\n' "$SESSION_PIDS"; ps_snap | tree_keys "$1"; } | sort -u)
++}
++# Prints the pids of the "pid|start" keys in $1 that are alive now with the same start time.
++alive_keys() {
++  # (BSD awk takes no newline in -v, so the keys come through the environment.)
++  ps_snap | KEYS="$1" awk 'BEGIN { n = split(ENVIRON["KEYS"], k, "\n"); for (i = 1; i <= n; i++) want[k[i]] = 1 }
++    { if (($1 "|" $3 " " $4 " " $5 " " $6 " " $7) in want) print $1 }'
+ }
++stop_leftovers() {  # stop_leftovers <reaped leader pid>: uses SESSION_PIDS, then clears it
++  local leader=$1 roots keys grp=0 t alive p
++  # Recorded processes still alive with the same start time, then their current descendants.
++  roots=$(alive_keys "$SESSION_PIDS" | tr '\n' ' ')
++  keys=""; [[ -n "${roots// /}" ]] && keys=$(ps_snap | tree_keys "$roots" self)
++  SESSION_PIDS=""
++  # A process group id is not reused while the group has members, so -leader is ours as long as
++  # kill -0 finds members; once it doesn't, the group is never signalled again.
++  kill -0 -- "-$leader" 2>/dev/null && grp=1
++  [[ -z "$keys" ]] && (( ! grp )) && return 0
++  log "stopping session leftovers: group $leader (members: $grp), pids $(printf '%s\n' "$keys" | cut -d'|' -f1 | tr '\n' ' ')"
++  (( grp )) && kill -TERM -- "-$leader" 2>/dev/null
++  for p in $(alive_keys "$keys"); do kill -TERM "$p" 2>/dev/null; done
 +  t=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
 +  while (( $(secs_since "$t") < 15 )); do
-+    alive=0; kill -0 -- "-$leader" 2>/dev/null && alive=1
-+    for ((i = 0; i < n; i++)); do ours "$i" && alive=1; done
++    alive=0
++    if (( grp )); then kill -0 -- "-$leader" 2>/dev/null && alive=1 || grp=0; fi
++    [[ -n "$(alive_keys "$keys")" ]] && alive=1
 +    (( alive )) || return 0
 +    sleep 0.2
 +  done
-+  kill -KILL -- "-$leader" 2>/dev/null
-+  for ((i = 0; i < n; i++)); do ours "$i" && kill -KILL "${lp[i]}" 2>/dev/null; done
- }
++  (( grp )) && kill -0 -- "-$leader" 2>/dev/null && kill -KILL -- "-$leader" 2>/dev/null
++  for p in $(alive_keys "$keys"); do kill -KILL "$p" 2>/dev/null; done
++}
  
  run_session() {
--  local ts out err start t0 rc res sid pid="" idle state why=""
-+  local ts out err start t0 rc res sid pid="" idle state why="" track
-   ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; err="ops/logs/$ts.stderr"; start=$(date +%s)
-   t0=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
+   local ts out err start t0 rc res sid pid="" idle state why=""
+@@ -153,7 +219,7 @@
    log "session $ts starting"
-@@ -164,6 +206,7 @@
+   # Its own group no longer gets the terminal's HUP/INT (closing tmux, Ctrl-C), so pass them on.
+   # Set before the launch so no signal falls in between; stop_group ignores an empty pid.
+-  trap 'log "driver signalled: stopping session $ts"; stop_group "$pid"; exit 130' HUP INT TERM
++  trap 'log "driver signalled: stopping session $ts"; stop_group "$pid"; stop_leftovers "$pid"; exit 130' HUP INT TERM
+   # Agent sessions get only the project MCP config (an isolated headless Chrome), never the
+   # owner's claude.ai connectors (mail, drive, calendar) or the owner's own browser.
+   # perl puts the session in its own process group (pgid = pid) for stop_group; stderr goes to
+@@ -164,6 +230,7 @@
        --strict-mcp-config --mcp-config ops/driver/mcp.json \
        --permission-mode auto --output-format stream-json --verbose > "$out" 2> "$err" &
    pid=$!
-+  track="ops/state/session-$ts.pids"; : > "$track"
++  SESSION_PIDS=""
    # A finished `claude -p` can stay alive (a pending ScheduleWakeup; #125). Stop it once its last
    # turn event is a result, no background task runs, and the log has been quiet for SETTLE_GRACE
    # seconds. A background task's notification starts a new turn (system/init), so waits on agents
-@@ -171,6 +214,7 @@
+@@ -171,6 +238,7 @@
    # BG_QUIET_MAX quiet seconds, and SESSION_MAX caps everything.
    while kill -0 "$pid" 2>/dev/null; do
      sleep "$POLL"
-+    track_tree "$pid" "$track"
++    track_tree "$pid"
      if (( $(secs_since "$t0") >= SESSION_MAX )); then
        why="SESSION_MAX"; log "session $ts reached SESSION_MAX (${SESSION_MAX}s): stopping"
        stop_group "$pid"; break
-@@ -188,6 +232,8 @@
+@@ -188,6 +256,8 @@
      fi
    done
    wait "$pid"; rc=$?
 +  # However it ended (normal exit included), stop what it left behind before the next session.
-+  stop_leftovers "$pid" "$track"; rm -f "$track"
++  stop_leftovers "$pid"
    trap - HUP INT TERM
    # Stopped by us after its final result (however the CLI exits on TERM), or killed by the
    # owner's signal after it had answered: report what the session itself reported in its final
@@ -319,28 +376,39 @@ unchanged code.
 The diffs and both test scripts are also in `ops/proposals/codex-review-isolation/`. Run them from
 the repository root against the patched files (after applying, the real ones):
 `ops/proposals/codex-review-isolation/test-codex.sh ops/driver/codex-review.sh` and
-`ops/proposals/codex-review-isolation/test-driver.sh ops/driver/driver.sh`.
-- T5–T8: `test-codex.sh`, 15 checks, all pass. Each piece is pulled out of the patched script by
-  its exact text, so the tests run the proposed code, not a copy of it:
-  - T5 symlink pre-check: a plain repo passes; a repo with `ops/judge` → symlink and an empty repo
-    are refused;
-  - T6 toolchain file: the repo's real `rust-toolchain.toml` and a file with targets/profile/comments
-    pass; `path = "/x/y"`, `channel = "nightly"`, a CRLF line and a legacy `rust-toolchain` fail.
-    (Writing the tests caught a fail-open bug in the first draft: BSD grep rejects an empty
-    alternative in `(…|)$`, exits 2, and `! grep` passed everything. The check now takes only exit 1
-    as success);
-  - T7 `rmtree`: a 0444 file hard-linked into a 0555 tree keeps mode 0444 and the tree is gone;
+`ops/proposals/codex-review-isolation/test-driver.sh ops/driver/driver.sh`. Each piece under test
+is pulled out of the patched script by its exact text, so the tests run the proposed code, not a
+copy of it.
+- `test-codex.sh`: 44 checks, all pass:
+  - `rmtree` (3): a 0444 file hard-linked into a 0555 tree keeps mode 0444 and the tree is gone;
     the old `chmod -R` pass on the same layout makes it 0644 (the AS.55 bug);
-  - TOML: the generated `FS_POLICY` parses with Python's `tomllib` as an 8-entry table, including a
-    `$HOME` with `"` and `\` in it, and names no `.codex`, `.ssh` or credentials path;
-  - T8 jq output check: 3 valid shapes pass; `[null]`, `[{}]`, an unknown severity, a missing key,
-    `line` 3.5, a non-string `detail`, an extra top-level key, a top-level array and a numeric
-    verdict fail.
-- T9: `test-driver.sh`, 9 checks, all pass (the KILL case waits about 15 s).
-- Hand mutants, each caught by the tests: dropping the start-time check in `stop_leftovers` (the
-  bystander is killed); `chmod u+w` on files too in `rmtree` (the outside file becomes 0644). Not
-  covered by a test: the expansion to descendants of a recorded process (a helper's own child
-  started after the last poll).
+  - the leftover sweep (1): old entries named `.codex-review-tmp.x *` and `.codex-review-tmp.x
+    victim` go; `victim`, `keepdir`, the brief, `other.json` and a fresh temp entry stay;
+  - `FS_POLICY` (1): parses with Python's `tomllib` as an 8-entry table, including a `$HOME` with
+    `"` and `\` in it, and names no `.codex`, `.ssh` or credentials path;
+  - toolchain file (10): the repo's real file and one with targets/profile/comments pass and set
+    `RUSTUP_TOOLCHAIN` to their channel; `path = "/x/y"`, `nightly`, a CRLF line, a legacy
+    `rust-toolchain` next to a good file, two channels, no channel and no file fail. (Writing the
+    first tests caught a fail-open bug: BSD grep rejects an empty alternative in `(…|)$`, exits 2,
+    and `! grep` passed everything. The check takes only exit 1 as success);
+  - `.cargo` walk (9): accepted with none, or one in the worktree, the main checkout or `$HOME`;
+    refused in `.claude/worktrees/`, `.claude/`, `target/`, `target/scratch/` and above the main
+    checkout;
+  - symlink pre-check (3): a plain repo passes; a repo with `ops/judge` → symlink and an empty repo
+    are refused;
+  - output check (17): 3 valid shapes pass; `[null]`, `[{}]`, an unknown severity, a missing key,
+    `line` 3.5, a non-string `detail`, an extra top-level key, a top-level array, a numeric verdict,
+    an empty file, non-JSON, two values with a malformed one first, and two valid values fail; the
+    write step uses `jq -s '.[0] + …'`.
+- `test-driver.sh`: 17 checks, all pass (about 20 s; the KILL case waits 15 s).
+- Hand mutants, each caught: dropping the start-time match in `alive_keys` (the bystander is
+  killed); dropping the pid ≤ 1 guard (pid 1 gets signalled, seen by the recorder); dropping the
+  descendant expansion (the helper's late child survives); `chmod u+w` on files in `rmtree`;
+  `length >= 1` in the output check; a walk that accepts any `.cargo`; an empty `RUSTUP_TOOLCHAIN`;
+  a sweep without the age filter. One equivalent mutant: dropping the "rust-toolchain.toml must
+  exist" line changes nothing, because the strict grep then fails on the missing file (exit 2).
+- The ancestor walk, run on this machine's real layout (a worktree under the main checkout under
+  `$HOME`), accepts it.
 - `bash -n` on both patched files.
 
 ### For the owner, after applying (Codex runs only through the launcher)
@@ -358,14 +426,15 @@ finding (findings are data; nothing here asks it to do anything else).
   `cat ~/.cargo/credentials.toml` (create an empty one first if none exists). Expect denials.
 - **T4 the review can still build:** the brief asks for `cargo test -p jpdf-syntax --offline -q`
   in the export. Expect it to compile and run. If it fails on a denied path, add that read-only path
-  to the list (never `$HOME` or `~/.cargo` as a whole).
+  to the list (never `$HOME` or `~/.cargo` as a whole); for the package-cache lock see §2.
 - **T10 no network:** the brief asks for `curl -sS https://example.com`. Expect a failure.
 - **T11 driver leftovers:** run `ops/driver/driver.sh --once` with a session that starts
   `perl -MPOSIX=setsid -e 'setsid; sleep 600' &` and then ends normally; expect the log line
   "stopping session leftovers" and no such sleeper afterwards (`pgrep -f 'sleep 600'`).
-- Run `ops/driver/codex-review.sh` on a branch whose HEAD changes `.cargo/config.toml`, or adds
-  `path = "x"` to `rust-toolchain.toml`: expect `unavailable` with the matching reason and no
-  `cargo fetch` run.
+- **T12 untrusted cargo and rustup config:** run `ops/driver/codex-review.sh` on a branch whose HEAD
+  changes `.cargo/config.toml`, adds `path = "x"` to `rust-toolchain.toml` or deletes it, and once
+  with an empty `.claude/worktrees/.cargo/` directory in the main checkout: expect `unavailable` with
+  the matching reason each time, and no `cargo fetch` run.
 
 ## 5. Risk if not applied
 - AS.52/CX.1 stays: a prompt-injected or misbehaving Codex can read the sealed corpus manifest,
