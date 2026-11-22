@@ -14,24 +14,24 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
-- **PR #201** (#76 part 1/2, E2E harness honesty: a failed run, reporter error or Release check reports no pass):
-  `ai-review` = success (2 rounds), auto-merge on. Part 2/2 is #200 (ready, M0).
+- **PR #204** (#200 = #76 part 2/2: unknown and malformed test IDs, stale output, spec drift, shared browser-test
+  fixture): `ai-review` = success (3 rounds), auto-merge on. Follow-ups #203 (frame check, sev:low, M10) and #205
+  (lint that browser specs import the fixture, M4).
 
 ## Last session
-- i: #76 → PR #201 (items 1-3; items 4-6 split to #200). PR #198 and #199 merged. Removed merged worktrees
-  (audit-0004, record-191, record-192). Journal 2026-11-22 09:40.
+- i: #200 → PR #204 (#76 items 4-5; item 6 → #203). PR #201 and #202 merged. Journal 2026-11-22 10:07.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. **#200** (#76 part 2/2): unknown/malformed test IDs, spec drift, shared CSP fixture.
+3. Close #76 once PR #204 merges (items 1-5 done, item 6 is #203) if GitHub doesn't.
 4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
-  #132, #134, #136, #137, #166.
+  #132, #134, #136, #137, #166, #193, #203.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2, PR #201: 2.
+    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
