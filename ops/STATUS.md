@@ -4,6 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **PR #239** (#238, ADR 0011 session types): ready, `owner-todo`, **no auto-merge**: waits for the owner's approval.
+  4 rounds + final check. After it merges: file the ADR §9 tasks (1a first) and link them on #238, close #224 into
+  task 3, then post "done:" on #238. #236 waits for task 3 (design: technical).
 - **PR #232** (#187 part 1, `ImageInputBudget::charge_output`): **parked for the owner**: draft, `ai-review` =
   failure on 0831d70 after 4 rounds + final check. The final check's Codex half found one false spec sentence (TIFF
   predictor tag bytes), corrected in 0831d70 unreviewed. #187 has `blocked` + `owner-todo` and the ledger with two
@@ -18,11 +21,11 @@ Phase: bootstrap (pilot)
   The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- d: #187 → PR #232 (`charge_output` charges a stage output by capacity and copies spare capacity back only within
-  the allowance; spec rules for the future caller). 4 rounds + final check; parked on one sentence. Journal
-  2026-11-22 14:00.
+- a: #238 → PR #239 (ADR 0011: session types, read-only scheduler `cargo xtask next-session`, product-merge
+  counters, area labels and design-pending, review-cap escalation to design). Journal 2026-11-22 16:24.
 
 ## Next step (suggested order, TICK letters)
+0. **a: #238** is the owner's focus: once PR #239 merges, file its §9 tasks and work them in order (1a first).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR (accept 0831d70, or one more final check).
    #231 isn't workable until the M2 image-decode caller exists.
 2. Rule i, M0, lowest number first: #154, #210 (write ops/proposals/ for the owner-commands fix), #216
@@ -55,6 +58,7 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
+- #238 / PR #239: approve (or comment on) ADR 0011; the PR has no auto-merge.
 - #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
 - #179: PR #184 merged; run test step 3 of ops/proposals/owner-comment-tracking.md (a PR comment and an inline
