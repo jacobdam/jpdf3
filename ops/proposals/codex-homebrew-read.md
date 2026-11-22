@@ -124,7 +124,7 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
 ## 4. Test plan
 
 ### Run by the session (static)
-- `ops/proposals/codex-homebrew-read/test-policy.sh <patched> ops/driver/codex-review.sh`: 3 passed,
+- `ops/proposals/codex-homebrew-read/test-policy.sh <patched> ops/driver/codex-review.sh`: 4 passed,
   0 failed. It pulls the block from `q()` to `FS_POLICY+=" }"` out of the script by its exact text,
   builds the policy with `HOME=/Users/u` and parses it as TOML (Python 3.14 `tomllib`):
   - the patched policy: `:root` deny, `:minimal` read, `:slash_tmp` deny; the read grants are
@@ -134,14 +134,19 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
     `~/.cargo/credentials.toml`, `~/jpdf-corpus` or `~/jpdf-research`;
   - the unpatched policy fails the "no grant contains a denied path" check with the assertion exit
     (4), not a crash, so the check tells the two apart;
+  - between `FS_POLICY+=" }"` and the one use (`-c permissions.jpdf-review.filesystem="$FS_POLICY"`)
+    no line mentions `FS_POLICY`, `HB_READ` or `HB=`, so the policy can't be changed after the check
+    (R2.2);
   - against this machine: every `/opt/homebrew/bin` entry that resolves inside the prefix resolves
     into a granted directory, except the other casks (counted, by design).
 - Hand mutants of the patched script, each caught: `Caskroom/codex` → `Caskroom`; an extra `$HB`,
   `$HB/etc` or `$HB/var/log`; `:slash_tmp` dropped; `$HB/lib` dropped; `:root` = read;
   `~/.cargo/registry` → `~/.cargo`; `HB=/opt/homebrew/` (double slash in every grant);
   `HB_READ+=("$HB")` on the line after the list (R1.2: the test builds the policy from one block,
-  `q()` through `FS_POLICY+=" }"`); a reflowed end marker (`FS_POLICY+="}"`): the test stops with
-  "markers not found" and evaluates nothing (R1.3; no `.codex-review-tmp.*` left behind).
+  `q()` through `FS_POLICY+=" }"`); a reassignment after that line (R2.2) and a changed
+  `-c permissions.jpdf-review.filesystem=` argument; a reflowed end marker (`FS_POLICY+="}"`): the
+  test stops with exit 2 ("markers not found", "cannot build the policy") and evaluates nothing
+  (R1.3, R2.1; no `.codex-review-tmp.*` left behind).
 - `bash -n` on the patched script.
 
 ### For the owner, after applying (Codex runs only through the launcher)
@@ -149,7 +154,7 @@ Use a scratch worktree and a brief that asks Codex to run each command and quote
 finding, as in the #161 plan.
 - **T1:** `git show 378c92c:ops/driver/codex-review.sh > /tmp/codex-review.old.sh`, then
   `ops/proposals/codex-homebrew-read/test-policy.sh ops/driver/codex-review.sh /tmp/codex-review.old.sh`
-  on the applied script: expect `3 passed, 0 failed`.
+  on the applied script: expect `4 passed, 0 failed`.
 - **T2:** `git diff` of the applied file against the diff in §3: identical.
 - **T3 the profile loads:** run the launcher on any small brief. Expect `status: ok`.
 - **T4 the review still builds and has its tools:** the brief asks for `rg --version`,

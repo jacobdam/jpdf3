@@ -65,10 +65,20 @@ if mode == "strict":
 ' "$1" "$2"
 }
 
-P="$(policy "$1")"
+# The policy can't be built (a marker lost in a reflow): stop, exit 2, nothing evaluated (R2.1).
+P="$(policy "$1")" || { echo "test-policy: cannot build the policy from $1" >&2; exit 2; }
 ok check "$P" strict
+# Between the end of the block and the one place Codex gets the policy, nothing may touch it again
+# (R2.2: a reassignment there would escape the check above). The use must pass "$FS_POLICY" as is.
+after_block() {
+  awk 'index($0,"FS_POLICY+=\" }\"")==1{on=1; next}
+       on && index($0,"-c permissions.jpdf-review.filesystem=\"$FS_POLICY\" \\")==3{found=1; exit}
+       on && /FS_POLICY|HB_READ|(^|[^A-Za-z_])HB=/{bad=1; print "touches the policy: " $0 > "/dev/stderr"}
+       END{exit (found && !bad) ? 0 : 1}' "$1"
+}
+ok after_block "$1"
 if [[ $# -ge 2 ]]; then
-  O="$(policy "$2")"
+  O="$(policy "$2")" || { echo "test-policy: cannot build the policy from $2" >&2; exit 2; }
   ok rc_is 4 check "$O" denied 2>/dev/null            # the AS.2 bug: /opt/homebrew covers etc/ and var/
 fi
 
