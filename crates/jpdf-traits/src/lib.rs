@@ -32,7 +32,7 @@ pub use image::{
     Bitmap, CcittDecoder, CcittParams, DecodedImage, ImageColor, Jbig2Decoder, Jpeg2000Decoder,
     JpegDecoder, JpegOptions,
 };
-pub use limits::{DecodeLimits, FontLimits, Limits, RasterLimits};
+pub use limits::{DecodeLimits, FontLimits, ImageInputBudget, Limits, RasterLimits};
 pub use raster::{
     BlendMode, Color, DrawCommand, FillRule, LineCap, LineJoin, Paint, Pixmap, Rasterizer,
     RgbaImage, SceneStats, StrokeStyle, Transform, check_scene, path_is_valid,

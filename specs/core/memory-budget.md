@@ -1,7 +1,7 @@
 # Process memory budget
 
 Area: engine
-ISO 32000-2 clauses: §7.5.4 (cross-reference table), §7.3.10 (indirect objects), §7.7.3.2 (page tree)
+ISO 32000-2 clauses: §7.5.4 (cross-reference table), §7.3.10 (indirect objects), §7.7.3.2 (page tree), §7.4.7 (JBIG2Decode, globals)
 Journeys: none (no UI; protects every journey that opens a large or hostile file)
 Status: implemented
 
@@ -30,7 +30,7 @@ consumer.
 | spans | persistent | `(max_xref_entries + max_xref_sections) × SPAN_ENTRY_BYTES (64)` | 128.06 MiB |
 | page walk | persistent | `max_pages × PAGE_WALK_BYTES (48)` | 45.78 MiB |
 | parse | phase | `max_objects_per_parse × PARSE_OBJECT_BYTES (272) + max_string_bytes_per_parse × 3` | 368 MiB |
-| decode | phase | `max_decoded_bytes_per_stream + max_decode_working_bytes` | 384 MiB |
+| decode | phase | `max_decoded_bytes_per_stream` (all inputs of one image decode together, #168) `+ max_decode_working_bytes` | 384 MiB |
 | raster | phase | `max_raster_working_bytes` | 256 MiB |
 | heap high-water | earlier phase | the largest phase (`heap_high_water`) | 384 MiB |
 | reserve | fixed | itemized below | 256 MiB |
@@ -185,6 +185,21 @@ working memory) and give up mostly speed (retained), the largest images (output 
   (or a known length) up front or writes in fixed chunks, so it never holds 1.5 × the cap
   during a realloc. A stage drops its input before the next stage grows its output. The decode
   term counts one 128 MiB intermediate output plus the image decoder's 256 MiB working bytes.
+- **The inputs of one image decode share one 128 MiB allowance** (#168, audit 0003 CX.12).
+  `Jbig2Decoder::decode` takes the page data and the decoded `/JBIG2Globals` at once. If each
+  could fill the per-stream cap (both through Flate, say), the decode phase would hold
+  128 + 128 + 256 MiB = 512 MiB; as the largest phase it counts twice, so the peak would be
+  about 2165.84 MiB, over the 2 GiB. The term counts the allowance once, so the caller (the
+  future `jpdf-filters` image path) takes `Limits::image_input_budget()` once per image
+  decode: it decodes each input's filter chain with `ImageInputBudget::cap` applied to its
+  `DecodeLimits` (the chain fails with `LimitExceeded` before outgrowing what the earlier
+  inputs left), and charges each decoded length with `ImageInputBudget::charge` before the
+  next input. An input held in its own buffer is charged even when it is cached (a cached
+  globals stream is then counted in `retained` too: conservative). An input that borrows the
+  file bytes (no filter before the image filter, no encryption) holds no buffer and is not
+  charged. Single-input decoders (DCT, JPX, CCITT) use the same budget with one charge. This is
+  a rule on a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call
+  site does not, so the review of the JBIG2 caller (M2) must check it.
 - `jpdf-render` and rasterizer adapters: geometry memory that grows with input (flattened
   edges, curve subdivision, dash output up to `max_path_segments`, the display-list commands)
   counts within `max_raster_working_bytes`. `jpdf-render` passes the adapter the working-bytes
@@ -207,7 +222,9 @@ No new error. A file with more than 2 097 152 xref entries now fails with
 `LimitExceeded("cross-reference entries")` (CLI exit 2). An object with more than 32 MiB of
 decoded string and name bytes fails with `LimitExceeded("string bytes in one object")` (exit 2).
 A render target larger than 2^22 pixels, or over 256 MiB of working bytes, and a stream whose
-output passes 128 MiB, fail with `BackendError::LimitExceeded`. Objects are charged more to the
+output passes 128 MiB, fail with `BackendError::LimitExceeded`. Once the image decode path exists, an
+image decode whose inputs together (JBIG2 page data plus globals) pass 128 MiB decoded fails
+with `BackendError::LimitExceeded("decoded bytes of one image decode's inputs")` (#168). Objects are charged more to the
 resolve cache than before (allocator chunks) and the cache is half as large (#146), so fewer
 stay cached; past the budget they are re-parsed, with no error until the lexing budget runs
 out.
@@ -231,6 +248,13 @@ out.
     value**: the at-limit and one-past behavior is tested with explicit limits
     (`retained_budget_boundary_for_one_object`, the decode suites' output-cap checks), and
     the check reads the field the same way whatever its value.
+  - The shared image-input allowance (#168): `default_image_input_allowance_is_exact`
+    (limits.rs) charges 64 MiB of page data plus 64 MiB of globals (the whole 128 MiB) and then
+    refuses one byte more; 64 MiB plus 64 MiB + 1 is refused. `image_inputs_share_one_allowance`
+    checks the same with an explicit 100-byte allowance in both orders (60 + 40 and 40 + 60
+    pass, 60 + 41 and 41 + 60 fail, a refused charge takes nothing), and
+    `image_input_cap_lowers_only_the_output_cap` checks that the next input's chain gets only
+    what remains (never more than the document budget allows).
   - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
     with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.
@@ -243,6 +267,9 @@ out.
   - `defaults_fit_the_process_budget_with_the_reserve`: peak + 64 MiB ≤ 2 GiB at the
     defaults (the peak is pinned as a literal in `default_terms`). The 64 MiB margin means a small increase to one term fails the test before it
     eats into the reserve.
+- `ImageInputBudget::charge` subtracts with `checked_sub` and refuses on underflow, so a
+  `usize::MAX` length is refused and charges nothing (`image_input_budget_saturates`, which also
+  fills a `usize::MAX` allowance exactly).
 - `MemoryBudget::of` and `alloc_bytes` use saturating arithmetic (`u64`), so loose caller limits
   (e.g. `usize::MAX`) give `u64::MAX` (`alloc_bytes` rounds the saturated value down to
   0xFFFF_FFFF_FFFF_FFF0; unreachable, since a capacity never exceeds `isize::MAX`), never an
@@ -279,6 +306,14 @@ out.
     minimum, header and rounding at their boundaries (24 → 32, 25 → 48). A budget that is
     wrong because the *model* misses a structure can't be caught by these tests. The
     "requirements on future code" list and the review of each new structure cover that.
+  - Image inputs (#168): `decode_term_holds_the_image_inputs_together` (budget.rs) ties the
+    decode term to `image_input_budget().remaining()` plus the working bytes, fills the
+    allowance with two inputs and refuses one byte more, and shows that a per-input cap (one
+    more allowance in the decode phase) would put the peak over 2 GiB. Hand mutants of
+    `ImageInputBudget` (cap raises instead of lowering, charge saturates instead of refusing,
+    charge forgets to subtract, allowance doubled) each fail at least one test. Still passing:
+    a caller that never uses the budget (decodes globals with plain `decode_limits`). No caller
+    exists yet; the JBIG2 caller's review must check it (requirement above).
   - What the tests can't see: real allocation sizes (no counting allocator; a global
     allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) is meant to
     measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,
@@ -316,7 +351,8 @@ per allocation counted by `retained_cost`, which already walks the object once.
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,
-  `peak_is_persistent_plus_largest_phase_twice_plus_reserve`.
+  `peak_is_persistent_plus_largest_phase_twice_plus_reserve`,
+  `decode_term_holds_the_image_inputs_together` (#168).
 - crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`, `default_string_bytes_limit_is_exact`,
   `default_objects_per_parse_limit_is_exact`, `flat_page_tree_at_max_pages_fits_one_parse`,
   `parse_object_bytes_bound_real_objects`, `trailer_with_duplicate_keys_is_trimmed_to_two_entries`,
@@ -324,7 +360,9 @@ per allocation counted by `retained_cost`, which already walks the object once.
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^22 pixels pass with
   the default limits, 2^22 + 1 fail), `default_working_bytes_limit_is_exact`.
 - crates/jpdf-engine/tests/open.rs: `page_limit_boundary_opens_at_the_limit`.
-- crates/jpdf-traits/src/limits.rs: `lowered_defaults_are_pinned` (new, #146); `default_raster_limits_fit_the_memory_budget` now uses
+- crates/jpdf-traits/src/limits.rs: `image_inputs_share_one_allowance`,
+  `default_image_input_allowance_is_exact`, `image_input_cap_lowers_only_the_output_cap`,
+  `image_input_budget_saturates` (#168); `lowered_defaults_are_pinned` (new, #146); `default_raster_limits_fit_the_memory_budget` now uses
   `check_scene`'s full formula and pins 256 MiB working bytes and 2^22 canvas pixels;
   `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of `max_pages` references plus
   32 768 other objects fit in one parse).
