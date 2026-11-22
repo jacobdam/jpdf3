@@ -338,7 +338,7 @@ signature from the native layer is rejected.
 
 ## 8. Milestones
 
-Each milestone ends at an **automated gate** (`cargo xtask gate`, criteria in protected `ops/judge/gates.toml`): judge metrics + held-out exam corpus + every user journey assigned to the milestone green (AUTOMATION.md §5.1).
+Each milestone ends at an **automated gate** (the nightly judge's `gates/gates.json`, criteria in protected `ops/judge/gates.toml`): judge metrics + held-out exam corpus + every user journey assigned to the milestone green (AUTOMATION.md §5.1).
 Milestones M4+ can overlap once their dependencies are met.
 
 | M | Name | Main deliverables | Exit criteria |

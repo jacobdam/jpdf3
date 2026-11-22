@@ -34,13 +34,15 @@ right before "Grade exam (aggregate only) and evaluate gates (nightly)". Being a
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh issue list --state open --limit 1000 --json number,labels > open-issues.json
           python3 judge/ops/judge/sev_counts.py open-issues.json > sev-counts.json
 ```
-(`gh` picks the repository from `GH_REPO` or the checkout; set `GH_REPO: ${{ github.repository }}`
-in `env` if the step's working directory isn't this repo's checkout.)
+`GH_REPO` is required: the job checks out into `judge/` and `pr/`, so the workspace root where the
+step runs is not a git repository (the job's other `gh` calls name the repository for the same
+reason). Without it, `gh` fails every night and M4 fails closed forever.
 
 New `ops/judge/sev_counts.py`. It counts by the `sev:*` label alone, so a `sev:high` issue missing
 the `security` label still counts; it counts open `security` issues with no or several `sev:*`
@@ -110,6 +112,9 @@ each gate's `failing` list, not just `pass`:
 - sev_counts.py on a fixture list with a `sev:high` issue without `security` (counted high), a
   `security` issue with no `sev:*` (unlabeled 1), one with two `sev:*` labels (unlabeled 1, both
   counted), and a list of 1000 entries (exits non-zero, writes nothing).
+- One dry nightly as applied (no deliberate failure): `gates/gates.json` has all four `open_sev_*`
+  metrics set to integers that match `gh issue list` at that time. This catches a count step that
+  can't reach the repository and a gate.py call missing `--sev-counts`.
 - One dry nightly on a branch with a deliberately failing count step: the sealing loop still runs
   (the `results-exam` artifact is gone afterwards) and `gates-report` is uploaded.
 
