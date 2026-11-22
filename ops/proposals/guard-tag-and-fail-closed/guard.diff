@@ -31,7 +31,14 @@
  # Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
  # instead of a regex, so there is no backtracking. It finds the command word of every simple command
  # (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
-@@ -47,13 +53,15 @@
+@@ -44,16 +50,25 @@
+ CODEX_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+ CODEX_KEYWORDS = ("then", "do", "else", "elif", "if", "while", "until", "function", "!", "{", "}")
+ CODEX_MAX_WORDS = 64  # words looked at per command start; bounds the work per start
++# Last "command" of a text the tokenizer could not read the shell's way (a heredoc whose delimiter
++# line never comes; text ending inside a quote, ${, $( or backticks). Every rule that uses the
++# tokenizer blocks on it (#162, round 4).
++AMBIGUOUS = "\0ambiguous"
  _CODEX_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
  
  
@@ -48,30 +55,49 @@
      mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
 +    arith = 0  # open (( / $(( frames: inside one, << is a shift, never a heredoc (#162, CX.5)
 +    brace = 0  # open ${ at this substitution level: inside, only quotes, $( and backticks count (#162, R3.1)
++    ticks = 0  # open backtick frames; a backtick closes the innermost one (#162, R4.1)
++    sq = 0  # open $[ (old arithmetic): inside, << is a shift
++    no_skip = False  # set once a heredoc's delimiter line never comes (the text is then AMBIGUOUS)
      i, n = 0, len(s)
  
      def flush_word():
-@@ -73,14 +81,14 @@
+@@ -73,14 +88,16 @@
          skip = False
  
      def open_sub(closer):
 -        nonlocal words, cur, started, mode, skip
 -        stack.append((closer, mode, words, cur, started, skip))
 -        words, cur, started, mode, skip = [], [], False, "n", False
-+        nonlocal words, cur, started, mode, skip, brace
++        nonlocal words, cur, started, mode, skip, brace, ticks
++        ticks += closer == "`"
 +        stack.append((closer, mode, words, cur, started, skip, brace))
 +        words, cur, started, mode, skip, brace = [], [], False, "n", False, 0
  
      def close_sub():
 -        nonlocal words, cur, started, mode, skip
-+        nonlocal words, cur, started, mode, skip, brace
++        nonlocal words, cur, started, mode, skip, brace, ticks
          flush_cmd()
 -        _, mode, words, cur, _, skip = stack.pop()
-+        _, mode, words, cur, _, skip, brace = stack.pop()
++        closer, mode, words, cur, _, skip, brace = stack.pop()
++        ticks -= closer == "`"
          started = True
  
      while i < n:
-@@ -116,6 +124,12 @@
+@@ -103,7 +120,12 @@
+             i += 2
+             continue
+         if c == "`":
+-            if stack and stack[-1][0] == "`":
++            if ticks:
++                while stack[-1][0] != "`":  # a ( or $( left open inside backticks ends with them
++                    if stack[-1][0] in ("g", "a"):
++                        arith -= stack.pop()[0] == "a"
++                    else:
++                        close_sub()
+                 close_sub()
+             else:
+                 open_sub("`")
+@@ -116,6 +138,12 @@
                  cur.append(c)
              i += 1
              continue
@@ -84,12 +110,18 @@
          if c in " \t":
              flush_word()
          elif c == "'":
-@@ -126,12 +140,14 @@
+@@ -126,12 +154,20 @@
              j = s.find("\n", i)
              i = n if j < 0 else j
              continue
 +        elif c == "$" and i + 1 < n and s[i + 1] in "'\"":
 +            i += 1  # $'...' and $"..." quote like '...' and "..." (escapes inside $'...' aren't decoded)
++            continue
++        elif c == "$" and s.startswith("$[", i) or (c == "]" and sq):
++            sq += 1 if c == "$" else -1
++            cur.append(s[i:i + 2] if c == "$" else c)
++            started = True
++            i += 2 if c == "$" else 1
 +            continue
          elif c == "$" and s.startswith("${", i):
 -            j = s.find("}", i)
@@ -103,7 +135,7 @@
              continue
          elif c in "<>" or (c == "&" and s.startswith("&>", i)):
              if started and "".join(cur).isdigit():
-@@ -149,19 +165,45 @@
+@@ -149,70 +185,115 @@
                      op, j = "<<-", j + 1
                  while j < n and s[j] in " \t":
                      j += 1
@@ -123,16 +155,17 @@
 +                    elif q == '"':
 +                        if ch == '"':
 +                            q = ""
-+                        elif ch == "\\" and k + 1 < n and s[k + 1] in '\\"$`':
++                        elif ch == "\\" and k + 1 < n and s[k + 1] in '\\"$`\n':
 +                            k += 1
-+                            d.append(s[k])
++                            d.append(s[k].strip("\n"))  # \ + newline: a continuation, dropped (R4.3)
 +                        else:
 +                            d.append(ch)
-+                    elif ch in "'\"":
-+                        q = ch
++                    elif ch in "'\"" or (ch == "$" and s[k + 1:k + 2] in ("'", '"')):
++                        q = s[k + 1] if ch == "$" else ch
++                        k += ch == "$"  # $'E' and $"E" quote like 'E' and "E"
 +                    elif ch == "\\" and k + 1 < n:
 +                        k += 1
-+                        d.append(s[k])
++                        d.append(s[k].strip("\n"))
 +                    elif ch in " \t\n;&|<>()":
 +                        break
 +                    else:
@@ -142,8 +175,8 @@
 -                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
 -                    cur.append(op)  # arithmetic shift (1<<3, $((1 << n))), not a heredoc
 +                delim = "".join(d)
-+                if arith or delim[:1].isdigit() or delim[:1] in ("", "$", "("):
-+                    cur.append(op)  # arithmetic shift (1<<3, $((a << b))), not a heredoc
++                if arith or sq or no_skip or not delim:
++                    cur.append(op)  # arithmetic shift ($((a << b)), $[1<<3]), or a body to scan
                      started = True
                      i = j
                      continue
@@ -155,8 +188,32 @@
              i = j
              continue
          elif c in ";&|\n":
-@@ -181,20 +223,23 @@
-                 continue
+             flush_cmd()
+             if c == "\n" and heredocs:
+                 j = i + 1
++                found = True
+                 for delim, tabs in heredocs:
+-                    while j < n:
++                    found = False
++                    while j < n and not found:
+                         e = s.find("\n", j)
+                         e = n if e < 0 else e
+-                        line = s[j:e]
++                        found = (s[j:e].lstrip("\t") if tabs else s[j:e]) == delim
+                         j = e + 1
+-                        if (line.lstrip("\t") if tabs else line) == delim:
+-                            break
++                    if not found:
++                        break
+                 heredocs = []
+-                i = j
+-                continue
++                if found:
++                    i = j
++                    continue
++                # No delimiter line (or the tokenizer misread it): AMBIGUOUS. Later heredocs aren't
++                # searched again, so the work stays linear (#162, R4.2, R4.3).
++                no_skip = True
          elif c == "(":
              flush_cmd()
 -            stack.append(("g", mode, None, None, False, False))
@@ -177,19 +234,23 @@
              cur.append(c)
              started = True
          i += 1
++    ambiguous = no_skip or mode != "n" or brace > 0 or any(f[0] in ")`" for f in stack)
      while stack:
 -        if stack[-1][0] == "g":
 +        if stack[-1][0] in ("g", "a"):
              stack.pop()
          else:
              close_sub()
-@@ -202,17 +247,23 @@
-     return cmds
+     flush_cmd()
+-    return cmds
++    return cmds + [[AMBIGUOUS]] if ambiguous else cmds
  
  
 -def _codex_runs(words, i, budget, depth, limit=CODEX_MAX_WORDS):
 -    """True if the simple command starting at words[i] runs codex (looking at most `limit` words)."""
 +def _is_codex(words, i, depth):
++    if words[i] == AMBIGUOUS:
++        return True
 +    base = words[i].lower().rsplit("/", 1)[-1]
 +    return base.split("@", 1)[0] == "codex" and not base.startswith("@")
 +
@@ -211,7 +272,7 @@
          if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
              i += 1
          elif base in CODEX_SHELLS:
-@@ -228,7 +279,7 @@
+@@ -228,7 +309,7 @@
                  if opt[-1] in "oO":
                      i += 1  # -o pipefail, -O extglob
              if want_c:
@@ -220,7 +281,7 @@
          elif base in CODEX_WRAPPERS:
              argopts = CODEX_WRAPPERS[base]
              i += 1
-@@ -248,22 +299,36 @@
+@@ -248,22 +329,36 @@
      return False
  
  
@@ -257,12 +318,12 @@
 +    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "")
 +    if not re.search(r"\.(?:ssh|codex|config)", flat):
 +        return False
-+    return any(_SECRET_WORD.search(posixpath.normpath(w)) for words in _codex_commands(cmd, True)
++    return any(w == AMBIGUOUS or _SECRET_WORD.search(posixpath.normpath(w)) for words in _codex_commands(cmd, True)
 +               for w in words if w and not re.search(r"\s", w))
  
  
  def codex_command(cmd):
-@@ -397,6 +462,8 @@
+@@ -397,6 +492,8 @@
          raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
      # The full command, not the inert view: quoted gh text is never a command word to the
      # tokenizer, and stripping it can be fooled (#130).
@@ -271,7 +332,7 @@
      if codex_command(cmd):
          raise Block("run Codex only through ops/driver/codex-review.sh (fixed sandbox flags)")
      if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
-@@ -498,49 +565,81 @@
+@@ -498,49 +595,81 @@
                 "--web", "-w", "--template", "-T", "--recover"}
  
  
@@ -285,7 +346,7 @@
 +
 +
 +def _gh_post_nested(words, i, depth):
-+    return depth > 0 and _gh_post_at(words, i)
++    return words[i] == AMBIGUOUS or depth > 0 and _gh_post_at(words, i)
 +
 +
 +def _check_post(toks, i):
@@ -385,11 +446,11 @@
 +                _check_post(words, j)
 +    if _codex_check(cmd, [2 * len(cmd) + 4096], 0, _gh_post_nested):
 +        raise Block("write each gh post as one plain command: `gh issue|pr <verb> ... --body '%s ...'`, "
-+                    "not inside bash -c or eval" % TAG)
++                    "not inside bash -c or eval, with balanced quotes and heredocs" % TAG)
      return texts
  
  
-@@ -609,7 +708,11 @@
+@@ -609,7 +738,11 @@
          fp = ti.get("file_path") or ti.get("notebook_path") or ""
          check_write_path(fp, cwd)
          if tool == "Write":
@@ -402,10 +463,12 @@
          elif tool == "Edit":
              new, old = ti.get("new_string", ""), ti.get("old_string", "")
          elif tool == "MultiEdit":
-@@ -627,21 +730,26 @@
+@@ -625,6 +758,20 @@
+         return
+     if tool == "Bash":
          check_bash(ti.get("command", ""), cwd)
- 
- 
++
++
 +def run_hook(stdin):
 +    """Exit code for one hook event read from stdin: 0 allow, 2 block. Fails closed (#162, AS.53)."""
 +    try:
@@ -418,10 +481,10 @@
 +              "or file an issue if a plain call keeps failing." % (type(e).__name__, str(e)[:200]), file=sys.stderr)
 +        return 2
 +    return 0
-+
-+
+ 
+ 
  def main():
-     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+@@ -632,16 +779,7 @@
          sys.exit(selftest())
      if os.environ.get("JPDF_OWNER") == "1":
          sys.exit(0)
@@ -439,7 +502,7 @@
  
  
  # ---------------------------------------------------------------- self-test
-@@ -830,6 +938,92 @@
+@@ -830,6 +968,114 @@
          ("Bash", {"command": "gh pr review 5 --approve"}, True),
          ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
          ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
@@ -493,6 +556,28 @@
 +        ("Bash", {"command": "cat <<\"E\\\\\"\nx\nE\\\ncodex exec x"}, True),
 +        ("Bash", {"command": "cat <<\"E\\x\"\nx\nE\\x\ncodex exec x"}, True),
 +        ("Bash", {"command": "cat <<'E\\'\ncodex exec x\nE\\\nls"}, False),
++        # round 4: a ( left open inside backticks; $- and digit-led delimiters; continuations in a
++        # delimiter; a body whose delimiter line never comes is scanned as commands; $[ ] arithmetic
++        ("Bash", {"command": "echo \"`echo (`\"; cat ~/.ssh/id_rsa; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"`echo (`\"; ls;gh issue comment 5 --body hi; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"`echo (`\"; codex exec x; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"`echo ${x:-{a}(}`\"; cat ~/.ssh/id_rsa; echo \"x\""}, True),
++        ("Bash", {"command": "cat <<$E\nit's\n$E\ncat ~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <<$'E'\nit's\nE\ncat ~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <<$E\nit's\n$E\nls;gh issue comment 5 --body hi\ncat <<'X'\n'\nX"}, True),
++        ("Bash", {"command": "cat <<1\nit's\n1\ncodex exec x"}, True),
++        ("Bash", {"command": "cat <<E\\\nF\nx\nEF\ncat ~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <<\"E\\\nF\"\nx\nEF\ncat ~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <<E\\\nF\nx\nEF\nls;gh issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "cat <<ZZ\nit's\ncodex exec x"}, True),
++        ("Bash", {"command": "echo $[1<<x]\ncodex exec x\nx]"}, True),
++        ("Bash", {"command": "echo $[1<<2] codex"}, False),
++        ("Bash", {"command": "cat <<$E\ncodex exec x\n$E\nls"}, False),
++        ("Bash", {"command": "echo \"`echo (`\" codex"}, False),
++        ("Bash", {"command": "cat <<$'E'\ncodex exec x\nE\nls"}, False),
++        ("Bash", {"command": "cat <<E\\\nF\ncodex exec x\nEF\nls"}, False),
++        ("Bash", {"command": "cat <<\"E\\\nF\"\ncodex exec x\nEF\nls"}, False),
++        ("Bash", {"command": "echo \"it\ncodex exec x"}, True),
 +        ("Bash", {"command": "gh issue comment 5 --body '%s x'" % TAG}, False),
 +        ("Bash", {"command": "{ gh issue comment 5 --body '%s x'; }" % TAG}, False),
 +        ("Bash", {"command": "echo 'run gh issue comment 5 later'"}, False),
@@ -532,7 +617,7 @@
      ]
      failures = 0
      for tool, ti, should in cases:
-@@ -869,6 +1063,61 @@
+@@ -869,6 +1115,61 @@
          if got != want:
              failures += 1
              print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
