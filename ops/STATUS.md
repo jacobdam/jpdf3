@@ -20,12 +20,13 @@ Phase: bootstrap (pilot)
 
 ## Last session
 - i: #86 → PR #212 merged (one minimal-PDF generator for engine and CLI tests; `Outline::control_box` removed), 3
-  review rounds. PR #211 merged. Journal 2026-11-22 10:37.
+  review rounds. PR #211 merged. Removed worktrees record-21 and testgen-86 (merged); left record-86 (this
+  record) until it merges, and guard-162 / jbig2-inputs (parked PRs #183, #186). Journal 2026-11-22 10:37.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. **g: audit 0005 is due** (11 merges since audit 0004 with PR #212 and this record PR).
+3. **g: audit 0005 is due** (12 merges since audit 0004 with this record PR).
 4. Then the `ready` backlog (rule i) in M0, lowest number first: #91, #115, #154, #210 (#210: write ops/proposals/
    for the owner-commands permission fix; not owner-todo until the proposal merges).
 5. When #208 has the owner's results: add them to docs/retros/0000-pilot.md and close #21.
@@ -46,7 +47,7 @@ Phase: bootstrap (pilot)
   - Codex refused the audit 0004 security brief (provider cyber filter); decide how audits use it. In PR #212 all 3
     Codex runs said its workspace commands timed out (brief-only review).
   - ops/LESSONS.md has 63 entries (cap 60).
-- **Next audit:** after 10 more merges or by 2026-11-29.
+- **Next audit:** due now (Next step 3).
 
 ## Blockers / owner-todo
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
