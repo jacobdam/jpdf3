@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { FullResult, Suite, TestError } from "@playwright/test/reporter";
-import JourneyReporter, { collect, finalize, statusOf } from "./journey-reporter";
+import JourneyReporter, { collect, finalize, malformedTags, statusOf } from "./journey-reporter";
 
 // Unit tests for the test-ID mapping (docs/adr/0002) and the run-failure rule (#76). No
 // browser needed.
-type T = Parameters<typeof collect>[0][number];
+type T = Parameters<typeof collect>[0][number] & Parameters<typeof malformedTags>[0][number];
 const t = (
   outcome: string,
   tags: string[],
@@ -19,6 +19,7 @@ const t = (
     outcome: () => outcome,
     expectedStatus,
     tags,
+    title: "t",
     results: statuses.map((status) => ({ status })),
   }) as unknown as T;
 
@@ -65,15 +66,40 @@ test("a failed run reports no pass", () => {
   ]);
 });
 
-/** Drives the reporter class directly: a passing tagged test, then the given run events. */
-function report(status: FullResult["status"], errored: boolean): string {
+test("tags meant as journey IDs but malformed are found", () => {
+  expect(
+    malformedTags([
+      t("expected", ["@e2e.web.a", "@slow", "@e2e.web.Bad", "@e2e.web.c.d"]),
+      t("expected", ["@E2E.web.a", "@e2e.macos.a", "@e2e.web.", "@e2e-web-a", "@e2e"]),
+      t("expected", ["@e2ex", "@xe2e.web.a", "@smoke_e2e"]),
+    ]),
+  ).toEqual([
+    '"@e2e.web.Bad" on "t"',
+    '"@e2e.web.c.d" on "t"',
+    '"@E2E.web.a" on "t"',
+    '"@e2e.macos.a" on "t"',
+    '"@e2e.web." on "t"',
+    '"@e2e-web-a" on "t"',
+    '"@e2e" on "t"',
+    '"@e2ex" on "t"',
+  ]);
+  // Well-formed tags and tags that don't start with @e2e are not reported.
+  expect(malformedTags([t("expected", ["@e2e.web.a_1", "@slow", "@xe2e.web.a"])])).toEqual([]);
+});
+
+/** Drives the reporter class directly: one passing test with `tags`, then the run events. */
+function report(
+  status: FullResult["status"],
+  errored: boolean,
+  tags: string[] = ["@e2e.web.a"],
+): string {
   const dir = mkdtempSync(join(tmpdir(), "jpdf-reporter-"));
   const file = join(dir, "r.tsv");
   const saved = process.env.JPDF_E2E_RESULTS;
   process.env.JPDF_E2E_RESULTS = file;
   try {
     const reporter = new JourneyReporter();
-    const suite = { allTests: () => [t("expected", ["@e2e.web.a"], "passed", ["passed"])] };
+    const suite = { allTests: () => [t("expected", tags, "passed", ["passed"])] };
     reporter.onBegin(undefined, suite as unknown as Suite);
     if (errored) reporter.onError({ message: "boom" } as TestError);
     reporter.onEnd({ status } as FullResult);
@@ -92,6 +118,13 @@ test("the reporter downgrades on a failed run status and on any reported error",
   }
   // onError alone, even if Playwright still called the run passed.
   expect(report("passed", true)).toBe("e2e.web.a\tfail\n");
+});
+
+test("a malformed journey tag on any test turns every pass into a fail (#76 item 4)", () => {
+  expect(report("passed", false, ["@e2e.web.a", "@slow"])).toBe("e2e.web.a\tpass\n");
+  expect(report("passed", false, ["@e2e.web.a", "@e2e.web.A"])).toBe("e2e.web.a\tfail\n");
+  // Only malformed tags: no ID at all (xtask then fails on "no journey test ids").
+  expect(report("passed", false, ["@e2e.web.a-b"])).toBe("");
 });
 
 /**
@@ -157,4 +190,24 @@ test.describe("a real Playwright run with the journey reporter", () => {
     expect(r.code, r.log).not.toBe(0);
     expect(r.tsv, r.log).toBe("e2e.web.harness_probe\tfail\n");
   });
+
+  // The shared fixture (./fixtures.ts) fails a browser test that the old per-test checks let
+  // through when a test forgot them (#76 item 5).
+  test("a clean page passes the shared fixture (control)", () => {
+    const r = probe(["fixture-clean.probe"]);
+    expect(r.code, r.log).toBe(0);
+    expect(r.tsv, r.log).toBe("e2e.web.harness_probe\tpass\n");
+  });
+
+  for (const [file, what] of [
+    ["fixture-csp-stay.probe", "a CSP violation on the last page"],
+    ["fixture-csp-away.probe", "a CSP violation on a page left earlier"],
+    ["fixture-foreign.probe", "a foreign request"],
+  ] as const) {
+    test(`the shared fixture fails a test on ${what}`, () => {
+      const r = probe([file]);
+      expect(r.code, r.log).not.toBe(0);
+      expect(r.tsv, r.log).toBe("e2e.web.harness_probe\tfail\n");
+    });
+  }
 });

@@ -246,6 +246,30 @@ fn walk(dir: &Path, files: &mut Vec<String>, out: &mut Vec<Problem>, root: &Path
     }
 }
 
+/// Every test ID named on a `- test:` line in `root/specs/journeys/*.md` (the judge's selection:
+/// not recursive; CONTRACT §2 grades only these). `ci linux` and `ci macos` fail on a reported
+/// ID outside this set and the harness IDs (docs/adr/0002 item 2). Any file that can't be read
+/// is an error, so a damaged tree never shrinks the set silently; format problems are
+/// check-specs' job and don't stop the collection.
+pub fn journey_test_ids(root: &Path) -> Result<BTreeSet<String>, String> {
+    let dir = root.join("specs").join("journeys");
+    let entries = fs::read_dir(&dir).map_err(|e| format!("{}: cannot list: {e}", dir.display()))?;
+    let mut ids = BTreeSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("{}: cannot list: {e}", dir.display()))?;
+        // Same match as the walk: a name ending in `.md` (the judge's glob), any file type.
+        if !entry.file_name().to_string_lossy().ends_with(".md") {
+            continue;
+        }
+        let path = entry.path();
+        let text = read_text(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        for j in parse_journeys(&text).0 {
+            ids.extend(j.tests);
+        }
+    }
+    Ok(ids)
+}
+
 fn rel_display(root: &Path, p: &Path) -> String {
     p.strip_prefix(root)
         .unwrap_or(p)
@@ -1305,5 +1329,61 @@ mod tests {
         let text = "[specs/x/y.md](x/typo.md) [web](https://example.org/a.md) [s](#top)";
         let p = check_trace(text, &BTreeSet::new(), &specs, |p| p == "specs/x/y.md");
         assert_eq!(p, vec!["links to missing file specs/x/typo.md".to_owned()]);
+    }
+
+    #[test]
+    fn journey_test_ids_come_from_every_journey_file_only() {
+        let base = std::env::temp_dir().join(format!("xtask-ids-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let j = base.join("specs").join("journeys");
+        assert!(fs::create_dir_all(j.join("sub")).is_ok());
+        let one = "## J-A-1: a\n- milestone: M1\n- platform: web, macos\n- test: e2e.web.a, e2e.macos.a\n";
+        let two = "## J-B-1: b\n- milestone: M1\n- platform: web\n- test: e2e.web.b\n\
+                   ## J-B-2: old\n- milestone: M1\n- platform: web\n- superseded_by: J-B-1\n";
+        assert!(fs::write(j.join("a.md"), one).is_ok());
+        assert!(fs::write(j.join("b.md"), two).is_ok());
+        // Not journey files: another extension, a subdirectory (the judge doesn't recurse).
+        assert!(fs::write(j.join("c.txt"), "- test: e2e.web.c\n").is_ok());
+        assert!(
+            fs::write(
+                j.join("sub").join("d.md"),
+                "## J-D-1: d\n- test: e2e.web.d\n"
+            )
+            .is_ok()
+        );
+        let want: BTreeSet<String> = ["e2e.macos.a", "e2e.web.a", "e2e.web.b"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(journey_test_ids(&base), Ok(want));
+        // A file that can't be read is an error, never a smaller set.
+        assert!(fs::write(j.join("e.md"), [0xff_u8]).is_ok());
+        assert!(journey_test_ids(&base).is_err(), "non-UTF-8 journey file");
+        assert!(fs::remove_file(j.join("e.md")).is_ok());
+        assert!(fs::create_dir(j.join("f.md")).is_ok());
+        assert!(
+            journey_test_ids(&base).is_err(),
+            "directory named like a journey file"
+        );
+        let _ = fs::remove_dir_all(&base);
+        assert!(journey_test_ids(&base).is_err(), "missing specs/journeys");
+    }
+
+    #[test]
+    fn the_repository_journeys_name_test_ids() {
+        // Tests run in xtask/; the repository root is its parent.
+        let ids = journey_test_ids(Path::new("..")).unwrap_or_default();
+        assert!(
+            ids.contains("e2e.web.ann_highlight_persists"),
+            "{} ids",
+            ids.len()
+        );
+        assert!(ids.contains("e2e.macos.ann_highlight_persists"));
+        for harness in crate::web::HARNESS_IDS {
+            assert!(
+                !ids.contains(harness),
+                "{harness}: a harness ID, no journey lists it"
+            );
+        }
     }
 }

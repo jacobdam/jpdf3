@@ -40,7 +40,8 @@ are third-party tools outside dependency admission. The CI runner (`macos-15`) h
    tests` (Xcode 16+), not from console output. xtask parses that JSON with its own small
    strict reader (`xtask/src/json.rs`), because xtask has no dependencies (ADR 0002 Context).
 6. **Harness ID** `e2e.macos.app_start_empty` follows ADR 0002 item 2: no journey lists it,
-   so it never changes a grade; journeys add their own IDs in M4.
+   so it never changes a grade; journeys add their own IDs in M4. Like the web IDs, any other
+   reported ID that no journey lists fails the run (amended for #76 item 4).
 
 ## Consequences
 - Adding targets or build settings means editing `project.pbxproj` by hand (or in Xcode,

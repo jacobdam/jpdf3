@@ -297,13 +297,20 @@ fn ci_linux_writes_no_pass_when_playwright_fails() {
     std::fs::create_dir_all(root.join("apps/web/dist")).unwrap();
     std::fs::write(root.join("apps/web/package.json"), "{}\n").unwrap();
     std::fs::write(root.join("apps/web/dist/index.html"), "i").unwrap();
+    // The reported ID must be a journey's (#76 item 4).
+    std::fs::create_dir_all(root.join("specs/journeys")).unwrap();
+    std::fs::write(
+        root.join("specs/journeys/a.md"),
+        "## J-A-1: a\n- milestone: M1\n- platform: web\n- test: e2e.web.a\n",
+    )
+    .unwrap();
     for (name, body) in [
         ("node", "echo v24.0.0"),
         (
             "npm",
             "[ \"$1\" = --version ] && { echo 11.0.0; exit 0; }\n\
              case \"$*\" in *'playwright test'*) \
-             printf 'e2e.web.a\\tpass\\n' > \"$JPDF_E2E_RESULTS\"; exit $E2E_EXIT;; esac\nexit 0",
+             printf \"$E2E_LINES\" > \"$JPDF_E2E_RESULTS\"; exit $E2E_EXIT;; esac\nexit 0",
         ),
     ] {
         let p = bin.join(name);
@@ -311,24 +318,38 @@ fn ci_linux_writes_no_pass_when_playwright_fails() {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let path = format!("{}:/usr/bin:/bin", bin.display());
-    let run_with = |exit: &str| {
+    let run_lines = |exit: &str, lines: &str| {
         let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
             .args(["ci", "linux", "--out"])
             .arg(root.join("out"))
             .current_dir(&root)
             .env("PATH", &path)
             .env("E2E_EXIT", exit)
+            .env("E2E_LINES", lines)
             .output()
             .unwrap();
         let err = String::from_utf8_lossy(&o.stderr).into_owned();
         let json = std::fs::read_to_string(root.join("out/e2e.json")).unwrap_or_default();
         (err, json)
     };
+    let run_with = |exit: &str| run_lines(exit, "e2e.web.a\\tpass\\n");
     // Control: Playwright exits 0, so the pass stands and the web part is ok.
     let (ok_err, ok_json) = run_with("0");
     // Playwright exits 1 after the reporter wrote a pass.
     let (err, json) = run_with("1");
+    // Playwright exits 0, but one reported ID is in no journey (a typo in a tag): no pass.
+    let (typo_err, typo_json) = run_lines("0", "e2e.web.a\\tpass\\ne2e.web.b\\tpass\\n");
     let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        typo_err.contains(
+            "xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b"
+        ),
+        "{typo_err}"
+    );
+    assert_eq!(
+        typo_json, "{\"results\": {\n  \"e2e.web.a\": \"fail\",\n  \"e2e.web.b\": \"fail\"\n}}\n",
+        "{typo_err}"
+    );
     assert!(ok_err.contains("xtask: web: ok"), "{ok_err}");
     assert_eq!(
         ok_json, "{\"results\": {\n  \"e2e.web.a\": \"pass\"\n}}\n",

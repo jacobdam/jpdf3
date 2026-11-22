@@ -38,8 +38,11 @@ It has no backend and makes no network requests other than loading its own files
    Emotion in production creates empty `<style>` elements and fills them with CSSOM
    `insertRule`, which CSP doesn't govern; the empty-string hash allows only those empty
    elements. Rationale: docs/adr/0002-web-e2e-ids-and-site.md.
-5. **`cargo xtask ci linux --out DIR`** (CONTRACT §2), run from the repository root, in order;
-   it stops at the first failing step:
+5. **`cargo xtask ci linux --out DIR`** (CONTRACT §2), run from the repository root, runs four
+   parts in this order, each even if an earlier one failed (so one run shows every problem),
+   and exits 0 only if all four passed: the web part below, `check-specs`, a short fuzz run
+   (specs/tooling/fuzz.md) and the offline Arlington check (specs/tooling/arlington.md). The
+   web part runs these steps in order and stops at the first failing one:
    1. checks that `apps/web/package.json`, `node` and `npm` exist (a clear message otherwise);
    2. `npm ci --ignore-scripts` (lockfile only; no dependency script runs). `.npmrc` sets
       `ignore-scripts` too, but an inherited `npm_config_ignore_scripts=false` overrides the
@@ -59,12 +62,18 @@ It has no backend and makes no network requests other than loading its own files
       not `passed`: a spec file that failed to load, a throwing hook or global setup, a
       timed-out or interrupted run) or Playwright reported any error (`onError`), the
       reporter writes every `pass` as `fail`; an interrupted test is `fail` (ADR 0002), not
-      the `skip` Playwright's own outcome gives it (#76).
+      the `skip` Playwright's own outcome gives it (#76). A tag that starts with `@e2e` (any
+      case) but isn't a valid `@e2e.web.<id>` (`@e2e.web.Bad`, `@e2e.web.a.b`,
+      `@e2e.macos.a`) is reported on stderr and has the same effect (#76 item 4).
    Before step 1 it deletes `DIR/e2e.json`, `DIR/web-e2e.tsv` and `DIR/site/` from any
-   earlier run. It then always writes `DIR/e2e.json` from that file (empty results if no tests ran;
-   if any step, including the Playwright run, failed, every `pass` is written as `fail`),
-   runs `check-specs`, and exits 0 only if every step passed, at least one test ID was
-   reported and every reported ID is `pass`.
+   earlier run; if one can't be removed, no step runs. Once `DIR` exists it always writes
+   `DIR/e2e.json` from the reporter's file (empty results if no tests ran or the stale
+   output couldn't be removed). Every reported ID must be a journey's test ID (a `- test:`
+   line in `specs/journeys/*.md`) or a harness ID (ADR 0002 item 2: `e2e.web.app_start_empty`,
+   listed in `xtask/src/web.rs` `HARNESS_IDS`). If any step, including the Playwright run,
+   failed, an ID is unknown or the journeys can't be read, every `pass` is written as
+   `fail`. The web part passes only if every step passed, every ID is known, at least one
+   test ID was reported and every reported ID is `pass`.
 
 ## Persistence
 None. The skeleton stores nothing (no localStorage, IndexedDB or cookies).
@@ -75,8 +84,9 @@ Not applicable (no document, no editing).
 ## Errors
 - Missing `#root` element: `main.tsx` throws (a build defect, caught by the E2E test).
 - xtask: a missing tool or failing step prints `xtask: web: <reason>` and exits 1; a damaged
-  results file (bad line, unknown status, invalid or duplicate ID, larger than 1 MiB) is an
-  error, never silently read as a pass.
+  results file (bad line, unknown status, invalid or duplicate ID, larger than 1 MiB), an ID
+  that no journey lists and that isn't a harness ID, journeys that can't be read, or stale
+  output that can't be removed is an error, never silently read as a pass.
 
 ## Limits
 No user input is processed. xtask reads at most 1 MiB of reporter output and accepts only IDs
@@ -116,9 +126,13 @@ tests:
   focusable with Tab, shows the two-tone focus ring (kept on hover), is described by its
   reason, keeps its resting look on hover (no darkening, no elevation; wireframes-web.md §0
   rule 5), and Enter or a click does nothing (same URL, no dialog, no file chooser); the
-  theme's primary and secondary text colors are applied (Emotion works under the CSP); no
-  console errors or warnings, uncaught errors, CSP violations or foreign requests (checked
-  in every browser test);
+  theme's primary and secondary text colors are applied (Emotion works under the CSP);
+- every browser test (each test that uses `page` from the shared fixture
+  `apps/web/e2e/fixtures.ts`, which every test in `start-screen.spec.ts` imports) fails
+  after its body on any console error or warning, uncaught error, CSP violation (also on a
+  page the test navigated away from) or request outside the app's origin. The CSP test
+  allows only the CSP / Trusted Types console errors and `script-src-elem`,
+  `style-src-elem` and `require-trusted-types-for` violations it provokes;
 - dark appearance uses the dark palette, and an unfocused hover changes neither background
   nor shadow;
 - reduced motion leaves no transition on the button;
@@ -129,19 +143,34 @@ tests:
 - `dragover`/`drop` with a PDF file are cancelled and the URL doesn't change;
 - reporter unit tests: outcome mapping (expected failures, flaky passes and interrupted
   results are failures; skipped is skip), worst status wins per ID, foreign and malformed
-  tags ignored, a failed run downgrades every pass, and the reporter class itself writes
-  `fail` for a run status of `failed`, `timedout` or `interrupted` and after `onError`;
+  tags ignored by the ID mapping, malformed tags found (`@e2e.web.Bad`, `@e2e.web.c.d`,
+  `@E2E.web.a`, `@e2e.macos.a`, `@e2e.web.`, `@e2e-web-a`, `@e2e`, `@e2ex`; not `@slow` or
+  `@xe2e.web.a`), a failed run downgrades every pass, and the reporter class itself writes
+  `fail` for a run status of `failed`, `timedout` or `interrupted`, after `onError` and when
+  any test carries a malformed tag (no line at all when its only tag is malformed);
 - reporter runs (untagged): `journey-reporter.spec.ts` runs a child Playwright on the probe
   project `apps/web/e2e/harness-probe/` (files `*.probe.ts`, which the app's config never
   matches) with the journey reporter: the passing probe alone reports
   `e2e.web.harness_probe` as `pass` and exits 0 (control); with a file whose `beforeAll`
   throws it exits non-zero and reports `fail`; with an unloadable file it exits non-zero
   and reports no ID (Playwright 1.65 runs nothing then; a tripwire for that behavior, which
-  any reporter passes today).
+  any reporter passes today). The fixture probes (`fixture-*.probe.ts`, pages served by
+  routing from the probe config's `origin`): a clean page exits 0 and reports `pass`
+  (control); a CSP violation on the last page, a CSP violation on a page the test left
+  (both with every console message allowed, so the violation itself is what fails), and a
+  request to another host each exit non-zero and report `fail`.
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
 lines), a failed run downgrades every pass (and damaged results are an error and an empty set), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
-tree copy. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step
-writes a `pass` line writes it as `pass` when that step exits 0 and as `fail` when it exits 1;
+tree copy; known IDs (journey and harness IDs stand; one unknown ID, a near miss of a harness
+ID or unreadable journeys is an error that downgrades every pass); stale-output removal (files
+and trees, the first failure reported, later paths still removed) and `ci` with an
+undeletable `DIR/site/` (skipped as root): it runs nothing, ignores the stale reporter file and
+still writes empty results over a stale `e2e.json` that claimed a pass. `xtask/src/specs.rs`:
+journey test IDs come from `specs/journeys/*.md` only (not subdirectories or other
+extensions), an unreadable file, a directory named `*.md` or a missing directory is an error,
+and the repository's journeys list no harness ID. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step
+writes a `pass` line writes it as `pass` when that step exits 0 and as `fail` when it exits 1,
+and when it also reports an ID no journey lists, both are written as `fail` and the run names it;
 `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs;
 `ci linux` with stub `node`/`npm` on PATH and `npm_config_ignore_scripts=false` must call the

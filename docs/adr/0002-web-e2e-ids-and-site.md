@@ -23,7 +23,10 @@ CONSTITUTION 10 has to be enforced by us.
 2. **Harness IDs** that no journey lists (today `e2e.web.app_start_empty`) are allowed. The
    judge grades only journey IDs, so they don't change any grade; they show that the harness
    ran and are kept as smoke checks. A journey that later covers the same screen lists its own
-   ID; harness IDs are never renamed to fake a journey pass.
+   ID; harness IDs are never renamed to fake a journey pass. They are listed in
+   `xtask/src/web.rs` (`HARNESS_IDS`); any other reported ID that no journey lists (a typo in a
+   tag, a renamed journey ID) fails the run and turns every `pass` into `fail`, and so does a
+   malformed `@e2e…` tag (amended for #76 item 4; the original text is in git history).
 3. **Site layout.** `DIR/site/` is the Vite build (`index.html` + `assets/`), built with
    `base: "./"` because Pages serves the repository under a sub-path. CI adds `site/judge/`;
    the metrics dashboard (#15) will live under `site/metrics/`. Nothing else writes there.

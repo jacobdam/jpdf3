@@ -38,6 +38,23 @@ export function collect(tests: readonly (Test & Pick<TestCase, "tags">)[]): Map<
 }
 
 /**
+ * Tags that look meant as a journey ID but aren't a valid web one: any tag starting with
+ * `@e2e` (any case) that TAG rejects, such as `@e2e.web.Bad`, `@e2e.web.a.b`, `@E2E.web.a` or
+ * `@e2e.macos.a`. `collect` ignores them, so without this check their test would count for
+ * nothing and no one would notice (#76 item 4). Returns `"<tag>" on "<test title>"` lines.
+ */
+export function malformedTags(tests: readonly Pick<TestCase, "tags" | "title">[]): string[] {
+  const out: string[] = [];
+  for (const test of tests) {
+    for (const tag of test.tags) {
+      if (/^@e2e/i.test(tag) && !TAG.test(tag))
+        out.push(`${JSON.stringify(tag)} on ${JSON.stringify(test.title)}`);
+    }
+  }
+  return out;
+}
+
+/**
  * A run that didn't pass as a whole (a spec file that failed to load, a throwing hook or
  * global setup, a reported error, a timed-out or interrupted run) reports no ID as passing:
  * it may have dropped tests of an ID that another test passed (#76).
@@ -62,10 +79,15 @@ export default class JourneyReporter implements Reporter {
   onEnd(result: FullResult): void {
     const path = process.env.JPDF_E2E_RESULTS;
     if (path === undefined || path === "") return;
+    const tests = this.suite?.allTests() ?? [];
+    // A malformed journey tag makes the run fail like a reported error: no ID passes.
+    const malformed = malformedTags(tests);
+    for (const m of malformed)
+      process.stderr.write(`journey-reporter: malformed journey tag ${m}\n`);
     // Tests that never ran (interrupted run) report "skipped", so they can't pass.
     const results = finalize(
-      collect(this.suite?.allTests() ?? []),
-      result.status === "passed" && !this.errored,
+      collect(tests),
+      result.status === "passed" && !this.errored && malformed.length === 0,
     );
     const lines = [...results.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
