@@ -288,8 +288,8 @@ impl Limits {
 /// outgrows what the buffers still alive left (decryption is such a stage; a buffer the first stage
 /// reads that is already allocated, such as a cached stream, is charged before it runs). Each stage
 /// keeps its output buffer's capacity, not just its length, within the cap. After a stage the
-/// caller shrinks the output (`Vec::shrink_to_fit`) and charges its **capacity** with
-/// [`ImageInputBudget::charge`], then drops the stage's input buffer and gives its charge back with
+/// caller charges the output with [`ImageInputBudget::charge_output`] (its **capacity**; spare
+/// capacity is given back only through a copy that fits the allowance), then drops the stage's input buffer and gives its charge back with
 /// [`ImageInputBudget::release`]. An input that borrows the file bytes (no filter before the image
 /// filter, no encryption) holds no new buffer and is not charged; every input held in its own
 /// buffer is, cached ones included.
@@ -329,6 +329,46 @@ impl ImageInputBudget {
                 "decoded bytes of one image decode's inputs",
             )),
         }
+    }
+
+    /// Charges a filter stage's output buffer by its **capacity** (read here, so a caller can't
+    /// charge its length by mistake) and gives spare capacity back when that is safe (#187).
+    ///
+    /// Fails with [`BackendError::LimitExceeded`], charging nothing and leaving `output`
+    /// untouched, when the capacity is more than what remains; the caller drops the buffer and
+    /// fails the decode. Otherwise, when `output` has spare capacity and its length also fits in
+    /// what remains after the charge, the bytes move to a new buffer of that length
+    /// (`try_reserve_exact`), the old buffer is dropped and its charge given back. The old and the
+    /// new buffer are alive together only during the copy, and both are charged (the new one at
+    /// its requested length before it is allocated), so the allowance holds then too. If the
+    /// new buffer's capacity comes out larger than requested and the difference doesn't fit, it
+    /// is dropped unused. When the length doesn't fit (or the allocation fails), `output`
+    /// stays as it is with its whole capacity charged: the next stages get less room and may be
+    /// refused, but nothing goes over the allowance. That is why a stage on the image path
+    /// should reserve only a known length, never the cap speculatively.
+    pub fn charge_output(&mut self, output: &mut Vec<u8>) -> Result<(), BackendError> {
+        let held = output.capacity();
+        self.charge(held)?;
+        let len = output.len();
+        if len == held || self.charge(len).is_err() {
+            return Ok(());
+        }
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(len).is_err() {
+            self.release(len);
+            return Ok(());
+        }
+        // `try_reserve_exact` may give more than it was asked for: charge the rest too.
+        let extra = copy.capacity().saturating_sub(len);
+        if self.charge(extra).is_err() {
+            drop(copy);
+            self.release(len);
+            return Ok(());
+        }
+        copy.extend_from_slice(output);
+        drop(core::mem::replace(output, copy));
+        self.release(held);
+        Ok(())
     }
 
     /// Gives back the charge of a buffer the caller has dropped (the same `capacity` it
@@ -478,6 +518,14 @@ mod tests {
         assert_eq!(budget.cap(tightened(10)), tightened(10));
         assert_eq!(budget.charge(30), Ok(()));
         assert_eq!(budget.cap(tightened(1000)), tightened(0));
+        // Odd counts (PR #186 S4.2): 69 charged of 100 leaves 31; a cap of 31 stays 31, 32 and
+        // 1000 come down to 31, 30 stays 30.
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(69), Ok(()));
+        assert_eq!(budget.cap(tightened(31)), tightened(31));
+        assert_eq!(budget.cap(tightened(32)), tightened(31));
+        assert_eq!(budget.cap(tightened(1000)), tightened(31));
+        assert_eq!(budget.cap(tightened(30)), tightened(30));
     }
 
     /// Spare capacity is charged (R1.1 on PR #186): a first input of 10 bytes left in a buffer
@@ -552,6 +600,22 @@ mod tests {
         assert_eq!(budget.remaining(), 70);
         budget.release(30);
         assert_eq!(budget.remaining(), 100);
+        // Odd balance after a release (PR #186 S4.3): 31 + 21 charged, the 21 dropped admits 69
+        // and refuses 70.
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(31), Ok(()));
+        assert_eq!(budget.charge(21), Ok(()));
+        budget.release(21);
+        assert_eq!(budget.charge(70), Err(LIMIT_ERROR));
+        assert_eq!(budget.charge(69), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+        // An over-release that would pass the allowance by exactly one byte: 30 charged, 31
+        // released, so 101 unclamped; it stays at 100 and 101 is refused.
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(30), Ok(()));
+        budget.release(31);
+        assert_eq!(budget.remaining(), 100);
+        assert_eq!(budget.charge(101), Err(LIMIT_ERROR));
         // Over-release clamps at the allowance, from a full budget and from a partly used one.
         let mut budget = limits.image_input_budget();
         budget.release(5);
@@ -577,6 +641,128 @@ mod tests {
         assert_eq!(budget.charge(2), Err(LIMIT_ERROR));
         assert_eq!(budget.charge(1), Ok(()));
         assert_eq!(budget.remaining(), 0);
+    }
+
+    /// A stage output of `len` distinct-ish bytes in a buffer of exactly `capacity`.
+    fn stage_output(capacity: usize, len: usize) -> Vec<u8> {
+        let mut output = Vec::new();
+        assert!(output.try_reserve_exact(capacity).is_ok());
+        output.extend((0..=u8::MAX).cycle().take(len));
+        assert_eq!((output.capacity(), output.len()), (capacity, len));
+        output
+    }
+
+    fn budget_of(allowance: usize) -> ImageInputBudget {
+        Limits {
+            max_decoded_bytes_per_stream: allowance,
+            ..Limits::default()
+        }
+        .image_input_budget()
+    }
+
+    /// The caller-path capacity check (#187 item 2): `charge_output` reads the capacity itself.
+    /// 10 bytes in a buffer reserved at the whole 100-byte allowance take all of it (charging the
+    /// length would leave 90), and with nothing left the copy can't be made, so the buffer stays
+    /// as it is and the next stage's cap is 0.
+    #[test]
+    fn charge_output_charges_capacity_not_length() {
+        let mut budget = budget_of(100);
+        let mut output = stage_output(100, 10);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+        assert_eq!(output, stage_output(10, 10));
+        assert_eq!(output.capacity(), 100);
+        assert_eq!(
+            budget
+                .cap(Limits::default().decode_limits(u64::MAX))
+                .max_output_bytes,
+            0
+        );
+        assert_eq!(budget.charge(1), Err(LIMIT_ERROR));
+    }
+
+    /// Spare capacity comes back only through a copy that fits (#187 item 1): capacity 100 with
+    /// 10 bytes needs 100 + 10 at once during the copy. With 110 remaining the copy is made (the
+    /// buffer ends at capacity 10, 100 remain); with 109 it isn't (capacity 100 stays charged, 9
+    /// remain).
+    #[test]
+    fn charge_output_copies_only_when_both_buffers_fit() {
+        let mut budget = budget_of(110);
+        let mut output = stage_output(100, 10);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output, stage_output(10, 10));
+        assert_eq!(output.capacity(), 10);
+        assert_eq!(budget.remaining(), 100);
+
+        let mut budget = budget_of(109);
+        let mut output = stage_output(100, 10);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output, stage_output(10, 10));
+        assert_eq!(output.capacity(), 100);
+        assert_eq!(budget.remaining(), 9);
+
+        // With another buffer alive: 50 charged, then a 40-byte buffer holding 10 needs 50 more
+        // during the copy, exactly what remains; it ends at 10, leaving 40. Holding 11, the copy
+        // needs 51: refused, the 40 stays charged and 10 remain.
+        let mut budget = budget_of(100);
+        assert_eq!(budget.charge(50), Ok(()));
+        let mut output = stage_output(40, 10);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.capacity(), 10);
+        assert_eq!(budget.remaining(), 40);
+        let mut budget = budget_of(100);
+        assert_eq!(budget.charge(50), Ok(()));
+        let mut output = stage_output(40, 11);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.capacity(), 40);
+        assert_eq!(budget.remaining(), 10);
+    }
+
+    /// A full buffer is charged as it is, an empty one with spare capacity gives it all back,
+    /// and a buffer one byte over what remains is refused untouched, charging nothing.
+    #[test]
+    fn charge_output_boundaries() {
+        let mut budget = budget_of(100);
+        let mut output = stage_output(100, 100);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.capacity(), 100);
+        assert_eq!(budget.remaining(), 0);
+
+        let mut budget = budget_of(50);
+        let mut output = stage_output(50, 0);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.capacity(), 0);
+        assert_eq!(budget.remaining(), 50);
+
+        let mut budget = budget_of(100);
+        let mut output = stage_output(101, 3);
+        assert_eq!(budget.charge_output(&mut output), Err(LIMIT_ERROR));
+        assert_eq!((output.capacity(), output.len()), (101, 3));
+        assert_eq!(budget.remaining(), 100);
+        assert_eq!(budget.charge(100), Ok(()));
+    }
+
+    /// The documented stage cycle (specs/core/memory-budget.md): stage 1's output is charged,
+    /// stage 2 grows within the cap while it is alive, then stage 1 is dropped and released.
+    #[test]
+    fn charge_output_in_a_two_stage_chain() {
+        let limits = Limits {
+            max_decoded_bytes_per_stream: 100,
+            ..Limits::default()
+        };
+        let mut budget = limits.image_input_budget();
+        let mut stage1 = stage_output(40, 30);
+        assert_eq!(budget.charge_output(&mut stage1), Ok(()));
+        assert_eq!(budget.remaining(), 70);
+        let cap = budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes;
+        assert_eq!(cap, 70);
+        let mut stage2 = stage_output(cap, cap);
+        assert_eq!(budget.charge_output(&mut stage2), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+        budget.release(stage1.capacity());
+        drop(stage1);
+        assert_eq!(budget.remaining(), 30);
+        assert_eq!(budget.charge(31), Err(LIMIT_ERROR));
     }
 
     #[test]
