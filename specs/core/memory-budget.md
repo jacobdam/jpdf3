@@ -149,7 +149,7 @@ the 2 GiB unused.
     any crate beyond the parse-only set (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax,
     jpdf-traits), or any package that doesn't resolve to its workspace directory (a fork with an
     allowed name, a registry crate); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
-    jpdf-syntax package (not only `src`; `target` and the test file itself skipped) name a
+    jpdf-syntax package (not only `src`; `target`, directory symlinks and the test file itself skipped) name a
     decode or raster entry point (the decode, raster and font limit builders, `check_scene`,
     the codec, image, cipher, font and rasterizer traits and methods, `inflate`, `FlateDecode`);
     or one of the five manifests mentions `features` or `optional` (so workspace feature

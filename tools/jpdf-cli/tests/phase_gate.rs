@@ -1,5 +1,5 @@
-//! Tripwire for the #146 gate (specs/core/memory-budget.md, "Gate"): no decode or raster phase
-//! runs on the jpdf-cli path until the cross-phase heap build-up is measured or fixed. Today the
+//! Tripwire for the #146 gate (specs/core/memory-budget.md, "Gate"; see there for the exact
+//! conditions): no decode or raster phase runs on the jpdf-cli path until the gate opens. Today the
 //! path only parses, so its whole normal and build dependency graph is the parse-only crates
 //! below. A change that pulls in a filter, backend or render crate (or any other crate) fails
 //! here and must first satisfy the gate, then update this allowlist in the same PR.
@@ -61,8 +61,11 @@ const SCANNED: [&str; 4] = [
 
 fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
+        let entry = entry?;
+        let (path, kind) = (entry.path(), entry.file_type()?);
+        // A directory symlink is not descended (it can point out of the package); a symlinked
+        // `.rs` file is still read.
+        if kind.is_dir() {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
@@ -134,6 +137,30 @@ fn parse_crates_declare_no_features_until_the_146_gate_opens() {
     }
 }
 
+/// The path in a `cargo tree --prefix none` line, `name vX.Y.Z (path)` with an optional
+/// ` (*)` for a repeated package. Name and version hold no parentheses, so the path runs from
+/// the first `(` to the last `)` once the marker is removed; a path may contain `(` and `)`.
+fn package_path(line: &str) -> Option<&str> {
+    let line = line.trim_end();
+    let line = line.strip_suffix(" (*)").unwrap_or(line);
+    let (_, rest) = line.split_once(" (")?;
+    rest.strip_suffix(')')
+}
+
+#[test]
+fn package_path_handles_parentheses_and_the_repeat_marker() {
+    assert_eq!(
+        package_path("jpdf-cos v0.0.0 (/w/jpdf (review)/crates/jpdf-cos)"),
+        Some("/w/jpdf (review)/crates/jpdf-cos")
+    );
+    assert_eq!(
+        package_path("jpdf-syntax v0.0.0 (/w/a) b/crates/jpdf-syntax) (*)"),
+        Some("/w/a) b/crates/jpdf-syntax")
+    );
+    // A registry package has no path.
+    assert_eq!(package_path("serde v1.0.0"), None);
+}
+
 #[test]
 fn jpdf_cli_links_only_parse_crates_until_the_146_gate_opens() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
@@ -184,10 +211,7 @@ fn jpdf_cli_links_only_parse_crates_until_the_146_gate_opens() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
         let name = line.split_whitespace().next().unwrap_or_default();
-        let path = line
-            .split_once('(')
-            .and_then(|(_, rest)| rest.split_once(')'))
-            .map(|(p, _)| p);
+        let path = package_path(line);
         let want = if name == "jpdf-cli" {
             root.to_path_buf()
         } else {

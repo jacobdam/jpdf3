@@ -23,7 +23,7 @@ The change has four parts.
 
    | Field | Default | Why |
    |---|---|---|
-   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays at 2 GiB (the full budget is specs/core/memory-budget.md; #146 kept this at 256 MiB and lowered the output cap to 128 MiB). A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
+   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays within 2 GiB (the full budget is specs/core/memory-budget.md; #146 kept this at 256 MiB and lowered the output cap to 128 MiB). A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
    | `max_decode_ops: u64` | 2^32 | Operations one image decode may perform: about 43 per pixel at the 100,000,000-pixel limit. That leaves room for a several-stage decode of the largest legal image, and still bounds the time of one call |
 
    `Limits::decode_limits(remaining)` copies both into the new `DecodeLimits` fields
