@@ -229,8 +229,9 @@ working memory) and give up mostly speed (retained), the largest images (output 
     earlier Flate or decryption stage, nor the Flate stage before `/JBIG2Decode` or
     `/DCTDecode`, whose output is encoded data): the decoded image size in bytes, ceil(width ×
     components × bits per component / 8) × height (rows padded to whole bytes), computed with
-    checked arithmetic after the image limits. A predictor stage's input is not that size (its
-    rows follow `/Columns`, each with a tag byte, not the image width), so it grows in chunks
+    checked arithmetic after the image limits. A predictor stage's input size follows its own
+    `/DecodeParms` (`/Columns`, `/Colors`, `/BitsPerComponent`, plus one tag byte per row for the
+    PNG predictors; TIFF Predictor 2 adds none), not the image dictionary, so it grows in chunks
     like any other stage. A chunked output that must become one slice is copied into a buffer
     whose length the caller charges with `charge` **before allocating it**, alongside the chunks
     still alive (any capacity beyond the request is charged right after, and the buffer dropped
