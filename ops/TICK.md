@@ -67,13 +67,14 @@ ops/driver/owner-issues.sh
 gh run list --branch main --limit 5
 gh pr list --author @me --state open
 gh issue list --state open --limit 50 --json number,title,labels,milestone
-# owner-todo check (§0): your PRs merged since the last journal entry that add or change
-# ops/proposals/ (label their issue), and merges that change protected paths, which only the
-# owner's signed commits can do (unlabel what they applied)
+git fetch -q origin
+# owner-todo check (§0): your recent merged PRs that touched ops/proposals/ (any that added a
+# proposal and merged after the last journal entry, compare mergedAt: label its issue), and
+# merges that change protected paths, which only the owner's signed commits can do (unlabel
+# what they applied)
 gh pr list --author @me --state merged --limit 10 --json number,title,mergedAt,files \
   --jq '.[] | select(any(.files[]; .path | startswith("ops/proposals/"))) | [.number,.mergedAt,.title] | @tsv'
 git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protected.txt)
-git fetch -q origin
 # audit due? commit that ADDED the last audit record, then merges since it
 # (due at >= 10 merges or 7 days; if the first line is empty, no audit exists yet: due now)
 git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md'
