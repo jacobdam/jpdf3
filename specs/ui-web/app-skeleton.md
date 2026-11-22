@@ -137,7 +137,7 @@ tests:
   `require-trusted-types-for trusted-types-sink`. Not checked: that a new spec file using
   `page` imports `test` from the fixture rather than from `@playwright/test` (#205); other
   pages (popups, a second `context.newPage()`) and `request` traffic; that only the CSP test
-  calls `watch.allow`; console errors (the probes pin warnings) (#218);
+  calls `watch.allow`; that a console error (not only a warning) fails: no probe pins it (#218);
 - dark appearance uses the dark palette, and an unfocused hover changes neither background
   nor shadow;
 - reduced motion leaves no transition on the button;

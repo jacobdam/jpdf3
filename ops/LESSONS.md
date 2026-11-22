@@ -282,7 +282,7 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
-  past the filter ([journal](journal/2026-11-22.md), audit 0004). Audit 0005's brief (no `ops/driver` diff) ran ok.
+  past the filter ([journal](journal/2026-11-22.md), audit 0004).
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).

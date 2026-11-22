@@ -158,8 +158,8 @@ per ID, unmapped and unknown results are errors, passes downgraded on a failed `
 test`, an unmapped result or a failed Release check (each alone), `ci` with an undeletable
 `DIR/macos.xcresult` (skipped as root), which writes empty results over a stale `e2e.json` that
 claimed a pass, and then with a repository root that can't be resolved, which writes them again
-(neither repository exists, so the tests don't show that the steps are skipped: #218) (the
-known-ID check itself is `web.rs`'s, tested there), `graded` (the path `ci` writes from: a journey
+(the repository path doesn't exist in either phase, so the test doesn't show that the steps are
+skipped: #218; the known-ID check itself is `web.rs`'s, tested there), `graded` (the path `ci` writes from: a journey
 plus the harness ID keep their passes, an unknown ID is named and downgrades every pass,
 unreadable journeys too, after the run's own error), entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
