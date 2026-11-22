@@ -48,8 +48,14 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
-    if let (Some(s), Some(u)) = (opts.since, opts.until)
-        && s > u
+    // The check runs against the default `--until` (today) too (PR #220 R1.2).
+    let until = match opts.until {
+        Some(u) => u,
+        None => today()?,
+    };
+    opts.until = Some(until);
+    if let Some(s) = opts.since
+        && s > until
     {
         return Err("--since is after --until".to_owned());
     }
@@ -122,6 +128,15 @@ fn parse_date(s: &str) -> Option<i64> {
     days_from_civil(num(0..4)?, num(5..7)?, num(8..10)?)
 }
 
+/// The UTC day of a Unix time in seconds (`%ct`), years 1970..=9999 only.
+fn utc_day(secs: &str) -> Option<i64> {
+    let secs: i64 = secs.parse().ok()?;
+    let max = days_from_civil(9999, 12, 31)?
+        .checked_mul(86_400)?
+        .checked_add(86_399)?;
+    (0..=max).contains(&secs).then(|| secs.div_euclid(86_400))
+}
+
 /// The date part of an ISO 8601 timestamp (`2026-11-22T11:48:38Z`).
 fn iso_day(s: &str) -> Option<i64> {
     parse_date(s.get(..10)?)
@@ -153,7 +168,8 @@ fn excluded(path: &str) -> bool {
     name == "Cargo.lock" || name == "package-lock.json" || path.starts_with("tools/arlington/data/")
 }
 
-/// Parses `git log --first-parent --no-renames --format=@@%H%x09%cs%x09%s --numstat --summary`.
+/// Parses `git log --first-parent --no-renames --format=@@%H%x09%ct%x09%s --numstat --summary`.
+/// `%ct` (Unix seconds) gives the UTC day; `%cs` would be the committer's own time zone.
 /// Returns commits oldest first.
 fn parse_git_log(text: &str) -> Result<Vec<Commit>, String> {
     let mut commits: Vec<Commit> = Vec::new();
@@ -161,8 +177,8 @@ fn parse_git_log(text: &str) -> Result<Vec<Commit>, String> {
         let bad = || format!("git log line {}: unexpected `{line}`", i.saturating_add(1));
         if let Some(rest) = line.strip_prefix("@@") {
             let mut f = rest.splitn(3, '\t');
-            let (_hash, date) = (f.next(), f.next());
-            let day = date.and_then(parse_date).ok_or_else(bad)?;
+            let (_hash, time) = (f.next(), f.next());
+            let day = time.and_then(utc_day).ok_or_else(bad)?;
             commits.push(Commit {
                 day,
                 added: 0,
@@ -278,7 +294,11 @@ fn stamp_day(stamp: &str) -> Option<i64> {
             .get(r)
             .filter(|p| p.bytes().all(|c| c.is_ascii_digit()))
     };
-    digits(9..15)?;
+    let t = digits(9..15)?;
+    let part = |r: std::ops::Range<usize>| t.get(r).and_then(|x| x.parse::<u8>().ok());
+    if part(0..2)? > 23 || part(2..4)? > 59 || part(4..6)? > 59 {
+        return None;
+    }
     let d = digits(0..8)?;
     parse_date(&format!(
         "{}-{}-{}",
@@ -369,9 +389,11 @@ fn header(body: &str) -> Option<Header> {
     let rest = first.split_once("**AI review, round ")?.1;
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
     let k = digits.parse().ok()?;
-    let final_check = rest
-        .get(digits.len()..)
-        .is_some_and(|r| r.starts_with(" (final check)"));
+    // TICK §4 step 6: the final check is round 5.
+    let final_check = k == 5
+        && rest
+            .get(digits.len()..)
+            .is_some_and(|r| r.starts_with(" (final check)"));
     Some(Header::Review { k, final_check })
 }
 
@@ -753,7 +775,12 @@ fn render_md(rep: &Report) -> String {
     for (path, day, prev) in &rep.audits {
         let prev = prev.map_or_else(
             || "first".to_owned(),
-            |m| format!("{m} merges after the previous one"),
+            |m| {
+                format!(
+                    "{m} merge{} after the previous one",
+                    if m == 1 { "" } else { "s" }
+                )
+            },
         );
         let _ = writeln!(o, "- {path}: {} ({prev})", fmt_day(*day));
     }
@@ -764,7 +791,12 @@ fn render_md(rep: &Report) -> String {
     for (path, day, prev) in &rep.retros {
         let prev = prev.map_or_else(
             || "first".to_owned(),
-            |d| format!("{d} days after the previous one"),
+            |d| {
+                format!(
+                    "{d} day{} after the previous one",
+                    if d == 1 { "" } else { "s" }
+                )
+            },
         );
         let _ = writeln!(o, "- {path}: {} ({prev})", fmt_day(*day));
     }
@@ -786,7 +818,7 @@ const GIT_LOG_ARGS: &[&str] = &[
     "log",
     "--first-parent",
     "--no-renames",
-    "--format=@@%H%x09%cs%x09%s",
+    "--format=@@%H%x09%ct%x09%s",
     "--numstat",
     "--summary",
     "origin/main",
@@ -969,8 +1001,16 @@ mod tests {
         let o = a(&[]).unwrap();
         assert_eq!(
             (o.since, o.until, o.out, o.from, o.index),
-            (None, None, PathBuf::from("target/metrics"), None, None)
+            (
+                None,
+                Some(today().unwrap()),
+                PathBuf::from("target/metrics"),
+                None,
+                None
+            )
         );
+        // An explicit --since after the default --until (today) is refused too (PR #220 R1.2).
+        assert!(a(&["--since", "9999-12-31"]).unwrap_err().contains("after"));
         assert!(a(&["--since", "2026-11-22", "--until", "2026-11-22"]).is_ok());
         assert!(
             a(&["--since", "2026-11-23", "--until", "2026-11-22"])
@@ -982,7 +1022,11 @@ mod tests {
         assert!(a(&["--bogus"]).unwrap_err().contains("unknown"));
     }
 
-    const LOG: &str = "@@c3\t2026-11-22\tthird\n\
+    // %ct times: c4 2026-11-23 00:00:00 UTC (one second past --until), c3 2026-11-22 23:59:59
+    // (2026-11-23 in UTC+7, PR #220 R1.1), c1b 2026-11-15 00:00:00, c1 2026-11-14 23:59:59.
+    const LOG: &str = "@@c4\t1795392000\tafter\n\
+        50\t0\tsrc/b.rs\n\
+        @@c3\t1795391999\tthird\n\
         5\t1\tsrc/a.rs\n\
         100\t100\tCargo.lock\n\
         7\t0\tapps/web/package-lock.json\n\
@@ -990,24 +1034,35 @@ mod tests {
         -\t-\tlogo.png\n\
         \x20create mode 100644 docs/retros/0002.md\n\
         \n\
-        @@c2\t2026-11-20\tsecond\twith tab\n\
+        @@c2\t1795176000\tsecond\twith tab\n\
         2\t0\tdocs/audits/0002.md\n\
         \x20create mode 100644 docs/audits/0002.md\n\
         \x20create mode 100644 docs/audits/0002-extra.md\n\
         \x20mode change 100644 => 100755 x.sh\n\
-        @@c1\t2026-11-14\tfirst\n\
+        @@c1b\t1794700800\ton since\n\
+        1\t0\tsrc/c.rs\n\
+        @@c1\t1794700799\tfirst\n\
         \x20create mode 100644 docs/audits/0001.md\n\
         \x20create mode 100644 docs/retros/0001.md\n\
         \x20create mode 100644 docs/retros/0000-pilot.md\n\
-        @@c0\t2026-11-13\tzero\n";
+        @@c0\t1794571200\tzero\n";
 
     #[test]
     fn git_log_counts_lines_without_lockfiles_and_finds_records() {
         let c = parse_git_log(LOG).unwrap();
-        assert_eq!(c.len(), 4);
-        assert_eq!((c[0].day, c[3].day), (d("2026-11-13"), d("2026-11-22")));
-        assert_eq!((c[3].added, c[3].deleted), (5, 1));
-        assert_eq!((c[2].added, c[2].deleted), (2, 0));
+        assert_eq!(c.len(), 6);
+        let days: Vec<i64> = c.iter().map(|c| c.day).collect();
+        let want = [
+            "2026-11-13",
+            "2026-11-14",
+            "2026-11-15",
+            "2026-11-20",
+            "2026-11-22",
+            "2026-11-23",
+        ];
+        assert_eq!(days, want.map(d));
+        assert_eq!((c[4].added, c[4].deleted), (5, 1));
+        assert_eq!((c[3].added, c[3].deleted), (2, 0));
         let audits: Vec<_> = records(&c, "audits")
             .into_iter()
             .map(|(i, _, p)| (i, p))
@@ -1016,7 +1071,7 @@ mod tests {
             audits,
             [
                 (1, "docs/audits/0001.md".to_owned()),
-                (2, "docs/audits/0002.md".to_owned())
+                (3, "docs/audits/0002.md".to_owned())
             ]
         );
         assert_eq!(records(&c, "retros").len(), 2); // 0000-pilot.md is not a record
@@ -1026,11 +1081,16 @@ mod tests {
         for bad in [
             "x\t1\tsrc/a.rs\n",
             "@@c\tnot-a-date\ts\n",
-            "@@c\t2026-11-22\ts\n1\tsrc\n",
-            "@@c\t2026-11-22\ts\nx\t1\tp\n",
+            "@@c\t2026-11-22\ts\n",
+            "@@c\t-1\ts\n",
+            "@@c\t253402300800\ts\n",
+            "@@c\t0\ts\n1\tsrc\n",
+            "@@c\t0\ts\nx\t1\tp\n",
         ] {
             assert!(parse_git_log(bad).is_err(), "{bad:?}");
         }
+        assert_eq!(utc_day("253402300799"), Some(d("9999-12-31")));
+        assert_eq!(utc_day("0"), Some(0));
         assert!(
             excluded("Cargo.lock") && excluded("fuzz/Cargo.lock") && !excluded("Cargo.lock.md")
         );
@@ -1047,7 +1107,10 @@ mod tests {
             20261116T000000Z\t0\te\t5\n\
             2026111T000000Z\t0\te\t5s\n\
             20261116T0000a0Z\t0\te\t5s\n\
-            20261116T000000Z\t0\te\t60s\textra\n";
+            20261116T000000Z\t0\te\t60s\textra\n\
+            20261116T240000Z\t0\te\t5s\n\
+            20261116T006000Z\t0\te\t5s\n\
+            20261116T000060Z\t0\te\t5s\n";
         let s = parse_sessions(tsv, d("2026-11-15"), d("2026-11-22"));
         assert_eq!(
             s,
@@ -1056,7 +1119,7 @@ mod tests {
                 nonzero: 1,
                 total_s: 720,
                 median_s: Some(600),
-                malformed: 6
+                malformed: 9
             }
         );
         assert_eq!(parse_sessions("", 0, 1).median_s, None);
@@ -1101,6 +1164,13 @@ mod tests {
         )
         .unwrap();
         assert!(fc.final_check && fc.rounds == 5);
+        let r4 = review_of(
+            1,
+            &[comment(
+                "🤖 jpdf-agent **AI review, round 4 (final check)** x",
+            )],
+        );
+        assert!(!r4.unwrap().final_check); // the final check is round 5 only (PR #220 R1.5)
         assert!(
             !review_of(1, &[comment("🤖 jpdf-agent **AI review, round 50** x")])
                 .unwrap()
@@ -1155,7 +1225,7 @@ mod tests {
                 pr(3, "2026-11-14T23:59:59Z", review),
                 pr(4, "2026-11-23T00:00:00Z", review)
             ),
-            issues_closed: "[{\"number\":1,\"closedAt\":\"2026-11-15T01:00:00Z\"},{\"number\":2,\"closedAt\":\"2026-11-14T01:00:00Z\"}]".to_owned(),
+            issues_closed: "[{\"number\":1,\"closedAt\":\"2026-11-15T00:00:00Z\"},{\"number\":2,\"closedAt\":\"2026-11-14T23:59:59Z\"},{\"number\":3,\"closedAt\":\"2026-11-22T23:59:59Z\"},{\"number\":4,\"closedAt\":\"2026-11-23T00:00:00Z\"}]".to_owned(),
             issues_open: "[{\"number\":5,\"title\":\"a|b\\nc\",\"createdAt\":\"2026-11-12T00:00:00Z\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"flaky\"}]},{\"number\":6,\"title\":\"x\",\"createdAt\":\"2026-11-20T00:00:00Z\",\"labels\":[{\"name\":\"ready\"}]}]".to_owned(),
         }
     }
@@ -1164,8 +1234,8 @@ mod tests {
     fn compute_filters_the_period_on_both_edges() {
         let commits = parse_git_log(LOG).unwrap();
         let rep = compute(&inputs(), &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
-        assert_eq!((rep.merges, rep.added, rep.deleted), (2, 7, 1));
-        assert_eq!((rep.merged_prs, rep.closed_issues), (2, 1));
+        assert_eq!((rep.merges, rep.added, rep.deleted), (3, 8, 1));
+        assert_eq!((rep.merged_prs, rep.closed_issues), (2, 2));
         assert_eq!(rep.reviews.len(), 1);
         assert_eq!(
             (rep.reviews[0].pr, rep.reviews[0].rounds, rep.reviews[0].r),
@@ -1184,10 +1254,10 @@ mod tests {
             rep.audits,
             [
                 ("docs/audits/0001.md".to_owned(), d("2026-11-14"), None),
-                ("docs/audits/0002.md".to_owned(), d("2026-11-20"), Some(1))
+                ("docs/audits/0002.md".to_owned(), d("2026-11-20"), Some(2))
             ]
         );
-        assert_eq!(rep.merges_since_audit, Some(1));
+        assert_eq!(rep.merges_since_audit, Some(2));
         assert_eq!(
             rep.retros.iter().map(|r| r.2).collect::<Vec<_>>(),
             [None, Some(8)]
@@ -1225,14 +1295,27 @@ mod tests {
     #[test]
     fn truncation_flags_exactly_the_limit() {
         let commits = Vec::new();
-        let issue = "{\"number\":1,\"closedAt\":\"2026-11-15T01:00:00Z\"}";
-        let mut i = inputs();
-        i.issues_closed = list_of(LIST_LIMIT - 1, issue);
-        assert!(compute(&i, &commits, 0, 1).unwrap().truncated.is_empty());
-        i.issues_closed = list_of(LIST_LIMIT, issue);
-        let rep = compute(&i, &commits, 0, 1).unwrap();
-        assert_eq!(rep.truncated, ["closed issues"]);
-        assert!(render_md(&rep).contains("the closed issues list returned 1000 entries"));
+        let pr = "{\"number\":1,\"mergedAt\":\"2026-11-15T01:00:00Z\"}";
+        let closed = "{\"number\":1,\"closedAt\":\"2026-11-15T01:00:00Z\"}";
+        let open = "{\"number\":1,\"createdAt\":\"2026-11-15T01:00:00Z\"}";
+        type Field = fn(&mut Inputs) -> &mut String;
+        let lists: [(Field, &str, &str); 3] = [
+            (|i| &mut i.prs, pr, "merged PRs"),
+            (|i| &mut i.issues_closed, closed, "closed issues"),
+            (|i| &mut i.issues_open, open, "open issues"),
+        ];
+        for (field, item, name) in lists {
+            let mut i = inputs();
+            *field(&mut i) = list_of(LIST_LIMIT - 1, item);
+            assert!(
+                compute(&i, &commits, 0, 1).unwrap().truncated.is_empty(),
+                "{name}"
+            );
+            *field(&mut i) = list_of(LIST_LIMIT, item);
+            let rep = compute(&i, &commits, 0, 1).unwrap();
+            assert_eq!(rep.truncated, [name]);
+            assert!(render_md(&rep).contains(&format!("the {name} list returned 1000 entries")));
+        }
     }
 
     #[test]

@@ -54,7 +54,7 @@ fn report_from_saved_inputs() {
         "| Merges on main | 2 |\n",
         "| Lines added / deleted (no lockfiles, no generated data) | 13 / 3 |\n",
         "| Merged PRs | 2 |\n",
-        "| Closed issues | 1 |\n",
+        "| Closed issues | 2 |\n",
         "| Sessions (non-zero exit) | 2 (1) |\n",
         "| Session time, total | 30 min |\n",
         "| Session time, median | 20 min |\n",
@@ -66,7 +66,7 @@ fn report_from_saved_inputs() {
         "`blocked`: 1\n- #3 (12 days): stuck / here\n",
         "`flaky`: 0\n",
         "- docs/audits/0001.md: 2026-11-15 (first)\n",
-        "Merges since the last audit record: 1.\n",
+        "Merges since the last audit record: 2.\n",
         "- docs/retros/0002.md: 2026-11-22 (7 days after the previous one)\n",
         "Days from the last retro record to 2026-11-22: 0.\n",
     ] {
@@ -145,6 +145,7 @@ fn bad_input_exits_1_and_bad_usage_exits_2() {
     for args in [
         &["metrics", "--since", "2026-11-31"][..],
         &["metrics", "--since", "2026-11-23", "--until", "2026-11-22"],
+        &["metrics", "--since", "9999-12-31"], // after the default --until (PR #220 R1.2)
         &["metrics", "--out"],
         &["metrics", "--frm", "x"],
     ] {
