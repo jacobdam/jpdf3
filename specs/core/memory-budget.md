@@ -215,8 +215,10 @@ working memory) and give up mostly speed (retained), the largest images (output 
     `Vec` itself and charges its **capacity**, not its length (a 10-byte output left in a
     buffer reserved at the cap would otherwise hide 128 MiB, PR #186 R1.1). It gives spare
     capacity back only by copying the bytes into a new buffer of their length, and only when
-    that length also fits in what remains after the capacity is charged: the old and the new
-    buffer are both charged while both are alive. When the copy doesn't fit, the buffer keeps
+    that length also fits in what remains after the capacity is charged: the old buffer's
+    capacity and the new one's requested length are both charged before the new one is
+    allocated (any capacity beyond the request is charged right after, or the copy is dropped;
+    see below). When the copy doesn't fit, the buffer keeps
     its whole capacity charged and the next stages get less room (a later stage that needs
     more than its reduced cap fails with `LimitExceeded`, never over the allowance). So on the
     image path a stage grows its output in chunks, never reserving the cap speculatively: a
