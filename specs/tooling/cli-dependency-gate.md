@@ -1,6 +1,9 @@
 # jpdf-cli dependency gate: the #146 phase gate on the resolved graph
 
-Area: tooling ISO 32000-2 clauses: none (build structure) Journeys: none Status: implemented
+Area: tooling
+ISO 32000-2 clauses: none (build structure)
+Journeys: none
+Status: implemented
 
 ## Behavior
 specs/core/memory-budget.md ("Phases run one at a time", **Gate**) says no decode or raster phase

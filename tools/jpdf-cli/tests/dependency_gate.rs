@@ -39,13 +39,6 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Parses `cargo tree --prefix none --format {p}` output. Blank lines (between roots) are
-/// skipped; any other line that is not `<name> v<version>[ (<source>)]` is an error, so an
-/// output format change fails the gate instead of passing it. The version starts with a digit
-/// and holds only ASCII alphanumerics, `.`, `-` and `+`. The source is everything between the
-/// ` (` after the version and the line's final `)`, so a path may contain parentheses (also
-/// `) (`, S3.1). A marker at its token boundary (`has_marker`) makes the line an error, never a
-/// path to resolve (S2.2: a directory named `x) (*` could alias an allowed one).
 /// Whether the text inside a line's outer parentheses holds a Cargo marker at its token
 /// boundary: `(proc-macro)` comes before the source (`proc-macro) (<path>`), `(*)` and any
 /// `(proc-macro)` after it (`<path>) (*`, `<path>) (proc-macro`).
@@ -55,6 +48,13 @@ fn has_marker(inner: &str) -> bool {
         || inner.ends_with(") (proc-macro")
 }
 
+/// Parses `cargo tree --prefix none --format {p}` output. Blank lines (between roots) are
+/// skipped; any other line that is not `<name> v<version>[ (<source>)]` is an error, so an
+/// output format change fails the gate instead of passing it. The version starts with a digit
+/// and holds only ASCII alphanumerics, `.`, `-` and `+`. The source is everything between the
+/// ` (` after the version and the line's final `)`, so a path may contain parentheses (also
+/// `) (`, S3.1). A marker at its token boundary (`has_marker`) makes the line an error, never a
+/// path to resolve (S2.2: a directory named `x) (*` could alias an allowed one).
 fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
     let mut pkgs = Vec::new();
     for line in out.lines() {
