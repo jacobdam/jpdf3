@@ -91,8 +91,8 @@ One flag on an open; nothing measurable.
   listed Linux architecture, so the FIFO tests can't skip there); `regular_files_read_normally` (200 000 bytes read back whole; a missing path is
   `NotFound`); `open_never_blocks_on_a_fifo` (a FIFO with no writer opens within 10 s and its
   handle is not a regular file; skipped where `OPEN_FLAGS` is `None`; on a timeout the
-  blocked reader thread is left to end with the test process, so nothing can hold up the
-  failure report).
+  blocked reader thread is left to end with the test process: no join waits for it, so
+  the timeout is reported once the scratch cleanup that follows returns).
   The integration-test root forbids `unsafe_code` like the library.
 - `xtask/src/web.rs` `reads_results_files`: a directory and a FIFO at the results path give
   `<path>: not a regular file` without blocking (the FIFO half only where `OPEN_FLAGS` is

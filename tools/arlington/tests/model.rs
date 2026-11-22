@@ -1405,6 +1405,20 @@ fn shipped_scan_finds_links_copies_and_names() {
         )]
     );
     std::fs::remove_dir_all(root).unwrap();
+    // A symlink in place of `bindings`, to a clean directory, is a finding too.
+    let root = tree("scan-bindings-link");
+    std::fs::create_dir_all(root.join("real-bindings/b")).unwrap();
+    std::fs::write(root.join("real-bindings/b/lib.rs"), "//! b\n").unwrap();
+    std::os::unix::fs::symlink(root.join("real-bindings"), root.join("bindings")).unwrap();
+    let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
+    assert_eq!(
+        hits,
+        [format!(
+            "{}: not a directory (symlinks are refused)",
+            root.join("bindings").display()
+        )]
+    );
+    std::fs::remove_dir_all(root).unwrap();
     let root = tree("scan-apps-link");
     std::fs::rename(root.join("apps"), root.join("ui")).unwrap();
     std::os::unix::fs::symlink(root.join("ui"), root.join("apps")).unwrap();

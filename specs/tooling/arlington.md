@@ -356,7 +356,7 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
   `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
   directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlink
-  to a clean directory in place of each of the first four, the word under
+  to a clean directory in place of each of them, the word under
   `apps/web/src/test-results` and `apps/web/src/playwright-report`, and the per-file cap one byte below the largest file gives exactly its one finding
   (at that file's size: none), and an endless source read through the cap stops with the cap
   error after exactly cap + 1 bytes (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
