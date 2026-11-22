@@ -7,7 +7,7 @@ Status: proposed by a session for owner issue #173, 2026-11-22; the owner part i
 Files:
 - `owner-comment-tracking/owner-issues.sh`: the whole proposed script (a drop-in replacement).
 - `owner-comment-tracking/owner-issues.diff`: the same change as a diff against main.
-- `owner-comment-tracking/test-owner-issues.sh`: 64 checks against a fake `gh` (§4).
+- `owner-comment-tracking/test-owner-issues.sh`: 71 checks against a fake `gh` (§4).
 
 ## 1. Problem (#173)
 
@@ -109,7 +109,7 @@ the first run fails):
 
 ```sh
 SCRATCH=<an empty directory> ops/proposals/owner-comment-tracking/test-owner-issues.sh
-# passed 64, failed 0
+# passed 71, failed 0
 ```
 
 It covers: owner issue quoting the tag mid-body shown, tagged and stranger issues hidden, a null
@@ -119,24 +119,35 @@ days old, and 2 minutes past and 2 minutes short of `WARN_DAYS` (stale or not, a
 expected stderr warnings, a 20-day review among them); handled by a reply on a later page; edited
 after its "done:" reply (pending again), before it (handled), and between two replies (the latest
 counts); stranger reply, untagged reply, `done:` on a later line, another repo's URL: all still
-shown; id prefixes both ways (`-107` vs `-1070`, `-108` vs `-1080`); a reply ending in a period;
-review comments (handled, unhandled, stranger), reviews (handled, empty body, a second PR, a second
-page, stale); the `kind` of each; conversation and review comments both fetched from `FLOOR`, or
-from 14 days ago when `FLOOR` is later; and a non-zero exit when any one of the six calls fails.
-The `WARN_DAYS` boundary is tested at ±2 minutes, not to the second: the script reads the clock
-itself.
+shown; comments whose URL is on another repo of the owner and on another owner's `jpdf3`, each
+named by an owner "done:" reply (still shown: the done pattern names this repo; the API returns
+only this repo's comments, so these pin a defense-in-depth check); id prefixes both ways (`-107` vs
+`-1070`, `-108` vs `-1080`); a reply ending in a period; review comments (handled, unhandled,
+stranger, agent-tagged, owner text quoting the tag mid-body), reviews (handled, empty body, a
+second PR, a second page, stale, stranger, agent-tagged, owner text quoting the tag mid-body); the
+`kind` of each; conversation and review comments both fetched from `FLOOR`, or from 14 days ago
+when `FLOOR` is later; and a non-zero exit when any one of the six calls fails. The `WARN_DAYS`
+boundary is tested at ±2 minutes, not to the second: the script reads the clock itself.
 
-Hand mutants (each changed one spot of the script copy; failures out of 64): drop the owner check
-on "done:" replies (2), drop the `^` anchor (1), back to `contains($tag)` (2), pre-`FLOOR` window
-always true (4), `stale` always false (9), keep empty review bodies (1), treat every comment as
-post-`FLOOR` (4), drop the owner check on review comments (1), read only the first page (7), accept
-only `/issues/` URLs (3), fetch review comments from 14 days ago (1), `<=` at `FLOOR` (4), `>`/`<=`
-in `stale` (3), reviews never stale (3), ignore edits of pre-`FLOOR` review comments (2), ignore
-edits after "done:" (1), earliest instead of latest "done:" (1).
+Hand mutants (each changed one spot of the script copy; failures out of 64, before the #192
+cases): drop the owner check on "done:" replies (2), drop the `^` anchor (1), back to
+`contains($tag)` (2), pre-`FLOOR` window always true (4), `stale` always false (9), keep empty
+review bodies (1), treat every comment as post-`FLOOR` (4), drop the owner check on review
+comments (1), read only the first page (7), accept only `/issues/` URLs (3), fetch review comments
+from 14 days ago (1), `<=` at `FLOOR` (4), `>`/`<=` in `stale` (3), reviews never stale (3), ignore
+edits of pre-`FLOOR` review comments (2), ignore edits after "done:" (1), earliest instead of
+latest "done:" (1).
+
+Added for #192 (audit 0004 AC.1, AC.7, and PR #198 review round 1; failures out of 71): drop the
+owner check on reviews (1), drop the untagged check on reviews (1), drop the untagged check on
+review comments (1), `contains($tag) | not` instead of the untagged check on reviews (1) and on
+review comments (1), a generic `[^/]+/[^/]+` instead of this repo in the "done:" pattern (2),
+`[^/]+/jpdf3` there (1).
 
 Owner steps after applying:
 1. Run `ops/proposals/owner-comment-tracking/test-owner-issues.sh ops/driver/owner-issues.sh`
-   (the argument makes it test the applied file): `passed 64, failed 0`.
+   (the argument makes it test the applied file): `passed 71, failed 0` (64 before #192 added
+   seven cases; PR #184's file passes all 71).
 2. Run `ops/driver/owner-issues.sh` on the live repo. Applied before 2026-11-23: the output lists
    the same comments as the old script (all pre-`FLOOR`), now with `url`, plus #173 while it is
    open. Applied later: also every owner comment since 2026-11-23 that has no "done:" reply; each
