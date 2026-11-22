@@ -5,7 +5,7 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #177 (#172, owner: `owner-todo` = "the owner can act now"): ops/TICK.md §0 rule + AUTOMATION.md. If it hasn't
-  merged, check its CI and review. Reply on #172 is posted when it merges.
+  merged, check its CI. Reply on #172 posted.
 - #146 stays open after PR #151 merged (2026-11-22, after the owner's `/release`): the decode/raster gate waits for a
   #25 measurement or a structural fix (#154). Follow-up #156 (sev:medium, M10).
 
