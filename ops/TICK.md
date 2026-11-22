@@ -78,7 +78,11 @@ b. **main is red.** Read the failing run. Infra failure (network, outage, a miss
      continue with work that doesn't need a merge. Delete that file once the judge is green.
 c. **Your own open PR** failing CI or review → fix it. Max 3 attempts per PR. Then label the
    issue `blocked`, write hypotheses and evidence on it, and close or park the PR.
-d. **`crash` / `security` issues.**
+d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`.** Every
+   `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
+   When you file one, set it, and put `sev:medium` / `sev:low` issues in milestone M10: they
+   wait for the release gate and are not picked before then. An unlabeled `security` issue →
+   label it first (higher level when unsure).
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
 f. **A leftover branch/worktree from a dead session** → resume it if valuable, else delete it.
 g. **AUDIT session due** (§1 shows ≥ 10 merges since the last audit, or 7 days) → §6.
@@ -169,7 +173,9 @@ Each round K runs in this order:
 3. Fix, commit and **push**.
 4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
    finding (R and S): `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
-   round gets one too ("no findings").
+   round gets one too ("no findings"). Blockers and majors are fixed in the PR; a minor or nit
+   security finding that isn't a quick fix may be deferred to a `sev:medium` / `sev:low` issue in
+   M10 (ADR 0009).
 5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
    changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
    set to the URL that `gh pr comment` printed for the last triage comment.
@@ -240,7 +246,8 @@ leave the PR blocked.
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
   the last audit, plus a Codex security review of the same range (`ops/driver/codex-review.sh`,
   brief = the security reviewer's brief in `target/scratch/`). Findings → issues; mark Codex
-  ones `(codex)`. Tell each reviewer what §4 tells its reviewer (public,
+  ones `(codex)`. Security findings get a `sev:*` label (ADR 0009; medium/low → M10), and the
+  audit re-checks the labels of open `security` issues. Tell each reviewer what §4 tells its reviewer (public,
   repo-relative paths, one line per finding), with IDs `AS.<n>` (security) or `AC.<n>` (code).
   Post each report verbatim on the audit PR (draft it early) with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
   (code)**` (no round number, so §4's K is unaffected). Then post `**Audit findings → issues**`,
