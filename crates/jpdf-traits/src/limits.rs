@@ -1,6 +1,8 @@
 //! Resource limits (PLAN.md §2.2). They live here, at the bottom of the dependency graph, so
 //! every crate and every backend trait shares one definition (ADR 0004).
 
+use crate::BackendError;
+
 /// Resource limits enforced on every operation (PLAN.md §2.2). Never raise a check for speed
 /// (CONSTITUTION 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +48,8 @@ pub struct Limits {
     pub max_image_dimension: u32,
     /// Peak bytes one image decode may hold at once, output included (JPEG, JPEG 2000, JBIG2,
     /// CCITT; specs/core/decode-work-limits.md). The decode term of the 2 GiB budget is this plus
-    /// `max_decoded_bytes_per_stream`, the decoder's input (specs/core/memory-budget.md).
+    /// `max_decoded_bytes_per_stream`, the decoder's inputs together ([`Limits::image_input_budget`],
+    /// specs/core/memory-budget.md).
     pub max_decode_working_bytes: u64,
     /// Operations one image decode may perform: at least one per output sample, plus work that
     /// produces no output (tiles, layers, scans, symbol instances). CPU bound per call.
@@ -263,6 +266,80 @@ impl Default for DecodeLimits {
     }
 }
 
+impl Limits {
+    /// The allowance the decoded inputs of one image decode share: `max_decoded_bytes_per_stream`
+    /// in total, not per input. [`crate::Jbig2Decoder::decode`] takes the page data and the
+    /// decoded `/JBIG2Globals` together; if each could use the whole per-stream cap, the decode
+    /// phase would hold two caps of input, which the memory budget's decode term does not
+    /// count (specs/core/memory-budget.md, #168).
+    pub fn image_input_budget(&self) -> ImageInputBudget {
+        ImageInputBudget {
+            allowance: self.max_decoded_bytes_per_stream,
+            remaining: self.max_decoded_bytes_per_stream,
+        }
+    }
+}
+
+/// What is left of the shared input allowance of one image decode ([`Limits::image_input_budget`]).
+///
+/// It counts the buffers the caller allocates, not the slices the decoder gets. For each input the
+/// caller runs the filter chain one stage at a time with [`ImageInputBudget::cap`] applied to the
+/// stage's [`DecodeLimits`], so a stage fails with [`BackendError::LimitExceeded`] before it
+/// outgrows what the buffers still alive left (decryption is such a stage; a buffer the first stage
+/// reads that is already allocated, such as a cached stream, is charged before it runs). Each stage
+/// keeps its output buffer's capacity, not just its length, within the cap. After a stage the
+/// caller shrinks the output (`Vec::shrink_to_fit`) and charges its **capacity** with
+/// [`ImageInputBudget::charge`], then drops the stage's input buffer and gives its charge back with
+/// [`ImageInputBudget::release`]. An input that borrows the file bytes (no filter before the image
+/// filter, no encryption) holds no new buffer and is not charged; every input held in its own
+/// buffer is, cached ones included.
+///
+/// Neither `Copy` nor `Clone`: a copy charged in place of the original would lose the charge.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ImageInputBudget {
+    allowance: usize,
+    remaining: usize,
+}
+
+impl ImageInputBudget {
+    /// Bytes the buffers not yet charged may still hold.
+    pub fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    /// `limits` with `max_output_bytes` lowered to [`ImageInputBudget::remaining`] (never
+    /// raised), for the next filter stage.
+    pub fn cap(&self, limits: DecodeLimits) -> DecodeLimits {
+        DecodeLimits {
+            max_output_bytes: limits.max_output_bytes.min(self.remaining),
+            ..limits
+        }
+    }
+
+    /// Charges a buffer of `capacity` bytes (its `Vec::capacity()`, not its length: spare
+    /// capacity is memory too). Fails with [`BackendError::LimitExceeded`] and charges nothing
+    /// when it is more than what remains.
+    pub fn charge(&mut self, capacity: usize) -> Result<(), BackendError> {
+        match self.remaining.checked_sub(capacity) {
+            Some(left) => {
+                self.remaining = left;
+                Ok(())
+            }
+            None => Err(BackendError::LimitExceeded(
+                "decoded bytes of one image decode's inputs",
+            )),
+        }
+    }
+
+    /// Gives back the charge of a buffer the caller has dropped (the same `capacity` it
+    /// charged). What remains never grows past the allowance, but below it an over-release (or
+    /// releasing a buffer still alive) gives back too much: the caller must release exactly
+    /// what it charged for a buffer it has dropped.
+    pub fn release(&mut self, capacity: usize) {
+        self.remaining = self.remaining.saturating_add(capacity).min(self.allowance);
+    }
+}
+
 /// The limits font backend calls must enforce ([`crate::FontEngine`], [`crate::Type1Parser`],
 /// [`crate::FontFace::outline`]). Font output is structured, so it is bounded by counts
 /// rather than bytes: a face holds at most `max_glyphs` glyphs and one outline at most
@@ -313,6 +390,194 @@ impl Default for RasterLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LIMIT_ERROR: BackendError =
+        BackendError::LimitExceeded("decoded bytes of one image decode's inputs");
+
+    /// JBIG2 page data and globals together (#168): at the allowance both inputs fit, in either
+    /// order; one byte past it the second input is refused and nothing is charged.
+    #[test]
+    fn image_inputs_share_one_allowance() {
+        let limits = Limits {
+            max_decoded_bytes_per_stream: 100,
+            ..Limits::default()
+        };
+        for (first, second) in [(60, 40), (40, 60), (0, 100), (100, 0)] {
+            let mut budget = limits.image_input_budget();
+            assert_eq!(budget.remaining(), 100);
+            assert_eq!(budget.charge(first), Ok(()), "{first} + {second}");
+            assert_eq!(budget.remaining(), 100 - first);
+            assert_eq!(budget.charge(second), Ok(()), "{first} + {second}");
+            assert_eq!(budget.remaining(), 0);
+            // Nothing more fits, not even one byte; an empty input still does.
+            assert_eq!(budget.charge(1), Err(LIMIT_ERROR));
+            assert_eq!(budget.charge(0), Ok(()));
+        }
+        for (first, second) in [(60, 41), (41, 60), (0, 101), (101, 0)] {
+            let mut budget = limits.image_input_budget();
+            let (fits, over) = if first > 100 {
+                (second, first)
+            } else {
+                (first, second)
+            };
+            assert_eq!(budget.charge(fits), Ok(()), "{first} + {second}");
+            assert_eq!(budget.charge(over), Err(LIMIT_ERROR), "{first} + {second}");
+            // The refused charge took nothing: what remained still fits exactly.
+            assert_eq!(budget.remaining(), 100 - fits);
+            assert_eq!(budget.charge(100 - fits), Ok(()));
+            assert_eq!(budget.remaining(), 0);
+        }
+    }
+
+    /// The same boundary at the default limits: 64 MiB of page data plus 64 MiB of globals is
+    /// the whole 128 MiB allowance; one byte more is refused.
+    #[test]
+    fn default_image_input_allowance_is_exact() {
+        const MIB: usize = 1 << 20;
+        let limits = Limits::default();
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.remaining(), 128 * MIB);
+        assert_eq!(budget.charge(64 * MIB), Ok(()));
+        assert_eq!(budget.charge(64 * MIB), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(64 * MIB), Ok(()));
+        assert_eq!(budget.charge(64 * MIB + 1), Err(LIMIT_ERROR));
+        // A full-cap page alone leaves nothing for globals.
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(128 * MIB), Ok(()));
+        assert_eq!(budget.charge(1), Err(LIMIT_ERROR));
+    }
+
+    /// `cap` lowers only the output cap, to what remains, and never raises it; every other
+    /// field (all distinct, none at its default) passes through unchanged.
+    #[test]
+    fn image_input_cap_lowers_only_the_output_cap() {
+        let limits = Limits {
+            max_decoded_bytes_per_stream: 100,
+            ..Limits::default()
+        };
+        let tightened = |max_output_bytes| DecodeLimits {
+            max_output_bytes,
+            max_image_pixels: 7,
+            max_image_dimension: 8,
+            max_image_components: 9,
+            max_working_bytes: 10,
+            max_ops: 11,
+        };
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.cap(tightened(1000)), tightened(100));
+        // Equal caps: unchanged.
+        assert_eq!(budget.cap(tightened(100)), tightened(100));
+        assert_eq!(budget.charge(70), Ok(()));
+        // The allowance binds.
+        assert_eq!(budget.cap(tightened(1000)), tightened(30));
+        // Equal caps after a charge: unchanged.
+        assert_eq!(budget.cap(tightened(30)), tightened(30));
+        // A smaller document budget stays the binding cap.
+        assert_eq!(budget.cap(tightened(10)), tightened(10));
+        assert_eq!(budget.charge(30), Ok(()));
+        assert_eq!(budget.cap(tightened(1000)), tightened(0));
+    }
+
+    /// Spare capacity is charged (R1.1 on PR #186): a first input of 10 bytes left in a buffer
+    /// reserved at the whole allowance takes all of it, so the second input gets nothing; once
+    /// it is shrunk to its length, the rest is available.
+    #[test]
+    fn image_input_budget_charges_capacity() {
+        let limits = Limits {
+            max_decoded_bytes_per_stream: 100,
+            ..Limits::default()
+        };
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(100), Ok(()));
+        assert_eq!(
+            budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes,
+            0
+        );
+        assert_eq!(budget.charge(1), Err(LIMIT_ERROR));
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(10), Ok(()));
+        assert_eq!(
+            budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes,
+            90
+        );
+        assert_eq!(budget.charge(90), Ok(()));
+        assert_eq!(budget.charge(1), Err(LIMIT_ERROR));
+    }
+
+    /// A two-stage chain: the first stage's output stays charged while the second grows, and
+    /// its charge comes back once it is dropped. `release` never lifts what remains past the
+    /// allowance.
+    #[test]
+    fn image_input_budget_release_returns_dropped_stages() {
+        let limits = Limits {
+            max_decoded_bytes_per_stream: 100,
+            ..Limits::default()
+        };
+        let mut budget = limits.image_input_budget();
+        // Stage 1 of the page chain: 30 bytes.
+        assert_eq!(budget.charge(30), Ok(()));
+        // Stage 2 may grow to 70 while stage 1 is alive, not 71.
+        assert_eq!(
+            budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes,
+            70
+        );
+        assert_eq!(budget.charge(70), Ok(()));
+        // Stage 1 dropped: 30 bytes come back for the globals, not 31.
+        budget.release(30);
+        assert_eq!(budget.remaining(), 30);
+        assert_eq!(budget.charge(31), Err(LIMIT_ERROR));
+        assert_eq!(budget.charge(30), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+        // A release with other charges still alive gives back exactly that charge: 30 + 20
+        // charged, the 30 dropped, so 80 remain (not the whole allowance).
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(30), Ok(()));
+        assert_eq!(budget.charge(20), Ok(()));
+        budget.release(30);
+        assert_eq!(budget.remaining(), 80);
+        assert_eq!(
+            budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes,
+            80
+        );
+        assert_eq!(budget.charge(81), Err(LIMIT_ERROR));
+        assert_eq!(budget.charge(80), Ok(()));
+        // Odd sizes: 30 + 21 charged, the 21 dropped leaves exactly 70; dropping the 30 too
+        // brings it back to exactly the allowance.
+        let mut budget = limits.image_input_budget();
+        assert_eq!(budget.charge(30), Ok(()));
+        assert_eq!(budget.charge(21), Ok(()));
+        budget.release(21);
+        assert_eq!(budget.remaining(), 70);
+        budget.release(30);
+        assert_eq!(budget.remaining(), 100);
+        // Over-release clamps at the allowance, from a full budget and from a partly used one.
+        let mut budget = limits.image_input_budget();
+        budget.release(5);
+        assert_eq!(budget.remaining(), 100);
+        assert_eq!(budget.charge(60), Ok(()));
+        budget.release(usize::MAX);
+        assert_eq!(budget.remaining(), 100);
+        assert_eq!(budget.charge(101), Err(LIMIT_ERROR));
+    }
+
+    /// Huge lengths and loose limits neither overflow nor wrap.
+    #[test]
+    fn image_input_budget_saturates() {
+        let mut budget = Limits::default().image_input_budget();
+        assert_eq!(budget.charge(usize::MAX), Err(LIMIT_ERROR));
+        assert_eq!(budget.remaining(), 128 << 20);
+        let loose = Limits {
+            max_decoded_bytes_per_stream: usize::MAX,
+            ..Limits::default()
+        };
+        let mut budget = loose.image_input_budget();
+        assert_eq!(budget.charge(usize::MAX - 1), Ok(()));
+        assert_eq!(budget.charge(2), Err(LIMIT_ERROR));
+        assert_eq!(budget.charge(1), Ok(()));
+        assert_eq!(budget.remaining(), 0);
+    }
 
     #[test]
     fn decode_limits_take_the_smaller_of_stream_and_document_budget() {

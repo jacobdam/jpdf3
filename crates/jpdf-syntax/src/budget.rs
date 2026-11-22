@@ -83,9 +83,10 @@ pub struct MemoryBudget {
     /// One parse: `max_objects_per_parse` objects at [`PARSE_OBJECT_BYTES`] each, plus
     /// `max_string_bytes_per_parse` string and name bytes times the growth factor.
     pub parse: u64,
-    /// One decode: the filter chain's output feeding the image decoder
-    /// (`max_decoded_bytes_per_stream`) plus the decoder's own working memory, output
-    /// included (`max_decode_working_bytes`).
+    /// One decode: the decoded inputs feeding the image decoder, all of them together
+    /// (`max_decoded_bytes_per_stream`, shared through `Limits::image_input_budget`: JBIG2 page
+    /// data and globals draw from one allowance, #168) plus the decoder's own working memory,
+    /// output included (`max_decode_working_bytes`).
     pub decode: u64,
     /// One render's working memory (`max_raster_working_bytes`).
     pub raster: u64,
@@ -242,6 +243,39 @@ mod tests {
         assert!(
             peak.saturating_add(64 * MIB) <= PROCESS_BUDGET_BYTES,
             "peak {peak} bytes"
+        );
+    }
+
+    /// The decode term counts the image decoder's inputs once, all together (#168): it is the
+    /// whole shared input allowance plus the working bytes, and inputs that fill the allowance
+    /// (JBIG2 page data and globals) leave no room for one more byte. Were each input allowed
+    /// the per-stream cap, two inputs would hold 256 MiB at the defaults and the peak would
+    /// pass 2 GiB (checked below), so the term would understate the phase.
+    #[test]
+    fn decode_term_holds_the_image_inputs_together() {
+        let limits = Limits::default();
+        let b = MemoryBudget::of(&limits);
+        let mut inputs = limits.image_input_budget();
+        let allowance = size_u64(inputs.remaining());
+        assert_eq!(allowance, 128 * MIB);
+        assert_eq!(
+            b.decode,
+            allowance.saturating_add(limits.max_decode_working_bytes)
+        );
+        let half = inputs.remaining() / 2;
+        assert_eq!(inputs.charge(half), Ok(()));
+        assert_eq!(inputs.charge(inputs.remaining()), Ok(()));
+        assert!(inputs.charge(1).is_err());
+        // What two per-input caps would cost: one more allowance in the decode phase, which is
+        // the largest phase and counts twice (heap high-water), so the peak would not fit.
+        let per_input = MemoryBudget {
+            decode: b.decode.saturating_add(allowance),
+            ..b
+        };
+        assert!(
+            per_input.peak() > PROCESS_BUDGET_BYTES,
+            "{}",
+            per_input.peak()
         );
     }
 

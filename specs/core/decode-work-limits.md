@@ -126,9 +126,10 @@ still renders (specs/core/backend-traits.md, Errors).
     Flate output that feeds the image decoder is still alive while it runs, and nothing charges
     it. The real decode term is up to 384 MiB (128 MiB output cap + 256 MiB working bytes;
     #146 lowered the cap from 256 MiB). specs/core/memory-budget.md counts it as the decode
-    term. That holds only if `jpdf-filters`, which doesn't exist yet,
-    keeps at most one intermediate output alive while the image decoder runs; the
-    requirement is listed there.
+    term. That holds only if `jpdf-filters`, which doesn't exist yet, keeps every decoded
+    input buffer alive during one image decode (JBIG2 page data and globals, and intermediate
+    stage outputs) within one shared 128 MiB allowance, `Limits::image_input_budget` (#168);
+    the caller's steps are listed there.
 - The toy decoder in the suite's tests charges one operation per output sample plus 64 per
   unit of value in the bytes after the samples (a "repeat count"); its heavy fixtures end in a
   count of 4, and their lighter input is the same length with a count of 0. Its loops run over the input once, so they need no step cap.
