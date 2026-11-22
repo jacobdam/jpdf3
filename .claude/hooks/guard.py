@@ -140,9 +140,11 @@ def check_bash(cmd, cwd):
         raise Block("call GitHub only through `gh` (no direct API URLs)")
     post_text = check_gh_posts(cmd)
     inert_c = inert_view(cmd, post_text)
-    # The cmux socket has no password (owner's choice), so this block is the only barrier between
-    # an agent and the owner's other terminal tabs. The word may appear only as quoted, inert
-    # title/body text of a gh post; anywhere else (incl. bash -c, $(...), grep) it is blocked.
+    # The cmux socket has no password (owner's choice; risk accepted in #130). This block is a
+    # plain text match, not a barrier: quoting tricks (c''mux, c\mux) dodge it. Sessions are kept
+    # off the owner's terminal tabs by CONSTITUTION and TICK, which forbid going around the guard.
+    # The word may appear only as quoted, inert title/body text of a gh post; anywhere else
+    # (incl. bash -c, $(...), grep) it is blocked.
     if re.search(r"\bcmux\b", inert_c.lower()):
         raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
     if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
