@@ -6,12 +6,11 @@ review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lesson
 ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 ## Tooling & environment
-- Journal date and time → the machine's clock and the session's "today" are local (UTC+7); use `date -u`
-  for the journal file name and the `HH:MM UTC` heading (the 2026-11-22.md "00:30 UTC" entry was really
-  17:10 UTC on 11-21) ([journal](journal/2026-11-21.md), PR #123).
-- Counting by date across git and GitHub → git `%cs`/`%cd` print the committer's own time zone (some main commits are
-  `+0700`) while GitHub timestamps are UTC; use `%ct` (Unix seconds) for UTC days, and test a commit at 23:59:59 UTC
-  ([journal](journal/2026-11-22.md), PR #220 R1.1).
+- Dates and times → the machine's clock, the session's "today" and git `%cs`/`%cd` (committer time zone; some main
+  commits are `+0700`) are local, while GitHub timestamps are UTC. Use `date -u` for the journal file name and the
+  `HH:MM UTC` heading (the 2026-11-22.md "00:30 UTC" entry was really 17:10 UTC on 11-21), and `%ct` (Unix seconds)
+  for UTC commit days, tested with a commit at 23:59:59 UTC ([journal](journal/2026-11-21.md), PR #123;
+  [journal](journal/2026-11-22.md), PR #220 R1.1).
 - Scratch files (probe trees, throwaway scripts, downloads) → put them in the session scratchpad
   directory, never `/tmp` (owner instruction, #28). `$TMPDIR` is unset in the sandbox (so
   `$TMPDIR/x` is `/x`, read-only): use the git-ignored `target/scratch/` of your worktree

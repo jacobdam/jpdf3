@@ -22,7 +22,7 @@ Phase: bootstrap (pilot)
 ## Last session
 - i: #91 → PR #220 (`cargo xtask metrics`: throughput, review rounds/findings from posted reviews, stuck issues,
   audit/retro lag; split, part 2 = #219). 3 review rounds (R1: 3 majors, all fixed). Audit 0005 (PR #215) merged
-  before the pick. Journal 2026-11-22 12:15.
+  during the session. Journal 2026-11-22 12:15.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
@@ -33,10 +33,11 @@ Phase: bootstrap (pilot)
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
   #132, #134, #136, #137, #166, #193, #203, #218.
-- **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index
+- **Next retro (rule h): by 2026-11-28.** Once PR #220 is on main, start from `git fetch` + `cargo xtask metrics --index
   <main checkout>/ops/logs/index.tsv` (specs/tooling/metrics.md; CI counts need #219). Inputs:
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3.
+    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
+    PR #220: 3.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
@@ -48,7 +49,7 @@ Phase: bootstrap (pilot)
     AUTOMATION.md:295).
   - Codex on audits: audit 0005's brief (no ops/driver diff) ran ok (7 findings, 0 Codex-only bugs above sev:low),
     but like PR #212's 3 runs it said its workspace commands timed out (brief-only review).
-  - ops/LESSONS.md has 63 entries (cap 60).
+  - ops/LESSONS.md has 63 entries (cap 60); PR #221 merged the new date lesson into an existing one.
   - audit 0005: harness tests named for a limit that fail for another reason (AS.3), and proposal harnesses without
     near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
 - **Next audit:** after 10 more merges or by 2026-11-29.
