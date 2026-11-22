@@ -45,7 +45,8 @@ pub struct Limits {
     /// Width or height of one decoded image, in pixels.
     pub max_image_dimension: u32,
     /// Peak bytes one image decode may hold at once, output included (JPEG, JPEG 2000, JBIG2,
-    /// CCITT; specs/core/decode-work-limits.md). It is the decode term of the 2 GiB budget.
+    /// CCITT; specs/core/decode-work-limits.md). The decode term of the 2 GiB budget is this plus
+    /// `max_decoded_bytes_per_stream`, the decoder's input (specs/core/memory-budget.md).
     pub max_decode_working_bytes: u64,
     /// Operations one image decode may perform: at least one per output sample, plus work that
     /// produces no output (tiles, layers, scans, symbol instances). CPU bound per call.
@@ -528,6 +529,15 @@ mod tests {
             .saturating_add(stream)
             .saturating_add(l.max_raster_working_bytes);
         assert!(total <= 2 << 30, "{total} bytes");
+    }
+
+    /// Lowering `max_objects_per_parse` (#109) must keep `max_pages` reachable: a flat
+    /// `/Kids` array of `max_pages` references, plus room for the rest of the `/Pages`
+    /// dictionary, fits in one parse.
+    #[test]
+    fn per_parse_objects_hold_a_flat_page_tree() {
+        let l = Limits::default();
+        assert!(l.max_objects_per_parse >= l.max_pages.saturating_add(32_768));
     }
 
     #[test]

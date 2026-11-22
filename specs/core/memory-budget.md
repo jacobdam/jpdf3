@@ -80,7 +80,13 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
   entries in an exact buffer (`trim_trailer`). Before #109 it kept every duplicate: 2 M
   `/Root 1 0 R` entries in a 22 MB trailer stayed alive for the document (about 173 MiB).
 - **Phases run one at a time.** A document parses an object, decodes a stream or renders a
-  tile, never two at once, so only the largest phase counts. What a phase produces and is
+  tile, never two at once, so only the largest phase counts. This also assumes a finished
+  phase gives its address space back, which glibc does not guarantee: the parse phase comes
+  from the brk heap, which only shrinks from the top, and a later decode or raster buffer above
+  the mmap threshold gets a new mapping. Counting the parse high-water mark next to decode
+  gives 2445.84 MiB, over the 2 GiB. Today parse is the only phase on the jpdf-cli path, so
+  the claim holds for the code that exists. **#146 must be resolved before any decode or
+  raster runs on the jpdf-cli path.** What a phase produces and is
   still alive in a later phase must be charged to `retained` (see the requirements). The model
   is per process with one document and one job at a time. That is what the judge runs. A
   front end that renders several pages or documents in parallel must divide the budgets among
@@ -180,6 +186,11 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,
     page-walk and growth factors are reasoned from std's B-tree, hash set and `Vec` layouts,
     not measured.
+- Known gap (#146): the phase model assumes heap reuse across phases (see Behavior). It holds
+  today only because parse is the only phase on the jpdf-cli path.
+- Known gap (#113, PR #140): `max_string_bytes_per_parse` is not exact for names and odd hex
+  strings. The overshoot is bounded by the object count, and each such token is a small chunk
+  inside the 272-byte per-object bound, so the parse term still holds.
 - Known gap: `read_capped` in jpdf-cli reserves the size from `stat`. A file that grows
   during the read (below `max_file_size`) makes `read_to_end` double the buffer, up to 3 ×
   `max_file_size` at the realloc peak. It needs a local attacker who can write to the file
@@ -205,6 +216,8 @@ per allocation counted by `retained_cost`, which already walks the object once.
   `each_term_follows_its_fields`, `peak_is_persistent_plus_largest_phase_plus_reserve`.
 - crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`,
   `parse_object_bytes_bound_real_objects`, `trailer_with_duplicate_keys_is_trimmed_to_two_entries`,
+- crates/jpdf-traits/src/limits.rs: `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of
+  `max_pages` references plus 32 768 other objects fit in one parse).
   `alloc_bytes_follow_glibc_chunks`, `retained_cost_counts_every_allocation` (new literals).
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^23 pixels pass with
   the default limits, 2^23 + 1 fail).
