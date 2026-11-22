@@ -36,8 +36,8 @@ Phase: bootstrap (pilot)
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
     final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
     PR #220: 3, PR #227: 4 + final check (every Codex round found
-    a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; every major
-    after round 1 was spec text about a future caller).
+    a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; all majors
+    after round 1 but one were spec text about a future caller).
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
