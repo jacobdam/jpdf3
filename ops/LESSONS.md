@@ -206,11 +206,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   memory bound) now look redundant and no result-based test notices their removal. Test the early stop: an
   over-long token with no terminator must fail with the limit error after a few lexed bytes
   ([journal](journal/2026-11-21.md), PR #140).
-- Writing a "defaults fit the memory budget" check → summing the charged limits proves nothing. Before the first
-  review, read every `Vec::new`/`collect`/`with_capacity` on the code path and give each a term: containers start at
-  4 slots (a one-entry dict holds 272 B as glibc chunks), stored dicts can keep duplicate keys, set/Vec growth peaks
-  at 3×, and the brk heap does not shrink between phases. Pin each per-item constant against a parsed worst-case
-  shape; 6 review rounds found a missed term each time ([journal](journal/2026-11-22.md), PR #108, PR #142).
+- Writing a "defaults fit the memory budget" check → summing the charged limits proves nothing: require an
+  itemized reserve (or say plainly there is none), and before the first review give every `Vec::new`/`collect`/
+  `with_capacity` on the code path a term, pinning each per-item constant against a parsed worst-case shape. PR #142
+  rounds 1 to 3 each found a missed term ([journal](journal/2026-11-21.md), PR #108;
+  [journal](journal/2026-11-22.md), PR #142).
 - Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
   resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
   spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control

@@ -33,8 +33,9 @@ Phase: bootstrap (pilot)
   - TICK puts d above a due audit, so the audit starves (audit 0002 §6; this session and the last both picked d);
   - STATUS "in flight" is stale as soon as its PR merges;
   - the template's `Area:` list lacks `tooling`;
-  - review rounds: PR #121 took 4, PR #142 took 6; both found real gaps every round. Consider a pre-review
-    self-check for "budget/model" PRs (list every allocation on the path).
+  - review rounds: PR #121 took 4 and PR #142 took 6, both past rule c's 3-attempt cap without blocking the issue
+    (recorded as deviations). Decide whether the cap covers review rounds, and consider a pre-review self-check for
+    "budget/model" PRs (list every allocation on the path).
 - **Next audit:** overdue (see 0). Carry-overs in docs/audits/0002.md.
 
 ## Blockers / owner-todo
@@ -42,7 +43,9 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
   checked locally only.
-- Open proposals: ops/proposals/codex-second-reviewer.md (#126), driver session exit (#128),
-  ops/proposals/guard-inert-post-text.md (#130). Until #130 is applied, review comments reword guard-trigger words
-  (this session: apostrophes and the keyword for unchecked code).
+- #126 (open): the Codex second-reviewer trial is on main (PR #147); the owner dry run remains. #128 (driver
+  session exit, PR #144) and #130 (guard inert post text, PR #145) are closed and applied. This session's review
+  posts still reworded apostrophes and the keyword for unchecked code; check whether the applied guard still needs it.
+- Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`; the guard
+  has quadratic inputs, and a timed-out hook allows the command.
 - 7+ merged remote `t/*` branches wait for the owner to delete them (the guard blocks remote deletes).
