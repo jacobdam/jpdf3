@@ -155,9 +155,11 @@ the 2 GiB unused.
     allowed name, a registry crate); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
     jpdf-syntax package (not only `src`; `target`, symlinks and the test file itself skipped) name a
     decode or raster entry point (the decode, raster and font limit builders, `check_scene`,
-    the codec, image, cipher, font and rasterizer traits, calls to their methods such as
-    `.decode(`, `.render(` and `.load(` (matched as call syntax, ignoring whitespace and
-    comments between the tokens), `inflate`, `FlateDecode`);
+    the codec, image, cipher, font and rasterizer traits, `inflate`, `FlateDecode`, calls to their methods such as `.decode`, `.render`
+    and `.load` (whitespace removed, the name followed by `(`, `::` or a comment, so a
+    turbofish or a comment before the call still matches; it fails closed on prose, literals
+    and same-named methods such as an atomic's `.load`)), or use any `#[path]` or `include!` (they
+    compile source the scan doesn't read);
     or one of the five manifests mentions `features` or `optional` (so workspace feature
     unification can't add a dependency the graph check misses). A PR that brings a phase onto the path must satisfy the
     gate and update the test. **Limit:** the graph check sees crates, not phases, and the name

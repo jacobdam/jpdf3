@@ -6,8 +6,9 @@
 //!
 //! Limits: the graph check sees crates, not phases. Decode or raster code written inside an
 //! allowed crate is caught only if it names one of the backend entry points in
-//! `PHASE_ENTRY_POINTS` or calls a method in `PHASE_METHOD_CALLS` (a best-effort text scan); an
-//! in-crate decoder under another name passes. Symlinked files and directories are skipped.
+//! `PHASE_ENTRY_POINTS` or uses a method in `PHASE_METHODS` (a best-effort text scan; files
+//! that pull in other source with `#[path]` or `include!` are refused); an in-crate decoder
+//! under another name passes. Symlinked files and directories are skipped.
 //! Review of each PR against the gate covers that.
 
 use std::collections::BTreeSet;
@@ -51,8 +52,8 @@ const PHASE_ENTRY_POINTS: [&str; 22] = [
 ];
 
 /// Package roots of the allowed crates other than jpdf-traits (which defines the names). The
-/// whole root is scanned (not only `src`), so a module loaded with `#[path]` from elsewhere
-/// in the package is seen too; `target` directories and this file are skipped.
+/// whole root is scanned (not only `src`); `target` directories, symlinks and this file are
+/// skipped, and `#[path]` / `include!` are refused (`UNSCANNED_SOURCE`).
 const SCANNED: [&str; 4] = [
     ".",
     "../../crates/jpdf-engine",
@@ -60,78 +61,73 @@ const SCANNED: [&str; 4] = [
     "../../crates/jpdf-syntax",
 ];
 
-/// Backend method calls, matched as call syntax (`.render(`) so prose and unrelated functions
-/// with the same word don't match. The receiver's type may be inferred (a factory's result), so
-/// only the call shows that a backend runs.
-const PHASE_METHOD_CALLS: [&str; 10] = [
-    ".decode(",
-    ".render(",
-    ".outline(",
-    ".inflate(",
-    ".deflate(",
-    ".rc4(",
-    ".aes_cbc(",
-    ".glyph_by_name(",
-    ".cmap_lookup(",
-    ".load(",
+/// Backend methods. After all whitespace is removed, `.name` followed by `(`, `::` or `/` is
+/// flagged: a call `.render(`, a turbofish `.decode::<T>(`, and a call with any comment
+/// (nested or not) between the name and the parenthesis (`.decode/*...*/(`). A field of the
+/// same name (`budget.decode`) is not a call and is not flagged. Comments and string literals are not parsed, so prose or a
+/// literal that quotes `x.render(` is also flagged (fail closed), and so is an unrelated method
+/// of the same name, e.g. an atomic's `.load(`: write `AtomicBool::load(&flag, ..)` instead.
+/// The receiver's type may be inferred (a factory's result), so only the call shows that a
+/// backend runs.
+const PHASE_METHODS: [&str; 10] = [
+    "decode",
+    "render",
+    "outline",
+    "inflate",
+    "deflate",
+    "rc4",
+    "aes_cbc",
+    "glyph_by_name",
+    "cmap_lookup",
+    "load",
 ];
 
-/// `text` without `//` and `/* */` comments (a rough cut: it doesn't know string literals,
-/// which is why the scan also looks at the text with its comments kept).
-fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find('/') {
-        out.push_str(&rest[..i]);
-        let tail = &rest[i..];
-        if let Some(after) = tail.strip_prefix("//") {
-            rest = after.find('\n').map_or("", |j| &after[j..]);
-        } else if let Some(after) = tail.strip_prefix("/*") {
-            rest = after.find("*/").map_or("", |j| &after[j + 2..]);
-        } else {
-            out.push('/');
-            rest = &tail[1..];
-        }
-    }
-    out.push_str(rest);
-    out
-}
+/// Constructs that compile source the scan doesn't read (a file with another extension, or one
+/// outside the scanned roots), so they are refused outright. Matched with whitespace removed.
+const UNSCANNED_SOURCE: [&str; 4] = ["#[path", "include!", "include_str!", "include_bytes!"];
 
-/// Every entry-point name and backend method call in `text`. A method call is matched with all
-/// whitespace removed, with and without comments, so `r.render\n    (` and
-/// `r.render /* x */ (` count too.
+/// Every entry-point name, backend method use and unscanned-source construct in `text`.
 fn phase_names_in(text: &str) -> Vec<&'static str> {
-    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    let (plain, uncommented) = (squash(text), squash(&strip_comments(text)));
+    let squashed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let method_used = |m: &str| {
+        let pat = format!(".{m}");
+        squashed.match_indices(&pat).any(|(i, _)| {
+            let next = &squashed[i + pat.len()..];
+            next.starts_with('(') || next.starts_with("::") || next.starts_with('/')
+        })
+    };
     let names = PHASE_ENTRY_POINTS.iter().filter(|n| text.contains(*n));
-    let calls = PHASE_METHOD_CALLS
-        .iter()
-        .filter(|c| plain.contains(*c) || uncommented.contains(*c));
-    names.chain(calls).copied().collect()
+    let methods = PHASE_METHODS.iter().filter(|m| method_used(m));
+    let unscanned = UNSCANNED_SOURCE.iter().filter(|u| squashed.contains(*u));
+    names.chain(methods).chain(unscanned).copied().collect()
 }
 
 #[test]
 fn phase_scan_sees_method_calls_on_inferred_receivers() {
+    let hits = |src: &str| phase_names_in(src);
     let src = "let (r, l) = backends::renderer();\nlet out = r\n    .render(&scene, &l);";
-    assert_eq!(phase_names_in(src), vec![".render("]);
+    assert_eq!(hits(src), vec!["render"]);
+    assert_eq!(hits("let d = make(); d.decode(data)"), vec!["decode"]);
     assert_eq!(
-        phase_names_in("let d = make(); d.decode(data)"),
-        vec![".decode("]
+        hits("let out = r.render\n    (&scene, &limits);"),
+        vec!["render"]
     );
+    assert_eq!(hits("r . decode /* the page */ (data)"), vec!["decode"]);
+    assert_eq!(hits("d.decode /* a /* b */ c */ (data)"), vec!["decode"]);
     assert_eq!(
-        phase_names_in("let out = r.render\n    (&scene, &limits);"),
-        vec![".render("]
+        hits("let s = \"/*\"; d.decode /* x */ (data)"),
+        vec!["decode"]
     );
-    assert_eq!(
-        phase_names_in("r . decode /* the page */ (data)"),
-        vec![".decode("]
-    );
-    assert_eq!(
-        phase_names_in("e.load // font\n (data, prog, &l)"),
-        vec![".load("]
-    );
-    // Prose naming the word without a call is not flagged.
-    assert!(phase_names_in("// we render the page later").is_empty());
+    assert_eq!(hits("d.decode::<u8>(data)"), vec!["decode"]);
+    assert_eq!(hits("e.load // font\n (data, prog, &l)"), vec!["load"]);
+    assert_eq!(hits("#[path = \"decode.inc\"]\nmod d;"), vec!["#[path"]);
+    assert_eq!(hits("include ! (\"x.in\");"), vec!["include!"]);
+    // A longer identifier that starts with a method name is not that method, and a field of
+    // the same name is not a call.
+    assert!(hits("x.decoded_len(); x.rendering = 1; x.loader()").is_empty());
+    assert!(hits("let d = b.decode.max(b.raster); f(b.decode, b.render)").is_empty());
+    // Prose naming the word without a member use is not flagged.
+    assert!(hits("// we render the page later").is_empty());
 }
 
 fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
