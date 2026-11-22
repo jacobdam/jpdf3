@@ -47,12 +47,21 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
     `waiting on owner: nothing`. If it waits on the owner, add `owner-todo` to the issue (or the
     PR's issue, §0 above).
 
+  "Finish" means the instruction's change is on main (or, for one that needs no PR, carried out).
+  When it goes through a PR, the PR body links the owner comment (`Owner instruction: <link>`), and
+  "done:" waits for the merge, which usually lands after the session exits. A later session that
+  sees an owner instruction with a "picked up" reply and no "done:" reply finds its PR
+  (`gh pr list --state all --search "<comment id> in:body"`): merged → post "done:"; open → work it
+  under rule c; closed unmerged → the instruction is not done, resume it under rule a.
+
   The link is the URL exactly as GitHub gives it (`…#issuecomment-N`, `…#discussion_rN`,
   `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply. The proposed
   feed (`ops/proposals/owner-comment-tracking.md`) drops a comment once a "done:" reply that starts
-  this way links it. An owner instruction with a "picked up" reply but no "done:" reply is
-  unfinished: the next session resumes it under rule a. Owner comments from before 2026-11-23
-  need no replies.
+  this way links it. Owner comments from before 2026-11-23 need no replies (the proposal's `FLOOR`;
+  change both together). Until the owner applies that proposal (#179), `owner-issues.sh` shows only
+  conversation comments, without their URL (take it from the issue's or PR's comment list), keeps
+  handled ones for 14 days (skip those with a "done:" reply), and shows no inline review comments
+  or review bodies, so those get no replies yet.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.

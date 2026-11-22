@@ -391,10 +391,13 @@ the owner's turn starts and remove it when the owner's part is done (rules: ops/
 **Replies to owner instructions** (#173): every owner issue, comment, review comment, review body
 and command gets `🤖 jpdf-agent picked up <link>` when a session starts on it and
 `🤖 jpdf-agent done: <link>` with what changed and `waiting on owner: <action|nothing>` when it
-ends, in the same issue or PR conversation. No reply means not seen yet; "picked up" without
-"done:" means in progress or interrupted (the next session resumes it). Proposal
-`ops/proposals/owner-comment-tracking.md` makes `owner-issues.sh` fetch review comments and review
-bodies and keep each comment until a "done:" reply links it.
+ends (for work through a PR: after it merges), in the same issue or PR conversation. No reply
+means not seen yet; "picked up" without "done:" means in progress or interrupted (a later session
+resumes it). Today `owner-issues.sh` reads only conversation comments, so inline review comments
+and review bodies get no reply yet. Proposal `ops/proposals/owner-comment-tracking.md` (owner
+issue #179) makes it fetch review comments (repo-wide) and review bodies (open PRs only: a review
+on a PR that merges before a session sees it is missed, so use a conversation comment or `/hold`
+on a PR about to merge) and keep each comment until a "done:" reply links it.
 
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.

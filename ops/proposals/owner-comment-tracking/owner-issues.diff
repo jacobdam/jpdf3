@@ -1,6 +1,6 @@
 --- a/ops/driver/owner-issues.sh
 +++ b/ops/driver/owner-issues.sh
-@@ -1,12 +1,77 @@
+@@ -1,12 +1,84 @@
  #!/usr/bin/env bash
  # PROTECTED. Prints ONLY owner-authored instructions (CONSTITUTION 1) as JSON lines:
 -# open issues by the owner, plus owner comments from the last 14 days.
@@ -14,10 +14,13 @@
 +#
 +# Handled marker (ops/TICK.md, #173): an owner comment is handled once a conversation comment
 +# by the owner's account whose body starts with "<TAG> done: <comment URL>" exists. Only that
-+# account can mark a comment handled; a stranger's "done:" reply is ignored.
-+# Comments created before FLOOR predate the done: replies; they keep the old rule (shown while
-+# updated in the last 14 days). Comments from FLOOR on stay until handled, whatever their age;
-+# unhandled ones older than WARN_DAYS carry "stale": true and a warning goes to stderr.
++# account can mark a comment handled; a stranger's "done:" reply is ignored. A comment edited
++# after its latest done: reply is pending again.
++# Comments created before FLOOR (the date ops/TICK.md names) predate the done: replies; they
++# keep the old rule (shown while updated in the last 14 days). Comments from FLOOR on stay until
++# handled, whatever their age; unhandled ones older than WARN_DAYS carry "stale": true and a
++# warning goes to stderr. Limit: reviews are read only on open PRs (there is no repo-wide list),
++# so a review on a PR that closes before a session handles it drops out.
  set -euo pipefail
  OWNER="jacobdam"; R="jacobdam/jpdf3"; TAG="🤖 jpdf-agent"
 -since=$(date -u -v-14d +%FT%TZ 2>/dev/null || date -u -d '14 days ago' +%FT%TZ)
@@ -43,7 +46,8 @@
 +review_comments=$(fetch "repos/$R/pulls/comments?since=$since&per_page=100")
 +prs=$(fetch "repos/$R/pulls?state=open&per_page=100")
 +reviews='[]'
-+for n in $("$JQ" -r '.[].number | select(type == "number")' <<<"$prs"); do
++nums=$("$JQ" -r '.[].number | select(type == "number")' <<<"$prs")
++for n in $nums; do
 +  page=$(fetch "repos/$R/pulls/$n/reviews?per_page=100")
 +  reviews=$(printf '%s\n' "$reviews" "$page" | "$JQ" -s 'add')
 +done
@@ -63,11 +67,14 @@
 +  # a reply for …-1234 never handles …-123.
 +    ("^" + ($tag | esc) + " done: (?<u>https://github\\.com/" + ($repo | esc)
 +      + "/(issues|pull)/[0-9]+#(issuecomment-|discussion_r|pullrequestreview-)[0-9]+)") as $re
-+  | ([$comments[] | select(owner) | (.body // "") | capture($re) | .u]
-+      | map({key: ., value: true}) | from_entries) as $done
-+  # Pre-FLOOR: the old 14-day window. From FLOOR on: until handled.
++  # $done: URL -> created_at of its latest done: reply.
++  | ([$comments[] | select(owner) | .created_at as $at | (.body // "") | capture($re)
++      | {key: .u, value: $at}]
++      | group_by(.key) | map({key: .[0].key, value: (map(.value) | max)}) | from_entries) as $done
++  # Pre-FLOOR: the old 14-day window. From FLOOR on: until a done: reply newer than the last edit.
 +  | def pending($t; $u):
-+      if $t < $floor then ($u // $t) >= $since14 else ($done[.html_url // ""] // false) | not end;
++      if $t < $floor then ($u // $t) >= $since14
++      else $done[.html_url // ""] as $d | $d == null or ($u // $t) > $d end;
 +    def stale($t): $t >= $floor and $t < $warn;
 +  ( $issues[] | select(owner and untagged)
 +    | {kind: "issue", number, title, labels: [.labels[].name], is_pr: (.pull_request != null), body} ),

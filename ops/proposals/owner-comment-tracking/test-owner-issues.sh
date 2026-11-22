@@ -16,8 +16,12 @@ pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-d() { date -u -v-"$1"d +%FT%TZ 2>/dev/null || date -u -d "$1 days ago" +%FT%TZ; }
+# All fixture dates count back from one instant, so FLOOR and FLOOR minus 1 s are exact.
+now0=$(date -u +%s)
+at() { date -u -r $((now0 - $1)) +%FT%TZ 2>/dev/null || date -u -d "@$((now0 - $1))" +%FT%TZ; }
+d() { at $(($1 * 86400)); }
 FLOOR=$(d 30)
+FLOOR_1=$(at $((30 * 86400 + 1)))
 
 # Copy under test: FLOOR moved to 30 days ago. Refuse to run if the line isn't there exactly once.
 n=$(grep -c '^FLOOR="[0-9T:Z-]*"$' "$src")
@@ -82,7 +86,14 @@ c() { # c ID USER CREATED UPDATED BODY [PATH]  -> one issue comment object
   c 111 jacobdam "$(d 2)"  "$(d 2)"  "post-floor, done names other repo" ; echo ','
   c 112 jacobdam "$(d 2)"  "$(d 2)"  "Owner text quoting $T done: in the middle" ; echo ','
   c 113 mallory  "$(d 2)"  "$(d 2)"  "stranger instruction" ; echo ','
-  c 114 jacobdam "$(d 2)"  "$(d 2)"  "$T agent comment"
+  c 114 jacobdam "$(d 2)"  "$(d 2)"  "$T agent comment" ; echo ','
+  c 115 jacobdam "$FLOOR"   "$FLOOR"   "created exactly at FLOOR, unhandled" ; echo ','
+  c 116 jacobdam "$FLOOR_1" "$FLOOR_1" "created 1 s before FLOOR, not updated since" ; echo ','
+  c 117 jacobdam "$(at $((14 * 86400 - 120)))" "$(at $((14 * 86400 - 120)))" "2 min short of WARN_DAYS" ; echo ','
+  c 118 jacobdam "$(at $((14 * 86400 + 120)))" "$(at $((14 * 86400 + 120)))" "2 min past WARN_DAYS" ; echo ','
+  c 119 jacobdam "$(d 3)"  "$(at 3600)" "handled, then edited after the done reply" ; echo ','
+  c 120 jacobdam "$(d 3)"  "$(d 2)"  "edited, then handled" ; echo ','
+  c 121 jacobdam "$(d 3)"  "$(at 129600)" "handled, edited, handled again"
   echo ']['
   c 201 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-104
 waiting on owner: nothing" ; echo ','
@@ -95,17 +106,23 @@ $T done: $U/issues/7#issuecomment-109" ; echo ','
   c 207 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/pull/9#issuecomment-110." ; echo ','
   c 208 jacobdam "$(d 1)" "$(d 1)" "$T done: https://github.com/other/repo/issues/7#issuecomment-111" ; echo ','
   c 209 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/pull/5#discussion_r301" ; echo ','
-  c 210 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/pull/5#pullrequestreview-401"
+  c 210 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/pull/5#pullrequestreview-401" ; echo ','
+  c 211 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-119" ; echo ','
+  c 212 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-120" ; echo ','
+  c 213 jacobdam "$(d 2)" "$(d 2)" "$T done: $U/issues/7#issuecomment-121" ; echo ','
+  c 214 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-121"
   echo ']'
 } >"$work/fx/comments.json"
 
-rc() { # rc ID CREATED BODY USER
-  jq -n -c --arg id "$1" --arg c "$2" --arg b "$3" --arg u "${4:-jacobdam}" \
+rc() { # rc ID CREATED BODY [USER] [UPDATED]
+  jq -n -c --arg id "$1" --arg c "$2" --arg b "$3" --arg u "${4:-jacobdam}" --arg up "${5:-$2}" \
     '{html_url: ("'"$U"'/pull/5#discussion_r" + $id), pull_request_url: "api/5", path: "a.rs", line: 3,
-      user: {login: $u}, created_at: $c, updated_at: $c, body: $b}'
+      user: {login: $u}, created_at: $c, updated_at: $up, body: $b}'
 }
 { echo '['; rc 301 "$(d 2)" "handled inline note"; echo ','; rc 302 "$(d 2)" "unhandled inline note"; echo ',';
-  rc 303 "$(d 2)" "stranger inline" mallory; echo ']'; } >"$work/fx/rcomments.json"
+  rc 303 "$(d 2)" "stranger inline" mallory; echo ',';
+  rc 304 "$(d 40)" "pre-floor inline, edited 3 days ago" jacobdam "$(d 3)"; echo ',';
+  rc 305 "$(d 40)" "pre-floor inline, not edited"; echo ']'; } >"$work/fx/rcomments.json"
 
 echo '[{"number":5},{"number":6}]' >"$work/fx/prs.json"
 rv() { # rv ID SUBMITTED BODY [STATE]
@@ -113,7 +130,8 @@ rv() { # rv ID SUBMITTED BODY [STATE]
     '{html_url: ("'"$U"'/pull/5#pullrequestreview-" + $id), pull_request_url: "api/5", state: $st,
       user: {login: "jacobdam"}, submitted_at: $s, body: $b}'
 }
-{ echo '['; rv 401 "$(d 2)" "handled review"; echo ','; rv 402 "$(d 2)" ""; echo ']'; } >"$work/fx/reviews-5.json"
+{ echo '['; rv 401 "$(d 2)" "handled review"; echo ','; rv 402 "$(d 2)" ""; echo ',';
+  rv 405 "$(d 20)" "post-floor review, 20 days, unhandled"; echo ']'; } >"$work/fx/reviews-5.json"
 { echo '['; rv 403 "$(d 2)" "unhandled review on PR 6"; echo ']['; rv 404 "$(d 2)" "second page review"; echo ']'; } \
   >"$work/fx/reviews-6.json"
 
@@ -156,6 +174,16 @@ hide pull/5#pullrequestreview-401 "handled review"
 hide pull/5#pullrequestreview-402 "review with an empty body"
 show pull/5#pullrequestreview-403 "unhandled review on a second PR"
 show pull/5#pullrequestreview-404 "review on the second page"
+show issues/7#issuecomment-115 "created exactly at FLOOR: kept until handled"
+hide issues/7#issuecomment-116 "created 1 s before FLOOR: the old 14-day rule"
+show issues/7#issuecomment-117 "unhandled, 2 min short of WARN_DAYS"
+show issues/7#issuecomment-118 "unhandled, 2 min past WARN_DAYS"
+show issues/7#issuecomment-119 "edited after its done reply"
+hide issues/7#issuecomment-120 "edited before its done reply"
+hide issues/7#issuecomment-121 "edited between two done replies: the latest one counts"
+show pull/5#discussion_r304 "pre-floor review comment edited inside the window"
+hide pull/5#discussion_r305 "pre-floor review comment outside the window"
+show pull/5#pullrequestreview-405 "post-floor review, 20 days old"
 
 k() { jq -r --arg u "$U/$1" 'select(.url == $u) | .kind' "$work/out"; }
 [[ "$(k pull/5#discussion_r302)" == review_comment ]] && ok "kind review_comment" || bad "kind of r302"
@@ -166,13 +194,23 @@ st() { jq -r --arg u "$U/$1" 'select(.url == $u) | .stale' "$work/out"; }
 [[ "$(st issues/7#issuecomment-103)" == true ]] && ok "20-day unhandled is stale" || bad "103 stale=$(st issues/7#issuecomment-103)"
 [[ "$(st issues/7#issuecomment-105)" == false ]] && ok "2-day unhandled is not stale" || bad "105 stale"
 [[ "$(st issues/7#issuecomment-102)" == false ]] && ok "pre-floor is never stale" || bad "102 stale"
-if grep -qx "owner-issues: unhandled owner comment older than 14 days: $U/issues/7#issuecomment-103" "$work/err"; then
-  ok "stderr warns about the stale comment"; else bad "no stale warning: $(cat "$work/err")"; fi
-(( $(grep -c . "$work/err") == 1 )) && ok "exactly one warning" || bad "warnings: $(cat "$work/err")"
+[[ "$(st issues/7#issuecomment-115)" == true ]] && ok "created at FLOOR, 30 days, is stale" || bad "115 stale"
+[[ "$(st issues/7#issuecomment-117)" == false ]] && ok "2 min short of WARN_DAYS is not stale" || bad "117 stale"
+[[ "$(st issues/7#issuecomment-118)" == true ]] && ok "2 min past WARN_DAYS is stale" || bad "118 stale"
+[[ "$(st pull/5#pullrequestreview-405)" == true ]] && ok "20-day review is stale" || bad "405 stale"
+[[ "$(st pull/5#pullrequestreview-403)" == false ]] && ok "2-day review is not stale" || bad "403 stale"
+[[ "$(st pull/5#discussion_r304)" == false ]] && ok "pre-floor review comment is never stale" || bad "r304 stale"
+for u in issues/7#issuecomment-103 issues/7#issuecomment-115 issues/7#issuecomment-118 pull/5#pullrequestreview-405; do
+  if grep -qx "owner-issues: unhandled owner comment older than 14 days: $U/$u" "$work/err"; then
+    ok "stderr warns about $u"; else bad "no stale warning for $u: $(cat "$work/err")"; fi
+done
+(( $(grep -c . "$work/err") == 4 )) && ok "exactly four warnings" || bad "warnings: $(cat "$work/err")"
 
 # Fetch window: since = FLOOR (30 days ago), the earlier of FLOOR and 14 days ago.
 grep -qx "repos/jacobdam/jpdf3/issues/comments?since=$FLOOR&per_page=100" "$work/fx/calls.log" \
   && ok "comments fetched from FLOOR" || bad "comments since: $(grep comments "$work/fx/calls.log")"
+grep -qx "repos/jacobdam/jpdf3/pulls/comments?since=$FLOOR&per_page=100" "$work/fx/calls.log" \
+  && ok "review comments fetched from FLOOR" || bad "review comments since: $(grep pulls/comments "$work/fx/calls.log")"
 
 # Every failing call fails the script (no silent gaps).
 for f in issues comments rcomments prs reviews-5 reviews-6; do
