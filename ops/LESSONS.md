@@ -206,9 +206,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   memory bound) now look redundant and no result-based test notices their removal. Test the early stop: an
   over-long token with no terminator must fail with the limit error after a few lexed bytes
   ([journal](journal/2026-11-21.md), PR #140).
-- Writing a "defaults fit the memory budget" check → summing the charged limits to exactly the 2 GiB cap proves
-  nothing: list the uncharged terms (binary, stacks, xref table, one parse's objects, decoder slack) and require a
-  reserve, or say plainly that there is none ([journal](journal/2026-11-21.md), PR #108, #109).
+- Writing a "defaults fit the memory budget" check → summing the charged limits proves nothing: require an
+  itemized reserve (or say plainly there is none), and before the first review give every `Vec::new`/`collect`/
+  `with_capacity` on the code path a term, pinning each per-item constant against a parsed worst-case shape. PR #142
+  rounds 1 to 3 each found a missed term ([journal](journal/2026-11-21.md), PR #108;
+  [journal](journal/2026-11-22.md), PR #142).
 - Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
   resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
   spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control
