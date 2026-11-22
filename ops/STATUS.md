@@ -21,12 +21,14 @@ Phase: bootstrap (pilot)
 ## Next step (suggested order, TICK letters)
 0. PR #151: wait for `/release`. PR #157: wait for an owner comment. Don't touch either before.
    Until #157 merges, TICK §4 on main is still the old loop, with no defined exit.
-1. **d: #161, then #162** (sev:high). Both are in protected files, so the work is a proposal each
+1. **a: #167 (owner, `human`, filed 03:32 UTC during the audit session): "Add README for this repo".** It has no
+   body; write a README from PLAN.md/AUTOMATION.md and reply on the issue.
+2. **d: #161, then #162** (sev:high). Both are in protected files, so the work is a proposal each
    (`ops/proposals/codex-review-isolation.md`, `ops/proposals/guard-tag-and-fail-closed.md`) with the diff and a
    test plan; label `owner-todo` stays. #162's CX.4 is confirmed and small (drop the raw-text prefilter).
    #168 (sev:high, M2) is engine work in budget.rs and can go before or after them.
-2. **#76**: harness honesty. The judge relies on it.
-3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
+3. **#76**: harness honesty. The judge relies on it.
+4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165; low #83, #122, #132, #134,
   #136, #137, #166.
