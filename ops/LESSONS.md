@@ -163,7 +163,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 - Writing an overview doc (README, digest) from PLAN.md → PLAN describes the target, so "runs in a worker", "is
   published", "every limit is enforced" come out in the present tense; check each against the tree and open issues
-  first (PR #169 round 1: 2 majors, 2 minors) ([journal](journal/2026-11-22.md), PR #169).
+  first (PR #169 round 1: 2 majors, 2 minors) ([journal](journal/2026-11-22.md), PR #169). Same for a cleanup's
+  "one copy", "only", "every" claims: grep the whole tree for the duplicated shape before writing them (PR #212 spent
+  rounds 1 and 2 on such a sentence) ([journal](journal/2026-11-22.md), PR #212).
 
 ## Apps (web, macOS)
 - Writing a check that "nothing from set X reaches the artifact" (licenses, imports) → a text
