@@ -135,8 +135,11 @@ copy the tests in §4 ran against. `git apply --check` passes on main @ 378c92c.
   - the unpatched policy fails the "no grant contains a denied path" check with the assertion exit
     (4), not a crash, so the check tells the two apart;
   - between `FS_POLICY+=" }"` and the one use (`-c permissions.jpdf-review.filesystem="$FS_POLICY"`)
-    no line mentions `FS_POLICY`, `HB_READ` or `HB=`, so the policy can't be changed after the check
-    (R2.2);
+    no line names `FS_POLICY`, `HB_READ` or `HB=`, and the use passes `$FS_POLICY` unchanged (R2.2).
+    This is a text check: an indirect write (`printf -v` with a built name, a function defined
+    earlier) or another `-c permissions.…` argument later on the Codex command line would get past
+    it (R3.1, R3.2). The test is a static aid; what pins the applied script is T2 (the applied file
+    matches the diff in §3 exactly);
   - against this machine: every `/opt/homebrew/bin` entry that resolves inside the prefix resolves
     into a granted directory, except the other casks (counted, by design).
 - Hand mutants of the patched script, each caught: `Caskroom/codex` → `Caskroom`; an extra `$HB`,
