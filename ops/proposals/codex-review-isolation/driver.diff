@@ -1,0 +1,81 @@
+--- a/ops/driver/driver.sh
++++ b/ops/driver/driver.sh
+@@ -144,10 +144,52 @@
+   done
+   kill -KILL -- "-$pid" 2>/dev/null
+   for p in $pids; do kill -KILL "$p" 2>/dev/null; done
++}
++
++# Session helpers that outlive the CLI (CX.11): a helper that calls setsid leaves the session's
++# process group, and once the CLI exits it is reparented to launchd, so neither the group nor the
++# descendant list finds it after a normal exit. track_tree records "pid start-time" for every
++# descendant at each poll; stop_leftovers signals, after the CLI is gone, each recorded process
++# whose start time still matches (so a reused pid is never hit), plus its own descendants and what
++# is left of the session's group. A helper started and detached within one poll interval
++# (POLL seconds) before the CLI exits is not seen; that gap is the residual risk.
++start_time() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/  */ /g; s/ *$//'; }
++track_tree() {  # track_tree <root pid> <file>
++  local p st
++  for p in $(descendants "$1"); do
++    st=$(start_time "$p"); [[ -n "$st" ]] && printf '%s %s\n' "$p" "$st"
++  done >> "$2"
++}
++stop_leftovers() {  # stop_leftovers <reaped leader pid> <file>
++  local leader=$1 file=$2 p q st t alive i n=0
++  local -a lp=() lst=()
++  # Recorded processes still alive with the same start time, then their descendants (with the
++  # start time seen now), so every signal below re-checks it and never hits a reused pid.
++  while read -r p st; do
++    [[ -n "$p" && "$(start_time "$p")" == "$st" ]] || continue
++    for q in "$p" $(descendants "$p"); do
++      st=$(start_time "$q"); [[ -n "$st" ]] && { lp[n]=$q; lst[n]=$st; n=$((n + 1)); }
++    done
++  done < <(sort -u "$file" 2>/dev/null)
++  ours() { [[ "$(start_time "${lp[$1]}")" == "${lst[$1]}" ]]; }
++  # A process group id is not reused while the group has members, so -leader is still ours.
++  (( n == 0 )) && ! kill -0 -- "-$leader" 2>/dev/null && return 0
++  log "stopping session leftovers: group $leader, pids ${lp[*]:-none}"
++  kill -TERM -- "-$leader" 2>/dev/null
++  for ((i = 0; i < n; i++)); do ours "$i" && kill -TERM "${lp[i]}" 2>/dev/null; done
++  t=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
++  while (( $(secs_since "$t") < 15 )); do
++    alive=0; kill -0 -- "-$leader" 2>/dev/null && alive=1
++    for ((i = 0; i < n; i++)); do ours "$i" && alive=1; done
++    (( alive )) || return 0
++    sleep 0.2
++  done
++  kill -KILL -- "-$leader" 2>/dev/null
++  for ((i = 0; i < n; i++)); do ours "$i" && kill -KILL "${lp[i]}" 2>/dev/null; done
+ }
+ 
+ run_session() {
+-  local ts out err start t0 rc res sid pid="" idle state why=""
++  local ts out err start t0 rc res sid pid="" idle state why="" track
+   ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; err="ops/logs/$ts.stderr"; start=$(date +%s)
+   t0=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
+   log "session $ts starting"
+@@ -164,6 +206,7 @@
+       --strict-mcp-config --mcp-config ops/driver/mcp.json \
+       --permission-mode auto --output-format stream-json --verbose > "$out" 2> "$err" &
+   pid=$!
++  track="ops/state/session-$ts.pids"; : > "$track"
+   # A finished `claude -p` can stay alive (a pending ScheduleWakeup; #125). Stop it once its last
+   # turn event is a result, no background task runs, and the log has been quiet for SETTLE_GRACE
+   # seconds. A background task's notification starts a new turn (system/init), so waits on agents
+@@ -171,6 +214,7 @@
+   # BG_QUIET_MAX quiet seconds, and SESSION_MAX caps everything.
+   while kill -0 "$pid" 2>/dev/null; do
+     sleep "$POLL"
++    track_tree "$pid" "$track"
+     if (( $(secs_since "$t0") >= SESSION_MAX )); then
+       why="SESSION_MAX"; log "session $ts reached SESSION_MAX (${SESSION_MAX}s): stopping"
+       stop_group "$pid"; break
+@@ -188,6 +232,8 @@
+     fi
+   done
+   wait "$pid"; rc=$?
++  # However it ended (normal exit included), stop what it left behind before the next session.
++  stop_leftovers "$pid" "$track"; rm -f "$track"
+   trap - HUP INT TERM
+   # Stopped by us after its final result (however the CLI exits on TERM), or killed by the
+   # owner's signal after it had answered: report what the session itself reported in its final
