@@ -344,6 +344,20 @@ mod tests {
         assert_eq!(d.max_ops, 1 << 32);
     }
 
+    /// The defaults #146 lowered, as literals (specs/core/memory-budget.md). Raising one makes
+    /// the memory budget be re-checked.
+    #[test]
+    fn lowered_defaults_are_pinned() {
+        let l = Limits::default();
+        assert_eq!(l.max_xref_entries, 1 << 21);
+        assert_eq!(l.max_retained_bytes_per_document, 128 << 20);
+        assert_eq!(l.max_string_bytes_per_parse, 32 << 20);
+        assert_eq!(l.max_decoded_bytes_per_stream, 128 << 20);
+        assert_eq!(l.max_decode_working_bytes, 256 << 20);
+        assert_eq!(l.max_raster_working_bytes, 256 << 20);
+        assert_eq!(l.max_canvas_pixels, 1 << 22);
+    }
+
     #[test]
     fn defaults_fit_a_32_bit_usize() {
         let limits = Limits::default();

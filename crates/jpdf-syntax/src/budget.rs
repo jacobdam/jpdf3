@@ -137,7 +137,9 @@ impl MemoryBudget {
     /// span, a cache node) keeps everything below it mapped. Freed heap memory is reused by
     /// later small requests, but a request above the threshold gets a new mapping. So the
     /// worst case is one phase's whole memory left in the heap (every phase can allocate below
-    /// the threshold) plus the next phase's whole memory in new mappings.
+    /// the threshold) plus the next phase's whole memory in new mappings. This covers one
+    /// earlier phase; holes several phases leave that no later request fits are not bounded
+    /// (specs/core/memory-budget.md, known gap, #146).
     pub fn heap_high_water(&self) -> u64 {
         self.largest_phase()
     }
@@ -458,6 +460,13 @@ mod tests {
             file: u64::MAX,
             ..b
         };
+        assert_eq!(max.peak(), u64::MAX);
+        // A phase at the maximum is added twice (heap high-water and phase): still saturates.
+        let max = MemoryBudget {
+            raster: u64::MAX,
+            ..b
+        };
+        assert_eq!(max.heap_high_water(), u64::MAX);
         assert_eq!(max.peak(), u64::MAX);
     }
 }

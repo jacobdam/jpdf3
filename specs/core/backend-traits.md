@@ -50,7 +50,7 @@ defaults:
 | `max_decoded_bytes_per_stream` | 128 MiB | One backend call's output; fits a 32-bit `usize` (wasm32). Lowered from 256 MiB by #146 (specs/core/memory-budget.md) |
 | `max_decoded_bytes_per_document` | 4 GiB (`u64`) | Lifetime total charged by the engine; time bound against many small bombs |
 | `max_retained_bytes_per_document` | 128 MiB (`u64`; 256 MiB before #146) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Charged by the object resolve cache (specs/core/resolve-cache.md); every other cache added must charge it too, through one shared counter (#138), and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
-| `max_image_pixels` | 100,000,000 | Header check before any allocation; binds for 1–2 byte pixels, while the 128 MiB output cap binds first for RGB/CMYK |
+| `max_image_pixels` | 100,000,000 | Header check before any allocation; binds first for 1-byte pixels, while the 128 MiB output cap binds first at 2 or more bytes per pixel (256 MiB before #146: 1–2 byte pixels) |
 | `max_image_dimension` | 2^20 | Long strips stay legal; the pixel limit does the real bounding |
 | `max_decode_working_bytes` | 256 MiB (`u64`) | Peak memory of one image decode, output included; the decode term of the 2 GiB budget (specs/core/decode-work-limits.md) |
 | `max_decode_ops` | 2^32 (`u64`) | Operations one image decode may perform, work that produces no output included (specs/core/decode-work-limits.md) |

@@ -105,9 +105,21 @@ the 2 GiB unused.
     gets a new mapping. So in the worst case one phase leaves its whole memory in the heap
     (e.g. a parse of nested one-entry dictionaries: all small chunks) and the next phase gets
     all of its memory as new mappings (e.g. a decode with one large output buffer).
-  - Both are bounded by the largest phase, so `heap_high_water` = the largest phase. Sub-threshold memory of
-    later phases reuses the earlier heap first, so the heap stays near one phase's worth; the
-    holes it can't reuse are the fragmentation item in the reserve.
+  - Both are bounded by the largest phase, so `heap_high_water` = the largest phase. This
+    covers **one** earlier phase's heap left mapped.
+  - **Known gap, not bounded (#146 stays open):** leftovers from several phases can build up.
+    Long-lived chunks (cache nodes, up to `retained`; span nodes; the growing xref table) sit
+    between the buffers each parse freed. A later phase whose sub-threshold requests are larger
+    than those holes gets new heap above them, and the next long-lived chunk pins that in turn.
+    Each phase stays within its own limit, but the holes no later request fits can add up past
+    `heap_high_water` plus the 96 MiB fragmentation item: in theory up to one phase's worth for
+    each size class a hostile file steps through. This was already possible before #146 (parse
+    after parse), and it can't be bounded by a formula over the limits. Closing it needs
+    either a measurement showing it doesn't happen at a meaningful scale (#25: many cached
+    growing containers, then phases making ever larger sub-threshold requests) or a structural
+    fix that keeps long-lived allocations out of the phases' heap region (e.g. reserving the
+    span map, xref table and cache storage before the first parse). Until then the peak is an
+    estimate for the one-phase case, not a proven bound.
   - Before #146 the model counted the largest phase once: at those defaults the parse heap
     (464 MiB) next to a decode (512 MiB) came to 2445.84 MiB, over the 2 GiB. Parse was the only
     phase on the jpdf-cli path, so it could not happen yet.
@@ -196,9 +208,11 @@ out.
     16 MiB strings (one literal, one hex) parses; with one more hex byte it is refused with
     `LimitExceeded("string bytes in one object")`. Two strings, so a per-token check fails it.
   - `max_retained_bytes_per_document` and `max_decoded_bytes_per_stream`: their defaults are
-    pinned as literals in `default_terms` and `decode_limits`'s tests; the at-limit and
-    one-past behavior is tested with explicit limits (resolve-cache tests, the decode suites),
-    which doesn't depend on the default value.
+    pinned as literals in `lowered_defaults_are_pinned` (limits.rs); `default_terms` pins
+    `retained` and the decode sum. Neither has an exact-boundary test **at its default
+    value**: the at-limit and one-past behavior is tested with explicit limits
+    (`retained_budget_boundary_for_one_object`, the decode suites' output-cap checks), and
+    the check reads the field the same way whatever its value.
   - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
     with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.
@@ -217,7 +231,8 @@ out.
   overflow
   (`loose_limits_saturate_every_term` calls `of` with every contributing field at its type
   maximum all at once, and six of them one at a time; `peak_is_persistent_plus_largest_phase_twice_plus_reserve`
-  saturates `peak`; `alloc_bytes_follow_glibc_chunks` saturates `alloc_bytes`).
+  saturates `peak`, with a persistent term and with a phase term at the maximum (the heap term
+  adds that phase twice); `alloc_bytes_follow_glibc_chunks` saturates `alloc_bytes`).
 
 ## Security
 - Threat: a hostile file that drives every limit to its maximum at once must not exhaust the
@@ -251,8 +266,10 @@ out.
     not measured.
 - The heap term (#146) is reasoned from glibc's documented behavior (brk heap trimmed only from
   the top, the dynamic mmap threshold), not measured. The resource-limit harness (#25) should
-  measure a parse of nested one-entry dictionaries pinned by a cached object, followed by a
-  maximal decode, under `RLIMIT_AS`.
+  measure, under `RLIMIT_AS`: a parse of nested one-entry dictionaries pinned by a cached
+  object, followed by a maximal decode; and many cached growing containers followed by phases
+  making ever larger sub-threshold requests (the cross-phase build-up in Behavior, which this
+  model does **not** bound; #146 stays open for it).
 - `max_string_bytes_per_parse` is exact for every token kind since #113 (merged into this
   branch), which the parse term's `× 3` assumes.
 - Known gap: `read_capped` in jpdf-cli reserves the size from `stat`. A file that grows
@@ -287,7 +304,7 @@ per allocation counted by `retained_cost`, which already walks the object once.
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^22 pixels pass with
   the default limits, 2^22 + 1 fail), `default_working_bytes_limit_is_exact`.
 - crates/jpdf-engine/tests/open.rs: `page_limit_boundary_opens_at_the_limit`.
-- crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now uses
+- crates/jpdf-traits/src/limits.rs: `lowered_defaults_are_pinned` (new, #146); `default_raster_limits_fit_the_memory_budget` now uses
   `check_scene`'s full formula and pins 256 MiB working bytes and 2^22 canvas pixels;
   `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of `max_pages` references plus
   32 768 other objects fit in one parse).
