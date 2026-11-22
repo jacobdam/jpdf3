@@ -141,7 +141,8 @@ enum VerifyError {
 fn verify(path: &Path, e: &Entry) -> Result<(), VerifyError> {
     let io = |x: std::io::Error| VerifyError::Io(x.to_string());
     // Only a regular file: a FIFO planted in the cache would block a plain open forever, so
-    // the open is non-blocking and the opened handle is checked again.
+    // the open is non-blocking (where `jpdf_fsio::OPEN_FLAGS` is set) and the opened handle
+    // is checked again.
     let not_file = || VerifyError::Io("not a regular file".into());
     if !std::fs::metadata(path).map_err(io)?.is_file() {
         return Err(not_file());

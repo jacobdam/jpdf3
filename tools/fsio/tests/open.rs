@@ -70,13 +70,17 @@ fn open_never_blocks_on_a_fifo() {
     });
     let got = rx.recv_timeout(Duration::from_secs(10));
     if got.is_err() {
-        // Unblock the stuck thread so the test process can exit. The write end opens
-        // non-blocking too: with no reader left it fails at once (ENXIO) instead of waiting.
-        let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(
-            fs::OpenOptions::new().write(true),
-            flags,
-        )
-        .open(&fifo);
+        // Unblock the stuck thread so the test process can exit, from a thread of its own
+        // that nobody waits for: if this open blocks too, the failure is still reported.
+        // The write end opens non-blocking: with no reader left it fails at once.
+        let path = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(
+                fs::OpenOptions::new().write(true),
+                flags,
+            )
+            .open(&path);
+        });
     }
     let _ = fs::remove_file(&fifo);
     let got = got.expect("open of a FIFO blocked");

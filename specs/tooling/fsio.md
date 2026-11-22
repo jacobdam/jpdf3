@@ -21,7 +21,8 @@ file whose type they have just checked (#115 items 2 and 5, audit 0002).
   unchanged. The open follows symlinks and accepts any file type: every caller checks the
   opened handle (`File::metadata`, an `fstat`) and refuses anything but a regular file.
 
-Callers (each keeps its own type checks, caps and errors):
+Callers (each keeps its own type checks, caps and errors). Every "doesn't block" for them, here
+and in their specs, holds only where `OPEN_FLAGS` is set; elsewhere their opens are plain:
 - `jpdf-cli` `read_limited` (specs/cli/jpdf-cli.md, "Reading FILE" step 2);
 - `jpdf-arlington` `vendor.rs` `read_capped` (specs/tooling/arlington.md item 9 step 4);
 - `jpdf-arlington` `read_dir` (the `--tsv` source; the opened handle must still be a regular
@@ -69,7 +70,10 @@ changes whether the open can block.
   their values are the generic ones. On targets where `OPEN_FLAGS` is `None` the open of a
   FIFO still blocks: the FIFO tests are skipped there, and a FIFO swap between a caller's type
   check and its open still hangs it (`read_results` and `manifest::load`, which have no
-  pre-open check, block on any FIFO there).
+  pre-open check, block on any FIFO there). The handle checks of `read_results` and
+  `manifest::load` are tested only with a FIFO or directory already in place; an
+  implementation that checks the path before opening instead would pass those tests too (the
+  swap that tells them apart can't be staged deterministically).
 
 ## Accessibility
 None.
@@ -85,12 +89,13 @@ One flag on an open; nothing measurable.
   Linux x86_64); `regular_files_read_normally` (200 000 bytes read back whole; a missing path is
   `NotFound`); `open_never_blocks_on_a_fifo` (a FIFO with no writer opens within 10 s and its
   handle is not a regular file; skipped where `OPEN_FLAGS` is `None`; on a timeout the
-  cleanup opens the write end non-blocking, so it can't wait for a reader that is gone).
+  cleanup opens the write end non-blocking, from a thread nobody waits for, so it can't
+  hold up the failure report).
   The integration-test root forbids `unsafe_code` like the library.
 - `xtask/src/web.rs` `reads_results_files`: a directory and a FIFO at the results path give
   `<path>: not a regular file` without blocking (the FIFO half only where `OPEN_FLAGS` is
   set).
 - `tools/corpus/tests/corpus.rs` `manifest_load_refuses_non_regular_files`: the same for a
   manifest path (30 s timeout; the FIFO half only where `OPEN_FLAGS` is set).
-- `tools/jpdf-cli/src/main.rs` `open_never_blocks_on_a_fifo` (unchanged, now through the
-  crate).
+- `tools/jpdf-cli/src/main.rs` `open_never_blocks_on_a_fifo` (now through the crate, skipped
+  where `OPEN_FLAGS` is `None`, with the same non-blocking cleanup).

@@ -258,7 +258,7 @@ fn check_metadata(path: &Path, meta: &Metadata, max: usize) -> Result<usize, Fai
 
 /// Reads at most `max` bytes. Non-regular files (FIFOs, devices, directories) and files larger
 /// than `max` are rejected from `stat` before the file is opened, so nothing is read. The open
-/// never blocks; the opened file is checked again (the path may have been swapped), and the
+/// never blocks where `jpdf_fsio::OPEN_FLAGS` is set; the opened file is checked again (the path may have been swapped), and the
 /// read stops after `max + 1` bytes in case the file grows while we read it.
 fn read_limited(path: &Path, max: usize) -> Result<Vec<u8>, Failure> {
     let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));
@@ -326,6 +326,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn open_never_blocks_on_a_fifo() {
+        // A plain open of a FIFO blocks by design where the flags are unknown.
+        let Some(flags) = jpdf_fsio::OPEN_FLAGS else {
+            return;
+        };
         use std::process::Command;
         use std::sync::mpsc;
         use std::time::Duration;
@@ -352,8 +356,17 @@ mod tests {
         });
         let got = rx.recv_timeout(Duration::from_secs(10));
         if got.is_err() {
-            // Unblock the stuck thread so the test process can exit.
-            let _ = fs::OpenOptions::new().write(true).open(&fifo);
+            // Unblock the stuck thread so the test process can exit, from a thread of its own
+            // that nobody waits for: if this open blocks too, the failure is still reported.
+            // The write end opens non-blocking: with no reader left it fails at once.
+            let path = fifo.clone();
+            std::thread::spawn(move || {
+                let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(
+                    fs::OpenOptions::new().write(true),
+                    flags,
+                )
+                .open(&path);
+            });
         }
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(

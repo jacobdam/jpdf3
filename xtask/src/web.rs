@@ -273,7 +273,7 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
 }
 
 /// Reads at most `MAX_RESULTS_BYTES` (+1 to detect overflow) in one pass; a missing file
-/// means no tests reported anything. The open never blocks ([`jpdf_fsio::open_nonblocking`]),
+/// means no tests reported anything. The open never blocks where [`jpdf_fsio::OPEN_FLAGS`] is set,
 /// and anything but a regular file (a FIFO, a directory) is refused from the opened handle.
 fn read_results(tsv: &Path) -> Result<BTreeMap<String, Status>, String> {
     use std::io::Read as _;

@@ -152,7 +152,8 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
       with a UTF-8 name ending in `.tsv`;
    4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
       regular file, so a swap to a device or FIFO after the first check is refused (the open
-      is non-blocking, specs/tooling/fsio.md, so a FIFO can't block it);
+      is non-blocking where `jpdf_fsio::OPEN_FLAGS` is set, specs/tooling/fsio.md, so a FIFO
+      can't block it there);
    5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
@@ -178,7 +179,9 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
     - no scanned file contains "arlington" in any case or has the git blob id of a vendored
       TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
       non-regular entry it meets, and every directory or file it can't read. Files are opened
-      non-blocking (specs/tooling/fsio.md), the opened handle must be a regular file, and a
+      non-blocking (where `OPEN_FLAGS` is set, specs/tooling/fsio.md; the scan assumes a stable
+      checkout: a file swapped for a symlink after the walk is followed), the opened handle
+      must be a regular file, and a
       file over 64 MiB is a finding, read no further than one byte past the cap.
     So dev-dependencies are usable only from `tests/` integration tests, not from
     `#[cfg(test)]` modules in `src/`, and engine sources can't mention Arlington even in
@@ -350,9 +353,10 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
   `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
   `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
-  directory and file (skipped as root), a regular file in place of `apps/macos`, a symlinked
+  directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlinked
   `apps`, and the per-file cap one byte below the largest file gives exactly its one finding
-  (at that file's size: none), while the same word,
+  (at that file's size: none), and an endless source read through the cap stops with the cap
+  error (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
   copy and link inside skipped directories give none; files below the app roots
   (`apps/web/src`, `apps/macos/JPDF`) are scanned; a missing `apps/macos` is a finding. On the
   real tree, `apps/web/src/main.tsx` and `apps/macos/JPDF/StartView.swift` must be scanned.

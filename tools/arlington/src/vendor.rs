@@ -171,7 +171,7 @@ fn check_top_level(dir: &Path, tsv: &Path) -> Result<(), Error> {
 /// Reads at most `cap` bytes; a larger file is a limit error, and no read goes past the cap.
 /// The path must not be a symlink, and the opened file must be a regular file (checked again
 /// on the open handle, so a swap to a device or FIFO after the first check is refused; the
-/// open itself never blocks, [`jpdf_fsio::open_nonblocking`]).
+/// open itself never blocks where [`jpdf_fsio::OPEN_FLAGS`] is set).
 fn read_capped(path: &Path, name: &str, cap: usize) -> Result<Vec<u8>, Error> {
     let io = |source| Error::Io {
         path: path.display().to_string(),

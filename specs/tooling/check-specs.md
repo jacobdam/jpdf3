@@ -84,7 +84,7 @@ is opened only if it is a regular file (not followed if a symlink; a FIFO or dev
 block the open or never end, is reported as `cannot read: not a regular file`), its size is
 checked on the open file, and the read stops one byte past 1 MiB, so a file that grows after the
 check is reported, never read whole (#83). A file swapped for a FIFO between the type check and
-the open doesn't block: the open is non-blocking (`jpdf_fsio::open_nonblocking`,
+the open doesn't block where `OPEN_FLAGS` is set: the open is non-blocking (`jpdf_fsio::open_nonblocking`,
 specs/tooling/fsio.md) and the check on the open file reports it; a swap to a symlink in that
 window is followed. The walk reports any other non-regular, non-directory entry named `*.md` (FIFO,
 socket, device) the same way, since the judge's glob would match it. Identical problem lines

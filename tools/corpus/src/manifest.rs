@@ -35,7 +35,7 @@ pub struct Manifest {
 }
 
 /// Reads and parses a manifest file (read bounded at the cap + 1 byte). The open never
-/// blocks (specs/tooling/fsio.md), and anything but a regular file is refused from the opened
+/// blocks where `jpdf_fsio::OPEN_FLAGS` is set (specs/tooling/fsio.md), and anything but a regular file is refused from the opened
 /// handle.
 pub fn load(path: &Path) -> Result<Manifest, Error> {
     let name = path.display().to_string();
