@@ -201,29 +201,41 @@ working memory) and give up mostly speed (retained), the largest images (output 
     just the bytes it returns: a cipher that checks the length and then grows a `Vec` block by
     block could hold more. Today's `DecodeLimits` checks are on lengths (the returned bytes;
     for AES-CBC decryption also the ciphertext) and don't bound buffer capacity; the image
-    path's adapters must be checked against this at the exact cap when they land (#187);
+    path's adapters must be checked against this at the exact cap when they land (#231);
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
-  - after the stage, the caller shrinks the output (`Vec::shrink_to_fit`) and charges its
-    **capacity**, not its length, with `ImageInputBudget::charge` (a 10-byte output left in a
-    buffer reserved at the cap would otherwise hide 128 MiB, PR #186 R1.1);
+  - after the stage, the caller charges the output with `ImageInputBudget::charge_output`
+    (#187), which takes the `Vec` itself and charges its **capacity**, not its length (a
+    10-byte output left in a buffer reserved at the cap would otherwise hide 128 MiB, PR #186
+    R1.1). It gives spare capacity back only by copying the bytes into a new buffer of their
+    length, and only when that length also fits in what remains after the capacity is
+    charged: the old and the new buffer are both charged while both are alive. When the copy
+    doesn't fit, the buffer keeps its whole capacity charged and the next stages get less room
+    (they fail with `LimitExceeded`, never over the allowance). So on the image path a stage
+    reserves only a known length (`/DL`, the image dimensions) or grows in chunks, never the cap
+    speculatively: a stage reserved at the whole allowance that wrote less leaves the rest of
+    the chain nothing. A chunked output that must become one slice is copied into a buffer the
+    caller charges by capacity (`charge`) before filling it, and each chunk is released once
+    dropped;
   - then it drops the stage's input buffer and gives its charge back with
     `ImageInputBudget::release` (clamped to the allowance).
 
   So between stages every decoded buffer alive during the image decode is within the allowance.
-  The shrink itself may copy: for a moment the old buffer (at most what remained) and the new one
-  (its length) are both alive. That transient (up to the output's length on top of the allowance)
-  is not charged and no reserve item is sized for it (#187); glibc usually shrinks a large mapped
-  buffer in place (`mremap`), but nothing guarantees it, so the decode term is an estimate here
-  too. An input held in its own buffer is charged even when it is cached (a cached globals stream
+  The copy that gives spare capacity back is inside the allowance too (#187): `charge_output`
+  charges the new buffer at its requested length before allocating it, so the old buffer (at
+  most what remained) and the new one together never pass it. It never calls
+  `Vec::shrink_to_fit`, whose reallocation may copy uncharged and aborts the process if it
+  fails; a failed `try_reserve_exact` just keeps the old buffer. Counted are requested
+  capacities; allocator rounding and headers are outside the allowance, as everywhere in this
+  model. An input held in its own buffer is charged even when it is cached (a cached globals stream
   is then counted in `retained` too: conservative). An input that borrows the file bytes (no
   filter before the image filter, no encryption) holds no buffer and is not charged, so the slices
   the decoder gets can be longer than 128 MiB together; the allowance bounds the buffers, not the
   slices. Single-input decoders (DCT, JPX, CCITT) follow the same steps for every allocating stage
   of their chain; at the backend call only the final input's charge is still live. This is a rule
   on a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call site does
-  not, so the review of the JBIG2 caller (M2) must check it.
+  not, so the review of the JBIG2 caller (M2, #231) must check it.
 - `jpdf-render` and rasterizer adapters: geometry memory that grows with input (flattened
   edges, curve subdivision, dash output up to `max_path_segments`, the display-list commands)
   counts within `max_raster_working_bytes`. `jpdf-render` passes the adapter the working-bytes
@@ -251,8 +263,10 @@ exists, an image decode whose decoded input buffers (JBIG2 page data plus global
 intermediate stages and decryption) would hold more than 128 MiB between stages fails with
 `BackendError::LimitExceeded` (#168): either a stage stops at the reduced cap (with its own
 message, e.g. `"output"`) or `ImageInputBudget::charge` refuses a capacity larger than what
-remains, with `"decoded bytes of one image decode's inputs"`. The copy a shrink may make is not
-refused (see the requirement above, #187). Objects are charged more to the resolve cache than
+remains, with `"decoded bytes of one image decode's inputs"` (`charge` or `charge_output`).
+A stage output whose spare capacity can't be copied out within the allowance is kept whole, so a
+later stage of the same image may now fail with one of these errors where a shrink would have
+let it through (#187). Objects are charged more to the resolve cache than
 before (allocator chunks) and the cache is half as large (#146), so fewer stay cached; past the
 budget they are re-parsed, with no error until the lexing budget runs out.
 
@@ -289,7 +303,20 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     stage may reach 70, not 71; releasing it gives back 30, not
     31; with 30 + 20 charged, releasing the 30 leaves 80 (an 80-byte charge fits, 81 is
     refused); with 30 + 21 charged, releasing the 21 leaves exactly 70 and releasing the 30
-    then leaves exactly 100; over-release clamps at the allowance.
+    then leaves exactly 100; with 31 + 21 charged, releasing the 21 admits 69 and refuses 70;
+    over-release clamps at the allowance, also when it would pass it by exactly one byte (30
+    charged, 31 released). `image_input_cap_lowers_only_the_output_cap` also checks odd counts
+    (69 charged: a cap of 31 stays 31, 32 comes down to 31).
+  - `charge_output` (#187): `charge_output_copies_only_when_both_buffers_fit` gives spare
+    capacity back at exactly the room the copy needs (capacity 100 holding 10 bytes, 110
+    remaining: copied, 100 left) and keeps the buffer one byte short of it (109: capacity 100
+    stays charged, 9 left), also with another 50-byte buffer charged (10 bytes copied with 50
+    remaining, 11 kept). `charge_output_boundaries`: a buffer of exactly what remains is
+    charged, one byte more is refused untouched and charges nothing; a full buffer is not
+    copied; an empty one with spare capacity gives all of it back.
+    `charge_output_charges_capacity_not_length`: 10 bytes at capacity 100 take the whole
+    100-byte allowance, so the next stage's cap is 0 (a caller charging the length would
+    leave 90). `charge_output_in_a_two_stage_chain` runs the stage cycle above.
   - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
     with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.
@@ -350,9 +377,15 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     doubled, release unclamped, release does nothing, release resets to the allowance, cap
     returns 0 when the caps are equal) each fail at least one test. The type is
     neither `Copy` nor `Clone`, so a charge on a copy can't be lost. Still passing: a caller
-    that never uses the budget (decodes globals with plain `decode_limits`), charges a length
-    instead of a capacity, or releases a buffer it still holds. No caller exists yet; the
-    JBIG2 caller's review must check it (requirement above).
+    that never uses the budget (decodes globals with plain `decode_limits`), calls `charge`
+    with a length instead of `charge_output`, or releases a buffer it still holds. No caller
+    exists yet; the JBIG2 caller's review must check it (requirement above, #231).
+    `charge_output` (#187): hand mutants (charge the length, never copy, copy without the fit
+    check, skip or ignore the capacity charge, forget to release the old buffer or release its
+    length, keep the old buffer after the copy, charge the copy's whole capacity twice) each
+    fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
+    or returns more capacity than asked for (std returns exactly the request); both keep the
+    old buffer and give back the copy's charge.
   - What the tests can't see: real allocation sizes (no counting allocator; a global
     allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) is meant to
     measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,
@@ -402,7 +435,9 @@ per allocation counted by `retained_cost`, which already walks the object once.
 - crates/jpdf-traits/src/limits.rs: `image_inputs_share_one_allowance`,
   `default_image_input_allowance_is_exact`, `image_input_cap_lowers_only_the_output_cap`,
   `image_input_budget_saturates`, `image_input_budget_charges_capacity`,
-  `image_input_budget_release_returns_dropped_stages` (#168);
+  `image_input_budget_release_returns_dropped_stages` (#168); `charge_output_charges_capacity_not_length`,
+  `charge_output_copies_only_when_both_buffers_fit`, `charge_output_boundaries`,
+  `charge_output_in_a_two_stage_chain` (#187);
   `lowered_defaults_are_pinned` (new, #146); `default_raster_limits_fit_the_memory_budget` now uses
   `check_scene`'s full formula and pins 256 MiB working bytes and 2^22 canvas pixels;
   `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of `max_pages` references plus
