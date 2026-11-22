@@ -269,6 +269,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- Recording that a workflow or rule fired (drills, audits) → cite the run log or the resulting state (timeline event,
+  label, draft flag), never the bot's own "applied" message: owner-commands' `|| true` hid a permission error and the
+  PR was already a draft, so the comment proved nothing ([journal](journal/2026-11-22.md), PR #209 R1.1).
 - Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
   should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
   near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a
