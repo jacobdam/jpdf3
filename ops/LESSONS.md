@@ -290,6 +290,8 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   typo fix ([journal](journal/2026-11-21.md), PR #90).
 - Writing a record (retro, audit, journal) that claims GitHub side effects (labels, new issues)
   → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
+  Claiming a workflow or rule fired (drills) → cite the run log or the resulting state (timeline event, draft flag),
+  never the bot's "applied" message: a `|| true` hid a permission error ([journal](journal/2026-11-22.md), PR #209 R1.1).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
