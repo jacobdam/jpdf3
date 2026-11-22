@@ -27,8 +27,6 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Hand-checking that a specific test kills a mutant → run `cargo nextest run --no-fail-fast`; fail-fast stops at
   the first failing test, so the targeted test may never run and a "caught" claim can be false
   ([journal](journal/2026-11-21.md), PR #140).
-- Undoing a hand mutant with `git checkout <file>` → it also drops your uncommitted edits in that file (a review fix
-  was lost that way); commit first, or mutate and restore a copy ([journal](journal/2026-11-22.md), PR #201).
 - Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
   `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests).
   Use `--in-diff <range diff>`, set `TMPDIR` (it is unset) to the session scratchpad **outside the repo**: under
@@ -111,9 +109,6 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   regrade, dispute, a merge from main), each with its next step. A rule triggered by "when the PR merges" needs a step that notices the
   merge: auto-merge lands after the session exits (PR #177). PR #157's reviewers found at least one unhandled
   state in every round, 5 in a row ([journal](journal/2026-11-22.md), PR #157).
-
-- Testing "any of N failure triggers turns passes into fails" → give each trigger its own case with every other
-  trigger off; a case that combined two hid a mutant (PR #201 R1.1) ([journal](journal/2026-11-22.md), PR #201).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
@@ -228,7 +223,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   the whole cache to be plain directories and regular files, allow-list its config keys, and put every setting on
   the `-c` command line; naming dangerous paths took 3 review rounds ([journal](journal/2026-11-21.md), PR #131).
 - Hand mutation with sed → if the mutated literal also appears in the test's expected value, sed rewrites both
-  and the mutant "survives"; replace only the first occurrence and check which line changed (PR #131).
+  and the mutant "survives"; replace only the first occurrence and check which line changed (PR #131). Undoing a
+  mutant with `git checkout <file>` also drops your uncommitted edits in that file: commit first, or mutate and
+  restore a copy ([journal](journal/2026-11-22.md), PR #201).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
@@ -269,7 +266,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
   should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
   near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a
-  hand mutant per term ([journal](journal/2026-11-22.md), PR #198).
+  hand mutant per term ([journal](journal/2026-11-22.md), PR #198). Likewise, for "any of N triggers fails the
+  run", give each trigger its own case with every other trigger off; a combined case hid a mutant
+  ([journal](journal/2026-11-22.md), PR #201 R1.1).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
