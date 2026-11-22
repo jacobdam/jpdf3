@@ -143,19 +143,20 @@
                  return True
      return False
  
-@@ -455,6 +473,11 @@
+@@ -455,6 +473,12 @@
              toks = shlex.split(seg)
          except ValueError:
              toks = seg.split()
 +        # Secrets the Read rule covers, named in a Bash word (cat ~/.codex/auth.json). A text match,
 +        # like the cmux rule: a glob, a variable or a script that builds the path still passes. Words
-+        # with whitespace (commit messages, post bodies) are prose, not paths (#162, AS.54).
-+        if any(_SECRET_WORD.search(t) for t in toks if not re.search(r"\s", t)):
++        # with whitespace (commit messages, post bodies) are prose, not paths. Quotes and backslashes
++        # are removed first: the seg.split() fallback keeps them (#162, AS.54).
++        if any(_SECRET_WORD.search(re.sub(r"[\\'\"]", "", t)) for t in toks if not re.search(r"\s", t)):
 +            raise Block("reading credentials is not allowed (~/.ssh, ~/.config/gh, ~/.codex)")
          while toks and ("=" in toks[0] and not toks[0].startswith("-")) or (toks and toks[0] in ("sudo", "env", "command", "nohup", "time")):
              toks = toks[1:]
          if not toks:
-@@ -498,11 +521,31 @@
+@@ -498,49 +522,81 @@
                 "--web", "-w", "--template", "-T", "--recover"}
  
  
@@ -172,44 +173,108 @@
 +    return depth > 0 and _gh_post_at(words, i)
 +
 +
++def _check_post(toks, i):
++    """Check the gh post starting at toks[i] (`gh <group> <post verb> ...`, up to the end of toks
++    or a separator token); return its titles and bodies. Raises Block."""
++    group, verb = toks[i + 1], toks[i + 2]
++    if group == "pr" and verb == "review":
++        raise Block("PR reviews are not allowed (the account is the owner's); post the ai-review status instead")
++    titles, bodies = [], []
++    j = i + 3
++    while j < len(toks) and not re.fullmatch(r"&&|\|\||;|\|", toks[j]):
++        a = toks[j]
++        flag = a.split("=", 1)[0]
++        if flag in GH_NO_FLAGS:
++            raise Block("gh %s %s: %s is not allowed; pass the text inline with --body \"%s ...\"" % (group, verb, flag, TAG))
++        if flag in GH_BODY_FLAGS and (group, flag) != ("pr", "-c") or (flag in ("-c", "--comment") and verb in ("close", "reopen")):
++            if "=" in a and a.startswith("--"):
++                bodies.append(a.split("=", 1)[1])
++            elif j + 1 < len(toks):
++                bodies.append(toks[j + 1])
++                j += 1
++        elif flag in GH_TEXT_FLAGS:
++            if "=" in a and a.startswith("--"):
++                titles.append(a.split("=", 1)[1])
++            elif j + 1 < len(toks):
++                titles.append(toks[j + 1])
++                j += 1
++        j += 1
++    if verb in ("create", "comment") and not bodies:
++        raise Block("gh %s %s needs --body \"%s ...\" (CONSTITUTION 1: agent text is tagged)" % (group, verb, TAG))
++    for b in bodies:
++        if not b.lstrip().startswith(TAG):
++            raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
++    return titles + bodies
++
++
  def check_gh_posts(cmd):
 -    """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's."""
 -    if not re.search(r"\bgh\s+(issue|pr)\s+(%s)\b" % "|".join(sorted(GH_POST_VERBS["pr"] | GH_POST_VERBS["issue"])), cmd):
 +    """Agent text on GitHub must be tagged (see TAG), so it can never pass as the owner's.
 +
-+    The shlex scan below checks the posts it sees. The shell tokenizer of the Codex tripwire then
-+    counts the posts the shell would run, with quotes, backslashes and line continuations removed
-+    and `;gh`, `(gh`, `$(gh`, backtick gh split off; any post the shlex scan missed, or any post
-+    inside `bash -c`/`eval` text, blocks (#162, CX.4). A text match, not a sandbox: a variable
-+    (`g=gh; $g ...`), a gh alias or another program that calls gh still passes."""
-+    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "")
++    Each post is checked twice, by the same rules: as shlex reads it (those titles and bodies are
++    returned for inert_view) and as the shell tokenizer of the Codex tripwire reads it (quotes,
++    backslashes and line continuations removed, comments and heredoc bodies dropped, `;gh`, `(gh`,
++    `$(gh` and backtick gh split off). A post inside `bash -c`/`eval` text blocks (#162, CX.4). A
++    text match, not a sandbox: a variable (`g=gh; $g ...`), a gh alias, ANSI-C escapes
++    (`$'\\x67h'`) or another program that calls gh still passes."""
++    flat = re.sub(r"\$(?=['\"])", "", cmd.replace("\\\n", ""))  # $'..' and $".." quote like '..' and ".."
++    flat = flat.replace("'", "").replace('"', "").replace("\\", "")
 +    if not _GH_POST.search(flat):
          return []
--    texts = []
-+    texts, checked = [], 0
+     texts = []
      try:
          toks = shlex.split(cmd)
      except ValueError:
-@@ -513,6 +556,7 @@
-         group, verb = toks[i + 1], toks[i + 2]
-         if verb not in GH_POST_VERBS.get(group, ()):
-             continue
-+        checked += 1
-         if group == "pr" and verb == "review":
-             raise Block("PR reviews are not allowed (the account is the owner's); post the ai-review status instead")
-         bodies = []
-@@ -541,6 +585,10 @@
-             if not b.lstrip().startswith(TAG):
-                 raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
-         texts.extend(bodies)
-+    shell_posts = sum(1 for words in _codex_commands(cmd) for j in range(len(words)) if _gh_post_at(words, j))
-+    if shell_posts > checked or _codex_check(cmd, [2 * len(cmd) + 4096], 0, _gh_post_nested):
+         raise Block("could not parse this gh command; use one simple `gh ... --body \"%s ...\"`" % TAG)
+-    for i, t in enumerate(toks):
+-        if os.path.basename(t) != "gh" or i + 2 >= len(toks):
+-            continue
+-        group, verb = toks[i + 1], toks[i + 2]
+-        if verb not in GH_POST_VERBS.get(group, ()):
+-            continue
+-        if group == "pr" and verb == "review":
+-            raise Block("PR reviews are not allowed (the account is the owner's); post the ai-review status instead")
+-        bodies = []
+-        j = i + 3
+-        while j < len(toks) and not re.fullmatch(r"&&|\|\||;|\|", toks[j]):
+-            a = toks[j]
+-            flag = a.split("=", 1)[0]
+-            if flag in GH_NO_FLAGS:
+-                raise Block("gh %s %s: %s is not allowed; pass the text inline with --body \"%s ...\"" % (group, verb, flag, TAG))
+-            if flag in GH_BODY_FLAGS and (group, flag) != ("pr", "-c") or (flag in ("-c", "--comment") and verb in ("close", "reopen")):
+-                if "=" in a and a.startswith("--"):
+-                    bodies.append(a.split("=", 1)[1])
+-                elif j + 1 < len(toks):
+-                    bodies.append(toks[j + 1])
+-                    j += 1
+-            elif flag in GH_TEXT_FLAGS:
+-                if "=" in a and a.startswith("--"):
+-                    texts.append(a.split("=", 1)[1])
+-                elif j + 1 < len(toks):
+-                    texts.append(toks[j + 1])
+-                    j += 1
+-            j += 1
+-        if verb in ("create", "comment") and not bodies:
+-            raise Block("gh %s %s needs --body \"%s ...\" (CONSTITUTION 1: agent text is tagged)" % (group, verb, TAG))
+-        for b in bodies:
+-            if not b.lstrip().startswith(TAG):
+-                raise Block("agent text on GitHub must start with \"%s\" (owner-issues.sh relies on it)" % TAG)
+-        texts.extend(bodies)
++    for i in range(len(toks)):
++        if _gh_post_at(toks, i):
++            texts.extend(_check_post(toks, i))
++    for words in _codex_commands(cmd):
++        for j in range(len(words)):
++            if _gh_post_at(words, j):
++                _check_post(words, j)
++    if _codex_check(cmd, [2 * len(cmd) + 4096], 0, _gh_post_nested):
 +        raise Block("write each gh post as one plain command: `gh issue|pr <verb> ... --body '%s ...'`, "
-+                    "with gh unquoted and not inside $(...), backticks, bash -c or eval" % TAG)
++                    "not inside bash -c or eval" % TAG)
      return texts
  
  
-@@ -609,7 +657,11 @@
+@@ -609,7 +665,11 @@
          fp = ti.get("file_path") or ti.get("notebook_path") or ""
          check_write_path(fp, cwd)
          if tool == "Write":
@@ -222,7 +287,7 @@
          elif tool == "Edit":
              new, old = ti.get("new_string", ""), ti.get("old_string", "")
          elif tool == "MultiEdit":
-@@ -627,21 +679,26 @@
+@@ -627,21 +687,26 @@
          check_bash(ti.get("command", ""), cwd)
  
  
@@ -259,7 +324,7 @@
  
  
  # ---------------------------------------------------------------- self-test
-@@ -830,6 +887,45 @@
+@@ -830,6 +895,61 @@
          ("Bash", {"command": "gh pr review 5 --approve"}, True),
          ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
          ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
@@ -271,9 +336,19 @@
 +        ("Bash", {"command": "gh 'issue' \"comment\" 5 --body hi"}, True),
 +        ("Bash", {"command": "gh issue \\\ncomment 5 --body hi"}, True),
 +        ("Bash", {"command": "ls;gh issue comment 5 --body hi"}, True),
-+        ("Bash", {"command": "ls;gh issue comment 5 --body '%s x'" % TAG}, True),
++        ("Bash", {"command": "ls;gh issue comment 5 --body '%s x'" % TAG}, False),
++        ("Bash", {"command": "ls;gh issue comment 5 --body hi # gh issue close 5"}, True),
++        ("Bash", {"command": "gh issue \\\ncomment 5 --body hi # gh issue close 5"}, True),
++        ("Bash", {"command": "echo $(gh issue comment 5 --body hi) # gh issue close 5"}, True),
++        ("Bash", {"command": "ls;gh issue comment 5 --body hi\ncat <<EOF\ngh issue close 5\nEOF"}, True),
++        ("Bash", {"command": "sudo $'gh' issue comment 5 --body hi # gh issue close 5"}, True),
++        ("Bash", {"command": "gh issue $'comment' 5 --body hi"}, True),
++        ("Bash", {"command": "gh $'issue' comment 5 --body hi"}, True),
++        ("Bash", {"command": "gh issue $\"comment\" 5 --body hi"}, True),
++        ("Bash", {"command": "(gh pr review 5 --approve)"}, True),
++        ("Bash", {"command": "ls;gh issue comment 5 --body-file b.md # gh issue close 5"}, True),
 +        ("Bash", {"command": "(gh issue comment 5 --body hi)"}, True),
-+        ("Bash", {"command": "echo $(gh issue comment 5 --body '%s x')" % TAG}, True),
++        ("Bash", {"command": "echo $(gh issue comment 5 --body '%s x')" % TAG}, False),
 +        ("Bash", {"command": "echo `gh issue comment 5 --body hi`"}, True),
 +        ("Bash", {"command": "bash -c 'gh issue comment 5 --body hi'"}, True),
 +        ("Bash", {"command": "bash -c 'gh issue comment 5 --body \"%s x\"'" % TAG}, True),
@@ -299,13 +374,19 @@
 +        ("Bash", {"command": "cd ~ && cat .codex/auth.json"}, True),
 +        ("Bash", {"command": "cat ~/.co''dex/auth.json"}, True),
 +        ("Bash", {"command": "wc -c <~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <.ssh/id_rsa"}, True),
++        ("Bash", {"command": "echo k >.ssh/authorized_keys"}, True),
++        ("Bash", {"command": "ssh -oIdentityFile=.ssh/k host"}, True),
++        ("Bash", {"command": "scp host:.ssh/id_rsa x"}, True),
++        ("Bash", {"command": "cat ~/.co''dex/auth.json #'"}, True),
++        ("Bash", {"command": "cat ~/.co\"dex/auth.json\" \"a;b\""}, True),
 +        ("Bash", {"command": "git commit -m 'never read ~/.codex/auth.json'"}, False),
 +        ("Bash", {"command": "ls docs/x.ssh ~/.codex-notes ~/.sshd"}, False),
 +        ("Bash", {"command": "gh issue comment 5 --body '%s the guard blocks cat ~/.ssh/id now'" % TAG}, False),
      ]
      failures = 0
      for tool, ti, should in cases:
-@@ -869,6 +965,55 @@
+@@ -869,6 +989,55 @@
          if got != want:
              failures += 1
              print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
