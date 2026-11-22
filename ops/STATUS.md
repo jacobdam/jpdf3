@@ -21,13 +21,14 @@ Phase: bootstrap (pilot)
 
 ## Last session
 - i: #21 → drills (crash PR #207, weakened-test reviewer, guard probes), record PR #209, owner part #208, bug #210.
-  PR #204 and #206 merged. Removed worktrees e2e-honesty, e2e-honesty-2. Journal 2026-11-22 10:30.
+  PR #204 and #206 merged. Removed worktrees e2e-honesty, e2e-honesty-2, record-200;
+  left pilot-drill (PR #209) and record-21 (this record) until they merge. Journal 2026-11-22 10:30.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. **#210**: write ops/proposals/ for the owner-commands permission fix (bug, M0; not owner-todo until the proposal
-   merges). Then the `ready` backlog (rule i) in M0, lowest number first: #86, #91, #115, #154.
+3. **#210** (`ready`, M0): write ops/proposals/ for the owner-commands permission fix (not owner-todo until the
+   proposal merges). Then the `ready` backlog (rule i) in M0, lowest number first: #86, #91, #115, #154.
 4. When #208 has the owner's results: add them to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
