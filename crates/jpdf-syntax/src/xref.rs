@@ -440,24 +440,25 @@ mod tests {
         );
     }
 
-    /// The default entry limit at its exact boundary: a subsection header declaring 4 194 304
-    /// entries passes the count check (it then fails on the missing first entry, at byte 14),
-    /// one more is refused before any entry is read. Two subsections are summed.
+    /// The default entry limit (2^21 since #146) at its exact boundary: a subsection header
+    /// declaring 2 097 152 entries passes the count check (it then fails on the missing first
+    /// entry, at byte 14), one more is refused before any entry is read. Two subsections are
+    /// summed.
     #[test]
     fn default_entry_limit_is_exact() {
         let l = Limits::default();
-        assert_eq!(l.max_xref_entries, 4_194_304);
-        let at = b"xref\n0 4194304\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
+        assert_eq!(l.max_xref_entries, 2_097_152);
+        let at = b"xref\n0 2097152\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
         assert_eq!(
             XrefDocument::parse(at, &l).map(|_| ()),
             Err(malformed("invalid xref entry", 14))
         );
-        let past = b"xref\n0 4194305\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
+        let past = b"xref\n0 2097153\ntrailer\n<<>>\nstartxref\n0\n%%EOF";
         assert_eq!(
             XrefDocument::parse(past, &l).map(|_| ()),
             Err(SyntaxError::LimitExceeded("cross-reference entries"))
         );
-        // Two subsections: 1 + 4 194 303 is at the limit, 1 + 4 194 304 one past.
+        // Two subsections: 1 + 2 097 151 is at the limit, 1 + 2 097 152 one past.
         let head = b"xref\n0 1\n0000000000 65535 f\r\n1 ";
         let summed = |count: &str| {
             let mut f = head.to_vec();
@@ -465,9 +466,9 @@ mod tests {
             f.extend(b"\ntrailer\n<<>>\nstartxref\n0\n%%EOF");
             XrefDocument::parse(&f, &l).map(|_| ())
         };
-        assert_eq!(summed("4194303"), Err(malformed("invalid xref entry", 38)));
+        assert_eq!(summed("2097151"), Err(malformed("invalid xref entry", 38)));
         assert_eq!(
-            summed("4194304"),
+            summed("2097152"),
             Err(SyntaxError::LimitExceeded("cross-reference entries"))
         );
     }
@@ -596,6 +597,43 @@ mod tests {
             .and_then(Object::as_array)
             .map(<[Object]>::len);
         assert_eq!(kids, Some(1_000_000));
+    }
+
+    /// The lowered default `max_string_bytes_per_parse` (32 MiB, #146) at its exact boundary:
+    /// an object whose two strings decode to exactly 32 MiB parses, one byte more is refused.
+    /// Two strings, so a check that looks at one token instead of the parse's total fails.
+    #[test]
+    fn default_string_bytes_limit_is_exact() {
+        let l = Limits::default();
+        assert_eq!(l.max_string_bytes_per_parse, 32 << 20);
+        let half = 16 << 20;
+        let pair = |second: usize| {
+            [
+                b"[(".to_vec(),
+                b"a".repeat(half),
+                b") <".to_vec(),
+                b"62".repeat(second),
+                b">]".to_vec(),
+            ]
+            .concat()
+        };
+        let data = file(&[pair(half), pair(half + 1)]);
+        let doc = XrefDocument::parse(&data, &l).expect("parses");
+        let at = doc.resolve(obj(1)).expect("32 MiB of string bytes parse");
+        let lens: Option<Vec<usize>> = at.as_array().map(|a| {
+            a.iter()
+                .filter_map(|o| match o {
+                    Object::String(s) => Some(s.len()),
+                    _ => None,
+                })
+                .collect()
+        });
+        assert_eq!(lens, Some(vec![half, half]));
+        drop(at);
+        assert_eq!(
+            doc.resolve(obj(2)).map(|_| ()),
+            Err(SyntaxError::LimitExceeded("string bytes in one object"))
+        );
     }
 
     #[test]

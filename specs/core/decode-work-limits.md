@@ -10,8 +10,8 @@ Status: implemented
 Issue #106 (trait contracts 2/3, from #79 and audit 0001 item 1). Before this change only
 Inflate promised bounded working memory (specs/core/backend-traits.md). The four image decoders
 bounded only their output. Two gaps:
-- **Memory.** A JPEG 2000 image just under the 256 MiB output cap needs about 1 GiB of 32-bit
-  wavelet coefficients. A progressive JPEG keeps 16-bit coefficients for every sample.
+- **Memory.** A JPEG 2000 image just under the 128 MiB output cap (256 MiB before #146) needs
+  about 512 MiB of 32-bit wavelet coefficients. A progressive JPEG keeps 16-bit coefficients for every sample.
 - **CPU.** A JBIG2 text region with millions of symbol instances, or a JPEG 2000 codestream
   with many tiles, quality layers or code-block passes, can do unbounded work while producing a
   tiny image. The output cap doesn't see that work.
@@ -23,7 +23,7 @@ The change has four parts.
 
    | Field | Default | Why |
    |---|---|---|
-   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays at 2 GiB. A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
+   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays within 2 GiB (the full budget is specs/core/memory-budget.md; #146 kept this at 256 MiB and lowered the output cap to 128 MiB). A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
    | `max_decode_ops: u64` | 2^32 | Operations one image decode may perform: about 43 per pixel at the 100,000,000-pixel limit. That leaves room for a several-stage decode of the largest legal image, and still bounds the time of one call |
 
    `Limits::decode_limits(remaining)` copies both into the new `DecodeLimits` fields
@@ -122,10 +122,11 @@ still renders (specs/core/backend-traits.md, Errors).
   (specs/core/memory-budget.md, #109) counts both: its decode term is the output cap plus the
   working bytes.
   - **Known gap:** the decoder's input is not in `working_bytes`. In a filter chain such as
-    `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-256 MiB
+    `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-128 MiB
     Flate output that feeds the image decoder is still alive while it runs, and nothing charges
-    it. The real decode term is up to 512 MiB. specs/core/memory-budget.md now counts it
-    (decode term = 256 + 256 MiB). That holds only if `jpdf-filters`, which doesn't exist yet,
+    it. The real decode term is up to 384 MiB (128 MiB output cap + 256 MiB working bytes;
+    #146 lowered the cap from 256 MiB). specs/core/memory-budget.md counts it as the decode
+    term. That holds only if `jpdf-filters`, which doesn't exist yet,
     keeps at most one intermediate output alive while the image decoder runs; the
     requirement is listed there.
 - The toy decoder in the suite's tests charges one operation per output sample plus 64 per

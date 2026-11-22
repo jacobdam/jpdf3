@@ -33,7 +33,7 @@ resolve callers exist.
      buffers (`capacity × size_of::<Object>()`), dictionary buffers (`capacity ×
      size_of::<(Vec<u8>, Object)>()`) and their keys.
    - Every allocation is charged as a glibc chunk (`alloc_bytes`, since #109): an 8-byte header,
-     rounded up to 16, at least 32 bytes. A 1-byte name costs 32. So the 256 MiB budget is real
+     rounded up to 16, at least 32 bytes. A 1-byte name costs 32. So the retained budget (128 MiB since #146) is real
      memory on the judge's Linux, not a sum of capacities.
    An object is cached only if the running total plus its cost stays `<=` the limit.
    Otherwise it isn't cached; there is **no eviction**, so the cache contents depend only on
@@ -60,7 +60,7 @@ No new error. A full cache is not an error: the object is re-parsed, and a file 
 an uncached object too often still fails with `LimitExceeded("bytes lexed per document")`.
 
 ## Limits
-- `max_retained_bytes_per_document` (default 256 MiB) bounds what the cache holds, by the cost
+- `max_retained_bytes_per_document` (default 128 MiB since #146; 256 MiB before) bounds what the cache holds, by the cost
   in item 2. Boundary tests:
   - `retained_budget_boundary_for_one_object`: with the limit at exactly the object's cost,
     the second resolve returns the same `Arc` and lexes nothing; at cost − 1 it returns a new

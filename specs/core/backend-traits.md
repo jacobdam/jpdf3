@@ -47,10 +47,10 @@ defaults:
 
 | Field | Default | Why |
 |---|---|---|
-| `max_decoded_bytes_per_stream` | 256 MiB | One backend call's output; fits a 32-bit `usize` (wasm32) |
+| `max_decoded_bytes_per_stream` | 128 MiB | One backend call's output; fits a 32-bit `usize` (wasm32). Lowered from 256 MiB by #146 (specs/core/memory-budget.md) |
 | `max_decoded_bytes_per_document` | 4 GiB (`u64`) | Lifetime total charged by the engine; time bound against many small bombs |
-| `max_retained_bytes_per_document` | 256 MiB (`u64`) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Charged by the object resolve cache (specs/core/resolve-cache.md); every other cache added must charge it too, through one shared counter (#138), and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
-| `max_image_pixels` | 100,000,000 | Header check before any allocation; binds for 1–2 byte pixels, while the 256 MiB output cap binds first for RGB/CMYK |
+| `max_retained_bytes_per_document` | 128 MiB (`u64`; 256 MiB before #146) | What one document keeps alive between calls (cached decoded streams, font programs held by cached faces, cached objects). Charged by the object resolve cache (specs/core/resolve-cache.md); every other cache added must charge it too, through one shared counter (#138), and evict or recompute instead of exceeding it (#79, specs/core/limits-ceiling.md) |
+| `max_image_pixels` | 100,000,000 | Header check before any allocation; binds first for 1-byte pixels, while the 128 MiB output cap binds first at 2 or more bytes per pixel (256 MiB before #146: 1–2 byte pixels) |
 | `max_image_dimension` | 2^20 | Long strips stay legal; the pixel limit does the real bounding |
 | `max_decode_working_bytes` | 256 MiB (`u64`) | Peak memory of one image decode, output included; the decode term of the 2 GiB budget (specs/core/decode-work-limits.md) |
 | `max_decode_ops` | 2^32 (`u64`) | Operations one image decode may perform, work that produces no output included (specs/core/decode-work-limits.md) |
@@ -59,11 +59,11 @@ defaults:
 | `max_font_glyphs` | 65,535 | Glyph ids are 16-bit in TrueType, CFF and CFF2 |
 | `max_outline_points` | 131,072 | One glyph, composites and subroutines expanded. Counted per segment (implied TrueType points and 3 per cubic count), so a simple glyph within `maxp`'s 65,535 raw points can exceed 65,536 |
 | `max_outline_ops` | 1,048,576 | One outline call: charstring operators executed plus composite components visited. Bounds CPU for subroutine fan-out and empty-component loops, which emit no points |
-| `max_canvas_pixels` | 8,388,608 (2^23) | One render target is one tile (PLAN §3: `jpdf-render` renders tiles), e.g. 4096 × 2048; a 32 MiB RGBA buffer. Lowered from 2^24 by #109 so a full tile with 4 layers and 32 clips fits the 512 MiB working bytes (specs/core/memory-budget.md) |
+| `max_canvas_pixels` | 4,194,304 (2^22) | One render target is one tile (PLAN §3: `jpdf-render` renders tiles), e.g. 2048 × 2048; a 16 MiB RGBA buffer. Lowered from 2^24 by #109 and from 2^23 by #146 so a full tile with 4 layers and 32 clips fits the 256 MiB working bytes (specs/core/memory-budget.md) |
 | `max_path_segments` | 1,048,576 | Segments in one path, and dashes one dashed stroke may produce (a dash array of tiny lengths otherwise turns one segment into millions) |
 | `max_clip_depth` | 64 | Nested clips; each is one 8-bit mask the size of the canvas |
 | `max_layer_depth` | 32 | Nested transparency groups; each is one RGBA buffer the size of the canvas |
-| `max_raster_working_bytes` | 512 MiB | `pixels × (4 + S) + 4 × I`, a quarter of the 2 GiB process budget (lowered from 1 GiB by #109; specs/core/memory-budget.md). `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Buffers the caller owns (the display list's images) aren't counted, so a maximum-size image plus a deep stack on a full tile needs a smaller tile. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
+| `max_raster_working_bytes` | 256 MiB | `pixels × (4 + S) + 4 × I`, an eighth of the 2 GiB process budget (lowered from 1 GiB by #109 and from 512 MiB by #146; specs/core/memory-budget.md). `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Buffers the caller owns (the display list's images) aren't counted, so a maximum-size image plus a deep stack on a full tile needs a smaller tile. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
@@ -606,7 +606,7 @@ A `DecodeStatus::Truncated` result is not an error. The caller uses the partial 
 may record a repair note.
 
 ## Limits
-- `DecodeLimits` bounds every call's output: at most 256 MiB by default, less once the
+- `DecodeLimits` bounds every call's output: at most 128 MiB by default (256 MiB before #146), less once the
   document budget runs low.
 - Image headers are checked against pixel, dimension and component limits before any
   allocation.
