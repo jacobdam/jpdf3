@@ -122,7 +122,7 @@ picks smaller tiles before it gets there.
 - Known gap: `read_capped` in jpdf-cli reserves the size from `stat`. A file that grows
   during the read (below `max_file_size`) makes `read_to_end` double the buffer, up to 3 ×
   `max_file_size` at the realloc peak. It needs a local attacker who can write to the file
-  while we read it. Tracked in the follow-up issue for this spec.
+  while we read it. Tracked in #141.
 
 ## Accessibility
 Not applicable.
