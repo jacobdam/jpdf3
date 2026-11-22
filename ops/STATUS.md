@@ -14,26 +14,24 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
-- **PR #194** (#191, sev:high, Codex Homebrew read list): proposal, `ai-review` = success, auto-merge on. When it
-  merges, add `owner-todo` to #196 (owner applies the diff and runs T1–T6) with "ready for owner: apply
-  ops/proposals/codex-homebrew-read.md, test plan in §4".
+- **PR #198** (#192, owner-comment tracking harness: 64 → 71 cases, audit 0004 AC.1/AC.7): `ai-review` = success
+  (2 rounds), auto-merge on. Told the owner on #179 that step 1 expects `passed 71` once it merges.
 
 ## Last session
-- d: #191 → PR #194 (proposal: HB_READ allow list instead of all of /opt/homebrew; test-policy.sh; 3 review rounds).
-  Filed #195 (deferred test minors), #196 (owner part, sev:high). Audit 0004 (PR #190) merged 08:48.
-  Journal 2026-11-22 09:05.
+- i: #192 → PR #198 (proposal harness only; the proposed owner-issues.sh is unchanged and PR #184's copy passes
+  71/71; 7 hand mutants each caught). PR #194 merged; #196 has `owner-todo` + "ready for owner". Journal 2026-11-22
+  09:19.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
-2. **§1 owner-todo check:** once PR #194 merges, `owner-todo` + "ready for owner" on #196. #187 waits on PR #186.
-3. **#192** (M0, ready): fix the owner-comment tracking harness soon; the owner's #179 relies on it.
-4. **#76**: harness honesty. The judge relies on it.
-5. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
+2. #187 waits on PR #186.
+3. **#76**: harness honesty. The judge relies on it.
+4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
   #132, #134, #136, #137, #166.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
-  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
+  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #198: 2, PR #186: 4 +
     final check (parked on one sentence).
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
@@ -47,7 +45,7 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
-- #196 (after PR #194 merges): apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
+- #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
 - #168 / PR #186: accept the final-check wording fix or ask for one more round (options on #168).
 - #162 / PR #183: decide the next step for the guard proposal (options on #162).
 - #179: merge PR #184, then run test step 3 of ops/proposals/owner-comment-tracking.md.
