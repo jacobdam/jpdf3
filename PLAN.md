@@ -347,13 +347,13 @@ Milestones M4+ can overlap once their dependencies are met.
 | **M1** | Syntax & security | lexer, objects, xref (table/stream/hybrid), object streams, **repair**, all filters, standard security handler R2–R6 | `wide` corpus: 0 panics/timeouts; opens ≥ 99.5% of what qpdf opens |
 | **M2** | Rendering core | content interpreter, display list, graphics state, paths, clipping, all fonts, images, all color spaces, shadings 1–7, patterns, transparency/blend/soft masks, OCGs, annotation appearances | ≥ 95% consensus pass on `regress`; bench within 2× PDFium |
 | **M3** | Text | extraction, reading order, search, selection geometry, ToUnicode/ActualText, structure tree | text metric parity with pdf.js on corpus |
-| **M4** | Engine API + Reader apps | command protocol, validation, sessions, jobs/cancel, tiles; **web reader** + **macOS reader** (XPC) | all reader features of §4; E2E green; first-page/fps targets met |
+| **M4** | Engine API + Reader apps | command protocol, validation, sessions, jobs/cancel, tiles; **web reader** + **macOS reader** (XPC) | all reader features of §4; E2E green; first-page/fps targets met; **owner preview**: no open `sev:critical`/`sev:high` security issue (ADR 0009) |
 | **M5** | Annotations + basic save | all types + appearance generation, threads, flatten, XFDF; **minimal incremental save** (pulled forward so annotations persist) | journeys J-ANN-* green (annotate → save → reopen, renders in MuPDF/Poppler) |
 | **M6** | Writer & pages | full rewrite, Save As, object streams, page ops, merge/split, encrypt/permissions | `qpdf --check` clean on all outputs; re-render equal |
 | **M7** | Forms | fill/create/flatten, safe built-in calculations | form corpus round-trip; no JS executed |
 | **M8** | Content editing | text/image edit, add text/images/links, watermark, header/footer, Bates, crop, redaction, compress | redaction verified by text-extraction + render; compress ratio vs qpdf/gs reported |
 | **M9** | Signatures | verify (all PAdES levels, MDP), sign via platform signer, LTV/DSS, timestamps | external validators accept our signatures; known-bad corpus rejected |
-| **M10** | Hardening & 1.0 | long fuzz campaign, perf tuning, accessibility, localization scaffolding, sandbox/notarization, PWA offline, CSP | 1.5× PDFium target; 30-day fuzz with 0 open crashes; release |
+| **M10** | Hardening & 1.0 | long fuzz campaign, perf tuning, accessibility, localization scaffolding, sandbox/notarization, PWA offline, CSP | 1.5× PDFium target; 30-day fuzz with 0 open crashes; no open `sev:medium`+ security issue (ADR 0009); release |
 | **P2** | Phase 2 | OCR, PDF→Office, AI chat, read aloud, iOS, Office→PDF, Android | scoped at the start of P2 |
 
 ---
@@ -362,6 +362,7 @@ Milestones M4+ can overlap once their dependencies are met.
 
 | Risk | Mitigation |
 |---|---|
+| The product is never delivered (foundation and hardening work crowd out features) | M4 is the owner preview; only `crash` and `sev:high`+ security issues jump the queue, medium/low wait for M10 (ADR 0009); M0 holds only what M0's exit and M1 need |
 | Real-world PDFs break the spec constantly | repair/recovery mode is in M1, fed by the `wide` corpus and engine comparison |
 | Text editing in existing PDFs is hard (subset fonts, kerning) | font substitution with a visible warning; spec explicitly scopes "good enough" |
 | Pure-Rust codec gaps (JBIG2, JPX quality/perf) | trait boundary lets us switch or write our own without touching callers |
