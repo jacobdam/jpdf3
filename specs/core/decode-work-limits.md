@@ -118,14 +118,16 @@ still renders (specs/core/backend-traits.md, Errors).
   - unit: `decode_limits` copies both fields (`decode_limits_copy_the_work_budgets`); the
     clamping tests list both fields (`all_fields`, distinct ceilings, one past the ceiling).
 - Budget: `charged_budgets_do_not_exceed_the_process_budget` now counts the larger of the
-  output cap and `max_decode_working_bytes` as the decode term. The sum is still exactly 2 GiB,
-  with no headroom (#109).
+  output cap and `max_decode_working_bytes` as the decode term. The full budget
+  (specs/core/memory-budget.md, #109) counts both: its decode term is the output cap plus the
+  working bytes.
   - **Known gap:** the decoder's input is not in `working_bytes`. In a filter chain such as
     `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-256 MiB
     Flate output that feeds the image decoder is still alive while it runs, and nothing charges
-    it. The real decode term is up to 512 MiB, so the 2 GiB sum understates it. The input is
-    owned by `jpdf-filters`, which doesn't exist yet; charging intermediate filter outputs is
-    added to #109's scope.
+    it. The real decode term is up to 512 MiB. specs/core/memory-budget.md now counts it
+    (decode term = 256 + 256 MiB). That holds only if `jpdf-filters`, which doesn't exist yet,
+    keeps at most one intermediate output alive while the image decoder runs; the
+    requirement is listed there.
 - The toy decoder in the suite's tests charges one operation per output sample plus 64 per
   unit of value in the bytes after the samples (a "repeat count"); its heavy fixtures end in a
   count of 4, and their lighter input is the same length with a count of 0. Its loops run over the input once, so they need no step cap.

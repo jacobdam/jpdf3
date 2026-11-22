@@ -67,6 +67,9 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
         .and_then(Object::as_ref)
         .ok_or(CosError::Malformed("catalog /Pages is not a reference"))?;
     let kids = kid_refs(&*doc.resolve(pages_ref)?, limits)?;
+    // `kids` and `seen` stay alive while every kid is resolved. The memory budget counts them
+    // as `jpdf_syntax::PAGE_WALK_BYTES` per page, assuming this exact-capacity set (no resize
+    // peak); change both together (specs/core/memory-budget.md).
     let mut seen = HashSet::with_capacity(kids.len());
     for &r in &kids {
         if r == pages_ref || !seen.insert(r) {

@@ -605,6 +605,61 @@ mod tests {
         ]));
     }
 
+    /// The lowered default canvas (#109, specs/core/memory-budget.md) at its exact boundary:
+    /// 2^23 pixels pass with `RasterLimits::default()`, one pixel more fails.
+    #[test]
+    fn default_canvas_limit_is_exact() {
+        let l = RasterLimits::default();
+        assert!(check_scene(4096, 2048, &[], &l).is_ok());
+        assert!(check_scene(8_388_608, 1, &[], &l).is_ok());
+        assert_eq!(
+            check_scene(8_388_609, 1, &[], &l),
+            Err(BackendError::LimitExceeded("canvas pixels"))
+        );
+        assert_eq!(
+            check_scene(4097, 2048, &[], &l),
+            Err(BackendError::LimitExceeded("canvas pixels"))
+        );
+    }
+
+    /// The lowered default working bytes (512 MiB, #109) at its exact boundary: a 4096 x 2048
+    /// canvas with 15 nested layers is 2^23 x (4 + 15 x 4) = exactly 512 MiB and passes; one
+    /// more clip (1 byte per pixel) fails.
+    #[test]
+    fn default_working_bytes_limit_is_exact() {
+        let path = [PathSegment::MoveTo(p(0.0, 0.0))];
+        let layer = DrawCommand::PushLayer {
+            opacity: 1.0,
+            blend: BlendMode::Normal,
+            mask: None,
+        };
+        let clip = DrawCommand::PushClip {
+            path: &path,
+            rule: FillRule::NonZero,
+            transform: Transform::IDENTITY,
+            anti_alias: true,
+        };
+        let layers = |extra_clip: bool| {
+            let mut c = vec![layer.clone(); 15];
+            if extra_clip {
+                c.push(clip.clone());
+                c.push(DrawCommand::PopClip);
+            }
+            c.extend(std::iter::repeat_n(DrawCommand::PopLayer, 15));
+            c
+        };
+        let l = RasterLimits::default();
+        assert_eq!(l.max_working_bytes, 512 << 20);
+        assert_eq!(
+            check_scene(4096, 2048, &layers(false), &l).map(|s| s.working_bytes),
+            Ok(512 << 20)
+        );
+        assert_eq!(
+            check_scene(4096, 2048, &layers(true), &l),
+            Err(BackendError::LimitExceeded("working bytes"))
+        );
+    }
+
     #[test]
     fn working_bytes_follow_the_formula() {
         let path = [PathSegment::MoveTo(p(0.0, 0.0))];

@@ -45,7 +45,8 @@ pub struct Limits {
     /// Width or height of one decoded image, in pixels.
     pub max_image_dimension: u32,
     /// Peak bytes one image decode may hold at once, output included (JPEG, JPEG 2000, JBIG2,
-    /// CCITT; specs/core/decode-work-limits.md). It is the decode term of the 2 GiB budget.
+    /// CCITT; specs/core/decode-work-limits.md). The decode term of the 2 GiB budget is this plus
+    /// `max_decoded_bytes_per_stream`, the decoder's input (specs/core/memory-budget.md).
     pub max_decode_working_bytes: u64,
     /// Operations one image decode may perform: at least one per output sample, plus work that
     /// produces no output (tiles, layers, scans, symbol instances). CPU bound per call.
@@ -200,10 +201,10 @@ impl Default for Limits {
         Self {
             max_file_size: 512 * 1024 * 1024,
             max_nesting_depth: 256,
-            max_objects_per_parse: 2_000_000,
+            max_objects_per_parse: 1 << 20,
             max_objects_per_document: 20_000_000,
             max_string_bytes_per_parse: 64 * 1024 * 1024,
-            max_xref_entries: 10_000_000,
+            max_xref_entries: 1 << 22,
             max_xref_sections: 1024,
             max_pages: 1_000_000,
             lex_budget_factor: 4,
@@ -220,11 +221,11 @@ impl Default for Limits {
             max_font_glyphs: u16::MAX,
             max_outline_points: 1 << 17,
             max_outline_ops: 1 << 20,
-            max_canvas_pixels: 1 << 24,
+            max_canvas_pixels: 1 << 23,
             max_path_segments: 1 << 20,
             max_clip_depth: 64,
             max_layer_depth: 32,
-            max_raster_working_bytes: 1 << 30,
+            max_raster_working_bytes: 512 * 1024 * 1024,
         }
     }
 }
@@ -372,13 +373,16 @@ mod tests {
 
     #[test]
     fn default_raster_limits_fit_the_memory_budget() {
-        // A full-size canvas with 4 layers and 32 clips stays within the working bytes.
+        // A full-size canvas (4 bytes per pixel) with 4 soft-masked layers (5 each), 32 clips
+        // (1 each) and one canvas-sized image (4 per pixel) stays within the working bytes:
+        // 2^23 x 60 = 480 MiB. This is `check_scene`'s formula, `pixels x (4 + S) + 4 x I`.
         let r = RasterLimits::default();
-        assert!(r.max_canvas_pixels * (4 * (1 + 4) + 32) <= r.max_working_bytes);
-        assert!(
-            r.max_working_bytes <= 1 << 30,
-            "half of the 2 GiB process budget"
-        );
+        let px = r.max_canvas_pixels;
+        assert!(px * (4 + 4 * 5 + 32) + 4 * px <= r.max_working_bytes);
+        // A quarter of the 2 GiB process budget (jpdf_syntax::MemoryBudget checks the sum).
+        assert_eq!(r.max_working_bytes, 512 * 1024 * 1024);
+        // The canvas default: 2^23 pixels, e.g. a 4096 x 2048 tile.
+        assert_eq!(r.max_canvas_pixels, 1 << 23);
     }
 
     /// Every field set to `v` (one literal, so a new field must be listed here too).
@@ -512,10 +516,9 @@ mod tests {
         // The four budgeted terms (the file held in memory, what a document
         // retains, one decode's working memory or output, whichever is larger, and one
         // render's working memory) sum to at most the judge's 2 GiB address-space cap
-        // (PLAN §2.2). This is a ceiling on the budgeted terms
-        // only: the binary, stacks, the xref table, one parse's objects and a filter chain's
-        // intermediate output feeding the image decoder are not charged and have no headroom
-        // at these defaults (#109).
+        // (PLAN §2.2). This is a coarse ceiling on the budgeted terms only; the full budget,
+        // with the xref table, spans, one parse, the decoder's input and a reserve, is
+        // `jpdf_syntax::MemoryBudget` (specs/core/memory-budget.md, #109).
         let l = Limits::default();
         let file = u64::try_from(l.max_file_size).unwrap_or(u64::MAX);
         let stream = u64::try_from(l.max_decoded_bytes_per_stream)
@@ -526,6 +529,15 @@ mod tests {
             .saturating_add(stream)
             .saturating_add(l.max_raster_working_bytes);
         assert!(total <= 2 << 30, "{total} bytes");
+    }
+
+    /// Lowering `max_objects_per_parse` (#109) must keep `max_pages` reachable: a flat
+    /// `/Kids` array of `max_pages` references, plus room for the rest of the `/Pages`
+    /// dictionary, fits in one parse.
+    #[test]
+    fn per_parse_objects_hold_a_flat_page_tree() {
+        let l = Limits::default();
+        assert!(l.max_objects_per_parse >= l.max_pages.saturating_add(32_768));
     }
 
     #[test]

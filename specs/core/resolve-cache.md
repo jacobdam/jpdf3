@@ -26,12 +26,15 @@ resolve callers exist.
      same way.
 2. **Charged to `Limits::max_retained_bytes_per_document`.** Each cached object costs
    `retained_cost(o)` bytes:
-   - `CACHE_ENTRY_OVERHEAD` = 64 bytes (the `Arc` counters, the map's key and pointer, doubled
-     for B-tree node slack);
-   - plus `size_of::<Object>()` for the root node inside the `Arc`;
+   - `CACHE_ENTRY_OVERHEAD` = 64 bytes (the map's key and pointer in a B-tree node, internal
+     nodes and the chunk header; about 54 bytes, specs/core/memory-budget.md);
+   - plus the `Arc` allocation: two counters and the root `Object` (48 bytes, a 64-byte chunk);
    - plus every heap allocation below it, **by capacity**: string and name buffers, array
      buffers (`capacity × size_of::<Object>()`), dictionary buffers (`capacity ×
      size_of::<(Vec<u8>, Object)>()`) and their keys.
+   - Every allocation is charged as a glibc chunk (`alloc_bytes`, since #109): an 8-byte header,
+     rounded up to 16, at least 32 bytes. A 1-byte name costs 32. So the 256 MiB budget is real
+     memory on the judge's Linux, not a sum of capacities.
    An object is cached only if the running total plus its cost stays `<=` the limit.
    Otherwise it isn't cached; there is **no eviction**, so the cache contents depend only on
    resolve order. An uncached object is re-parsed on every resolve and charged to the
@@ -100,12 +103,12 @@ an uncached object too often still fails with `LimitExceeded("bytes lexed per do
     generation case. Caching before the end-of-object overlap check fails
     `object_rejected_for_overlap_is_not_cached`. Charging lengths instead of capacities fails
     the spare-capacity cases (string, name, key, array and dictionary buffers). Switching the
-    cache to `Rc` fails to compile `xref_document_is_send`. Still passing: an overhead constant
-    that undercounts the allocator's real per-entry cost (the 64 bytes are an estimate, not
+    cache to `Rc` fails to compile `xref_document_is_send`. A cheaper chunk model fails
+    `alloc_bytes_follow_glibc_chunks`. Still passing: an overhead constant that undercounts the
+    map's real per-entry cost (the 64 bytes are reasoned from std's B-tree layout, not
     measured).
-  - What the tests can't see: real allocator overhead and fragmentation. The cost counts
-    capacities, not allocator headers, so actual RSS can exceed `retained_bytes()` by a small
-    factor for many tiny objects. The 2 GiB budget accounting (#109) covers the headroom.
+  - What the tests can't see: fragmentation and other allocators (macOS, wasm). The chunk
+    model is glibc's; fragmentation is in the reserve of specs/core/memory-budget.md (#109).
 
 ## Accessibility
 Not applicable (no UI).

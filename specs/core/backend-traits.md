@@ -59,11 +59,11 @@ defaults:
 | `max_font_glyphs` | 65,535 | Glyph ids are 16-bit in TrueType, CFF and CFF2 |
 | `max_outline_points` | 131,072 | One glyph, composites and subroutines expanded. Counted per segment (implied TrueType points and 3 per cubic count), so a simple glyph within `maxp`'s 65,535 raw points can exceed 65,536 |
 | `max_outline_ops` | 1,048,576 | One outline call: charstring operators executed plus composite components visited. Bounds CPU for subroutine fan-out and empty-component loops, which emit no points |
-| `max_canvas_pixels` | 16,777,216 (2^24) | One render target is one tile (PLAN §3: `jpdf-render` renders tiles), e.g. 4096 × 4096; a 64 MiB RGBA buffer |
+| `max_canvas_pixels` | 8,388,608 (2^23) | One render target is one tile (PLAN §3: `jpdf-render` renders tiles), e.g. 4096 × 2048; a 32 MiB RGBA buffer. Lowered from 2^24 by #109 so a full tile with 4 layers and 32 clips fits the 512 MiB working bytes (specs/core/memory-budget.md) |
 | `max_path_segments` | 1,048,576 | Segments in one path, and dashes one dashed stroke may produce (a dash array of tiny lengths otherwise turns one segment into millions) |
 | `max_clip_depth` | 64 | Nested clips; each is one 8-bit mask the size of the canvas |
 | `max_layer_depth` | 32 | Nested transparency groups; each is one RGBA buffer the size of the canvas |
-| `max_raster_working_bytes` | 1 GiB | `pixels × (4 + S) + 4 × I`, half of the 2 GiB process budget. `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Buffers the caller owns (the display list's images) aren't counted, so a maximum-size image plus a deep stack on a full tile needs a smaller tile. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
+| `max_raster_working_bytes` | 512 MiB | `pixels × (4 + S) + 4 × I`, a quarter of the 2 GiB process budget (lowered from 1 GiB by #109; specs/core/memory-budget.md). `S` is the most bytes per pixel the clip/layer stack holds at once (1 per clip mask, 4 per layer buffer, 5 per layer with a soft mask, counting the adapter's copy of the mask); `I` is the largest image's pixel count (the adapter's premultiplied copy). Buffers the caller owns (the display list's images) aren't counted, so a maximum-size image plus a deep stack on a full tile needs a smaller tile. Depth and canvas size trade off: deep nesting needs smaller tiles, which the engine can choose |
 
 `Limits::decode_limits(remaining_document_bytes)` builds the `DecodeLimits` for one call.
 Its output cap is the smaller of the per-stream limit and what the document has left.
