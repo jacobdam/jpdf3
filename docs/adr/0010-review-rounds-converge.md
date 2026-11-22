@@ -6,8 +6,9 @@ process level", 2026-11-22). Supersedes `ops/proposals/review-round-cap.md` (own
 
 ## Context
 TICK §4 step 5 asked for a fresh re-review whenever a round found a blocker or major, with no
-limit. Rule c's 3-attempt cap was written for CI fixes, and sessions did not apply it to review
-rounds. Round counts since reviews were first posted on PRs (#124):
+limit. Rule c read "failing CI or review → fix it. Max 3 attempts per PR", so on paper it covered
+review too, but no session applied it to review rounds: it named no exit for findings that keep
+coming, and §4 step 5 kept demanding re-reviews. Round counts since reviews were first posted on PRs (#124):
 
 | PR | Rounds | Blockers + majors per round (R = subagent, S = Codex) |
 |---|---|---|
@@ -29,61 +30,75 @@ Root causes (5 whys, short):
    that always reports its top finding (Codex in #151: exactly one major per round) never lets
    the loop end.
 3. **Fixes grew the scope.** Answering "not proven" with enforcement tooling (the #151 tripwire)
-   added new code, and that code drew the next major (rounds 6 to 14 were all about the
+   added new code, and that code drew the next major (rounds 6, 7 and 9 to 14 were about the
    tripwire).
 4. **No exit.** Nothing said what happens when findings keep coming, so the only exit was the
    owner.
 
-## Decision (applied in ops/TICK.md §2 rule c, §4 and §5)
+## Decision (applied in ops/TICK.md §2 rule c, §4, the §5 journal template and §7)
 1. **Severity rubric**, given to every reviewer in the brief and applied again by the author at
-   triage. Blocker and major need a concrete failing input or scenario in code, tests or text
-   the PR adds or changes:
+   triage. Blocker and major need a concrete failing input or scenario caused by the PR (in what
+   it adds or changes, or in untouched code whose behavior it changes):
    - blocker: a CONSTITUTION violation, a panic or hang on hostile input, a bypassed limit, a
-     security hole, a weakened test assertion;
+     security hole, a weakened test assertion the PR doesn't explain;
    - major: wrong behavior or a false statement (spec, comment, PR description) for a concrete
      input, or a missing test for behavior or a limit the PR claims;
    - minor: real but not shown to fail: hardening, an unproven bound that the text already calls
      an estimate, a bypass of best-effort or heuristic tooling, a test that could be stronger, a
-     problem in code the PR does not touch;
+     pre-existing problem the PR doesn't cause;
    - nit: wording and style.
-   The author may regrade a finding that has no concrete scenario, saying why in the triage
-   line. The next delta reviewer sees the regrade and can dispute it.
 2. **Round 1 is a full review; rounds 2 and later are delta reviews.** The brief adds a
    ledger (every earlier finding with its triage line) and the fix diff since the last reviewed
    commit. The delta reviewer checks that each fix works, that the fixes added no blocker or
    major, and whether each dispute or regrade holds. On lines the fixes did not touch, it reports
    blockers only.
-3. **A second-reviewer-only blocker or major triggers a re-review only when the author reproduces
-   it** (a failing test or command). If the author can't reproduce it, it is regraded minor and
-   deferred.
-4. **Fix only what was found.** A finding about an unproven property is fixed by stating the
+3. **Self-grading is always seen by a reviewer.** The author may regrade or dispute a blocker or
+   major, but every such regrade forces a delta round before `ai-review` can succeed, and if the
+   delta reviewer rejects it, the reviewer's grade is final. In round 4 no review is left, so
+   round-4 blockers and majors are fixed, never regraded.
+4. **Second-reviewer-only findings.** A behavioral blocker or major (panic, hang, wrong output,
+   bypassed limit) counts once the author reproduces it with a failing test or command; if the
+   author can't, it is regraded with the attempt as the reason (and rule 3 sends it to a
+   reviewer). A non-behavioral one (CONSTITUTION, license, resemblance to another engine, a false
+   statement) is checked against the cited lines and fixed or disputed with evidence.
+5. **Review grade and security severity are separate.** A deferred security finding takes its
+   `sev:*` label from the ADR 0009 table, so an unreproduced hang on hostile input is still
+   `sev:high` and stays under rule d.
+6. **Fix only what was found.** A finding about an unproven property is fixed by stating the
    limitation. Requests for new enforcement tooling (scanners, tripwires, extra checkers) go to
    their own issue.
-5. **Cap: 4 rounds per PR** (1 full + 3 delta). Findings still open after round 4:
-   - minors and nits are deferred to issues;
-   - a blocker or major is fixed with a test that fails before the fix and passes after it, both
-     results recorded in the triage (a false statement: the corrected text is quoted), with no
-     further review round. If the fix is more than a
-     local change, the PR goes back to draft, the issue is labeled `blocked` with the ledger, and
-     the owner decides.
-6. Rule c's "3 attempts" counts CI fix attempts only. Review rounds follow this cap.
-7. The journal's `Cost:` line records `review rounds N/4` and the deferred issues, so the retro
-   can measure this.
+7. **Cap: 4 rounds per issue** (1 full + 3 delta; rounds on an earlier PR for the same issue
+   count). After round 4, minors and nits are deferred to issues. A round-4 blocker or major is
+   fixed (behavior: a test that fails before and passes after, both runs recorded; text: the
+   corrected wording quoted) only if the fix adds ≤ 100 lines and no new file; then a **final
+   check** (a fresh reviewer, fix diff only, blockers only) runs. A bigger fix, or a blocker from
+   the final check, sends the PR back to draft and the issue to `blocked` for the owner. So a PR
+   sees at most 5 reviews, and code written after round 4 is still reviewed.
+8. Rule c's "3 attempts" now counts CI fix attempts only. This is a deliberate change: the old
+   text also covered review, and 4 rounds is looser than 3. Four, because real blockers and
+   majors came in round 2 or later on PRs #129 (rounds 2 to 4), #135 (2 to 4), #142 (2 to 4) and
+   #153 (round 2); with a cap of 3, PRs #129, #135 and #142 would have stopped on real findings
+   that were then fixed in the PR (except #142's round-3 major, deferred to #146). Delta reviews make each extra round cheaper than before.
+9. The journal's `Cost:` line records rounds, regrades (and how many the next reviewer
+   overturned) and deferred issues; the retro computes the metrics below.
 
 ## Consequences
 - Some real issues merge as deferred minors. ADR 0009 already allows that for medium and low
   security findings; this extends it to non-security findings without a concrete failing
   scenario.
 - The author grades their own PR's findings. Three checks keep that honest: the regrade reason
-  is posted on the PR, the next delta reviewer can dispute it, and the owner reads the posts
-  (#124).
+  is posted on the PR; every regrade of a blocker or major goes to a delta reviewer whose grade
+  is final; and the owner reads the posts (#124).
 - The Codex preamble is protected and doesn't define severity. The rubric reaches Codex through
-  the brief, which it reads as data, so it may ignore it. The author's triage (rule 3) is the
-  backstop.
+  the brief, which it reads as data, so it may ignore it. The author's triage (rules 3 and 4) is
+  the backstop.
 
-## Success check (next retro, then the one after)
-- Over the next 10 merged PRs, no PR goes past 4 review rounds.
-- Every deferred finding has an issue.
-- Retro: of the findings deferred under this ADR, how many later turned out to be real bugs that
-  should have blocked the merge (target: 0)? If any did, tighten the rubric instead of raising the
-  cap.
+## Success check (next retro, then the one after; computed in TICK §7 step 1)
+- Over the next 10 merged PRs: no PR has more than 5 reviews (4 rounds + final check); median
+  rounds ≤ 3; at most 2 of 10 reach the cap.
+- Every deferred finding has an issue, and every regrade went to a reviewer. Regrades the next
+  reviewer overturned: target ≤ 1 in 4; above that, the author regrades too eagerly and the
+  rubric needs tightening.
+- The retro re-reads every issue deferred from a review since the last retro and counts the ones
+  that were real bugs that should have blocked their merge (target: 0). If any were, tighten the
+  rubric instead of raising the cap.
