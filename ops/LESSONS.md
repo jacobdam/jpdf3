@@ -135,6 +135,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   paraphrasing, and check new web keys against `specs/ui/shortcuts.md` rule 3 (the
   browser-reserved list) ([journal](journal/2026-11-20.md), PR #40).
 
+- Writing an overview doc (README, digest) from PLAN.md → PLAN describes the target, so "runs in a worker", "is
+  published", "every limit is enforced" come out in the present tense; check each against the tree and open issues
+  first (PR #169 round 1: 2 majors, 2 minors) ([journal](journal/2026-11-22.md), PR #169).
+
 ## Apps (web, macOS)
 - Writing a check that "nothing from set X reaches the artifact" (licenses, imports) → a text
   scan leaks through every indirection: paths into node_modules, `../` out of the scanned

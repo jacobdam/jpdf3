@@ -8,35 +8,30 @@ Phase: bootstrap (pilot)
   enable auto-merge until the owner comments `/release`; then enable auto-merge.**
   - Follow-ups: #154 (enforce the gate structurally), #156 (sev:medium, M10). #146 stays open.
   - The owner's `/halt` on PR #151 isn't a defined command (no `halt` label, no `ops/HALT`).
-- **PR #157 (#155, owner issue): draft, #155 `blocked`, `ai-review` = failure on 6e799c2, waiting for the owner.**
-  Act only on an owner comment on #155 or PR #157: accept, run one more final check, or change.
-- PR #160 (audit 0003, #159): this session's record. If it hasn't merged when you read this, check its CI.
+- PR #169 (#167, owner: README): `ai-review` = success, auto-merge on. If it hasn't merged, check its CI.
 
 ## Last session
-- Audit 0003 (rule g, 20 merges since audit 0002), PR #160, record docs/audits/0003.md. Three subagent reviews plus
-  the first Codex audit review (34 findings in all), all posted on PR #160. New issues: #161 and #162 (sev:high,
-  owner-todo, protected files: Codex launcher isolation, guard tag check), #168 (sev:high, M2: JBIG2 page data +
-  globals budget), #163, #164, #165 (sev:medium, M10), #166 (sev:low, M10); #87 comment; proposal ops/proposals/security-gates-in-gate-tool.md. Journal 2026-11-22 03:10.
+- Owner instructions (rule a): PR #157 (ADR 0010, TICK §4 review convergence) got the owner's first-parent wording fix
+  and merged (d058087); TICK §4 on main now has the 4-round cap and final check. #167: README in PR #169 (2 rounds).
+  Journal 2026-11-22 03:55.
+- Before that: audit 0003 (PR #160, merged): issues #161, #162, #168 (sev:high), #163 to #166 (M10).
 
 ## Next step (suggested order, TICK letters)
-0. PR #151: wait for `/release`. PR #157: wait for an owner comment. Don't touch either before.
-   Until #157 merges, TICK §4 on main is still the old loop, with no defined exit.
-1. **a: #167 (owner, `human`, filed 03:32 UTC during the audit session): "Add README for this repo".** It has no
-   body; write a README from PLAN.md/AUTOMATION.md and reply on the issue.
-2. **d: #161, then #162** (sev:high). Both are in protected files, so the work is a proposal each
+0. PR #151: wait for `/release`. Don't touch it before.
+1. **d: #161, then #162** (sev:high). Both are in protected files, so the work is a proposal each
    (`ops/proposals/codex-review-isolation.md`, `ops/proposals/guard-tag-and-fail-closed.md`) with the diff and a
    test plan; label `owner-todo` stays. #162's CX.4 is confirmed and small (drop the raw-text prefilter).
    #168 (sev:high, M2) is engine work in budget.rs and can go before or after them.
-3. **#76**: harness honesty. The judge relies on it.
-4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
+2. **#76**: harness honesty. The judge relies on it.
+3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165; low #83, #122, #132, #134,
   #136, #137, #166.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
-  - review rounds: owner issue #155 / PR #157 (ADR 0010) once it merges; the retro checks its first numbers.
+  - review rounds: ADR 0010 (merged in #157, 2026-11-22); the retro checks its first numbers.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - the template's `Area:` list lacks `tooling`.
-  - ops/TICK.md:204 still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
+  - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
