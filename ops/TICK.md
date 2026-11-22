@@ -51,17 +51,22 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   When it goes through a PR, the PR body links the owner comment (`Owner instruction: <link>`), and
   "done:" waits for the merge, which usually lands after the session exits. A later session that
   sees an owner instruction with a "picked up" reply and no "done:" reply finds its PR
-  (`gh pr list --state all --search "<comment id> in:body"`): merged → post "done:"; open → work it
-  under rule c; closed unmerged → the instruction is not done, resume it under rule a.
+  (`gh pr list --state all --search "<comment id> in:body"`; for an owner issue,
+  `--search '"Closes #<issue>" in:body'`): merged → post "done:"; open → work it under rule c;
+  closed unmerged → the instruction is not done, resume it under rule a. A merge that closes an
+  owner issue drops it from the feed (it lists open issues only), so §1 also lists recently closed
+  owner issues; post the missing "done:" on any of them.
 
   The link is the URL exactly as GitHub gives it (`…#issuecomment-N`, `…#discussion_rN`,
   `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply. The proposed
   feed (`ops/proposals/owner-comment-tracking.md`) drops a comment once a "done:" reply that starts
   this way links it. Owner comments from before 2026-11-23 need no replies (the proposal's `FLOOR`;
   change both together). Until the owner applies that proposal (#179), `owner-issues.sh` shows only
-  conversation comments, without their URL (take it from the issue's or PR's comment list), keeps
-  handled ones for 14 days (skip those with a "done:" reply), and shows no inline review comments
-  or review bodies, so those get no replies yet.
+  conversation comments, without their URL (take it from the issue's or PR's comment list), shows
+  every comment for 14 days after its last update, handled or not (skip those with a "done:"
+  reply), then drops it, handled or not, and shows no inline review comments or review bodies, so
+  those get no replies yet. Until then, list every picked-up owner comment still without "done:"
+  under "In flight" in `ops/STATUS.md`, with its link, so it isn't lost when it leaves the feed.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
@@ -89,6 +94,11 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 ```sh
 cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3
 ops/driver/owner-issues.sh
+# owner issues (untagged) closed in the last 14 days: each one opened from 2026-11-23 on needs a
+# "done:" reply from the agent (§0)
+gh issue list --state closed --author jacobdam --search "closed:>=$(date -u -v-14d +%F)" \
+  --json number,title,createdAt,body \
+  --jq '.[] | select(.body | test("^\\s*🤖 jpdf-agent") | not) | [.number, .createdAt, .title] | @tsv'
 gh run list --branch main --limit 5
 gh pr list --author @me --state open
 gh issue list --state open --limit 50 --json number,title,labels,milestone
