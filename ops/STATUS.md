@@ -24,7 +24,7 @@ Phase: bootstrap (pilot)
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. Close #76 once PR #204 merges (items 1-5 done, item 6 is #203) if GitHub doesn't.
+3. #76 was closed by PR #201; #200 closes when PR #204 merges (#76 item 6 is #203).
 4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,

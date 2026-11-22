@@ -25,9 +25,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`, so put
   files for containers there, not in `/tmp` ([journal](journal/2026-11-20.md)).
 - Running the Playwright probes by hand (or letting a reviewer run them) → a relative `JPDF_PROBE_OUT`/`--output`
-  resolves from the config's directory, so output lands in `apps/web/target/` or `apps/target/`, which only the root
-  `/target` ignore misses; lint then fails and `git add -A` commits it (PR #204 R3.1). Pass absolute paths under the
-  worktree's `target/scratch/`, and read `git status --short` before every commit
+  resolves from the config's directory, so output lands under it or its parents (`apps/web/target/`, `apps/target/` in
+  PR #204 R3.1), which the root-only `/target` ignore misses; biome fails only on paths under apps/web, and `git add -A`
+  commits the rest. Pass absolute paths under the worktree's `target/scratch/`, and read `git status --short` before
+  every commit
   ([journal](journal/2026-11-22.md), PR #204).
 - Hand-checking that a specific test kills a mutant → run `cargo nextest run --no-fail-fast`; fail-fast stops at
   the first failing test, so the targeted test may never run and a "caught" claim can be false
