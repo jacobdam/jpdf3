@@ -228,6 +228,8 @@ resolves only the catalog, the page-tree root and its kids.
   garbage and truncated files exit 2 or 3; an oversized (sparse, write-only) file is refused
   before opening, with the exact-boundary case; a FIFO, a directory, `/dev/null` and `/dev/zero`
   exit 2 at once with "not a regular file". Tests remove their FIFO, directory and sparse files.
+- `tools/jpdf-cli/tests/dependency_gate.rs`: the #146 phase gate on the resolved dependency
+  graph (only parse-only crates; specs/tooling/cli-dependency-gate.md, #154).
 - `tools/jpdf-cli/src/main.rs` unit tests: the non-blocking open (`jpdf-fsio`, which has its
   own FIFO test) returns at once on a FIFO and the opened-file check refuses it; reading stops one byte past the limit (exactly `max`
   passes; `max + 1` and an endless source fail).
