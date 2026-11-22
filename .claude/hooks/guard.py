@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 REPO = "jacobdam/jpdf3"
 PROTECTED = (
@@ -24,7 +25,254 @@ PROTECTED = (
     "deny.toml", "supply-chain/", "clippy.toml", ".cargo/", ".config/nextest.toml",
     ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/",
 )
-SECRET_READ = ("/.ssh/", "/.config/gh/")
+SECRET_READ = ("/.ssh/", "/.config/gh/", "/.codex/")
+# Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
+# instead of a regex, so there is no backtracking. It finds the command word of every simple command
+# (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
+# words, keywords, redirections, heredoc bodies and wrappers with their options (sudo -u x,
+# timeout -s KILL 5, env -i, xargs -I {}, npx -y, pnpm dlx ...), and looks inside `bash -c '...'`,
+# `eval ...` and after find's -exec. Quotes and backslashes are removed, so `co''dex` and `\codex`
+# count. Recursion shares one character budget (2x the command + 4 KiB), so the total work stays
+# linear; running out of budget, or nesting deeper than three levels, blocks. Not a sandbox: `c=codex; $c`, `echo codex | sh` and other
+# launchers still pass (see ops/proposals/codex-second-reviewer.md, Risks).
+CODEX_WRAPPERS = {  # wrapper -> its single-letter options that take a separate argument
+    "sudo": "ughpcCDrtU", "doas": "uC", "env": "uCS", "exec": "a", "nohup": "", "command": "",
+    "builtin": "", "time": "", "nice": "n", "timeout": "sk", "gtimeout": "sk", "caffeinate": "tw",
+    "xargs": "ILnPsdEa", "npx": "p", "bunx": "", "npm": "", "yarn": "", "pnpm": "", "dlx": "",
+    "coproc": "", "stdbuf": "ioe",
+}
+CODEX_SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+CODEX_KEYWORDS = ("then", "do", "else", "elif", "if", "while", "until", "function", "!", "{", "}")
+CODEX_MAX_WORDS = 64  # words looked at per command start; bounds the work per start
+_CODEX_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+
+def _codex_commands(s):
+    """Split shell text into simple commands: lists of words with quotes and backslashes removed.
+    One pass; `$(`/backtick substitutions are nested commands (state saved on a stack), single
+    quotes are literal, `#` at a word start begins a comment, redirection targets are dropped and
+    heredoc bodies are skipped."""
+    cmds, words, cur, started, skip = [], [], [], False, False
+    mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
+    i, n = 0, len(s)
+
+    def flush_word():
+        nonlocal cur, started, skip
+        if started and not skip:
+            words.append("".join(cur))
+        if started:
+            skip = False
+        cur, started = [], False
+
+    def flush_cmd():
+        nonlocal words, skip
+        flush_word()
+        if words:
+            cmds.append(words)
+        words = []
+        skip = False
+
+    def open_sub(closer):
+        nonlocal words, cur, started, mode, skip
+        stack.append((closer, mode, words, cur, started, skip))
+        words, cur, started, mode, skip = [], [], False, "n", False
+
+    def close_sub():
+        nonlocal words, cur, started, mode, skip
+        flush_cmd()
+        _, mode, words, cur, _, skip = stack.pop()
+        started = True
+
+    while i < n:
+        c = s[i]
+        if mode == "s":
+            if c == "'":
+                mode = "n"
+            else:
+                cur.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            if s[i + 1] != "\n":
+                cur.append(s[i + 1])
+                started = True
+            i += 2
+            continue
+        if c == "$" and s.startswith("$(", i):
+            open_sub(")")
+            i += 2
+            continue
+        if c == "`":
+            if stack and stack[-1][0] == "`":
+                close_sub()
+            else:
+                open_sub("`")
+            i += 1
+            continue
+        if mode == "d":
+            if c == '"':
+                mode = "n"
+            else:
+                cur.append(c)
+            i += 1
+            continue
+        if c in " \t":
+            flush_word()
+        elif c == "'":
+            mode, started = "s", True
+        elif c == '"':
+            mode, started = "d", True
+        elif c == "#" and not started:
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "$" and s.startswith("${", i):
+            j = s.find("}", i)
+            j = n if j < 0 else j + 1
+            cur.append(s[i:j])
+            started = True
+            i = j
+            continue
+        elif c in "<>" or (c == "&" and s.startswith("&>", i)):
+            if started and "".join(cur).isdigit():
+                cur, started = [], False  # a file descriptor number: 2>&1
+            flush_word()
+            j = i
+            while j < n and s[j] in "<>&|":
+                j += 1
+            op = s[i:j]
+            if j < n and op.endswith("&") and (s[j].isdigit() or s[j] == "-"):
+                while j < n and (s[j].isdigit() or s[j] == "-"):
+                    j += 1
+            elif op in ("<<", "<<-"):
+                if j < n and s[j] == "-":
+                    op, j = "<<-", j + 1
+                while j < n and s[j] in " \t":
+                    j += 1
+                k = j
+                while k < n and s[k] not in " \t\n;&|<>()":
+                    k += 1
+                delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
+                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
+                    cur.append(op)  # arithmetic shift (1<<3, $((1 << n))), not a heredoc
+                    started = True
+                    i = j
+                    continue
+                heredocs.append((delim, op == "<<-"))
+                j = k
+            else:
+                skip = True  # the next word is the redirection target
+            i = j
+            continue
+        elif c in ";&|\n":
+            flush_cmd()
+            if c == "\n" and heredocs:
+                j = i + 1
+                for delim, tabs in heredocs:
+                    while j < n:
+                        e = s.find("\n", j)
+                        e = n if e < 0 else e
+                        line = s[j:e]
+                        j = e + 1
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                heredocs = []
+                i = j
+                continue
+        elif c == "(":
+            flush_cmd()
+            stack.append(("g", mode, None, None, False, False))
+        elif c == ")":
+            if stack and stack[-1][0] == ")":
+                close_sub()
+            else:
+                if stack and stack[-1][0] == "g":
+                    stack.pop()
+                flush_cmd()
+        else:
+            cur.append(c)
+            started = True
+        i += 1
+    while stack:
+        if stack[-1][0] == "g":
+            stack.pop()
+        else:
+            close_sub()
+    flush_cmd()
+    return cmds
+
+
+def _codex_runs(words, i, budget, depth, limit=CODEX_MAX_WORDS):
+    """True if the simple command starting at words[i] runs codex (looking at most `limit` words)."""
+    end = min(len(words), i + limit)
+    while i < end:
+        w = words[i]
+        low = w.lower()
+        base = low.rsplit("/", 1)[-1]
+        if base.split("@", 1)[0] == "codex" and not base.startswith("@"):
+            return True
+        if low == "eval":
+            return _codex_nested(" ".join(words[i + 1:end]), budget, depth)
+        if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
+            i += 1
+        elif base in CODEX_SHELLS:
+            i, want_c = i + 1, False
+            while i < end and words[i][:1] in "-+" and len(words[i]) > 1:
+                opt = words[i]
+                i += 1
+                if opt == "--":
+                    break
+                if opt.startswith("--"):
+                    continue
+                want_c = want_c or "c" in opt
+                if opt[-1] in "oO":
+                    i += 1  # -o pipefail, -O extglob
+            if want_c:
+                return i < len(words) and _codex_nested(words[i], budget, depth)
+        elif base in CODEX_WRAPPERS:
+            argopts = CODEX_WRAPPERS[base]
+            i += 1
+            while i < end and words[i].startswith("-") and words[i] != "-":
+                opt = words[i]
+                i += 1
+                if opt == "--":
+                    break
+                letters = opt[1:]
+                if not opt.startswith("--") and letters[-1:] in tuple(argopts) and all(
+                        ch not in argopts for ch in letters[:-1]):
+                    i += 1  # -u x, -iu x
+            if base in ("timeout", "gtimeout") and i < end and words[i][:1].isdigit():
+                i += 1
+        else:
+            return False
+    return False
+
+
+def _codex_nested(text, budget, depth):
+    """Check text run by `bash -c` or `eval`, charging the shared budget; out of budget blocks."""
+    budget[0] -= len(text) + 1
+    if budget[0] < 0 or depth >= 3:
+        return True  # too deep or too much nested text: block
+    return _codex_check(text, budget, depth + 1)
+
+
+def _codex_check(text, budget, depth):
+    for words in _codex_commands(text):
+        if _codex_runs(words, 0, budget, depth):
+            return True
+        for j, w in enumerate(words):
+            if j and w in ("-exec", "-execdir", "-ok", "{") and _codex_runs(words, j + 1, budget, depth, 8):
+                return True
+    return False
+
+
+def codex_command(cmd):
+    """True if the Bash command `cmd` runs codex. Linear: one tokenizer pass per text, and nested
+    texts (bash -c, eval) draw on one budget of 2x the command plus 4 KiB."""
+    flat = cmd.replace("\\\n", "").replace("'", "").replace('"', "").replace("\\", "").lower()
+    if "codex" not in flat:
+        return False
+    return _codex_check(cmd, [2 * len(cmd) + 4096], 0)
 # Every issue/PR/comment the agent writes starts with this tag. The agent shares the owner's
 # GitHub account; ops/driver/owner-issues.sh treats only UNTAGGED owner text as instructions.
 TAG = "\U0001F916 jpdf-agent"
@@ -147,6 +395,10 @@ def check_bash(cmd, cwd):
     # (incl. bash -c, $(...), grep) it is blocked.
     if re.search(r"\bcmux\b", inert_c.lower()):
         raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
+    # The full command, not the inert view: quoted gh text is never a command word to the
+    # tokenizer, and stripping it can be fooled (#130).
+    if codex_command(cmd):
+        raise Block("run Codex only through ops/driver/codex-review.sh (fixed sandbox flags)")
     if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
         raise Block("scripting keystrokes into other apps is not allowed")
     if re.search(r"\bsecurity\s+(find-|dump-keychain|export)", c):
@@ -398,6 +650,85 @@ def selftest():
     R = lambda p: os.path.join(root, p)  # noqa: E731
     cases = [
         # (tool, input, should_block)
+        ("Bash", {"command": "codex exec -s danger-full-access 'x'"}, True),
+        ("Bash", {"command": "/opt/homebrew/bin/codex exec x"}, True),
+        ("Bash", {"command": "/opt/homebrew/Caskroom/codex/0.171.0/bin/codex exec x"}, True),
+        ("Bash", {"command": "FOO=1 codex review"}, True),
+        ("Bash", {"command": "FOO=\"a b\" codex exec"}, True),
+        ("Bash", {"command": "FOO=" + "a" * 300 + " codex exec x"}, True),
+        ("Bash", {"command": "env " + "A=1 " * 40 + "codex exec x"}, True),
+        ("Bash", {"command": "bash -c 'codex exec x'"}, True),
+        ("Bash", {"command": "bash -lc 'FOO=1 codex exec x'"}, True),
+        ("Bash", {"command": "ls && codex exec"}, True),
+        ("Bash", {"command": "x=1;codex exec"}, True),
+        ("Bash", {"command": "a=b&&codex exec"}, True),
+        ("Bash", {"command": "ls\ncodex exec x"}, True),
+        ("Bash", {"command": "{ codex exec x; }"}, True),
+        ("Bash", {"command": "(codex exec x)"}, True),
+        ("Bash", {"command": "if true; then codex exec; fi"}, True),
+        ("Bash", {"command": "case x in x) codex exec;; esac"}, True),
+        ("Bash", {"command": "echo $(codex exec x)"}, True),
+        ("Bash", {"command": "out=$(codex exec -s danger-full-access 'x')"}, True),
+        ("Bash", {"command": "out=`codex exec x`"}, True),
+        ("Bash", {"command": "echo \"result: $(codex exec x)\""}, True),
+        ("Bash", {"command": "\\codex exec"}, True),
+        ("Bash", {"command": "co''dex exec"}, True),
+        ("Bash", {"command": "xargs -0 codex exec"}, True),
+        ("Bash", {"command": "env -i codex exec"}, True),
+        ("Bash", {"command": "env -u X codex exec"}, True),
+        ("Bash", {"command": "nice -n 5" + " " * 300 + "codex exec"}, True),
+        ("Bash", {"command": "sudo -u x codex exec"}, True),
+        ("Bash", {"command": "timeout 5 codex exec"}, True),
+        ("Bash", {"command": "timeout -s KILL -k 5 10 codex exec"}, True),
+        ("Bash", {"command": "exec -a x codex exec"}, True),
+        ("Bash", {"command": "coproc codex exec"}, True),
+        ("Bash", {"command": "caffeinate -i codex exec"}, True),
+        ("Bash", {"command": "/usr/bin/time codex exec"}, True),
+        ("Bash", {"command": "find . -exec codex exec {} +"}, True),
+        ("Bash", {"command": "npx @openai/codex exec"}, True),
+        ("Bash", {"command": "pnpm dlx @openai/codex exec"}, True),
+        ("Bash", {"command": "xargs -I {} codex exec {}"}, True),
+        ("Bash", {"command": "xargs -P 4 codex exec"}, True),
+        ("Bash", {"command": "env -C x codex exec"}, True),
+        ("Bash", {"command": "sudo -u me -H codex exec"}, True),
+        ("Bash", {"command": "sudo -iu me codex exec"}, True),
+        ("Bash", {"command": "bash -euo pipefail -c 'codex exec'"}, True),
+        ("Bash", {"command": "bash -c -- 'codex exec'"}, True),
+        ("Bash", {"command": "eval 'codex exec'"}, True),
+        ("Bash", {"command": "npx -y @openai/codex@0.171.0 exec"}, True),
+        ("Bash", {"command": "npm exec @openai/codex"}, True),
+        ("Bash", {"command": "yarn dlx @openai/codex"}, True),
+        ("Bash", {"command": ">log codex exec"}, True),
+        ("Bash", {"command": "2>&1 codex exec"}, True),
+        ("Bash", {"command": "function f { codex exec; }"}, True),
+        ("Bash", {"command": "coproc foo { codex exec; }"}, True),
+        ("Bash", {"command": "c\\\nodex exec"}, True),
+        ("Bash", {"command": "cat > target/scratch/b.md <<'EOF'\ndon't touch x\nEOF\ncodex exec - < target/scratch/b.md"}, True),
+        ("Bash", {"command": "x=$((1<<3))\ncodex exec x"}, True),
+        ("Bash", {"command": "(( m = 1 << 4 ))\ncodex exec"}, True),
+        ("Bash", {"command": "eval eval eval eval codex exec"}, True),
+        ("Read", {"file_path": os.path.join(HOME, ".codex/auth.json")}, True),
+        ("Bash", {"command": "ops/driver/codex-review.sh target/scratch/review-1.md target/scratch/codex-1.json"}, False),
+        ("Bash", {"command": "./ops/driver/codex-review.sh a b"}, False),
+        ("Bash", {"command": "cat ops/proposals/codex-second-reviewer.md"}, False),
+        ("Bash", {"command": "grep -rn codex ."}, False),
+        ("Bash", {"command": "grep -rn 'codex' ."}, False),
+        ("Bash", {"command": "echo \"codex is fine\""}, False),
+        ("Bash", {"command": "echo a=b codex"}, False),
+        ("Bash", {"command": "x=\"a=b codex\""}, False),
+        ("Bash", {"command": "echo $(date) codex"}, False),
+        ("Bash", {"command": "grep -c '(codex)' docs/audits/0003.md"}, False),
+        ("Bash", {"command": "git commit -m 'journal: Codex ok; (codex) finding fixed'"}, False),
+        ("Bash", {"command": "git commit -m \"journal\n\ncodex: ok\""}, False),
+        ("Bash", {"command": "gh issue create -t x --body \"🤖 jpdf-agent finding (codex): `foo` overflows\""}, False),
+        ("Bash", {"command": "git log --grep codex"}, False),
+        ("Bash", {"command": "ls ~/.codex-review-notes ${HOME}/codex.txt"}, False),
+        ("Bash", {"command": "jq . target/scratch/codex-12.json  # codex output"}, False),
+        ("Bash", {"command": "git commit -m \"$(cat <<'EOF'\nfix x\n\nCodex found the overflow; Opus agreed.\nFound by Codex (codex) review.\nEOF\n)\""}, False),
+        ("Bash", {"command": "cat <<EOF > notes.md\n(codex) finding\nfoo; codex bar\nEOF\nls"}, False),
+        ("Bash", {"command": "python3 - <<'EOF'\ncodex = 1\nEOF"}, False),
+        ("Bash", {"command": "cargo test 2>&1 | grep codex"}, False),
+        ("Bash", {"command": "echo $((1<<2)) codex"}, False),
         ("Write", {"file_path": R("ops/judge/verdict.py"), "content": "x"}, True),
         ("Edit", {"file_path": R("CONSTITUTION.md"), "old_string": "a", "new_string": "b"}, True),
         ("Write", {"file_path": R(".claude/settings.local.json"), "content": "{}"}, True),
@@ -538,6 +869,22 @@ def selftest():
         if got != want:
             failures += 1
             print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))
+    # The Codex check stays linear: 300 kB adversarial inputs that contain "codex", so the fast path
+    # doesn't skip them (the tokenizer reads the whole command before checking).
+    pads = ("(" * 300000, "$(" * 150000, "`" * 300000, ";a=" * 100000, "a=b " * 75000,
+            "/codex " * 43000, "((codexx" * 37500, "sudo -x " * 37500, "bash -c " * 37500,
+            "'codex' " * 37500, "\\" * 300000, "${" * 150000, "-exec sudo " * 27000,
+            "<<a\n" * 75000, "> " * 150000, ("{ eval '" + "`a`" * 5000 + "' ") * 20)
+    nested = "a " * 50000 + "echo codex"  # bash -c behind four -exec at each of three levels
+    for _ in range(3):
+        nested = "sudo -exec sudo -exec sudo -exec sudo -exec bash -c " + shlex.quote(nested)
+    pads += (nested,)
+    for pad in pads:
+        t0 = time.monotonic()
+        codex_command("echo " + pad + " codex")
+        if time.monotonic() - t0 > 2.0:
+            failures += 1
+            print("FAIL: codex_command took %.1fs on %d chars" % (time.monotonic() - t0, len(pad)))
     listed = os.path.join(root, "ops/judge/protected.txt")
     if os.path.isfile(listed):
         want = sorted(l.strip() for l in open(listed) if l.strip() and not l.startswith("#"))

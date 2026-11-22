@@ -34,7 +34,9 @@
       "Edit",
       "Write",
       "Glob",
-      "Grep"
+      "Grep",
+      "Bash(ops/driver/codex-review.sh:*)",
+      "Bash(./ops/driver/codex-review.sh:*)"
     ],
     "deny": [
       "Bash(gh auth token:*)",
@@ -45,6 +47,8 @@
       "Bash(security find-internet-password:*)",
       "Read(~/.ssh/**)",
       "Read(~/.config/gh/**)",
+      "Read(~/.codex/**)",
+      "Bash(codex:*)",
       "Read(./ops/judge/corpus/exam.tsv)",
       "mcp__claude_ai_Gmail",
       "mcp__claude_ai_Google_Calendar",
