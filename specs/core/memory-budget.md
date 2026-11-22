@@ -50,8 +50,8 @@ the 2 GiB unused.
   (memory freed by uncached parses can end up there too). Later sub-threshold allocations
   reuse a hole only if they fit (32-byte key holes can't serve a 240-byte buffer), and
   buffers above the mmap threshold (128 KiB at first, at most 32 MiB once raised: arrays over
-  4 096 slots, dictionaries over about 2 340 entries, long strings) get new mappings and never
-  reuse holes. So holes and the mmapped part of a parse can add up. Since #146 that case is a
+  4 096 slots, dictionaries over about 2 340 entries, long strings) get new mappings when no
+  freed chunk fits them (glibc looks in its bins and the heap top first). So holes and the mmapped part of a parse can add up. Since #146 that case is a
   term of its own: holes one earlier phase leaves are within `heap_high_water`, and the
   mmapped part is within the current phase. The fragmentation item covers up to 96 MiB of
   holes that later requests can't reuse because of their size. Build-up across several phases
@@ -104,7 +104,8 @@ the 2 GiB unused.
     shrinks from the top: one allocation made during the phase that stays alive (a span, a
     cache node, the xref table growing) keeps everything below it mapped.
   - Freed heap memory is reused by later requests that fit, but a request above the threshold
-    gets a new mapping. So in the worst case one phase leaves its whole memory in the heap
+    gets a new mapping when no freed chunk fits it (glibc looks in its bins first, which only
+    makes the worst case below less likely). So in the worst case one phase leaves its whole memory in the heap
     (e.g. a parse of nested one-entry dictionaries: all small chunks) and the next phase gets
     all of its memory as new mappings (e.g. a decode with one large output buffer).
   - Both are bounded by the largest phase, so `heap_high_water` = the largest phase. This
@@ -140,9 +141,14 @@ the 2 GiB unused.
     parse is the only phase on that path; parse after parse can build up holes the same way
     (already true before #146), which the same measurement covers.
   - **Tripwire:** tools/jpdf-cli/tests/phase_gate.rs fails, naming #146, as soon as jpdf-cli's
-    normal or build dependency graph (`cargo tree`) holds any crate beyond the parse-only set
-    (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax, jpdf-traits). A PR that brings a filter,
-    backend or render crate onto the path must satisfy the gate and update that allowlist.
+    normal or build dependency graph (`cargo tree` with every feature and every target) holds
+    any crate beyond the parse-only set (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax,
+    jpdf-traits), or the sources of jpdf-cli, jpdf-engine, jpdf-cos or jpdf-syntax name a
+    decode or raster entry point (the jpdf-traits limit builders, `check_scene`, the backend
+    traits, `inflate`, `FlateDecode`). A PR that brings a phase onto the path must satisfy the
+    gate and update the test. **Limit:** the graph check sees crates, not phases, and the name
+    scan is a text search: a decoder written inside an allowed crate under another name passes
+    both. Review against the gate covers that case.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
     the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
     sub-heaps, which are also trimmed only from the top.
@@ -327,8 +333,9 @@ No runtime cost for `MemoryBudget` (tests only). `alloc_bytes` adds a few intege
 per allocation counted by `retained_cost`, which already walks the object once.
 
 ## Tests
-- tools/jpdf-cli/tests/phase_gate.rs: `jpdf_cli_links_only_parse_crates_until_the_146_gate_opens`
-  (new, #146; the gate's tripwire).
+- tools/jpdf-cli/tests/phase_gate.rs: `jpdf_cli_links_only_parse_crates_until_the_146_gate_opens`,
+  `parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens` (new, #146; the
+  gate's tripwire).
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,

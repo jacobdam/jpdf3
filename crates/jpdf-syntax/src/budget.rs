@@ -136,7 +136,8 @@ impl MemoryBudget {
     /// requests below its mmap threshold (128 KiB at first, up to 32 MiB once raised) from the
     /// brk heap, which shrinks only from the top: one live allocation made during a phase (a
     /// span, a cache node) keeps everything below it mapped. Freed heap memory is reused by
-    /// later small requests, but a request above the threshold gets a new mapping. So the
+    /// later small requests, but a request above the threshold may get a new mapping (glibc
+    /// looks for a freed chunk that fits first, and maps only when none does). So the
     /// worst case for one phase transition is one phase's whole memory left in the heap
     /// (every phase can allocate below the threshold) plus the next phase's whole memory in
     /// new mappings. The same holds in a non-main arena (a thread other than the main one,
