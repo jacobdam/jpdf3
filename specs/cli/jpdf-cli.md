@@ -49,9 +49,9 @@ Reading FILE (#77), in order:
    `Limits::max_file_size` is refused: `limit exceeded: file size`. Neither case opens the file.
 2. Open it with `O_NONBLOCK`, so if the path was swapped for a FIFO after step 1 the open
    still returns at once; on Linux also `O_NOCTTY`, so a swapped-in terminal never becomes the
-   controlling terminal. Values: Linux `0o4000 | 0o400` on x86, x86_64, arm, aarch64, riscv64,
-   powerpc64 and s390x; macOS `0x0004`. Other targets (mips, sparc, … use different values)
-   open with plain flags and rely on step 1 alone. Step 1's checks run again on the opened
+   controlling terminal (`jpdf_fsio::open_nonblocking`, specs/tooling/fsio.md, which lists the
+   values per target). Other targets (mips, sparc, … use different values) open with plain
+   flags and rely on step 1 alone. Step 1's checks run again on the opened
    file (`fstat`).
 3. Reserve exactly the file size and read at most `max_file_size + 1` bytes (a file growing
    while it is read hits the limit instead of growing memory).
@@ -228,8 +228,8 @@ resolves only the catalog, the page-tree root and its kids.
   garbage and truncated files exit 2 or 3; an oversized (sparse, write-only) file is refused
   before opening, with the exact-boundary case; a FIFO, a directory, `/dev/null` and `/dev/zero`
   exit 2 at once with "not a regular file". Tests remove their FIFO, directory and sparse files.
-- `tools/jpdf-cli/src/main.rs` unit tests: the non-blocking open returns at once on a FIFO and
-  the opened-file check refuses it; reading stops one byte past the limit (exactly `max`
+- `tools/jpdf-cli/src/main.rs` unit tests: the non-blocking open (`jpdf-fsio`, which has its
+  own FIFO test) returns at once on a FIFO and the opened-file check refuses it; reading stops one byte past the limit (exactly `max`
   passes; `max + 1` and an endless source fail).
 - `crates/jpdf-syntax/src/lexer.rs` unit tests: `i64` range boundaries, every real shape
   (`5.`, `.5`, `+.5`, `-3.`, `-0.`), 1 MB-digit reals, non-numbers, octal and hex escapes;

@@ -957,9 +957,7 @@ fn cli_checks_the_vendored_copy_by_default() {
 /// 1. Through the resolved dependency graph (`cargo tree`, normal and build edges, so
 ///    transitive paths and any manifest syntax count): no package under `crates/` or
 ///    `bindings/` depends on `jpdf-arlington`. Dev-dependencies are allowed.
-/// 2. No shipped source names Arlington at all (case-insensitive): every file under
-///    `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web/src` and `apps/macos`
-///    (except their `tests`/`Tests` and `node_modules` directories).
+/// 2. No shipped file names Arlington or is a copy of a vendored TSV ([`shipped_hits`]).
 #[test]
 fn no_shipped_crate_uses_the_arlington_data() {
     let out = Command::new(env!("CARGO"))
@@ -1001,15 +999,88 @@ fn no_shipped_crate_uses_the_arlington_data() {
         );
     }
 
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
+    let ids = vendored_ids();
+    // 613 files; some share their contents, so 610 distinct blob ids.
+    assert_eq!(ids.len(), 610);
+    let (scanned, hits) = shipped_hits(&root, &ids);
+    for want in ["lib.rs", "Cargo.toml", "vite.config.ts", "index.html"] {
+        assert!(
+            scanned.iter().any(|f| f.ends_with(want)),
+            "{want} not scanned"
+        );
+    }
+    assert!(hits.is_empty(), "{hits:#?}");
+}
+
+/// Git blob ids of the vendored TSVs.
+#[cfg(test)]
+fn vendored_ids() -> std::collections::HashSet<[u8; 20]> {
+    let tsv = repo_root().join(vendor::DATA_DIR).join("tsv");
+    jpdf_arlington::read_dir(&tsv)
+        .unwrap()
+        .iter()
+        .map(|(_, bytes)| sha1::object_id("blob", bytes))
+        .collect()
+}
+
+/// Item 2 of [`no_shipped_crate_uses_the_arlington_data`] under `root`: returns the files
+/// scanned and the findings. Scanned: every file under each `crates/*` directory (outside
+/// its `tests` and `target` directories, so `build.rs`, `benches/` and data directories
+/// count), and under `bindings/`, `apps/web` and `apps/macos` (outside `tests`, `Tests`,
+/// `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist` and `target` directories).
+/// A finding is a file that contains "arlington" in any case or whose git blob id is one of
+/// `ids`, any symlink or other non-regular entry (a link could reach the data from inside a
+/// scanned tree), and any directory or file that can't be read. Every root except
+/// `bindings/` must exist.
+///
+/// Not seen: an edited or embedded copy of a TSV (only whole-file blob ids are compared),
+/// and a path to the data built outside the word match (`include_str!(concat!(…))` naming
+/// `tools/` from a shipped crate); the dependency graph check doesn't see those either.
+fn shipped_hits(
+    root: &Path,
+    ids: &std::collections::HashSet<[u8; 20]>,
+) -> (Vec<PathBuf>, Vec<String>) {
+    /// Visits `p` without following symlinks; directories for which `skip` holds aren't
+    /// entered.
+    fn visit(
+        p: &Path,
+        skip: &dyn Fn(&Path) -> bool,
+        files: &mut Vec<PathBuf>,
+        hits: &mut Vec<String>,
+    ) {
+        let ft = match std::fs::symlink_metadata(p) {
+            Ok(m) => m.file_type(),
+            Err(e) => return hits.push(format!("{}: {e}", p.display())),
         };
-        for e in entries.flatten() {
-            let p = e.path();
-            let name = e.file_name();
-            let ft = e.file_type().unwrap();
-            let skip = [
+        if ft.is_file() {
+            return files.push(p.to_path_buf());
+        }
+        if !ft.is_dir() {
+            return hits.push(format!("{}: not a regular file or directory", p.display()));
+        }
+        if skip(p) {
+            return;
+        }
+        let entries = match std::fs::read_dir(p) {
+            Ok(e) => e,
+            Err(e) => return hits.push(format!("{}: {e}", p.display())),
+        };
+        for e in entries {
+            match e {
+                Ok(e) => visit(&e.path(), skip, files, hits),
+                Err(e) => hits.push(format!("{}: {e}", p.display())),
+            }
+        }
+    }
+    let crates = root.join("crates");
+    // Only a crate's own top-level `tests` and `target` (a `src/tests/` module ships).
+    let crate_skip = |d: &Path| {
+        d.parent().and_then(Path::parent) == Some(crates.as_path())
+            && d.file_name().is_some_and(|n| n == "tests" || n == "target")
+    };
+    let other_skip = |d: &Path| {
+        d.file_name().is_some_and(|n| {
+            [
                 "tests",
                 "Tests",
                 "JPDFUITests",
@@ -1018,46 +1089,140 @@ fn no_shipped_crate_uses_the_arlington_data() {
                 "node_modules",
                 "dist",
                 "target",
-            ];
-            if ft.is_dir() && !skip.iter().any(|n| name == *n) {
-                walk(&p, out);
-            } else if ft.is_file() {
-                out.push(p);
+            ]
+            .iter()
+            .any(|s| n == *s)
+        })
+    };
+    let (mut files, mut hits) = (Vec::new(), Vec::new());
+    visit(&crates, &crate_skip, &mut files, &mut hits);
+    for d in ["bindings", "apps/web", "apps/macos"] {
+        let dir = root.join(d);
+        if d == "bindings" && std::fs::symlink_metadata(&dir).is_err() {
+            continue;
+        }
+        visit(&dir, &other_skip, &mut files, &mut hits);
+    }
+    for f in &files {
+        match std::fs::read(f) {
+            Ok(b) => {
+                if String::from_utf8_lossy(&b)
+                    .to_lowercase()
+                    .contains("arlington")
+                {
+                    hits.push(format!("{}: names Arlington", f.display()));
+                }
+                if ids.contains(&sha1::object_id("blob", &b)) {
+                    hits.push(format!("{}: a copy of a vendored TSV", f.display()));
+                }
             }
+            Err(e) => hits.push(format!("{}: {e}", f.display())),
         }
     }
-    let mut files = Vec::new();
-    for c in std::fs::read_dir(repo_root().join("crates"))
-        .unwrap()
-        .flatten()
-    {
-        walk(&c.path().join("src"), &mut files);
-        files.push(c.path().join("build.rs"));
-    }
-    for d in ["bindings", "apps/web", "apps/macos"] {
-        let dir = repo_root().join(d);
-        assert!(d == "bindings" || dir.is_dir(), "{d} is missing");
-        walk(&dir, &mut files);
-    }
-    for want in ["lib.rs", "vite.config.ts", "index.html"] {
-        assert!(
-            files.iter().any(|f| f.ends_with(want)),
-            "{want} not scanned"
-        );
-    }
-    let hits: Vec<_> = files
-        .iter()
-        .filter(|f| {
-            std::fs::read(f)
-                .map(|b| {
-                    String::from_utf8_lossy(&b)
-                        .to_lowercase()
-                        .contains("arlington")
-                })
-                .unwrap_or(false)
-        })
-        .collect();
+    (files, hits)
+}
+
+/// [`shipped_hits`] on a fixture tree: a clean tree has no findings, and each way around
+/// the audit 0002 version of the scan (#115 item 1) is found: a symlink in a crate's `src/`,
+/// a TSV copied outside `src/` without the word, and the word in a crate's non-`src` files
+/// or a `src/tests/` module. Skipped directories hold findings that must stay unseen.
+#[test]
+fn shipped_scan_finds_links_copies_and_names() {
+    let tsv = repo_root()
+        .join(vendor::DATA_DIR)
+        .join("tsv/ArrayOfFunctions.tsv");
+    let copy = std::fs::read(&tsv).unwrap();
+    let ids = vendored_ids();
+    // The copy must not contain the word, or the word match would find it instead.
+    assert!(
+        !String::from_utf8_lossy(&copy)
+            .to_lowercase()
+            .contains("arlington")
+    );
+    let tree = |name: &str| {
+        let root = scratch(name);
+        for (f, body) in [
+            ("crates/a/Cargo.toml", "[package]\n"),
+            ("crates/a/src/lib.rs", "//! a\n"),
+            ("crates/a/tests/t.rs", "// arlington is fine in tests\n"),
+            ("crates/a/target/x.rs", "// arlington in target\n"),
+            ("apps/web/index.html", "<html></html>\n"),
+            ("apps/web/node_modules/m/Arlington.txt", "arlington\n"),
+            ("apps/web/e2e/x.ts", "// Arlington\n"),
+            ("apps/macos/App.swift", "// app\n"),
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        std::fs::write(root.join("apps/web/node_modules/m/Catalog.tsv"), &copy).unwrap();
+        std::os::unix::fs::symlink(&tsv, root.join("apps/web/node_modules/link")).unwrap();
+        root
+    };
+    let clean = tree("scan-clean");
+    let (files, hits) = shipped_hits(&clean, &ids);
     assert!(hits.is_empty(), "{hits:#?}");
+    assert_eq!(files.len(), 4, "{files:#?}");
+
+    type Plant = fn(&Path, &Path, &[u8]);
+    let cases: [(&str, Plant, &str); 6] = [
+        (
+            "link",
+            |r, tsv, _| std::os::unix::fs::symlink(tsv, r.join("crates/a/src/data.tsv")).unwrap(),
+            "crates/a/src/data.tsv: not a regular file or directory",
+        ),
+        (
+            "link-dir",
+            |r, tsv, _| {
+                std::os::unix::fs::symlink(tsv.parent().unwrap(), r.join("crates/b")).unwrap()
+            },
+            "crates/b: not a regular file or directory",
+        ),
+        (
+            "copy",
+            |r, _, b| {
+                std::fs::create_dir_all(r.join("crates/a/data")).unwrap();
+                std::fs::write(r.join("crates/a/data/x.tsv"), b).unwrap();
+            },
+            "crates/a/data/x.tsv: a copy of a vendored TSV",
+        ),
+        (
+            "copy-web",
+            |r, _, b| std::fs::write(r.join("apps/web/x.tsv"), b).unwrap(),
+            "apps/web/x.tsv: a copy of a vendored TSV",
+        ),
+        (
+            "word",
+            |r, _, _| {
+                std::fs::create_dir_all(r.join("crates/a/benches")).unwrap();
+                std::fs::write(r.join("crates/a/benches/b.rs"), "// ARLINGTON\n").unwrap();
+            },
+            "crates/a/benches/b.rs: names Arlington",
+        ),
+        (
+            "word-src-tests",
+            |r, _, _| {
+                std::fs::create_dir_all(r.join("crates/a/src/tests")).unwrap();
+                std::fs::write(r.join("crates/a/src/tests/mod.rs"), "// Arlington\n").unwrap();
+            },
+            "crates/a/src/tests/mod.rs: names Arlington",
+        ),
+    ];
+    for (name, plant, want) in cases {
+        let root = tree(&format!("scan-{name}"));
+        plant(&root, &tsv, &copy);
+        let (_, hits) = shipped_hits(&root, &ids);
+        let want = format!(
+            "{}: ",
+            root.join(want.split(": ").next().unwrap()).display()
+        ) + want.split_once(": ").unwrap().1;
+        assert_eq!(hits, [want], "{name}");
+    }
+    // A missing app root is a finding; a missing bindings/ isn't.
+    std::fs::remove_dir_all(clean.join("apps/macos")).unwrap();
+    let (_, hits) = shipped_hits(&clean, &ids);
+    assert_eq!(hits.len(), 1, "{hits:#?}");
+    assert!(hits[0].starts_with(&format!("{}: ", clean.join("apps/macos").display())));
 }
 
 /// Every cap of the vendored loader at its exact boundary: at the cap the files load, one

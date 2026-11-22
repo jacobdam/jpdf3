@@ -151,8 +151,8 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    3. lists `tsv/`; every entry must be a regular file (symlinks and directories refused)
       with a UTF-8 name ending in `.tsv`;
    4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
-      regular file, so a swap to a device after the first check is refused (a swap to a FIFO
-      can still block `open`; that only hangs a local run, out of scope like the cache);
+      regular file, so a swap to a device or FIFO after the first check is refused (the open
+      is non-blocking, specs/tooling/fsio.md, so a FIFO can't block it);
    5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
@@ -168,13 +168,19 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
       normal,build -i jpdf-arlington`), no package under `crates/` or `bindings/` depends on
       `jpdf-arlington`, directly or transitively, on any target or feature; a positive control
       requires `xtask` (a known dependent) to appear with the same path prefix;
-    - no file under `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web` or
-      `apps/macos` (outside `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`,
-      `dist` and `target` directories) contains "arlington" in any case; each of those roots
-      except `bindings/` must exist.
+    - scanned: every file under each `crates/*` directory except its own top-level `tests`
+      and `target` directories (so `build.rs`, `benches/`, data directories and a `src/tests/`
+      module count), and every file under `bindings/`, `apps/web` and `apps/macos` outside
+      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist` and `target`
+      directories. Each root except `bindings/` must exist (#115 item 1);
+    - no scanned file contains "arlington" in any case or has the git blob id of a vendored
+      TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
+      non-regular entry it meets, and every directory or file it can't read.
     So dev-dependencies are usable only from `tests/` integration tests, not from
     `#[cfg(test)]` modules in `src/`, and engine sources can't mention Arlington even in
-    comments.
+    comments. Not seen: an edited or embedded copy of a TSV (only whole files are compared),
+    and a path to the data that the word match misses (`include_str!(concat!(…))` reaching
+    `tools/` from a shipped crate); #225 tracks a check on what the compiler actually reads.
     Changing that needs the owner.
 
 ## Persistence
@@ -336,9 +342,15 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   pinned commit; the CLI checks the vendored copy by default (run from a directory outside
   the checkout), exits 1 with a `vendored:`
   message on a copy that doesn't match the pins, and `vendor` refuses an existing target
-  without creating the cache; no shipped crate depends on the tool or its data (item 10).
-- `src/main.rs` unit test: argument parsing (including `--vendored`, `vendor`, and refused
-  combinations).
+  without creating the cache; no shipped crate depends on the tool or its data (item 10);
+  the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
+  `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
+  `apps/web`, the word in `benches/` and in a `src/tests/` module gives exactly its one
+  finding, while the same word, copy and link inside skipped directories give none; a missing
+  `apps/macos` is a finding.
+- `src/main.rs` unit test: argument parsing into the typed command (`check`, `generate`
+  and `vendor` each carry only their own fields; including `--vendored`, `vendor --cache`,
+  and refused combinations).
 - `xtask/tests/check_specs.rs`: `arlington <extra>` exits 2; `ci linux` outside the repo
   fails fast on the missing `tools/arlington/Cargo.toml`.
 - `cargo xtask ci linux` runs `cargo xtask arlington` on the real vendored model on every PR,

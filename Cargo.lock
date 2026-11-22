@@ -9,6 +9,9 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-arlington"
 version = "0.0.0"
+dependencies = [
+ "jpdf-fsio",
+]
 
 [[package]]
 name = "jpdf-backends"
@@ -26,6 +29,7 @@ name = "jpdf-cli"
 version = "0.0.0"
 dependencies = [
  "jpdf-engine",
+ "jpdf-fsio",
  "jpdf-testgen",
 ]
 
@@ -42,6 +46,7 @@ name = "jpdf-corpus"
 version = "0.0.0"
 dependencies = [
  "jpdf-arlington",
+ "jpdf-fsio",
 ]
 
 [[package]]
@@ -78,6 +83,10 @@ version = "0.0.0"
 
 [[package]]
 name = "jpdf-forms"
+version = "0.0.0"
+
+[[package]]
+name = "jpdf-fsio"
 version = "0.0.0"
 
 [[package]]
@@ -119,5 +128,6 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "jpdf-arlington",
+ "jpdf-fsio",
  "jpdf-testgen",
 ]

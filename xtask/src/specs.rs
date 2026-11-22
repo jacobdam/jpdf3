@@ -280,16 +280,15 @@ fn rel_display(root: &Path, p: &Path) -> String {
 fn read_text(path: &Path) -> Result<String, String> {
     // Only a regular file is opened: a symlink isn't followed (like the walk), and a FIFO or
     // device would block the open or never end. The open file is checked again (fstat), and
-    // the read is capped, so a file grown after the check can't flood us. Not covered: a
-    // swap to a FIFO between the lstat and the open (the open would block); these are
-    // repository files. Closing it needs `O_NONBLOCK` through `custom_flags`, with
-    // per-target flag values; not done. Likewise a swap to a symlink in that window is
-    // followed (the fstat then sees whatever it points to).
+    // the read is capped, so a file grown after the check can't flood us. A swap to a FIFO
+    // between the lstat and the open doesn't block: the open is non-blocking
+    // (`jpdf_fsio::open_nonblocking`) and the fstat refuses it. Not covered: a swap to a
+    // symlink in that window is followed (the fstat then sees whatever it points to).
     let link = fs::symlink_metadata(path).map_err(|e| format!("cannot read: {e}"))?;
     if !link.is_file() {
         return Err(not_regular(&link));
     }
-    let file = fs::File::open(path).map_err(|e| format!("cannot read: {e}"))?;
+    let file = jpdf_fsio::open_nonblocking(path).map_err(|e| format!("cannot read: {e}"))?;
     let meta = file.metadata().map_err(|e| format!("cannot read: {e}"))?;
     if !meta.is_file() {
         return Err(not_regular(&meta));

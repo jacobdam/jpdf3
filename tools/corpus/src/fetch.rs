@@ -140,12 +140,13 @@ enum VerifyError {
 /// checks its length and git blob id.
 fn verify(path: &Path, e: &Entry) -> Result<(), VerifyError> {
     let io = |x: std::io::Error| VerifyError::Io(x.to_string());
-    // Only a regular file: opening a FIFO planted in the cache would block forever.
+    // Only a regular file: a FIFO planted in the cache would block a plain open forever, so
+    // the open is non-blocking and the opened handle is checked again.
     let not_file = || VerifyError::Io("not a regular file".into());
     if !std::fs::metadata(path).map_err(io)?.is_file() {
         return Err(not_file());
     }
-    let file = std::fs::File::open(path).map_err(io)?;
+    let file = jpdf_fsio::open_nonblocking(path).map_err(io)?;
     if !file.metadata().map_err(io)?.is_file() {
         return Err(not_file());
     }

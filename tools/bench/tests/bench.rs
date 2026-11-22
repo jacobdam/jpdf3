@@ -395,7 +395,9 @@ fn timeout_kills_the_whole_process_group() {
         let (status, took) = run_once(&s, &[], Duration::from_secs(secs));
         assert_eq!(status, Status::Timeout, "limit {secs} s");
         assert!(took >= Duration::from_secs(secs), "killed early: {took:?}");
-        // Generous slack for load, but a timeout at twice the limit fails.
+        // Generous slack for load, but a kill 3 s or more after the limit fails (on the
+        // 3 s attempt, that is twice the limit). Only a missing pid is retried: a late kill
+        // fails at once, on any attempt.
         assert!(
             took < Duration::from_secs(secs + 3),
             "killed late: {took:?}"

@@ -64,8 +64,8 @@ the `wide` shards are the follow-up issue
      blob ids are dropped before the limit (item 2), so on the smoke manifest the two can
      pick different files past the one repeated id;
    - a file that already exists with the right size and blob id is kept (no download). Only
-     a regular file is opened (checked before and after `open`), so a FIFO or device planted
-     at `<blob>.pdf` can't block the run; it is downloaded again and renamed over;
+     a regular file is opened (checked before and after a non-blocking `open`,
+     specs/tooling/fsio.md), so a FIFO or device planted at `<blob>.pdf` can't block the run; it is downloaded again and renamed over;
    - otherwise `curl -q --proto =https --proto-redir =https --fail --silent --show-error
      --location --max-redirs 0 --connect-timeout 30 --max-time 300 --max-filesize <size>
      --url <encoded-url>`; `-q` first, so no `.curlrc` is read. A redirect fails (curl exit 47,

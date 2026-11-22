@@ -170,8 +170,8 @@ fn check_top_level(dir: &Path, tsv: &Path) -> Result<(), Error> {
 
 /// Reads at most `cap` bytes; a larger file is a limit error, and no read goes past the cap.
 /// The path must not be a symlink, and the opened file must be a regular file (checked again
-/// on the open handle, so a swap to a device after the first check is refused; a swap to a
-/// FIFO can still block `open`, which only hangs a local run).
+/// on the open handle, so a swap to a device or FIFO after the first check is refused; the
+/// open itself never blocks, [`jpdf_fsio::open_nonblocking`]).
 fn read_capped(path: &Path, name: &str, cap: usize) -> Result<Vec<u8>, Error> {
     let io = |source| Error::Io {
         path: path.display().to_string(),
@@ -181,7 +181,7 @@ fn read_capped(path: &Path, name: &str, cap: usize) -> Result<Vec<u8>, Error> {
     if !std::fs::symlink_metadata(path).map_err(io)?.is_file() {
         return Err(not_regular());
     }
-    let file = std::fs::File::open(path).map_err(io)?;
+    let file = jpdf_fsio::open_nonblocking(path).map_err(io)?;
     if !file.metadata().map_err(io)?.is_file() {
         return Err(not_regular());
     }
