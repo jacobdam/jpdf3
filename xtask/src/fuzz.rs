@@ -98,8 +98,8 @@ const CARGO_FUZZ_VERSION: &str = "0.13.2";
 pub fn ci(root: &Path) -> Result<(), String> {
     // Check before installing anything (the xtask tests run `ci linux` in fixture trees).
     require_project(root)?;
-    if std::env::var_os("CI").is_some() && !tools_present(root) {
-        install_tools()?;
+    if std::env::var_os("CI").is_some() {
+        install_missing_tools(root)?;
     }
     // fuzz/ is outside the workspace, so `cargo fmt --all` does not see it.
     let fmt = Command::new("cargo")
@@ -125,45 +125,73 @@ pub fn ci(root: &Path) -> Result<(), String> {
     }
 }
 
-fn tools_present(root: &Path) -> bool {
-    Command::new("cargo")
-        .arg(plus_nightly())
-        .args(["fuzz", "--version"])
-        .current_dir(root)
-        .output()
-        .is_ok_and(|o| o.status.success())
+/// Whether `rustup toolchain list` output names [`NIGHTLY`] (lines like
+/// `nightly-2026-11-20-x86_64-unknown-linux-gnu` or the same with ` (active)`).
+pub fn nightly_listed(list: &str) -> bool {
+    list.lines().any(|l| {
+        l.strip_prefix(NIGHTLY)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['-', ' ']))
+    })
 }
 
-fn install_tools() -> Result<(), String> {
-    let steps: [&[&str]; 2] = [
-        &[
-            "rustup",
-            "toolchain",
-            "install",
-            NIGHTLY,
-            "--profile",
-            "minimal",
-        ],
-        &[
-            "cargo",
-            "install",
-            "cargo-fuzz",
-            "--locked",
-            "--version",
-            CARGO_FUZZ_VERSION,
-        ],
+/// Whether `cargo fuzz --version` output is the pinned [`CARGO_FUZZ_VERSION`].
+pub fn cargo_fuzz_pinned(version: &str) -> bool {
+    version.split_whitespace().nth(1) == Some(CARGO_FUZZ_VERSION)
+}
+
+fn output_of(root: &Path, program: &str, args: &[&str]) -> Option<String> {
+    Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Installs only what is missing, so a tool CI already provides (a prebuilt cargo-fuzz, a
+/// cached toolchain) is not built or downloaded again. The nightly is looked up in the
+/// `rustup toolchain list`, not by running it, which could make rustup install it itself.
+fn install_missing_tools(root: &Path) -> Result<(), String> {
+    let nightly = [
+        "rustup",
+        "toolchain",
+        "install",
+        NIGHTLY,
+        "--profile",
+        "minimal",
     ];
-    for step in steps {
-        let (program, rest) = step.split_first().ok_or("empty install step")?;
-        let ok = Command::new(program)
-            .args(rest)
-            .status()
-            .is_ok_and(|s| s.success());
-        if !ok {
-            return Err(format!("installing fuzz tools failed: {}", step.join(" ")));
-        }
+    let fuzz = [
+        "cargo",
+        "install",
+        "cargo-fuzz",
+        "--locked",
+        "--version",
+        CARGO_FUZZ_VERSION,
+    ];
+    if !output_of(root, "rustup", &["toolchain", "list"]).is_some_and(|l| nightly_listed(&l)) {
+        install(&nightly)?;
+    }
+    let plus = plus_nightly();
+    if !output_of(root, "cargo", &[plus.as_str(), "fuzz", "--version"])
+        .is_some_and(|v| cargo_fuzz_pinned(&v))
+    {
+        install(&fuzz)?;
     }
     Ok(())
+}
+
+fn install(step: &[&str]) -> Result<(), String> {
+    let (program, rest) = step.split_first().ok_or("empty install step")?;
+    let ok = Command::new(program)
+        .args(rest)
+        .status()
+        .is_ok_and(|s| s.success());
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("installing fuzz tools failed: {}", step.join(" ")))
+    }
 }
 
 fn require_project(root: &Path) -> Result<(), String> {
@@ -216,23 +244,25 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
             "fuzz targets do not build with {NIGHTLY} (a build failure, not a crash)"
         ));
     }
-    let mut failed = Vec::new();
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    let jobs = jobs(cores, targets.len());
+    let mut runs = Vec::new();
     for t in &targets {
         let n = write_seeds(&fuzz_dir, t)?;
-        eprintln!("xtask: fuzz: {t}: {n} seed(s), {} s", opts.seconds);
-        let status = Command::new("cargo")
-            .arg(plus_nightly())
+        eprintln!(
+            "xtask: fuzz: {t}: {n} seed(s), {} s ({jobs} at a time)",
+            opts.seconds
+        );
+        let mut cmd = Command::new("cargo");
+        cmd.arg(plus_nightly())
             .args(["fuzz", "run", "--debug-assertions", t, "--"])
             .arg(format!("-max_total_time={}", opts.seconds))
             .arg(format!("-rss_limit_mb={RSS_LIMIT_MB}"))
             .arg(format!("-timeout={INPUT_TIMEOUT_SECONDS}"))
-            .current_dir(root)
-            .status()
-            .map_err(|e| format!("cannot run cargo fuzz: {e}"))?;
-        if !status.success() {
-            failed.push(t.clone());
-        }
+            .current_dir(root);
+        runs.push((t.clone(), cmd));
     }
+    let failed = run_all(runs, jobs, &root.join("target").join("fuzz-logs"))?;
     if failed.is_empty() {
         Ok(())
     } else {
@@ -243,9 +273,218 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
     }
 }
 
+/// How many targets run at once: one per core, never more than there are targets, at least 1.
+/// libFuzzer without `-jobs` uses one core, so more runs than cores would only split the
+/// cores and fuzz each target less in the same `-max_total_time`.
+pub fn jobs(cores: usize, targets: usize) -> usize {
+    cores.min(targets).max(1)
+}
+
+/// Runs the named commands, at most `jobs` at a time, in the given order. Each command's
+/// stdout and stderr go to `<log_dir>/<name>.log`, which is copied to stderr, with a header,
+/// once the command ends, so parallel runs do not interleave their output. Returns the names
+/// whose command exited non-zero or was killed by a signal. A command that cannot start, or a
+/// log that cannot be written, is an error, returned only after every started command ended.
+pub fn run_all(
+    runs: Vec<(String, Command)>,
+    jobs: usize,
+    log_dir: &Path,
+) -> Result<Vec<String>, String> {
+    std::fs::create_dir_all(log_dir)
+        .map_err(|e| format!("cannot create {}: {e}", log_dir.display()))?;
+    let mut failed = Vec::new();
+    let mut error = None;
+    let mut pending = runs.into_iter();
+    loop {
+        // Start one batch. Batches, not a pool: the targets get the same time, so a batch
+        // takes about `-max_total_time` and a pool would finish no sooner.
+        let mut started = Vec::new();
+        for (name, mut cmd) in pending.by_ref().take(jobs.max(1)) {
+            let log = log_dir.join(format!("{name}.log"));
+            let spawned = std::fs::File::create(&log)
+                .and_then(|out| Ok((out.try_clone()?, out)))
+                .map_err(|e| format!("cannot create {}: {e}", log.display()))
+                .and_then(|(out, err)| {
+                    cmd.stdout(out)
+                        .stderr(err)
+                        .spawn()
+                        .map_err(|e| format!("cannot run {name}: {e}"))
+                });
+            match spawned {
+                Ok(child) => started.push((name, log, child)),
+                Err(e) => {
+                    error.get_or_insert(e);
+                    break;
+                }
+            }
+        }
+        if started.is_empty() {
+            break;
+        }
+        for (name, log, mut child) in started {
+            let ok = child.wait().is_ok_and(|s| s.success());
+            let text = std::fs::read(&log).unwrap_or_default();
+            eprintln!(
+                "xtask: fuzz: ---- {name} ({}) ----",
+                if ok { "ok" } else { "FAILED" }
+            );
+            eprint!("{}", String::from_utf8_lossy(&text));
+            if !ok {
+                failed.push(name);
+            }
+        }
+        if error.is_some() {
+            break;
+        }
+    }
+    match error {
+        Some(e) => Err(e),
+        None => Ok(failed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sh(script: &str) -> Command {
+        let mut c = Command::new("sh");
+        c.args(["-c", script]);
+        c
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("xtask-fuzz-{tag}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        dir
+    }
+
+    /// `name` creates its marker, then waits up to `tries` × 50 ms for `other`'s marker: it
+    /// succeeds only if both commands run at the same time.
+    fn rendezvous(dir: &Path, name: &str, other: &str, tries: u32) -> Command {
+        sh(&format!(
+            "cd '{}' && touch {name}.up && i=0; while [ ! -e {other}.up ]; do \
+             i=$((i+1)); [ $i -gt {tries} ] && exit 1; sleep 0.05; done",
+            dir.display()
+        ))
+    }
+
+    #[test]
+    fn finds_the_pinned_nightly_in_the_toolchain_list() {
+        let host = "-x86_64-unknown-linux-gnu";
+        assert!(nightly_listed(&format!(
+            "1.100.0{host} (active)\n{NIGHTLY}{host}\n"
+        )));
+        assert!(nightly_listed(&format!("{NIGHTLY}{host} (active)")));
+        assert!(nightly_listed(NIGHTLY));
+        assert!(!nightly_listed(""));
+        assert!(!nightly_listed(&format!("nightly{host}\n1.100.0{host}")));
+        // Another date that shares the prefix, and the name inside another line.
+        assert!(!nightly_listed(&format!("{NIGHTLY}5{host}")));
+        assert!(!nightly_listed(&format!("x{NIGHTLY}{host}")));
+    }
+
+    #[test]
+    fn accepts_only_the_pinned_cargo_fuzz() {
+        assert!(cargo_fuzz_pinned(&format!(
+            "cargo-fuzz {CARGO_FUZZ_VERSION}\n"
+        )));
+        assert!(!cargo_fuzz_pinned("cargo-fuzz 0.13.1\n"));
+        assert!(!cargo_fuzz_pinned(&format!(
+            "cargo-fuzz {CARGO_FUZZ_VERSION}.1"
+        )));
+        assert!(!cargo_fuzz_pinned(""));
+    }
+
+    #[test]
+    fn jobs_is_cores_capped_by_targets() {
+        assert_eq!(jobs(4, 3), 3);
+        assert_eq!(jobs(3, 3), 3);
+        assert_eq!(jobs(2, 3), 2);
+        assert_eq!(jobs(1, 3), 1);
+        assert_eq!(jobs(8, 1), 1);
+        assert_eq!(jobs(0, 3), 1);
+        assert_eq!(jobs(4, 0), 1);
+    }
+
+    #[test]
+    fn runs_a_batch_at_the_same_time() {
+        let dir = scratch("together");
+        let runs = vec![
+            ("a".to_owned(), rendezvous(&dir, "a", "b", 200)),
+            ("b".to_owned(), rendezvous(&dir, "b", "a", 200)),
+        ];
+        assert_eq!(run_all(runs, 2, &dir.join("logs")), Ok(vec![]));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_job_runs_one_at_a_time_in_order() {
+        // With jobs = 1, `a` never sees `b` start: `a` fails, then `b` (which waits for `a`'s
+        // marker, already there) passes.
+        let dir = scratch("serial");
+        let runs = vec![
+            ("a".to_owned(), rendezvous(&dir, "a", "b", 10)),
+            ("b".to_owned(), rendezvous(&dir, "b", "a", 10)),
+        ];
+        assert_eq!(
+            run_all(runs, 1, &dir.join("logs")),
+            Ok(vec!["a".to_owned()])
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reports_every_failure_and_keeps_each_log() {
+        let dir = scratch("fail");
+        let logs = dir.join("logs");
+        let runs = vec![
+            ("ok".to_owned(), sh("echo out-ok; echo err-ok >&2")),
+            ("exit".to_owned(), sh("echo out-exit; exit 3")),
+            ("signal".to_owned(), sh("kill -9 $$")),
+            ("later".to_owned(), sh("exit 1")),
+        ];
+        assert_eq!(
+            run_all(runs, 3, &logs),
+            Ok(vec![
+                "exit".to_owned(),
+                "signal".to_owned(),
+                "later".to_owned()
+            ])
+        );
+        let read = |n: &str| std::fs::read_to_string(logs.join(format!("{n}.log")));
+        assert_eq!(read("ok").ok().as_deref(), Some("out-ok\nerr-ok\n"));
+        assert_eq!(read("exit").ok().as_deref(), Some("out-exit\n"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_command_that_cannot_start_is_an_error_after_the_others_end() {
+        let dir = scratch("spawn");
+        let marker = dir.join("first-ran");
+        let runs = vec![
+            (
+                "first".to_owned(),
+                sh(&format!("sleep 0.2; touch '{}'", marker.display())),
+            ),
+            (
+                "missing".to_owned(),
+                Command::new(dir.join("no-such-program")),
+            ),
+            ("never".to_owned(), sh("exit 0")),
+        ];
+        let got = run_all(runs, 3, &dir.join("logs"));
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("cannot run missing")),
+            "{got:?}"
+        );
+        // `first` was waited for, not left running; `never` was not started.
+        assert!(marker.is_file());
+        assert!(!dir.join("logs/never.log").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_owned()).collect()
