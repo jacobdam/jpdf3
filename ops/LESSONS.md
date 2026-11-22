@@ -56,6 +56,15 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH).
   It took 4 review rounds ([journal](journal/2026-11-21.md), PR #129).
 
+- Writing a shell check from grep/awk exit codes → BSD grep exits 2 on an ERE with an empty alternative (`(a|)$`),
+  so `! grep -v …` passes everything: accept only the exact success code (`(( $? == 1 ))` for `grep -qv`) and test a
+  bad input. BSD awk rejects a newline in `-v`: pass multi-line data through `ENVIRON`. Extract the code under test
+  from the patched script by its exact text so the tests can't drift ([journal](journal/2026-11-22.md), PR #171).
+- Trusting config for a tool run with the driver's permissions (cargo, rustup, git) → they read config from **every
+  ancestor directory**, and `<main checkout>/.claude/worktrees/`, `target/`, `ops/state/` and `~/.cargo` are writable by
+  sessions and not protected. Walk the ancestors, pin env overrides (`RUSTUP_TOOLCHAIN`), and keep anything that
+  decides what to kill or run in the driver's memory, not a file ([journal](journal/2026-11-22.md), PR #171).
+
 - Writing a guard/hook rule over untrusted command text (a hook timeout or exception fails open) → use a
   one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that
   contain the trigger word so the fast path can't skip them ([journal](journal/2026-11-21.md), PR #119).
