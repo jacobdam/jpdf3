@@ -274,13 +274,15 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
   should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
   near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a
-  hand mutant per term ([journal](journal/2026-11-22.md), PR #198). Likewise, for "any of N triggers fails the
+  hand mutant per term ([journal](journal/2026-11-22.md), PR #198). A filter that mirrors another check (the guard's
+  tag rule) needs cases run through both, including leading whitespace and the characters each side strips (audit
+  0005 AC.1, AS.1). Likewise, for "any of N triggers fails the
   run", give each trigger its own case with every other trigger off; a combined case hid a mutant
   ([journal](journal/2026-11-22.md), PR #201 R1.1).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
-  past the filter ([journal](journal/2026-11-22.md), audit 0004).
+  past the filter ([journal](journal/2026-11-22.md), audit 0004). Audit 0005's brief (no `ops/driver` diff) ran ok.
 - Any text naming the sealed exam manifest (even an issue body) is blocked by the guard, and any
   tool that reads it to "exclude" files would break CONSTITUTION 13 → refer to "the sealed
   corpus" only; overlap with it is the judge's concern ([journal](journal/2026-11-20.md)).
