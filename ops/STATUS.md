@@ -4,14 +4,16 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #239** (#238, ADR 0011 session types): ready, `owner-todo`, **no auto-merge**: waits for the owner's approval.
-  4 rounds + final check. After it merges: file the ADR §9 tasks (1a first) and link them on #238, close #224 into
-  task 3, then post "done:" on #238. #236 waits for task 3 (design: technical).
+- **PR #239** (#238, ADR 0011) merged 662bde6 (owner override of R5.1). Its §9 tasks are filed, #242–#251 (#224
+  closed into #245), "done:" posted on #238. #236 waits for #245. Leftover: `owner-todo` on PR #239 itself.
+- #240 (owner, CI time) **done**: PR #241 merged (144ab2f), fuzz targets in parallel; `project-linux` 237 s → 157 s.
+  Fixes 2 and 3 wait on the owner: #254 (`owner-todo`, apply ops/proposals/ci-fuzz-tools-cache.md). Follow-ups #252
+  (sev:medium, M10: the judge restores caches from the PR's scope) and #253 (proposal wording nit).
 - **PR #232** (#187 part 1, `ImageInputBudget::charge_output`): **parked for the owner**: draft, `ai-review` =
   failure on 0831d70 after 4 rounds + final check. The final check's Codex half found one false spec sentence (TIFF
   predictor tag bytes), corrected in 0831d70 unreviewed. #187 has `blocked` + `owner-todo` and the ledger with two
   options. No review round until an owner comment. Part 2: #231 (sev:high, M2, needs the image-decode caller).
-- Follow-ups of PR #227 (#115): #225 (M1), #228 (M10), #229 (M1). #223 and #224 came out of the closed PR #183.
+- Follow-ups of PR #227 (#115): #225 (M1), #228 (M10), #229 (M1). #223 came out of the closed PR #183.
 - PR #184 (owner's own, the owner-comment tracking feed) **merged** (66f4d3c): `owner-issues.sh` now lists comments
   from 2026-11-23 on until a "done:" reply links them. #179 keeps `owner-todo` for the owner's test step 3. #216 and
   #217 still apply to the applied script.
@@ -22,11 +24,12 @@ Phase: bootstrap (pilot)
   The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- a: #238 → PR #239 (ADR 0011: session types, read-only scheduler `cargo xtask next-session`, product-merge
-  counters, area labels and design-pending, review-cap escalation to design). Journal 2026-11-22 16:24.
+- a: #240 → PR #241 (parallel fuzz targets in `cargo xtask fuzz`/`ci linux`, CI installs only missing fuzz tools,
+  ops/proposals/ci-fuzz-tools-cache.md). Owner-run interactive session; also merged PR #239 on the owner's
+  instruction. Journal 2026-11-22 18:26.
 
 ## Next step (suggested order, TICK letters)
-0. **a: #238** is the owner's focus: once PR #239 merges, file its §9 tasks and work them in order (1a first).
+0. **i: #242** (ADR 0011 task 1a) first, then the chain listed on #238.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR (accept 0831d70, or one more final check).
    #231 isn't workable until the M2 image-decode caller exists.
 2. Rule i, M0, lowest number first: #210 (write ops/proposals/ for the owner-commands fix), #216
@@ -42,7 +45,8 @@ Phase: bootstrap (pilot)
     PR #220: 3, PR #227: 4 + final check (every Codex round found
     a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; all majors
     after round 1 but one were spec text about a future caller), PR #234: 4 + final check (each Codex round found a
-    new "what still passes" gap in a parser of cargo's text output or in how the flags were pinned).
+    new "what still passes" gap in a parser of cargo's text output or in how the flags were pinned), PR #241: 4 (4
+    of 5 majors were prose about actions/cache save/restore behavior in a proposal, at least one in each of rounds 1–3).
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
@@ -60,7 +64,7 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
-- #238 / PR #239: approve (or comment on) ADR 0011; the PR has no auto-merge.
+- #254: apply ops/proposals/ci-fuzz-tools-cache.md (CI caches; test plan in the proposal).
 - #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
 - #179: PR #184 merged; run test step 3 of ops/proposals/owner-comment-tracking.md (a PR comment and an inline
