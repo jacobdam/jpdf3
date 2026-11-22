@@ -172,9 +172,11 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
     - scanned: every file under each `crates/*` directory except its own top-level `tests`
       and `target` directories (so `build.rs`, `benches/`, data directories and a `src/tests/`
       module count), and every file under `bindings/`, `apps/web` and `apps/macos` outside
-      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist`, `target`,
-      `test-results` and `playwright-report` directories. Each root except `bindings/` must
-      exist, and every root (and `apps` above two of them) must be a real directory, not a
+      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist` and `target`
+      directories (at any depth) and the Playwright output directories `apps/web/test-results`
+      and `apps/web/playwright-report` (at exactly those paths: `apps/web/src/test-results/`
+      is scanned). Each root except `bindings/` must exist (only NotFound counts as absent
+      for `bindings/`; any other metadata error is a finding), and every root (and `apps` above two of them) must be a real directory, not a
       file or a symlink (#115 item 1);
     - no scanned file contains "arlington" in any case or has the git blob id of a vendored
       TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
@@ -356,7 +358,7 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlinked
   `apps`, and the per-file cap one byte below the largest file gives exactly its one finding
   (at that file's size: none), and an endless source read through the cap stops with the cap
-  error (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
+  error after exactly cap + 1 bytes (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
   copy and link inside skipped directories give none; files below the app roots
   (`apps/web/src`, `apps/macos/JPDF`) are scanned; a missing `apps/macos` is a finding. On the
   real tree, `apps/web/src/main.tsx` and `apps/macos/JPDF/StartView.swift` must be scanned.

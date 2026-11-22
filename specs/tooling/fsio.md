@@ -89,8 +89,8 @@ One flag on an open; nothing measurable.
   Linux x86_64); `regular_files_read_normally` (200 000 bytes read back whole; a missing path is
   `NotFound`); `open_never_blocks_on_a_fifo` (a FIFO with no writer opens within 10 s and its
   handle is not a regular file; skipped where `OPEN_FLAGS` is `None`; on a timeout the
-  cleanup opens the write end non-blocking, from a thread nobody waits for, so it can't
-  hold up the failure report).
+  blocked reader thread is left to end with the test process, so nothing can hold up the
+  failure report).
   The integration-test root forbids `unsafe_code` like the library.
 - `xtask/src/web.rs` `reads_results_files`: a directory and a FIFO at the results path give
   `<path>: not a regular file` without blocking (the FIFO half only where `OPEN_FLAGS` is
@@ -98,4 +98,4 @@ One flag on an open; nothing measurable.
 - `tools/corpus/tests/corpus.rs` `manifest_load_refuses_non_regular_files`: the same for a
   manifest path (30 s timeout; the FIFO half only where `OPEN_FLAGS` is set).
 - `tools/jpdf-cli/src/main.rs` `open_never_blocks_on_a_fifo` (now through the crate, skipped
-  where `OPEN_FLAGS` is `None`, with the same non-blocking cleanup).
+  where `OPEN_FLAGS` is `None`, and leaving a blocked reader to end with the process).

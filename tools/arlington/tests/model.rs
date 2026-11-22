@@ -1182,8 +1182,19 @@ fn read_capped(r: impl std::io::Read, max: u64) -> std::io::Result<Vec<u8>> {
 /// `max + 1` bytes (without the `take` this test never ends), and exactly `max` bytes pass.
 #[test]
 fn scan_reads_stop_one_byte_past_the_cap() {
-    let e = read_capped(std::io::repeat(b'a'), 1000).unwrap_err();
+    /// An endless source that counts the bytes it hands out.
+    struct Counting(u64);
+    impl std::io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            buf.fill(b'a');
+            self.0 += u64::try_from(buf.len()).unwrap();
+            Ok(buf.len())
+        }
+    }
+    let mut src = Counting(0);
+    let e = read_capped(&mut src, 1000).unwrap_err();
     assert_eq!(e.to_string(), "over 1000 bytes");
+    assert_eq!(src.0, 1001, "read past max + 1");
     assert_eq!(read_capped(&[7u8; 1000][..], 1000).unwrap().len(), 1000);
     // The real cap: 64 MiB.
     assert_eq!(SCAN_MAX_FILE_BYTES, 64 * 1024 * 1024);
@@ -1325,6 +1336,23 @@ fn shipped_scan_finds_links_copies_and_names() {
             );
             std::fs::remove_dir_all(root).unwrap();
         }
+        // A metadata error on `bindings` other than NotFound is a finding, not "absent": with
+        // the fixture root unsearchable, every root (bindings included) is a finding.
+        let root = tree("scan-root-locked");
+        mode(&root, 0o600);
+        let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
+        mode(&root, 0o755);
+        let refused = |r: &str| {
+            format!(
+                "{}: not a directory (symlinks are refused)",
+                root.join(r).display()
+            )
+        };
+        assert_eq!(
+            hits,
+            [refused("crates"), refused("bindings"), refused("apps")]
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     // A regular file in place of each root, and a symlinked `apps`, are findings.
     for (i, r) in ["crates", "apps", "apps/web", "apps/macos"]

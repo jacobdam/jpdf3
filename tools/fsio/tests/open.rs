@@ -49,9 +49,9 @@ fn regular_files_read_normally() {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn open_never_blocks_on_a_fifo() {
-    let Some(flags) = jpdf_fsio::OPEN_FLAGS else {
+    if jpdf_fsio::OPEN_FLAGS.is_none() {
         return;
-    };
+    }
     let fifo = scratch("fifo").join("fifo");
     assert!(
         Command::new("mkfifo")
@@ -69,19 +69,8 @@ fn open_never_blocks_on_a_fifo() {
         let _ = tx.send(format!("{kind:?}"));
     });
     let got = rx.recv_timeout(Duration::from_secs(10));
-    if got.is_err() {
-        // Unblock the stuck thread so the test process can exit, from a thread of its own
-        // that nobody waits for: if this open blocks too, the failure is still reported.
-        // The write end opens non-blocking: with no reader left it fails at once.
-        let path = fifo.clone();
-        std::thread::spawn(move || {
-            let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(
-                fs::OpenOptions::new().write(true),
-                flags,
-            )
-            .open(&path);
-        });
-    }
+    // On a timeout the reader thread stays blocked in its open; it ends with the test
+    // process (nothing can unblock it once the FIFO is removed below).
     let _ = fs::remove_file(&fifo);
     let got = got.expect("open of a FIFO blocked");
     assert!(got.starts_with("Ok((false,"), "{got}");
