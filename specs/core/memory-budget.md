@@ -199,7 +199,8 @@ working memory) and give up mostly speed (retained), the largest images (output 
   - every stage, the cipher included, keeps the **capacity** of its output buffer (and any
     buffers it holds at once while producing it) within the capped `max_output_bytes`, not
     just the bytes it returns: a cipher that checks the length and then grows a `Vec` block by
-    block could hold more. Today `DecodeLimits` bounds only the returned length; the image
+    block could hold more. Today's `DecodeLimits` checks are on lengths (the returned bytes;
+    for AES-CBC decryption also the ciphertext) and don't bound buffer capacity; the image
     path's adapters must be checked against this at the exact cap when they land (#187);
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
@@ -284,8 +285,7 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     every other field, each set to a distinct non-default value, passes through.
     `image_input_budget_charges_capacity`: a first input charged at a 100-byte capacity leaves
     a 0-byte cap and refuses 1 byte; charged at 10 it leaves exactly 90.
-    `image_input_budget_release_returns_dropped_stages`: with a
-    30-byte stage alive the next stage may reach 70, not 71; releasing it gives back 30, not
+    `image_input_budget_release_returns_dropped_stages`: with a 30-byte stage alive the next stage may reach 70, not 71; releasing it gives back 30, not
     31; with 30 + 20 charged, releasing the 30 leaves 80 (an 80-byte charge fits, 81 is
     refused); with 30 + 21 charged, releasing the 21 leaves exactly 70 and releasing the 30
     then leaves exactly 100; over-release clamps at the allowance.
