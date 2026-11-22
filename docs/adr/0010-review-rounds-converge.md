@@ -27,7 +27,7 @@ Root causes (5 whys, short):
    were graded major and forced another round. In PR #151, 16 of 16 majors were of this kind.
 2. **Every re-review started from zero.** A fresh reviewer with only the diff re-reviews the whole
    PR, finds whatever it ranks first, and does not know what earlier rounds settled. A reviewer
-   that always reports its top finding (Codex in #151: exactly one major per round) never lets
+   that always reports its top finding (Codex in #151: a major in every round) never lets
    the loop end.
 3. **Fixes grew the scope.** Answering "not proven" with enforcement tooling (the #151 tripwire)
    added new code, and that code drew the next major (rounds 6, 7 and 9 to 14 were about the
