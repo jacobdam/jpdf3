@@ -1,5 +1,8 @@
 # Proposal: cap re-review rounds in TICK §4
 
+Status: **applied, extended** by ADR 0010 (owner issue #155): ops/TICK.md §4 now has the 4-round cap, a severity
+rubric, delta re-reviews and a reproduction rule for second-reviewer findings. Kept for the record.
+
 Requested by the owner on PR #151 (2026-11-22). ops/TICK.md is not protected, so a retro may apply this directly. It
 is written as a proposal because the owner asked for one.
 

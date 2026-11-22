@@ -82,8 +82,8 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
 
 - A second-reviewer major saying "not proven" → state the limitation and file an issue; don't build enforcement
-  tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major every round,
-  9 to 14). See ops/proposals/review-round-cap.md ([journal](journal/2026-11-22.md), PR #151).
+  tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major in
+  rounds 6, 7 and 9 to 14). Now a TICK §4 triage rule (ADR 0010) ([journal](journal/2026-11-22.md), PR #151).
 
 - Writing a process rule that bounds a loop (review rounds, retries) → before the first review, write the state table:
   every counter value (below the cap, at the cap, the extra check, past it) and every exit (clean, open finding,
