@@ -196,6 +196,11 @@ working memory) and give up mostly speed (retained), the largest images (output 
   - decryption is a stage like the filters: the cipher call gets the capped `DecodeLimits` too,
     and its output is charged like any stage output; a buffer the first stage reads that is
     already allocated (a cached decoded stream) is charged before the first stage runs;
+  - every stage, the cipher included, keeps the **capacity** of its output buffer (and any
+    buffers it holds at once while producing it) within the capped `max_output_bytes`, not
+    just the bytes it returns: a cipher that checks the length and then grows a `Vec` block by
+    block could hold more. Today `DecodeLimits` bounds only the returned length; the image
+    path's adapters must be checked against this at the exact cap when they land (#187);
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
@@ -278,11 +283,12 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     remains (never more than the document budget allows; equal caps stay unchanged) and that
     every other field, each set to a distinct non-default value, passes through.
     `image_input_budget_charges_capacity`: a first input charged at a 100-byte capacity leaves
-    a 0-byte cap and refuses 1 byte; charged
-    at 10 it leaves exactly 90. `image_input_budget_release_returns_dropped_stages`: with a
+    a 0-byte cap and refuses 1 byte; charged at 10 it leaves exactly 90.
+    `image_input_budget_release_returns_dropped_stages`: with a
     30-byte stage alive the next stage may reach 70, not 71; releasing it gives back 30, not
     31; with 30 + 20 charged, releasing the 30 leaves 80 (an 80-byte charge fits, 81 is
-    refused); over-release clamps at the allowance.
+    refused); with 30 + 21 charged, releasing the 21 leaves exactly 70 and releasing the 30
+    then leaves exactly 100; over-release clamps at the allowance.
   - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
     with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.

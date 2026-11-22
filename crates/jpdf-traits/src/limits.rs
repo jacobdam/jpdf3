@@ -282,17 +282,17 @@ impl Limits {
 
 /// What is left of the shared input allowance of one image decode ([`Limits::image_input_budget`]).
 ///
-/// It counts the buffers the caller allocates, not the slices the decoder gets. For each input
-/// the caller runs the filter chain one stage at a time with [`ImageInputBudget::cap`] applied
-/// to the stage's [`DecodeLimits`], so a stage fails with [`BackendError::LimitExceeded`] before
-/// it outgrows what the buffers still alive left (decryption is such a stage; a buffer the first
-/// stage reads that is already allocated, such as a cached stream, is charged before it runs).
-/// After a stage it shrinks the output
-/// (`Vec::shrink_to_fit`) and charges its **capacity** with [`ImageInputBudget::charge`], then
-/// drops the stage's input buffer and gives its charge back with [`ImageInputBudget::release`].
-/// An input that borrows the file bytes (no filter before the image filter, no encryption)
-/// holds no new buffer and is not charged; every input held in its own buffer is, cached ones
-/// included.
+/// It counts the buffers the caller allocates, not the slices the decoder gets. For each input the
+/// caller runs the filter chain one stage at a time with [`ImageInputBudget::cap`] applied to the
+/// stage's [`DecodeLimits`], so a stage fails with [`BackendError::LimitExceeded`] before it
+/// outgrows what the buffers still alive left (decryption is such a stage; a buffer the first stage
+/// reads that is already allocated, such as a cached stream, is charged before it runs). Each stage
+/// keeps its output buffer's capacity, not just its length, within the cap. After a stage the
+/// caller shrinks the output (`Vec::shrink_to_fit`) and charges its **capacity** with
+/// [`ImageInputBudget::charge`], then drops the stage's input buffer and gives its charge back with
+/// [`ImageInputBudget::release`]. An input that borrows the file bytes (no filter before the image
+/// filter, no encryption) holds no new buffer and is not charged; every input held in its own
+/// buffer is, cached ones included.
 ///
 /// Neither `Copy` nor `Clone`: a copy charged in place of the original would lose the charge.
 #[derive(Debug, PartialEq, Eq)]
