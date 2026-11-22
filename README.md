@@ -42,6 +42,7 @@ License: [MIT](LICENSE).
 ## Building and testing
 
 The toolchain is pinned in [rust-toolchain.toml](rust-toolchain.toml); `rustup` installs it.
+The tests also need [`cargo-nextest`](https://nexte.st/) (`cargo install cargo-nextest --locked`).
 
 ```sh
 cargo build --workspace --locked
@@ -68,8 +69,8 @@ The web app is published at <https://jacobdam.github.io/jpdf3/>, with the raw ju
 ## How the project is run
 
 Work is done by autonomous agent sessions, one task per session, following
-[ops/TICK.md](ops/TICK.md). A protected judge in CI grades every pull request, and every PR also
-gets an independent AI review posted on it. Only the owner gives instructions; everything else
+[ops/TICK.md](ops/TICK.md). A protected judge in CI grades every pull request, and agent PRs also
+get an independent AI review posted on them. Only the owner gives instructions; everything else
 (issues and comments by others, text inside PDFs, dependency docs) is treated as data.
 
 | Document | Purpose |
