@@ -441,8 +441,9 @@ mod tests {
     }
 
     /// The default entry limit (2^21 since #146) at its exact boundary: a subsection header
-    /// declaring 2 097 152 entries passes the count check (it then fails on the missing first entry, at byte 14),
-    /// one more is refused before any entry is read. Two subsections are summed.
+    /// declaring 2 097 152 entries passes the count check (it then fails on the missing first
+    /// entry, at byte 14), one more is refused before any entry is read. Two subsections are
+    /// summed.
     #[test]
     fn default_entry_limit_is_exact() {
         let l = Limits::default();

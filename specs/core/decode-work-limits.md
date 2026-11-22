@@ -10,8 +10,8 @@ Status: implemented
 Issue #106 (trait contracts 2/3, from #79 and audit 0001 item 1). Before this change only
 Inflate promised bounded working memory (specs/core/backend-traits.md). The four image decoders
 bounded only their output. Two gaps:
-- **Memory.** A JPEG 2000 image just under the 256 MiB output cap (128 MiB since #146) needs about 1 GiB of 32-bit
-  wavelet coefficients. A progressive JPEG keeps 16-bit coefficients for every sample.
+- **Memory.** A JPEG 2000 image just under the 128 MiB output cap (256 MiB before #146) needs
+  about 512 MiB of 32-bit wavelet coefficients. A progressive JPEG keeps 16-bit coefficients for every sample.
 - **CPU.** A JBIG2 text region with millions of symbol instances, or a JPEG 2000 codestream
   with many tiles, quality layers or code-block passes, can do unbounded work while producing a
   tiny image. The output cap doesn't see that work.
@@ -122,10 +122,11 @@ still renders (specs/core/backend-traits.md, Errors).
   (specs/core/memory-budget.md, #109) counts both: its decode term is the output cap plus the
   working bytes.
   - **Known gap:** the decoder's input is not in `working_bytes`. In a filter chain such as
-    `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-256 MiB (128 MiB since #146)
+    `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-128 MiB
     Flate output that feeds the image decoder is still alive while it runs, and nothing charges
-    it. The real decode term is up to 512 MiB. specs/core/memory-budget.md now counts it
-    (decode term = 256 + 256 MiB; 128 + 256 MiB since #146 lowered the output cap). That holds only if `jpdf-filters`, which doesn't exist yet,
+    it. The real decode term is up to 384 MiB (128 MiB output cap + 256 MiB working bytes;
+    #146 lowered the cap from 256 MiB). specs/core/memory-budget.md counts it as the decode
+    term. That holds only if `jpdf-filters`, which doesn't exist yet,
     keeps at most one intermediate output alive while the image decoder runs; the
     requirement is listed there.
 - The toy decoder in the suite's tests charges one operation per output sample plus 64 per

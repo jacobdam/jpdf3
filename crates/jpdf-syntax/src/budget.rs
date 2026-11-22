@@ -137,15 +137,19 @@ impl MemoryBudget {
     /// span, a cache node) keeps everything below it mapped. Freed heap memory is reused by
     /// later small requests, but a request above the threshold gets a new mapping. So the
     /// worst case is one phase's whole memory left in the heap (every phase can allocate below
-    /// the threshold) plus the next phase's whole memory in new mappings. This covers one
+    /// the threshold) plus the next phase's whole memory in new mappings. The same holds in a
+    /// non-main arena (a thread other than the main one, #114): its 64 MiB sub-heaps are also
+    /// trimmed only from the top. This covers one
     /// earlier phase; holes several phases leave that no later request fits are not bounded
     /// (specs/core/memory-budget.md, known gap, #146).
     pub fn heap_high_water(&self) -> u64 {
         self.largest_phase()
     }
 
-    /// Peak process memory: persistent terms, the heap high-water mark of an earlier phase, the
-    /// largest phase and [`RESERVE_BYTES`].
+    /// Estimated peak process memory: persistent terms, the heap high-water mark of one earlier
+    /// phase, the largest phase and [`RESERVE_BYTES`]. An estimate, not a proven bound: holes
+    /// several earlier phases leave are not counted (specs/core/memory-budget.md, #146), so a
+    /// peak under [`PROCESS_BUDGET_BYTES`] does not certify that a run fits.
     pub fn peak(&self) -> u64 {
         self.persistent()
             .saturating_add(self.heap_high_water())

@@ -119,7 +119,15 @@ the 2 GiB unused.
     growing containers, then phases making ever larger sub-threshold requests) or a structural
     fix that keeps long-lived allocations out of the phases' heap region (e.g. reserving the
     span map, xref table and cache storage before the first parse). Until then the peak is an
-    estimate for the one-phase case, not a proven bound.
+    estimate that accounts for one earlier phase, not a proven bound, and a peak under 2 GiB
+    does not certify that a run fits.
+  - **Gate:** no decode or raster phase runs on the jpdf-cli path until #25 measures the
+    cross-phase case or the structural fix above lands (#146). Today parse is the only phase
+    on that path; parse after parse can build up holes the same way (already true before #146),
+    which the same measurement covers.
+  - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
+    the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
+    sub-heaps, which are also trimmed only from the top.
   - Before #146 the model counted the largest phase once: at those defaults the parse heap
     (464 MiB) next to a decode (512 MiB) came to 2445.84 MiB, over the 2 GiB. Parse was the only
     phase on the jpdf-cli path, so it could not happen yet.
@@ -143,19 +151,23 @@ the 2 GiB unused.
   with 4 soft-masked layers, 32 clips and one canvas-sized image still fits. `check_scene`'s
   formula gives 2^22 × (4 + 4 × 5 + 32) + 4 × 2^22 = 240 MiB ≤ 256 MiB
   (`default_raster_limits_fit_the_memory_budget`). `jpdf-render` renders larger views in tiles.
-- `max_retained_bytes_per_document` 256 MiB → 128 MiB (#146). It costs only speed: objects
-  that don't fit the resolve cache are parsed again.
+- `max_retained_bytes_per_document` 256 MiB → 128 MiB (#146). Objects that don't fit the
+  resolve cache are parsed again on every resolve. That costs time, and the re-parses are
+  charged to the document's lexing budget, so a file that resolves large uncached objects
+  many times hits `LimitExceeded` from the lexing budget sooner than before (e.g. five objects
+  with 30 MiB strings each: all five fit the old cache, the fifth no longer does).
 - `max_string_bytes_per_parse` 64 MiB → 32 MiB (#146). Large data lives in streams, which this
   limit doesn't cover; 32 MiB of strings in one object (signature contents are tens of KiB) is
   far above real files.
 - `max_decoded_bytes_per_stream` 256 MiB → 128 MiB (#146). One stream's output: a content
-  stream, or an image's filter output (128 MiB holds a 6 500 × 6 500 RGB image). The image
-  decoder's own memory, `max_decode_working_bytes`, stays at 256 MiB, so large scanned pages
-  still decode.
+  stream, or an image's output (128 MiB holds a 6 500 × 6 500 8-bit RGB image, or an A4 page
+  scanned at 600 dpi in RGB). The image decoder's own memory, `max_decode_working_bytes`, stays
+  at 256 MiB, but an image whose output passes 128 MiB (e.g. 7 000 × 7 000 RGB, 147 MB) is now
+  refused even when its working memory would fit.
 
-The levers were chosen to keep the user-visible ceilings (file size, pages, image decode
-memory) and give up what costs only speed (retained) or what real files don't reach (xref
-entries, string bytes per object).
+The levers were chosen to keep the main user-visible ceilings (file size, pages, image decode
+working memory) and give up mostly speed (retained), the largest images (output over
+128 MiB), and what real files don't reach (xref entries, string bytes per object).
 
 **Requirements on future code** (the model holds only if they do):
 - **Phase outputs that outlive their phase are charged to `retained`, or rejected.**

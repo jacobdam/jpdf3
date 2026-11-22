@@ -196,9 +196,10 @@ impl Limits {
     }
 }
 
-/// The defaults fit the judge's 2 GiB address space (specs/core/memory-budget.md). #146 lowered
-/// the string, xref, decoded-stream, retained and raster defaults so that the heap one phase
-/// leaves mapped and the next phase's new mappings fit together.
+/// The defaults fit the judge's 2 GiB address space by the estimate in
+/// specs/core/memory-budget.md, which counts the heap one earlier phase leaves mapped (#146
+/// lowered the string, xref, decoded-stream, retained and raster defaults for it). It is not a
+/// proven bound: holes several phases leave are a known gap (#146).
 impl Default for Limits {
     fn default() -> Self {
         Self {
