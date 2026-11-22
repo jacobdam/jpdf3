@@ -285,7 +285,8 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     every other field, each set to a distinct non-default value, passes through.
     `image_input_budget_charges_capacity`: a first input charged at a 100-byte capacity leaves
     a 0-byte cap and refuses 1 byte; charged at 10 it leaves exactly 90.
-    `image_input_budget_release_returns_dropped_stages`: with a 30-byte stage alive the next stage may reach 70, not 71; releasing it gives back 30, not
+    `image_input_budget_release_returns_dropped_stages`: with a 30-byte stage alive the next
+    stage may reach 70, not 71; releasing it gives back 30, not
     31; with 30 + 20 charged, releasing the 30 leaves 80 (an 80-byte charge fits, 81 is
     refused); with 30 + 21 charged, releasing the 21 leaves exactly 70 and releasing the 30
     then leaves exactly 100; over-release clamps at the allowance.
