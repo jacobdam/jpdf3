@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::json::{self, Value};
-use crate::web::{Status, downgrade_passes, render_e2e, step};
+use crate::web::{Status, check_known_ids, downgrade_passes, remove_stale, render_e2e, step};
 
 /// Largest tool output we read (xcresulttool JSON, entitlements, codesign text).
 const MAX_TOOL_OUTPUT: usize = 16 << 20;
@@ -134,6 +134,19 @@ pub fn final_results(
     (results, errors)
 }
 
+/// `final_results`, then the known-ID check (`web::check_known_ids`) against the journeys'
+/// test IDs: what `ci` writes to `e2e.json`, and its errors in order.
+pub fn graded(
+    tests: Result<(), String>,
+    read: (BTreeMap<String, Status>, Vec<String>),
+    shipped: Result<(), String>,
+    known: Result<std::collections::BTreeSet<String>, String>,
+) -> (BTreeMap<String, Status>, Vec<String>) {
+    let (mut results, mut errors) = final_results(tests, read, shipped);
+    errors.extend(check_known_ids(&mut results, known));
+    (results, errors)
+}
+
 /// Checks a signed bundle's entitlements (`plutil -convert json` of `codesign -d
 /// --entitlements`): exactly `expected`, each `true`.
 pub fn check_entitlements(doc: &Value, expected: &[&str]) -> Result<(), String> {
@@ -254,40 +267,33 @@ fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String
     Ok((stdout, stderr))
 }
 
-fn remove_stale(path: &Path) -> Result<(), String> {
-    let r = if path.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    };
-    match r {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            Err(format!("remove {}: {e}", path.display()))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// `cargo xtask ci macos`. Always writes `out/e2e.json` (empty or partial results when a step
-/// fails, with no `pass` if any step or check failed). Returns Err with the first failure.
+/// `cargo xtask ci macos`. Always writes `out/e2e.json` once `out` exists (empty or partial
+/// results when a step fails, with no `pass` if any step or check failed or a reported ID is
+/// unknown). Returns Err with the first failure.
 pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
     let out = fs::canonicalize(out).map_err(|e| format!("resolve {}: {e}", out.display()))?;
-    let repo = fs::canonicalize(repo).map_err(|e| format!("resolve {}: {e}", repo.display()))?;
     let e2e_json = out.join("e2e.json");
     let bundle = out.join("macos.xcresult");
-    // Derived data stays out of DIR (CI uploads DIR as an artifact).
-    let derived = repo.join("target").join("xtask-macos");
-    for stale in [&e2e_json, &bundle] {
-        remove_stale(stale)?;
-    }
-
-    let tests = run_tests(&repo, &derived, &bundle);
-    let read = read_results(&bundle);
-    // The shipped configuration is checked even when tests fail, so one run shows both, and
-    // before e2e.json is written, so its failure also turns every pass into a fail.
-    let shipped = check_release(&repo, &derived);
-    let (results, mut errors) = final_results(tests, read, shipped);
+    // If an earlier run's output can't be removed (or the repo can't be resolved), nothing
+    // runs and e2e.json still gets (empty) results (#76).
+    let ready = remove_stale(&[&e2e_json, &bundle]).and_then(|()| {
+        fs::canonicalize(repo).map_err(|e| format!("resolve {}: {e}", repo.display()))
+    });
+    let (results, mut errors) = match ready {
+        Ok(repo) => {
+            // Derived data stays out of DIR (CI uploads DIR as an artifact).
+            let derived = repo.join("target").join("xtask-macos");
+            let tests = run_tests(&repo, &derived, &bundle);
+            let read = read_results(&bundle);
+            // The shipped configuration is checked even when tests fail, so one run shows
+            // both, and before e2e.json is written, so its failure also turns every pass
+            // into a fail.
+            let shipped = check_release(&repo, &derived);
+            graded(tests, read, shipped, crate::specs::journey_test_ids(&repo))
+        }
+        Err(e) => (BTreeMap::new(), vec![e]),
+    };
     fs::write(&e2e_json, render_e2e(&results))
         .map_err(|e| format!("write {}: {e}", e2e_json.display()))?;
     eprintln!(
@@ -583,6 +589,75 @@ mod tests {
         let (r, e) = final_results(Ok(()), read(&["unmapped"]), Ok(()));
         assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
         assert_eq!(e, ["unmapped"]);
+    }
+
+    #[test]
+    fn an_unknown_id_reports_no_pass() {
+        let read = || {
+            let mut r = BTreeMap::new();
+            r.insert("e2e.macos.a".to_owned(), Status::Pass);
+            r.insert("e2e.macos.app_start_empty".to_owned(), Status::Pass);
+            (r, Vec::new())
+        };
+        let known = |ids: &[&str]| Ok(ids.iter().map(|s| (*s).to_owned()).collect());
+        // Journey ID plus the harness ID: a clean run keeps its passes.
+        let (r, e) = graded(Ok(()), read(), Ok(()), known(&["e2e.macos.a"]));
+        assert!(e.is_empty(), "{e:?}");
+        assert!(r.values().all(|s| *s == Status::Pass));
+        // e2e.macos.a is in no journey: named, and no ID passes.
+        let (r, e) = graded(Ok(()), read(), Ok(()), known(&["e2e.macos.b"]));
+        assert_eq!(
+            e,
+            ["test ids that no journey lists and that are not harness ids: e2e.macos.a"]
+        );
+        assert!(r.values().all(|s| *s == Status::Fail));
+        // Journeys that can't be read: no pass, the error comes after the run's own.
+        let (r, e) = graded(err_s("test"), read(), Ok(()), Err("boom".to_owned()));
+        assert_eq!(e, ["test", "cannot read the journeys' test ids: boom"]);
+        assert!(r.values().all(|s| *s == Status::Fail));
+    }
+
+    fn err_s(e: &str) -> Result<(), String> {
+        Err(e.to_owned())
+    }
+
+    #[test]
+    fn stale_output_that_cannot_be_removed_still_writes_e2e_json() {
+        use crate::web::testutil::{undeletable, unlock};
+        let base = std::env::temp_dir().join(format!("xtask-macos-ci-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let out = base.join("out");
+        assert!(fs::create_dir_all(&out).is_ok());
+        let Some(locked) = undeletable(&out.join("macos.xcresult")) else {
+            let _ = fs::remove_dir_all(&base);
+            return; // root can remove anything
+        };
+        assert!(
+            fs::write(
+                out.join("e2e.json"),
+                "{\"results\": {\"e2e.macos.a\": \"pass\"}}\n"
+            )
+            .is_ok()
+        );
+        // The repo doesn't exist either: nothing may run, and the stale error comes first.
+        let r = ci(&base.join("repo"), &out);
+        assert!(r.as_ref().is_err_and(|e| e.starts_with("remove ")), "{r:?}");
+        assert_eq!(
+            fs::read_to_string(out.join("e2e.json")).ok().as_deref(),
+            Some("{\"results\": {}}\n")
+        );
+        unlock(&locked);
+        // Stale output gone, but the repo can't be resolved: e2e.json is still written.
+        let r = ci(&base.join("repo"), &out);
+        assert!(
+            r.as_ref().is_err_and(|e| e.starts_with("resolve ")),
+            "{r:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("e2e.json")).ok().as_deref(),
+            Some("{\"results\": {}}\n")
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

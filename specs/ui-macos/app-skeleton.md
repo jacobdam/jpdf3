@@ -52,7 +52,8 @@ Status: implemented
    so the shipped entitlements are exactly these files with no `get-task-allow`. Debug test
    builds get Xcode's testing exceptions added automatically; they are never shipped.
 5. **`cargo xtask ci macos --out DIR`** (CONTRACT §2), run from the repository root:
-   1. deletes `DIR/e2e.json` and `DIR/macos.xcresult` from any earlier run;
+   1. deletes `DIR/e2e.json` and `DIR/macos.xcresult` from any earlier run; if one can't be
+      removed (or the repository root can't be resolved), steps 2–5 don't run;
    2. checks that `apps/macos/JPDF.xcodeproj` and `xcodebuild` exist;
    3. `xcodebuild … -scheme JPDF -destination platform=macOS,arch=<arch> -resultBundlePath
       DIR/macos.xcresult test` (Debug; `<arch>` is the architecture xtask was built for, so exactly one
@@ -68,10 +69,13 @@ Status: implemented
       the signatures are intact and that `jpdf.app` and its embedded
       `JPDFHelper.xpc` have the hardened runtime flag and exactly the entitlements of
       Behavior 4, each `true`; this runs even if the tests failed;
-   6. always writes `DIR/e2e.json` (empty results if no tests ran). If step 3 failed, step 4
-      found an error or step 5 failed, every `pass` is written as `fail`: such a run may not
-      have run every test, or its tests ran against a build that doesn't ship as checked
-      (#76);
+   6. once `DIR` exists, always writes `DIR/e2e.json` (empty results if no tests ran). Every
+      reported ID must be a journey's test ID (`specs/journeys/*.md`) or a harness ID (ADR
+      0003 item 6: `e2e.macos.app_start_empty`, in `xtask/src/web.rs` `HARNESS_IDS`). If step
+      1 or 3 failed, step 4 found an error, step 5 failed, an ID is unknown or the journeys
+      can't be read, every `pass` is written as `fail`: such a run may not have run every
+      test, or its tests ran against a build that doesn't ship as checked, or under an ID the
+      journeys don't grade (#76);
    7. exits 0 only if every step passed, at least one ID was reported and every ID is
       `pass`. All errors are printed; the first is the summary line.
 
@@ -82,7 +86,8 @@ None. The skeleton stores nothing (no defaults, no files, no recent list).
 Not applicable (no document, no editing).
 
 ## Errors
-- xtask: a missing project or tool, a failing step, an unreadable result bundle, a damaged
+- xtask: stale output that can't be removed, an ID that no journey lists and that isn't a
+  harness ID, unreadable journeys, a missing project or tool, a failing step, an unreadable result bundle, a damaged
   or oversized tool output (> 16 MiB, non-UTF-8, invalid JSON, nesting over 128) or a
   failed signature check prints `xtask: macos: <reason>` and exits 1. Nothing is ever read
   as a pass by default.
@@ -150,7 +155,12 @@ XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
   check couldn't fail) and the ⌘O shortcut.
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
 per ID, unmapped and unknown results are errors, passes downgraded on a failed `xcodebuild
-test`, an unmapped result or a failed Release check (each alone), entitlement check incl. extra
+test`, an unmapped result or a failed Release check (each alone), `ci` with an undeletable
+`DIR/macos.xcresult` (skipped as root) and then with a repository root that can't be resolved
+runs nothing and still writes empty results over a stale `e2e.json` that claimed a pass (the
+known-ID check itself is `web.rs`'s, tested there), `graded` (the path `ci` writes from: a journey
+plus the harness ID keep their passes, an unknown ID is named and downgrades every pass,
+unreadable journeys too, after the run's own error), entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
 `/bin/sh` tool that writes 300 000 bytes before reading 300 000 bytes of input finishes
 within 30 s, unread input is an error, a failed exit wins over it);

@@ -1,34 +1,10 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { CSP } from "../csp";
+import { expect, test } from "./fixtures";
 
-// specs/ui-web/app-skeleton.md §Tests. The W-02 start screen of the production build.
-
-declare global {
-  interface Window {
-    __cspViolations?: string[];
-  }
-}
-
-/** Collects console errors/warnings, uncaught exceptions, CSP violations and foreign requests. */
-async function watch(page: Page): Promise<string[]> {
-  const problems: string[] = [];
-  page.on("console", (m) => {
-    if (m.type() === "error" || m.type() === "warning")
-      problems.push(`console ${m.type()}: ${m.text()}`);
-  });
-  page.on("pageerror", (e) => problems.push(`uncaught: ${e.message}`));
-  page.on("request", (r) => {
-    if (!r.url().startsWith("http://127.0.0.1:4173/")) problems.push(`foreign request: ${r.url()}`);
-  });
-  // Init scripts run through the DevTools protocol, outside the page's CSP.
-  await page.addInitScript(() => {
-    window.__cspViolations = [];
-    document.addEventListener("securitypolicyviolation", (e) => {
-      window.__cspViolations?.push(`${e.effectiveDirective} ${e.blockedURI}`);
-    });
-  });
-  return problems;
-}
+// specs/ui-web/app-skeleton.md §Tests. The W-02 start screen of the production build. Every
+// test here gets the shared checks of ./fixtures.ts after its body: no console errors or
+// warnings, uncaught errors, CSP violations or foreign requests.
 
 /** Waits until every CSS transition/animation on the element has finished or been cancelled. */
 async function settled(locator: Locator): Promise<void> {
@@ -42,7 +18,6 @@ async function settled(locator: Locator): Promise<void> {
 test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty" }, async ({
   page,
 }) => {
-  const problems = await watch(page);
   await page.goto("./");
 
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();
@@ -100,15 +75,11 @@ test("start screen loads with the empty state", { tag: "@e2e.web.app_start_empty
     "color",
     "rgb(95, 95, 95)",
   );
-
-  expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
-  expect(problems).toEqual([]);
 });
 
 test("dark appearance uses the dark palette", { tag: "@e2e.web.app_start_empty" }, async ({
   page,
 }) => {
-  const problems = await watch(page);
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("./");
   const open = page.getByRole("button", { name: "Open file" });
@@ -120,14 +91,11 @@ test("dark appearance uses the dark palette", { tag: "@e2e.web.app_start_empty" 
   await expect(open).toHaveCSS("background-color", "rgb(144, 202, 249)");
   await expect(open).toHaveCSS("box-shadow", "none");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(18, 18, 18)");
-  expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
-  expect(problems).toEqual([]);
 });
 
 test("the CSP meta tag comes first and scripts are external", {
   tag: "@e2e.web.app_start_empty",
 }, async ({ page }) => {
-  const problems = await watch(page);
   await page.goto("./");
   const head = await page.evaluate(() => {
     const first = document.head.firstElementChild;
@@ -144,26 +112,32 @@ test("the CSP meta tag comes first and scripts are external", {
     metaCount: 1,
     inlineScripts: 0,
   });
-  expect(problems).toEqual([]);
 });
 
 test("reduced motion removes transitions", { tag: "@e2e.web.app_start_empty" }, async ({
   page,
 }) => {
-  const problems = await watch(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("./");
   const open = page.getByRole("button", { name: "Open file" });
   await expect(open).toBeVisible();
   const durations = await open.evaluate((el) => getComputedStyle(el).transitionDuration);
   expect(durations.split(",").every((d) => d.trim() === "0s")).toBe(true);
-  expect(problems).toEqual([]);
 });
 
 test("the CSP blocks inline script and inline style", {
   tag: "@e2e.web.app_start_empty",
-}, async ({ page }) => {
-  const problems = await watch(page);
+}, async ({ page, watch }) => {
+  // Only the violations this test provokes: CSP / Trusted Types console errors and the
+  // matching violation events. No uncaught errors, warnings or foreign requests.
+  watch.allow(
+    (p) =>
+      (p.startsWith("console error: ") &&
+        /Content Security Policy|TrustedScript|TrustedHTML|Trusted Type/.test(p)) ||
+      /^csp violation: ((script-src-elem|style-src-elem) inline|require-trusted-types-for trusted-types-sink)$/.test(
+        p,
+      ),
+  );
   await page.goto("./");
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();
   const result = await page.evaluate(() => {
@@ -195,22 +169,11 @@ test("the CSP blocks inline script and inline style", {
     }
   });
   expect(innerHtmlBlocked).toBe(true);
-  // Only the violations this test provokes: CSP / Trusted Types console errors. No uncaught
-  // errors, warnings or foreign requests.
-  const unexpected = problems.filter(
-    (p) =>
-      !(
-        p.startsWith("console error: ") &&
-        /Content Security Policy|TrustedScript|TrustedHTML|Trusted Type/.test(p)
-      ),
-  );
-  expect(unexpected).toEqual([]);
 });
 
 test("a file dropped on the window is not opened by the browser", {
   tag: "@e2e.web.app_start_empty",
 }, async ({ page }) => {
-  const problems = await watch(page);
   await page.goto("./");
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();
   const prevented = await page.evaluate(() => {
@@ -224,5 +187,4 @@ test("a file dropped on the window is not opened by the browser", {
   });
   expect(prevented).toEqual([true, true]);
   await expect(page).toHaveURL("http://127.0.0.1:4173/");
-  expect(problems).toEqual([]);
 });

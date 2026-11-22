@@ -2,11 +2,15 @@
 //! Spec: specs/ui-web/app-skeleton.md. Test-ID mapping and site layout: docs/adr/0002.
 //! Contract: ops/judge/CONTRACT.md §2.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+/// Harness IDs (docs/adr/0002 item 2, docs/adr/0003 item 6): smoke checks that no journey
+/// lists. They are the only reported IDs allowed outside the journeys' `- test:` lines.
+pub const HARNESS_IDS: [&str; 2] = ["e2e.web.app_start_empty", "e2e.macos.app_start_empty"];
 
 /// Largest results file we accept from the Playwright reporter (it is a few lines per test).
 const MAX_RESULTS_BYTES: u64 = 1 << 20;
@@ -98,6 +102,55 @@ pub fn final_results(
     (results, parse_err)
 }
 
+/// Checks every reported ID against the journeys' test IDs (`known`, from
+/// `specs::journey_test_ids`) and `HARNESS_IDS`. A reported ID outside both (a typo in a tag or
+/// test name, a renamed journey ID), or journeys that couldn't be read, is an error that turns
+/// every `pass` into `fail`: the run tested something other than what the journeys grade (#76).
+pub fn check_known_ids(
+    results: &mut BTreeMap<String, Status>,
+    known: Result<BTreeSet<String>, String>,
+) -> Option<String> {
+    let err = match known {
+        Err(e) => format!("cannot read the journeys' test ids: {e}"),
+        Ok(known) => {
+            let unknown: Vec<&str> = results
+                .keys()
+                .map(String::as_str)
+                .filter(|id| !known.contains(*id) && !HARNESS_IDS.contains(id))
+                .collect();
+            if unknown.is_empty() {
+                return None;
+            }
+            format!(
+                "test ids that no journey lists and that are not harness ids: {}",
+                unknown.join(", ")
+            )
+        }
+    };
+    downgrade_passes(results);
+    Some(err)
+}
+
+/// Removes output of an earlier run (files or directory trees; a missing one is fine). Tries
+/// every path and returns the first error.
+pub fn remove_stale(paths: &[&Path]) -> Result<(), String> {
+    let mut first = Ok(());
+    for path in paths {
+        let r = if path.is_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        };
+        if let Err(e) = r
+            && e.kind() != std::io::ErrorKind::NotFound
+            && first.is_ok()
+        {
+            first = Err(format!("remove {}: {e}", path.display()));
+        }
+    }
+    first
+}
+
 /// Renders CONTRACT §2's `{"results": {...}}`. IDs are validated, so they need no escaping.
 pub fn render_e2e(results: &BTreeMap<String, Status>) -> String {
     let mut s = String::from("{\"results\": {");
@@ -169,9 +222,9 @@ pub fn step(
     }
 }
 
-/// The web part of `cargo xtask ci linux`. Always writes `out/e2e.json` (empty or partial
-/// results when a step fails, with no `pass` if any step failed); writes `out/site/` only
-/// after a successful build.
+/// The web part of `cargo xtask ci linux`. Always writes `out/e2e.json` once `out` exists
+/// (empty or partial results when a step fails, with no `pass` if any step failed or a
+/// reported ID is unknown); writes `out/site/` only after a successful build.
 /// Returns Err with the first failure.
 pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
@@ -179,25 +232,19 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     let e2e_json = out.join("e2e.json");
     let tsv = out.join("web-e2e.tsv");
     let site = out.join("site");
-    // Never leave output of an earlier run: results, reporter file and site all go first.
-    let mut stale_err = None;
-    for stale in [&e2e_json, &tsv] {
-        if let Err(e) = fs::remove_file(stale)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            stale_err = Some(format!("remove {}: {e}", stale.display()));
-        }
-    }
-    if let Err(e) = fs::remove_dir_all(&site)
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        stale_err = Some(format!("remove {}: {e}", site.display()));
-    }
-    if let Some(e) = stale_err {
-        return Err(e);
-    }
-    let run = run_web(repo, &out, &tsv);
-    let (results, parse_err) = final_results(&run, read_results(&tsv));
+    // Never leave output of an earlier run: results, reporter file and site all go first. If
+    // one can't be removed, nothing runs and e2e.json still gets (empty) results (#76).
+    let stale = remove_stale(&[&e2e_json, &tsv, &site]);
+    let fresh = stale.is_ok();
+    let run = stale.and_then(|()| run_web(repo, &out, &tsv));
+    // A reporter file that couldn't be removed is an earlier run's: never read it.
+    let read = if fresh {
+        read_results(&tsv)
+    } else {
+        Ok(BTreeMap::new())
+    };
+    let (mut results, parse_err) = final_results(&run, read);
+    let id_err = check_known_ids(&mut results, crate::specs::journey_test_ids(repo));
     fs::write(&e2e_json, render_e2e(&results))
         .map_err(|e| format!("write {}: {e}", e2e_json.display()))?;
     eprintln!(
@@ -205,17 +252,24 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
         e2e_json.display(),
         results.len()
     );
-    run?;
-    if let Some(e) = parse_err {
-        return Err(e);
+    // Every error is printed; the first is the summary (as in `ci macos`).
+    let mut errors: Vec<String> = run
+        .err()
+        .into_iter()
+        .chain(parse_err)
+        .chain(id_err)
+        .collect();
+    if errors.is_empty() {
+        if results.is_empty() {
+            errors.push("Playwright reported no journey test ids".to_owned());
+        } else if let Some((id, s)) = results.iter().find(|(_, s)| **s != Status::Pass) {
+            errors.push(format!("{id}: {}", s.as_str()));
+        }
     }
-    if results.is_empty() {
-        return Err("Playwright reported no journey test ids".to_owned());
+    for e in errors.iter().skip(1) {
+        eprintln!("xtask: web: {e}");
     }
-    if let Some((id, s)) = results.iter().find(|(_, s)| **s != Status::Pass) {
-        return Err(format!("{id}: {}", s.as_str()));
-    }
-    Ok(())
+    errors.into_iter().next().map_or(Ok(()), Err)
 }
 
 /// Reads at most `MAX_RESULTS_BYTES` (+1 to detect overflow) in one pass; a missing file
@@ -285,8 +339,35 @@ fn run_web(repo: &Path, out: &Path, tsv: &Path) -> Result<(), String> {
     )
 }
 
+/// Test helpers shared with macos.rs.
+#[cfg(test)]
+pub(crate) mod testutil {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::{Path, PathBuf};
+
+    /// Creates `dir/locked`, a directory the current user can't empty, or returns None when
+    /// running as root (who can).
+    pub fn undeletable(dir: &Path) -> Option<PathBuf> {
+        let locked = dir.join("locked");
+        fs::create_dir_all(&locked).ok()?;
+        fs::write(locked.join("f"), "x").ok()?;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).ok()?;
+        if fs::write(locked.join("probe"), "x").is_ok() {
+            unlock(&locked);
+            return None;
+        }
+        Some(locked)
+    }
+
+    pub fn unlock(locked: &Path) {
+        let _ = fs::set_permissions(locked, fs::Permissions::from_mode(0o700));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testutil::{undeletable, unlock};
     use super::*;
 
     #[test]
@@ -420,6 +501,115 @@ mod tests {
         let big = "e2e.web.a\tpass\n".repeat(80_000); // > 1 MiB
         assert!(fs::write(&f, big).is_ok());
         assert!(read_results(&f).is_err(), "too large");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    fn ids(list: &[&str]) -> BTreeSet<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn unknown_ids_report_no_pass() {
+        let read = || all(&[("e2e.web.a", Status::Pass), ("e2e.web.b", Status::Skip)]);
+        // Every ID is a journey's or a harness ID: results stand.
+        let mut r = read();
+        assert_eq!(
+            check_known_ids(&mut r, Ok(ids(&["e2e.web.a", "e2e.web.b"]))),
+            None
+        );
+        assert_eq!(r, read());
+        let mut h = all(&[
+            ("e2e.web.a", Status::Pass),
+            ("e2e.web.app_start_empty", Status::Pass),
+            ("e2e.macos.app_start_empty", Status::Pass),
+        ]);
+        assert_eq!(check_known_ids(&mut h, Ok(ids(&["e2e.web.a"]))), None);
+        assert_eq!(h.values().filter(|s| **s == Status::Pass).count(), 3);
+        // One unknown ID (a typo): it is named, and no ID passes, the known one included.
+        let mut r = read();
+        let err = check_known_ids(&mut r, Ok(ids(&["e2e.web.a"])));
+        assert_eq!(
+            err.as_deref(),
+            Some("test ids that no journey lists and that are not harness ids: e2e.web.b")
+        );
+        assert_eq!(
+            r,
+            all(&[("e2e.web.a", Status::Fail), ("e2e.web.b", Status::Skip)])
+        );
+        // A near miss of a harness ID is unknown too.
+        let mut r = all(&[("e2e.web.app_start_empt", Status::Pass)]);
+        assert!(check_known_ids(&mut r, Ok(BTreeSet::new())).is_some());
+        assert_eq!(r.get("e2e.web.app_start_empt"), Some(&Status::Fail));
+        // Journeys that can't be read: no pass.
+        let mut r = read();
+        let err = check_known_ids(&mut r, Err("boom".to_owned()));
+        assert_eq!(
+            err.as_deref(),
+            Some("cannot read the journeys' test ids: boom")
+        );
+        assert_eq!(r.get("e2e.web.a"), Some(&Status::Fail));
+        // No results, no unknown IDs.
+        assert_eq!(
+            check_known_ids(&mut BTreeMap::new(), Ok(BTreeSet::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn harness_ids_are_well_formed() {
+        for id in HARNESS_IDS {
+            assert!(valid_web_id(id) || crate::macos::valid_macos_id(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn removes_stale_output_and_reports_the_first_failure() {
+        let base = std::env::temp_dir().join(format!("xtask-web-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        assert!(fs::create_dir_all(base.join("tree").join("sub")).is_ok());
+        assert!(fs::write(base.join("file"), "x").is_ok());
+        assert!(fs::write(base.join("tree").join("sub").join("f"), "x").is_ok());
+        let (file, tree, missing) = (base.join("file"), base.join("tree"), base.join("none"));
+        assert_eq!(remove_stale(&[&file, &tree, &missing]), Ok(()));
+        assert!(!file.exists() && !tree.exists());
+        let busy = base.join("busy");
+        if let Some(locked) = undeletable(&busy) {
+            assert!(fs::write(&file, "x").is_ok());
+            let r = remove_stale(&[&busy, &file]);
+            assert!(r.as_ref().is_err_and(|e| e.contains("remove ")), "{r:?}");
+            assert!(!file.exists(), "later paths are still removed");
+            unlock(&locked);
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stale_output_that_cannot_be_removed_still_writes_e2e_json() {
+        let base = std::env::temp_dir().join(format!("xtask-web-ci-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let out = base.join("out");
+        assert!(fs::create_dir_all(&out).is_ok());
+        let Some(locked) = undeletable(&out.join("site")) else {
+            let _ = fs::remove_dir_all(&base);
+            return; // root can remove anything
+        };
+        // An earlier run's results claim a pass; a stale reporter file does too.
+        assert!(
+            fs::write(
+                out.join("e2e.json"),
+                "{\"results\": {\"e2e.web.a\": \"pass\"}}\n"
+            )
+            .is_ok()
+        );
+        assert!(fs::write(out.join("web-e2e.tsv"), "e2e.web.a\tpass\n").is_ok());
+        // The repo has no apps/web: nothing may run, and the stale error comes first.
+        let r = ci(&base.join("repo"), &out);
+        assert!(r.as_ref().is_err_and(|e| e.starts_with("remove ")), "{r:?}");
+        assert_eq!(
+            fs::read_to_string(out.join("e2e.json")).ok().as_deref(),
+            Some("{\"results\": {}}\n")
+        );
+        unlock(&locked);
         let _ = fs::remove_dir_all(&base);
     }
 
