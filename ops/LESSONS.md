@@ -79,6 +79,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
 
+- A second-reviewer major saying "not proven" → state the limitation and file an issue; don't build enforcement
+  tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major every round,
+  9 to 14). See ops/proposals/review-round-cap.md ([journal](journal/2026-11-22.md), PR #151).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
