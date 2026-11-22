@@ -51,9 +51,11 @@ chmod +x "$work/bin/gh"
 
 T="🤖 jpdf-agent"
 U="https://github.com/jacobdam/jpdf3"
-c() { # c ID USER CREATED UPDATED BODY [PATH]  -> one issue comment object
+O="https://github.com/jacobdam/jpdf4"   # another repo of the same owner
+c() { # c ID USER CREATED UPDATED BODY [PATH] [REPO URL]  -> one issue comment object
   jq -n -c --arg id "$1" --arg u "$2" --arg c "$3" --arg up "$4" --arg b "$5" --arg p "${6:-issues/7}" \
-    '{html_url: ("'"$U"'/" + $p + "#issuecomment-" + $id), issue_url: "api", user: {login: $u},
+    --arg base "${7:-$U}" \
+    '{html_url: ($base + "/" + $p + "#issuecomment-" + $id), issue_url: "api", user: {login: $u},
       created_at: $c, updated_at: $up, body: $b}'
 }
 
@@ -93,7 +95,8 @@ c() { # c ID USER CREATED UPDATED BODY [PATH]  -> one issue comment object
   c 118 jacobdam "$(at $((14 * 86400 + 120)))" "$(at $((14 * 86400 + 120)))" "2 min past WARN_DAYS" ; echo ','
   c 119 jacobdam "$(d 3)"  "$(at 3600)" "handled, then edited after the done reply" ; echo ','
   c 120 jacobdam "$(d 3)"  "$(d 2)"  "edited, then handled" ; echo ','
-  c 121 jacobdam "$(d 3)"  "$(at 129600)" "handled, edited, handled again"
+  c 121 jacobdam "$(d 3)"  "$(at 129600)" "handled, edited, handled again" ; echo ','
+  c 122 jacobdam "$(d 2)"  "$(d 2)"  "post-floor, URL on another repo, done names that URL" issues/7 "$O"
   echo ']['
   c 201 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-104
 waiting on owner: nothing" ; echo ','
@@ -110,7 +113,8 @@ $T done: $U/issues/7#issuecomment-109" ; echo ','
   c 211 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-119" ; echo ','
   c 212 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-120" ; echo ','
   c 213 jacobdam "$(d 2)" "$(d 2)" "$T done: $U/issues/7#issuecomment-121" ; echo ','
-  c 214 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-121"
+  c 214 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-121" ; echo ','
+  c 215 jacobdam "$(d 1)" "$(d 1)" "$T done: $O/issues/7#issuecomment-122"
   echo ']'
 } >"$work/fx/comments.json"
 
@@ -122,16 +126,19 @@ rc() { # rc ID CREATED BODY [USER] [UPDATED]
 { echo '['; rc 301 "$(d 2)" "handled inline note"; echo ','; rc 302 "$(d 2)" "unhandled inline note"; echo ',';
   rc 303 "$(d 2)" "stranger inline" mallory; echo ',';
   rc 304 "$(d 40)" "pre-floor inline, edited 3 days ago" jacobdam "$(d 3)"; echo ',';
-  rc 305 "$(d 40)" "pre-floor inline, not edited"; echo ']'; } >"$work/fx/rcomments.json"
+  rc 305 "$(d 40)" "pre-floor inline, not edited"; echo ',';
+  rc 306 "$(d 2)" "$T agent inline note"; echo ']'; } >"$work/fx/rcomments.json"
 
 echo '[{"number":5},{"number":6}]' >"$work/fx/prs.json"
-rv() { # rv ID SUBMITTED BODY [STATE]
-  jq -n -c --arg id "$1" --arg s "$2" --arg b "$3" --arg st "${4:-COMMENTED}" \
+rv() { # rv ID SUBMITTED BODY [STATE] [USER]
+  jq -n -c --arg id "$1" --arg s "$2" --arg b "$3" --arg st "${4:-COMMENTED}" --arg u "${5:-jacobdam}" \
     '{html_url: ("'"$U"'/pull/5#pullrequestreview-" + $id), pull_request_url: "api/5", state: $st,
-      user: {login: "jacobdam"}, submitted_at: $s, body: $b}'
+      user: {login: $u}, submitted_at: $s, body: $b}'
 }
 { echo '['; rv 401 "$(d 2)" "handled review"; echo ','; rv 402 "$(d 2)" ""; echo ',';
-  rv 405 "$(d 20)" "post-floor review, 20 days, unhandled"; echo ']'; } >"$work/fx/reviews-5.json"
+  rv 405 "$(d 20)" "post-floor review, 20 days, unhandled"; echo ',';
+  rv 406 "$(d 2)" "stranger review" CHANGES_REQUESTED mallory; echo ',';
+  rv 407 "$(d 2)" "$T agent review"; echo ']'; } >"$work/fx/reviews-5.json"
 { echo '['; rv 403 "$(d 2)" "unhandled review on PR 6"; echo ']['; rv 404 "$(d 2)" "second page review"; echo ']'; } \
   >"$work/fx/reviews-6.json"
 
@@ -163,6 +170,9 @@ show issues/7#issuecomment-1080 "done for ...-108 does not handle ...-1080"
 show issues/7#issuecomment-109 "done: on a later line does not count"
 hide pull/9#issuecomment-110 "done followed by a period"
 show issues/7#issuecomment-111 "done naming another repo does not count"
+has_o() { jq -e --arg u "$O/issues/7#issuecomment-122" 'select(.url == $u)' "$work/out" >/dev/null; }
+has_o && ok "shown: another repo's URL named by a done reply (the repo part of the done pattern)" \
+  || bad "missing: another repo's URL named by a done reply (the repo part of the done pattern)"
 show issues/7#issuecomment-112 "owner comment quoting the tag mid-body is an instruction"
 hide issues/7#issuecomment-113 "stranger comment"
 hide issues/7#issuecomment-114 "agent comment"
@@ -170,6 +180,9 @@ hide issues/7#issuecomment-201 "the done reply itself"
 hide pull/5#discussion_r301 "handled review comment"
 show pull/5#discussion_r302 "unhandled review comment"
 hide pull/5#discussion_r303 "stranger review comment"
+hide pull/5#discussion_r306 "agent-tagged review comment"
+hide pull/5#pullrequestreview-406 "stranger review"
+hide pull/5#pullrequestreview-407 "agent-tagged review"
 hide pull/5#pullrequestreview-401 "handled review"
 hide pull/5#pullrequestreview-402 "review with an empty body"
 show pull/5#pullrequestreview-403 "unhandled review on a second PR"
