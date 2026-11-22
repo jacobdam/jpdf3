@@ -44,8 +44,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
   the session's shell) ([journal](journal/2026-11-21.md), PR #59).
 
-- The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, even in a heredoc writing markdown →
-  write such files with Write/Edit. Never `cat > file` without a heredoc (it waits on stdin until the 2 min
+- The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, or names a gh comment/issue command
+  (it tries to parse it as a CLI write), even in a heredoc or python script writing markdown →
+  write such files with Write/Edit ([journal](journal/2026-11-22.md), PR #178). Never `cat > file` without a heredoc (it waits on stdin until the 2 min
   timeout) ([journal](journal/2026-11-21.md), PR #104).
 - Posting review text with `gh pr comment` (TICK §4) → the guard scans the whole command, so the terminal-multiplexer
   name in a commit message or a python one-liner, a push command naming main, or `gh repo`/admin-merge text in a body
