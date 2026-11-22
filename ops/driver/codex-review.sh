@@ -164,6 +164,7 @@ TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
 run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
   "$CODEX" exec \
   --ignore-user-config --ignore-rules --ephemeral --strict-config \
+  -m gpt-6.2-sol -c model_reasoning_effort=high \
   --disable apps --disable plugins --disable shell_snapshot --disable hooks \
   --disable computer_use --disable browser_use --disable browser_use_external \
   --disable in_app_browser --disable image_generation \
