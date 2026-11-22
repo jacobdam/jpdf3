@@ -1,5 +1,7 @@
 # Proposal: guard text rules skip inert gh post text only in a single plain gh command
 
+**Applied** by the owner in PR #145 (noted by audit 0003); kept as the design record.
+
 Status: proposed by the session for owner issue #124, 2026-11-21; revised after review rounds 1
 to 4 on PR #129. Touches `.claude/hooks/guard.py` (protected, CONSTITUTION 12). Diff ready to
 apply: [`guard-inert-post-text/guard.diff`](guard-inert-post-text/guard.diff) (against main 4ce8115).

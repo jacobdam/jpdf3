@@ -1,5 +1,7 @@
 # Proposal: stop finished sessions, and detect usage limits from the result line only
 
+**Applied** by the owner in PR #144 (noted by audit 0003); kept as the design record.
+
 Status: proposed for owner issue #125, 2026-11-21, revised after one TICK §4 review round. Touches
 `ops/driver/driver.sh` (protected), so the owner applies it with a signed commit. The unprotected
 part (a TICK §0 rule) ships in the same PR as this proposal.

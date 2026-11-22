@@ -1,5 +1,7 @@
 # Proposal: Codex as a second reviewer (trial), Opus review unchanged
 
+**Applied** by the owner in PR #147 (noted by audit 0003); kept as the design record.
+
 Status: proposed by the owner's interactive session, 2026-11-21; revised after six TICK §4 review
 rounds (see "Review record" at the end). Touches protected paths (`CONSTITUTION.md`,
 `ops/driver/`, `.claude/settings.json`, `.claude/hooks/`), so the owner applies it with signed

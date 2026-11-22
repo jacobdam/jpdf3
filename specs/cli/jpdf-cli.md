@@ -141,8 +141,10 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
 packed into a sorted `Vec` of 12-byte records (newest entry per object number); the stored
 trailer keeps only the first usable `/Root` and `/Size` (at most 2 entries, since #109); the
-page-tree walk keeps at most one parsed object alive (catalog and `/Pages` are dropped once
-their references are extracted). The full peak-memory model, with every term and a reserve,
+page-tree walk keeps at most one uncached parsed object alive. Since #107 the resolve cache
+(specs/core/resolve-cache.md) keeps every resolved object that fits
+`max_retained_bytes_per_document`, so the catalog, `/Pages` and the kid dictionaries can stay
+alive for the whole walk, within that budget. The full peak-memory model, with every term and a reserve,
 is specs/core/memory-budget.md.
 Measured before #109 lowered the defaults (Linux, release, real `ulimit -v 2097152` as in the
 judge): every adversarial file
