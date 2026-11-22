@@ -173,8 +173,10 @@ pub trait Jpeg2000Decoder {
 /// (specs/core/decode-work-limits.md).
 pub trait Jbig2Decoder {
     /// Decodes the page. `globals` is the decoded `/JBIG2Globals` stream, if any. The caller
-    /// decodes `input` and `globals` within one [`crate::ImageInputBudget`], so together they
-    /// hold at most `max_decoded_bytes_per_stream` (specs/core/memory-budget.md, #168).
+    /// decodes `input` and `globals` within one [`crate::ImageInputBudget`], so the buffers it
+    /// allocates for them hold at most `max_decoded_bytes_per_stream` together. That bounds the
+    /// caller's buffers, not the slice lengths: an input borrowed from the file bytes is not
+    /// charged and may be longer (specs/core/memory-budget.md, #168).
     fn decode(
         &self,
         input: &[u8],
