@@ -21,9 +21,10 @@ const PARSE_ONLY: [&str; 5] = [
     "jpdf-traits",
 ];
 
-/// Names that start a decode or raster phase through jpdf-traits: the decode and raster limit
-/// builders, the scene check, and the backend traits.
-const PHASE_ENTRY_POINTS: [&str; 15] = [
+/// Names that start a decode or raster phase through jpdf-traits: the decode, raster and font
+/// limit builders, the scene check, and the backend traits that produce bulk output (codecs,
+/// image decoders, ciphers, fonts, the rasterizer).
+const PHASE_ENTRY_POINTS: [&str; 22] = [
     "decode_limits",
     "DecodeLimits",
     "raster_limits",
@@ -39,20 +40,32 @@ const PHASE_ENTRY_POINTS: [&str; 15] = [
     "CcittDecoder",
     "FontEngine",
     "FontFace",
+    "Type1Parser",
+    "font_limits",
+    "FontLimits",
+    "Deflate",
+    "Cipher",
+    "rc4",
+    "aes_cbc",
 ];
 
-/// Source directories of the allowed crates other than jpdf-traits (which defines the names).
+/// Package roots of the allowed crates other than jpdf-traits (which defines the names). The
+/// whole root is scanned (not only `src`), so a module loaded with `#[path]` from elsewhere
+/// in the package is seen too; `target` directories and this file are skipped.
 const SCANNED: [&str; 4] = [
-    "src",
-    "../../crates/jpdf-engine/src",
-    "../../crates/jpdf-cos/src",
-    "../../crates/jpdf-syntax/src",
+    ".",
+    "../../crates/jpdf-engine",
+    "../../crates/jpdf-cos",
+    "../../crates/jpdf-syntax",
 ];
 
 fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.is_dir() {
+            if path.file_name().is_some_and(|n| n == "target") {
+                continue;
+            }
             rust_files(&path, out)?;
         } else if path.extension().is_some_and(|x| x == "rs") {
             out.push(path);
@@ -75,8 +88,12 @@ fn parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens() 
             .any(|f| f.ends_with("jpdf-syntax/src/lexer.rs")),
         "{files:?}"
     );
+    let this = root.join("tests").join("phase_gate.rs");
     let mut hits = Vec::new();
-    for f in &files {
+    for f in files
+        .iter()
+        .filter(|f| f.canonicalize().ok() != this.canonicalize().ok())
+    {
         let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
         for name in PHASE_ENTRY_POINTS {
             if text.contains(name) {
@@ -89,6 +106,32 @@ fn parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens() 
         "{hits:?}: a decode or raster phase on the jpdf-cli path needs the #146 gate \
          (specs/core/memory-budget.md) first; then update this test"
     );
+}
+
+/// The allowed crates declare no features and no optional dependencies, so no feature a
+/// workspace-wide build turns on (feature unification) can add a dependency to the jpdf-cli
+/// graph that the `cargo tree` check below doesn't see.
+#[test]
+fn parse_crates_declare_no_features_until_the_146_gate_opens() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for dir in SCANNED
+        .iter()
+        .copied()
+        .chain(std::iter::once("../../crates/jpdf-traits"))
+    {
+        let manifest = root.join(dir).join("Cargo.toml");
+        let text = std::fs::read_to_string(&manifest).expect("manifest is readable");
+        assert!(text.contains("[package]"), "{}", manifest.display());
+        for word in ["features", "optional"] {
+            assert!(
+                !text.contains(word),
+                "{} mentions `{word}`: a feature or optional dependency could bring a decode or \
+                 raster phase onto the jpdf-cli path; the #146 gate (specs/core/memory-budget.md) \
+                 comes first, then update this test",
+                manifest.display()
+            );
+        }
+    }
 }
 
 #[test]

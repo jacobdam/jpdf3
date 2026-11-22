@@ -143,9 +143,12 @@ the 2 GiB unused.
   - **Tripwire:** tools/jpdf-cli/tests/phase_gate.rs fails, naming #146, as soon as jpdf-cli's
     normal or build dependency graph (`cargo tree` with every feature and every target) holds
     any crate beyond the parse-only set (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax,
-    jpdf-traits), or the sources of jpdf-cli, jpdf-engine, jpdf-cos or jpdf-syntax name a
-    decode or raster entry point (the jpdf-traits limit builders, `check_scene`, the backend
-    traits, `inflate`, `FlateDecode`). A PR that brings a phase onto the path must satisfy the
+    jpdf-traits); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
+    jpdf-syntax package (not only `src`; `target` and the test file itself skipped) name a
+    decode or raster entry point (the decode, raster and font limit builders, `check_scene`,
+    the codec, image, cipher, font and rasterizer traits and methods, `inflate`, `FlateDecode`);
+    or one of the five manifests mentions `features` or `optional` (so workspace feature
+    unification can't add a dependency the graph check misses). A PR that brings a phase onto the path must satisfy the
     gate and update the test. **Limit:** the graph check sees crates, not phases, and the name
     scan is a text search: a decoder written inside an allowed crate under another name passes
     both. Review against the gate covers that case.
@@ -334,8 +337,9 @@ per allocation counted by `retained_cost`, which already walks the object once.
 
 ## Tests
 - tools/jpdf-cli/tests/phase_gate.rs: `jpdf_cli_links_only_parse_crates_until_the_146_gate_opens`,
-  `parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens` (new, #146; the
-  gate's tripwire).
+  `parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens`,
+  `parse_crates_declare_no_features_until_the_146_gate_opens` (new, #146; the gate's
+  tripwire).
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,
