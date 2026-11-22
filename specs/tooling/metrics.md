@@ -12,14 +12,16 @@ its numbers from a command instead of counting by hand (#91, retro 0001). This i
 CI failures by job and a JSON summary are part 2 (#219).
 
 - **Period.** `--since` and `--until` are UTC calendar dates, both inclusive. `--until`
-  defaults to today (UTC, from the system clock). `--since` defaults to the committer date of
+  defaults to today (UTC, from the system clock). `--since` defaults to the UTC committer date of
   the commit that added the last `docs/retros/NNNN.md` (exact four-digit name, so
   `0000-pilot.md` doesn't count) on the first-parent history; with no retro record, or one
-  dated after `--until`, to `--until` minus 7 days. An explicit `--since` after `--until` is a
-  usage error.
+  dated after `--until`, to `--until` minus 7 days. An explicit `--since` after `--until`
+  (given or defaulted) is a usage error.
 - **Inputs.** It runs only read commands, from the current directory (the repo root):
-  1. `git log --first-parent --no-renames --format=@@%H%x09%cs%x09%s --numstat --summary origin/main`
-     → `raw/git-log.txt` (it reads the local `origin/main`, so `git fetch` first);
+  1. `git log --first-parent --no-renames --format=@@%H%x09%ct%x09%s --numstat --summary origin/main`
+     → `raw/git-log.txt` (it reads the local `origin/main`, so `git fetch` first). `%ct` is
+     Unix seconds, so a commit's day is its UTC day; `%cs` would use the committer's own time
+     zone, and some commits on main are `+0700` (PR #220 R1.1);
   2. the driver's session index: `--index FILE`, default `ops/logs/index.tsv`. The file is
      git-ignored and exists only in the main checkout, so a session in a worktree passes the
      main checkout's path. A missing file means no session data, and the report says so
@@ -38,7 +40,7 @@ CI failures by job and a JSON summary are part 2 (#219).
   report, also printed on stdout). `--out` defaults to `target/metrics`. Exit **0** on success,
   **1** when a command fails or an input doesn't parse, **2** on a usage error.
 - **Report sections** (every count is for the period unless it says otherwise):
-  1. *Throughput:* merges on main (first-parent commits whose committer date is in the period;
+  1. *Throughput:* merges on main (first-parent commits whose UTC committer date is in the period;
      main merges by squash, so one commit is one PR, plus any direct owner commit); lines added
      and deleted by them, leaving out every `Cargo.lock` and `package-lock.json` and everything
      under `tools/arlington/data/` (lockfiles and generated data, TICK §0 sizing rule; binary
@@ -53,7 +55,7 @@ CI failures by job and a JSON summary are part 2 (#219).
      - Headers are read from the first line only. Rounds: the highest K in a
        `**AI review, round K` header on that PR. K counts across PRs for one issue (TICK §4),
        so a replacement PR can start above 1.
-     - Final check: a `**AI review, round 5 (final check)` header.
+     - Final check: a `**AI review, round 5 (final check)` header (round 5 only, TICK §4 step 6).
      - Findings: lines in review comments (`**AI review, round K` or
        `**AI review (second reviewer), round K` headers) that start with `R<K>.<n> [<severity>]`
        (subagent) or `S<K>.<n> [<severity>]` (second reviewer), severity one of blocker, major,
@@ -92,8 +94,10 @@ Not applicable (read-only report; delete `--out` to undo).
   a tool printing more than 16 MiB or non-UTF-8 text, a missing required input file, a JSON
   document that doesn't parse or lacks a required field (`number`, `mergedAt`, `closedAt`,
   `createdAt`; a comment without a string `body` is skipped), a `git log` line that doesn't
-  follow the fixed format, an output file that can't be written.
-- Index rows that don't have exactly four tab-separated fields (a valid stamp, an integer exit
+  follow the fixed format (including a commit time before 1970 or after 9999-12-31), an output
+  file that can't be written.
+- Index rows that don't have exactly four tab-separated fields (a valid stamp, with a real date
+  and a time up to 23:59:59, an integer exit
   code, a session id, a `<seconds>s` duration) are skipped and counted in the report
   ("malformed rows"), since the driver appends to the file and a crash can leave a partial line.
 
@@ -102,8 +106,8 @@ Not applicable (read-only report; delete `--out` to undo).
   `ci macos`); past the cap the command is killed and the run fails. Boundary: the helper's own
   tests in xtask/src/macos.rs.
 - JSON nesting is capped at 128 (xtask/src/json.rs).
-- `gh` lists are capped at 1000 entries and report truncation. Boundary test: a list with
-  999 entries isn't flagged, one with exactly 1000 is.
+- `gh` lists are capped at 1000 entries and report truncation. Boundary test, for each of the
+  three lists: 999 entries aren't flagged, exactly 1000 are.
 - Arithmetic: counts and line sums use `saturating_add`, durations are `u64` seconds summed
   with `saturating_add`; dates become day numbers in `i64` from years 1–9999 only. No input
   value can panic: every index is checked and every parse returns an error or skips the row.
@@ -125,8 +129,9 @@ control characters and U+2028/U+2029 turned into spaces, so a title can't break 
     restatements (`R1.1 fixed: …`) or a triage line would double-count; the tests include
     both, and they must not add findings. A round counter that read triage headers would pass
     if the triage K were never higher, so the tests give a triage header a higher K than any
-    review header. A period filter off by one day is caught by PRs, sessions and issues dated
-    exactly on `--since`, exactly on `--until`, and one day outside each.
+    review header. A period filter off by one day is caught by merges, PRs, sessions and closed
+    issues dated on the first and last second of the period and one second outside each end
+    (a commit at 23:59:59 UTC on `--until` stands for one dated the next day in UTC+7).
   - What the tests can't see: `gh`'s own pagination and search semantics (the `merged:` and
     `closed:` ranges); a live run is checked by hand before review and recorded in the PR.
 
@@ -143,13 +148,15 @@ list` fetching comments.
 
 ## Tests
 - Unit tests in xtask/src/metrics.rs: date parsing and day arithmetic (leap years, invalid
-  dates, year bounds), option parsing, git log parsing (excluded paths, binary files, record
-  additions, the default `--since`), index rows (malformed rows skipped and counted, period
-  edges), review parsing (tag check, header on the first line only, round K from review headers
-  only, final check, finding IDs counted once, restatements and audit IDs ignored, regrades),
-  the period filter for PRs and issues, stuck ages, lag counts, truncation at exactly 1000, and
+  dates, year bounds), option parsing (including `--since` after the default `--until`), git
+  log parsing (UTC days from `%ct`, time bounds, excluded paths, binary files, record additions,
+  the default `--since`), index rows (malformed rows, impossible times included, skipped and
+  counted; period edges), review parsing (tag check, header on the first line only, round K from review headers
+  only, final check in round 5 only, finding IDs counted once, restatements and audit IDs ignored, regrades),
+  the period filter for merges, PRs and closed issues, stuck ages, lag counts, truncation at
+  exactly 1000 for each list, and
   escaping of titles.
 - xtask/tests/metrics.rs runs `cargo xtask metrics --from <fixture>` end to end: the report's
   numbers for xtask/tests/fixtures/metrics/, the default `--since`, `--index`, no `raw/` with
   `--from`, exit 1 (malformed and missing `prs.json`) and exit 2 (an impossible date, `--since`
-  after `--until`, a flag without its value, an unknown flag).
+  after a given or the default `--until`, a flag without its value, an unknown flag).
