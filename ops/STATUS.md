@@ -13,8 +13,8 @@ Phase: bootstrap (pilot)
   - Follow-ups: #154 (enforce the gate structurally), #156 (sev:medium, M10: what closes #146; non-main arena
     sub-heaps). #146 stays open (the cross-phase build-up).
   - The owner also commented `/halt` on PR #151. It isn't a defined command (no `halt` label, no `ops/HALT`).
-- **PR #157 (#155, owner issue): draft, #155 `blocked`, `ai-review` = failure on fee5f2a, waiting for the owner.**
-  It applies review convergence (ADR 0010) to TICK §4. Its own final check found R5.1; the fix (fee5f2a) is
+- **PR #157 (#155, owner issue): draft, #155 `blocked`, `ai-review` = failure on 6e799c2, waiting for the owner.**
+  It applies review convergence (ADR 0010) to TICK §4. Its own final check found R5.1; the fix (fee5f2a, plus a one-line wording fix in 6e799c2) is
   unreviewed. Options are posted on #155 and PR #157. Act only on an owner comment on either: accept, run one more
   final check, or change.
 
