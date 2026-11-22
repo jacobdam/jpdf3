@@ -59,6 +59,43 @@ const SCANNED: [&str; 4] = [
     "../../crates/jpdf-syntax",
 ];
 
+/// Backend method calls, matched as call syntax (`.render(`) so prose and unrelated functions
+/// with the same word don't match. The receiver's type may be inferred (a factory's result), so
+/// only the call shows that a backend runs.
+const PHASE_METHOD_CALLS: [&str; 9] = [
+    ".decode(",
+    ".render(",
+    ".outline(",
+    ".inflate(",
+    ".deflate(",
+    ".rc4(",
+    ".aes_cbc(",
+    ".glyph_by_name(",
+    ".cmap_lookup(",
+];
+
+/// Every entry-point name and backend method call in `text`.
+fn phase_names_in(text: &str) -> Vec<&'static str> {
+    PHASE_ENTRY_POINTS
+        .iter()
+        .chain(PHASE_METHOD_CALLS.iter())
+        .copied()
+        .filter(|name| text.contains(name))
+        .collect()
+}
+
+#[test]
+fn phase_scan_sees_method_calls_on_inferred_receivers() {
+    let src = "let (r, l) = backends::renderer();\nlet out = r\n    .render(&scene, &l);";
+    assert_eq!(phase_names_in(src), vec![".render("]);
+    assert_eq!(
+        phase_names_in("let d = make(); d.decode(data)"),
+        vec![".decode("]
+    );
+    // Prose naming the word without a call is not flagged.
+    assert!(phase_names_in("// we render the page later").is_empty());
+}
+
 fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
@@ -98,10 +135,8 @@ fn parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens() 
         .filter(|f| f.canonicalize().ok() != this.canonicalize().ok())
     {
         let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-        for name in PHASE_ENTRY_POINTS {
-            if text.contains(name) {
-                hits.push(format!("{} names {name}", f.display()));
-            }
+        for name in phase_names_in(&text) {
+            hits.push(format!("{} names {name}", f.display()));
         }
     }
     assert!(
