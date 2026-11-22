@@ -43,9 +43,13 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
   case, and the other terms are large buffers. All three non-binary items (stacks, arena,
   fragmentation) are placeholders until the resource-limit harness (#25) measures them. One
   fragmentation case on today's path: cached objects sit in the brk heap between buffers the
-  same parse freed as its containers grew. Later allocations reuse those holes only if they
-  fit, so the stranded bytes are bounded by the cached container bytes (at most `retained`),
-  not by 96 MiB. #25 must measure this with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
+  same parse freed as its containers, strings and names grew. Those holes add up to at most
+  the cached buffer bytes (at most `retained`, 256 MiB), which alone exceeds the 96 MiB
+  item. They don't add to the peak, though: they are sub-threshold chunks, glibc splits a free
+  chunk to serve any smaller request, and every later parse makes only sub-threshold
+  allocations (up to 2^20 × 272 = 272 MiB, more than the holes). So the heap high-water mark
+  stays near the larger of the holes and one parse, inside the parse term. #25 must confirm
+  this with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
   thread arena before trimming it, and a busy thread arena grows in 64 MiB sub-heaps that can
   strand unused tails. So #114 must either keep large allocations off the engine thread's
   arena (glibc serves requests above the mmap threshold, at most 32 MiB, with their own
@@ -150,7 +154,11 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     14). 4 194 305 is refused with the limit error before any entry is read. Across two
     subsections, 1 + 4 194 303 passes the count check and 1 + 4 194 304 is refused.
   - `default_canvas_limit_is_exact` (raster.rs): `check_scene` with `RasterLimits::default()`
-    passes 2^23 pixels (4096 × 2048 and 2^23 × 1) and refuses 2^23 + 1. The parameterized
+    passes 2^23 pixels (4096 × 2048 and 2^23 × 1) and refuses 2^23 + 1.
+  - `default_working_bytes_limit_is_exact` (raster.rs): a 4096 × 2048 canvas with 15 layers
+    is exactly 512 MiB and passes; one more clip is refused.
+  - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
+    with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.
   - `default_objects_per_parse_limit_is_exact` (xref.rs): with the default limits, an array
     plus 2^20 - 1 integers (2^20 objects) parses and one integer more is refused.
@@ -162,7 +170,9 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     defaults. The 64 MiB margin means a small increase to one term fails the test before it
     eats into the reserve.
 - `MemoryBudget::of` and `alloc_bytes` use saturating arithmetic (`u64`), so loose caller limits
-  (e.g. `usize::MAX`) give `u64::MAX`, never an overflow
+  (e.g. `usize::MAX`) give `u64::MAX` (`alloc_bytes` rounds the saturated value down to
+  0xFFFF_FFFF_FFFF_FFF0; unreachable, since a capacity never exceeds `isize::MAX`), never an
+  overflow
   (`loose_limits_saturate_every_term` calls `of` with every contributing field at its type
   maximum, all at once and one at a time; `peak_is_persistent_plus_largest_phase_plus_reserve`
   saturates `peak`; `alloc_bytes_follow_glibc_chunks` saturates `alloc_bytes`).
@@ -185,7 +195,8 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
     of two, so a dropped or double-counted term and a wrong phase choice both show up.
     Still passing: a formula that reads an extra field only through a `max` that doesn't bind
     at the defaults (e.g. `raster.max(max_canvas_pixels)`); lowering that field by one changes
-    nothing (checked by hand mutation). `reserve_is_itemized` pins each reserve item. `alloc_bytes_follow_glibc_chunks` pins the
+    nothing (checked by hand mutation). `reserve_is_itemized` pins each reserve item.
+    `alloc_bytes_follow_glibc_chunks` pins the
     minimum, header and rounding at their boundaries (24 → 32, 25 → 48). A budget that is
     wrong because the *model* misses a structure can't be caught by these tests. The
     "requirements on future code" list and the review of each new structure cover that.
@@ -228,7 +239,8 @@ per allocation counted by `retained_cost`, which already walks the object once.
   `parse_object_bytes_bound_real_objects`, `trailer_with_duplicate_keys_is_trimmed_to_two_entries`,
   `alloc_bytes_follow_glibc_chunks`, `retained_cost_counts_every_allocation` (new literals).
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^23 pixels pass with
-  the default limits, 2^23 + 1 fail).
+  the default limits, 2^23 + 1 fail), `default_working_bytes_limit_is_exact`.
+- crates/jpdf-engine/tests/open.rs: `page_limit_boundary_opens_at_the_limit`.
 - crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now uses
   `check_scene`'s full formula and pins 512 MiB working bytes and 2^23 canvas pixels;
   `per_parse_objects_hold_a_flat_page_tree` (a flat `/Kids` of `max_pages` references plus

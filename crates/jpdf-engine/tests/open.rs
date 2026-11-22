@@ -290,6 +290,19 @@ fn file_size_limit_is_enforced() {
     );
 }
 
+/// At the page limit the document opens; `page_limit_is_enforced` is the one-past side.
+#[test]
+fn page_limit_boundary_opens_at_the_limit() {
+    let limits = Limits {
+        max_pages: 5,
+        ..Limits::default()
+    };
+    assert_eq!(
+        Document::open(&minimal_pdf(5), &limits).map(|d| d.page_count()),
+        Ok(5)
+    );
+}
+
 #[test]
 fn page_limit_is_enforced() {
     let pdf = minimal_pdf(5);
