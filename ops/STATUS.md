@@ -30,7 +30,7 @@ Phase: bootstrap (pilot)
      #132, #134, #136, #137 (low).
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115.
-   - #14 closes after #55 and #70; #20 after #61; #22 after #64.
+   - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - **Next retro (rule h): by 2026-11-28.** Inputs:
   - review rounds: PR #121 took 4, PR #142 took 6 and PR #151 took 14+. Rule c's 3-attempt cap isn't applied to
     review rounds. Decide a cap, and when a second reviewer's majors may be deferred.
