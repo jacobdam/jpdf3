@@ -233,8 +233,9 @@ Each round K runs in this order:
      passes after it, both runs recorded in the triage line; a false statement: the corrected
      text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
      reproduce);
-   - "the post-cap diff" is your own changes since round 4: `git show <c>` for each non-merge
-     commit since round 4's commit, plus `git show --remerge-diff <m>` for each merge commit
+   - "the post-cap diff" is your own changes since round 4: `git show <c>` for each commit in
+     `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
+     merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
      (it shows only what you changed while merging, conflict resolutions included);
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
      regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
