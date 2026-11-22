@@ -119,7 +119,7 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   state in every round, 5 in a row ([journal](journal/2026-11-22.md), PR #157). In a design ADR, do it for every
   counter, "once a day" bound and fallback, and for the loops each fix adds: PR #239's majors in rounds 2 to 4 were
   states its own earlier fixes created ([journal](journal/2026-11-22.md), PR #239). The same goes for prose about
-  a cache or CI mechanism (exact hit, miss, failed run, eviction, PR scope): PR #241 drew one major per round on it.
+  a cache or CI mechanism (exact hit, miss, failed run, eviction, PR scope): PR #241 drew a major on it in each of rounds 1–3.
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
