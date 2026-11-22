@@ -31,7 +31,7 @@ Phase: bootstrap (pilot)
   - review rounds: ADR 0010 (merged in #157, 2026-11-22); the retro checks its first numbers.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - the template's `Area:` list lacks `tooling`.
-  - ops/TICK.md:204 still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
+  - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
