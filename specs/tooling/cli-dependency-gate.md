@@ -39,6 +39,11 @@ bypassed; owner instruction, step 2).
   - `control_a_real_graph_outside_the_list_is_reported`: the same command on `xtask` reports
     `xtask`, `jpdf-arlington` and `jpdf-testgen`, and not the allowed `jpdf-fsio`.
   - `control_cargo_tree_failure_is_an_error`: an unknown `-p` package is `cargo tree failed`.
+  - `control_flags_reach_features_other_targets_and_build_edges`: the same command on a
+    fixture workspace written under `CARGO_TARGET_TMPDIR` (lockfile from `cargo
+    generate-lockfile --offline`) lists a feature-gated optional dependency of a second root, a
+    `cfg(windows)` dependency and a build-dependency; from the first root alone the optional one
+    is not listed (why the gate takes every allowed crate as a root).
   - Parser and checker cases on synthetic lines: path, registry and git lines; each rejected
     shape; every allowed crate at its path passes; each kind of outsider is exactly one
     violation; one outsider among the six allowed crates is reported by name.
@@ -59,7 +64,7 @@ Test failures only: the violation lines (`<name> (<source>): not a parse-only cr
 <stderr>`.
 
 ## Limits
-None of its own; it runs one `cargo tree` per test (about 40 ms).
+None of its own; each graph test runs one `cargo tree` (about 40 ms), the fixture control a `cargo generate-lockfile` and two (about 150 ms).
 
 ## Security
 - Threat: a decode or raster backend reaching the jpdf-cli binary while #146 is open, so the
@@ -70,7 +75,12 @@ None of its own; it runs one `cargo tree` per test (about 40 ms).
   - **Code, not packages:** the gate sees crates, not what is in them. Decode or raster code
     written inside an allowed crate (`jpdf-syntax`, `jpdf-engine`, …) passes. `jpdf-traits`
     holds the decoder and rasterizer traits and the conformance suites that drive them; its
-    toy decoders are `#[cfg(test)]` only. Review is the check for that case.
+    toy decoders are `#[cfg(test)]` only. The same holds for code that an allowed crate
+    compiles from outside its directory, which `cargo tree` doesn't show: a manifest
+    `[lib] path`, `[[bin]] path` or `build = …` pointing into another crate's sources, or
+    `#[path = …] mod` and `include!` in source (round 1, R1.1; no workspace crate sets a target
+    path today). Review is the check for these cases; checking each allowed package's target
+    source paths from `cargo metadata` is #235.
   - Edge kinds: dev-dependencies are not on the binary's path and are not checked
     (`jpdf-cli` uses `jpdf-testgen` in its tests). Checked by hand-made mutants on this PR's
     branch: an optional `jpdf-filters` dependency behind a `jpdf-engine` feature fails
@@ -78,10 +88,10 @@ None of its own; it runs one `cargo tree` per test (about 40 ms).
     `cfg(windows)` dependency and a build-dependency of `jpdf-cli` on `jpdf-render` fail both
     graph tests with a `not a parse-only crate` line (the lockfile was updated first, so the
     failure was not `--locked`).
-  - Flags no test pins today: no allowed crate has features and no dependency is limited to a
-    target, so dropping `--all-features` or `--target all` from the command still passes every
-    test. Without them the mutants above pass too (checked with `cargo tree` on the mutated
-    manifests: `jpdf-filters` and `jpdf-render` are listed only with the flag).
+  - The command's flags: no allowed crate has features or a target-limited dependency today,
+    so the graph tests alone would pass without `--all-features`, `--target all` or the `build`
+    edge kind. `control_flags_reach_features_other_targets_and_build_edges` pins all three on a
+    fixture workspace (dropping any one of them fails it; checked by hand on this branch).
 - What the tests can't see: `--offline` needs every lockfile package's sources downloaded.
   Today the lockfile has no registry packages; once it has, CI builds the workspace before
   running tests, so they are present. A local run without them fails with `cargo tree failed`
@@ -99,6 +109,8 @@ About 40 ms per graph test locally.
 ## Tests
 `tools/jpdf-cli/tests/dependency_gate.rs`: `cli_graph_is_parse_only`,
 `cli_graph_is_exactly_the_allowed_set`, `control_a_real_graph_outside_the_list_is_reported`,
-`control_cargo_tree_failure_is_an_error`, `parser_reads_path_registry_and_git_lines`,
-`parser_rejects_unknown_shapes_and_empty_output`, `checker_accepts_every_allowed_crate_at_its_path`,
-`checker_rejects_each_kind_of_outsider`, `checker_reports_one_outsider_among_allowed_crates`.
+`control_cargo_tree_failure_is_an_error`, `control_flags_reach_features_other_targets_and_build_edges`,
+`synthetic::parser_reads_path_registry_and_git_lines`,
+`synthetic::parser_rejects_unknown_shapes_and_empty_output`,
+`synthetic::checker_accepts_every_allowed_crate_at_its_path`, `synthetic::checker_rejects_each_kind_of_outsider`,
+`synthetic::checker_reports_one_outsider_among_allowed_crates`.

@@ -271,7 +271,8 @@ fn control_flags_reach_features_other_targets_and_build_edges() {
 }
 
 // Parser and checker cases on synthetic output: each one should-fail case has a near miss that
-// must pass.
+// must pass. `#[cfg(test)]` is what lets clippy's allow-unwrap-in-tests (clippy.toml) cover the
+// helpers here, which are not `#[test]` functions.
 #[cfg(test)]
 mod synthetic {
     use super::*;
