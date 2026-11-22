@@ -206,15 +206,28 @@ impl<'a> XrefDocument<'a> {
     }
 }
 
-/// Fixed cost of one cache entry beyond the object itself: the `Arc` counters (two `usize`) and
-/// the map's key and pointer, doubled for B-tree node slack (nodes are at least half full).
+/// Fixed cost of one cache entry in the map: the key and the `Arc` pointer (16 bytes) in a
+/// B-tree node at least 5/11 full, plus internal nodes and the node's allocator header (about
+/// 54 bytes; specs/core/memory-budget.md).
 const CACHE_ENTRY_OVERHEAD: u64 = 64;
 
-/// Bytes a cached object keeps alive: the entry overhead, the root `Object` inside its `Arc`,
-/// and every heap allocation below it, by capacity (what the allocator really holds).
+/// Bytes the allocator really holds for a heap allocation of `n` bytes. This is glibc's
+/// malloc on 64-bit Linux, where the judge runs: an 8-byte header, rounded up to 16, at least
+/// 32 bytes. A 1-byte name costs 32, not 1 (specs/core/memory-budget.md, #109).
+fn alloc_bytes(n: u64) -> u64 {
+    if n == 0 {
+        return 0;
+    }
+    n.saturating_add(8 + 15).max(32 + 15) & !15
+}
+
+/// Bytes a cached object keeps alive: the entry overhead, the `Arc` allocation holding the
+/// root `Object` and its two counters, and every heap allocation below it, by capacity, as
+/// allocator chunks.
 fn retained_cost(o: &Object) -> u64 {
+    let arc = size_u64(size_of::<Object>()).saturating_add(16);
     CACHE_ENTRY_OVERHEAD
-        .saturating_add(size_u64(size_of::<Object>()))
+        .saturating_add(alloc_bytes(arc))
         .saturating_add(heap_bytes(o))
 }
 
@@ -223,15 +236,17 @@ fn retained_cost(o: &Object) -> u64 {
 /// larger stack frames than this one.
 fn heap_bytes(o: &Object) -> u64 {
     match o {
-        Object::String(s) | Object::Name(s) => size_u64(s.capacity()),
+        Object::String(s) | Object::Name(s) => alloc_bytes(size_u64(s.capacity())),
         Object::Array(items) => items.iter().fold(
-            size_u64(items.capacity()).saturating_mul(size_u64(size_of::<Object>())),
+            alloc_bytes(size_u64(items.capacity()).saturating_mul(size_u64(size_of::<Object>()))),
             |sum, item| sum.saturating_add(heap_bytes(item)),
         ),
         Object::Dict(d) => d.0.iter().fold(
-            size_u64(d.0.capacity()).saturating_mul(size_u64(size_of::<(Vec<u8>, Object)>())),
+            alloc_bytes(
+                size_u64(d.0.capacity()).saturating_mul(size_u64(size_of::<(Vec<u8>, Object)>())),
+            ),
             |sum, (k, v)| {
-                sum.saturating_add(size_u64(k.capacity()))
+                sum.saturating_add(alloc_bytes(size_u64(k.capacity())))
                     .saturating_add(heap_bytes(v))
             },
         ),
@@ -673,23 +688,44 @@ mod tests {
         assert!(!doc.cache.borrow().contains_key(&obj(1)));
     }
 
-    /// The cost is the entry overhead, the root node, and every heap allocation by capacity.
+    /// glibc chunk sizes: 8-byte header, 16-byte rounding, 32-byte minimum; no allocation is
+    /// free. Literals, so a cheaper model shows up as a test change.
+    #[test]
+    fn alloc_bytes_follow_glibc_chunks() {
+        let cases = [
+            (0, 0),
+            (1, 32),
+            (24, 32),
+            (25, 48),
+            (40, 48),
+            (41, 64),
+            (100, 112),
+        ];
+        for (n, chunk) in cases {
+            assert_eq!(alloc_bytes(n), chunk, "{n} bytes");
+        }
+        assert_eq!(alloc_bytes(u64::MAX), 0xFFFF_FFFF_FFFF_FFF0);
+    }
+
+    /// The cost is the entry overhead, the `Arc` chunk, and every heap allocation by capacity,
+    /// as allocator chunks. All literals (64-bit: `Object` is 32 bytes, a dictionary slot 56).
+    #[cfg(target_pointer_width = "64")]
     #[test]
     fn retained_cost_counts_every_allocation() {
-        let node = size_u64(size_of::<Object>());
-        let entry = size_u64(size_of::<(Vec<u8>, Object)>());
-        // A literal, so lowering the per-entry overhead shows up as a test change.
-        let base = 64 + node;
+        // 64 for the map entry + the 48-byte `Arc` allocation as a 64-byte chunk.
+        let base = 128;
         assert_eq!(retained_cost(&Object::Integer(7)), base);
         assert_eq!(retained_cost(&Object::Null), base);
         let mut s = Vec::with_capacity(100);
         s.extend(b"abc");
-        assert_eq!(retained_cost(&Object::String(s)), base + 100);
-        assert_eq!(retained_cost(&Object::Name(b"Type".to_vec())), base + 4);
+        assert_eq!(retained_cost(&Object::String(s)), base + 112);
+        // A 4-byte name is a minimum (32-byte) chunk.
+        assert_eq!(retained_cost(&Object::Name(b"Type".to_vec())), base + 32);
         let mut items = Vec::with_capacity(3);
         items.push(Object::Integer(1));
         items.push(Object::Name(b"xy".to_vec()));
-        assert_eq!(retained_cost(&Object::Array(items)), base + 3 * node + 2);
+        // 3 slots (96 bytes, a 112-byte chunk) + the name (32).
+        assert_eq!(retained_cost(&Object::Array(items)), base + 112 + 32);
         let dict = Object::Dict(Dict(vec![
             (
                 b"K".to_vec(),
@@ -697,7 +733,9 @@ mod tests {
             ),
             (b"LL".to_vec(), Object::Ref(obj(1))),
         ]));
-        assert_eq!(retained_cost(&dict), base + 2 * entry + 1 + (node + 2) + 2);
+        // 2 slots (112 bytes, a 128-byte chunk), key K (32), a 1-slot array (32 bytes, a
+        // 48-byte chunk), its string (32), key LL (32).
+        assert_eq!(retained_cost(&dict), base + 128 + 32 + 48 + 32 + 32);
 
         // Spare capacity counts everywhere: the dictionary buffer, keys and names (the parser
         // grows them by pushing, so real ones usually have some).
@@ -707,13 +745,14 @@ mod tests {
         name.extend(b"Nm");
         let mut entries = Vec::with_capacity(5);
         entries.push((key, Object::Name(name)));
+        // 5 slots (280 bytes, a 288-byte chunk), key (32), name (32).
         assert_eq!(
             retained_cost(&Object::Dict(Dict(entries))),
-            base + 5 * entry + 10 + 20
+            base + 288 + 32 + 32
         );
-        let mut name = Vec::with_capacity(9);
+        let mut name = Vec::with_capacity(40);
         name.push(b'N');
-        assert_eq!(retained_cost(&Object::Name(name)), base + 9);
+        assert_eq!(retained_cost(&Object::Name(name)), base + 48);
     }
 
     #[test]

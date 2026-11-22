@@ -372,9 +372,12 @@ mod tests {
 
     #[test]
     fn default_raster_limits_fit_the_memory_budget() {
-        // A full-size canvas with 4 layers and 32 clips stays within the working bytes.
+        // A full-size canvas (4 bytes per pixel) with 4 soft-masked layers (5 each), 32 clips
+        // (1 each) and one canvas-sized image (4 per pixel) stays within the working bytes:
+        // 2^23 x 60 = 480 MiB. This is `check_scene`'s formula, `pixels x (4 + S) + 4 x I`.
         let r = RasterLimits::default();
-        assert!(r.max_canvas_pixels * (4 * (1 + 4) + 32) <= r.max_working_bytes);
+        let px = r.max_canvas_pixels;
+        assert!(px * (4 + 4 * 5 + 32) + 4 * px <= r.max_working_bytes);
         // A quarter of the 2 GiB process budget (jpdf_syntax::MemoryBudget checks the sum).
         assert_eq!(r.max_working_bytes, 512 * 1024 * 1024);
         // The canvas default: 2^23 pixels, e.g. a 4096 x 2048 tile.

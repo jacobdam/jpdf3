@@ -1,7 +1,7 @@
 # Process memory budget
 
 Area: engine
-ISO 32000-2 clauses: §7.5.4 (cross-reference table), §7.3.10 (indirect objects)
+ISO 32000-2 clauses: §7.5.4 (cross-reference table), §7.3.10 (indirect objects), §7.7.3.2 (page tree)
 Journeys: none (no UI; protects every journey that opens a large or hostile file)
 Status: implemented
 
@@ -15,59 +15,88 @@ This adds `jpdf_syntax::MemoryBudget` (crates/jpdf-syntax/src/budget.rs). It is 
 memory one document may reach under a set of `Limits`. The default limits must fit in
 `PROCESS_BUDGET_BYTES` (2 GiB) and leave room for the reserve. It lives in jpdf-syntax because
 that crate owns the types whose sizes the formula multiplies (the xref `Entry` and
-`Object`).
+`Object`). Today only its tests use it. The resource-limit harness (#25) is the intended
+consumer.
 
 **Model.** Peak = persistent terms + the largest phase + `RESERVE_BYTES` (256 MiB).
 
 | Term | Kind | Formula | Default |
 |---|---|---|---|
-| file | persistent | `max_file_size` (the CLI reserves exactly the file size) | 512 MiB |
-| retained | persistent | `max_retained_bytes_per_document` | 256 MiB |
+| file | persistent | `max_file_size` (the CLI reserves exactly the file size; see #141) | 512 MiB |
+| retained | persistent | `max_retained_bytes_per_document`, charged as allocator chunks | 256 MiB |
 | xref table | persistent | `max_xref_entries × size_of::<Entry>() (12) × 3` | 144 MiB |
 | spans | persistent | `(max_xref_entries + max_xref_sections) × SPAN_ENTRY_BYTES (64)` | 256.06 MiB |
-| parse | phase | `(max_objects_per_parse × size_of::<(Vec<u8>, Object)>() (56) + max_string_bytes_per_parse) × 3` | 512.4 MiB |
+| page walk | persistent | `max_pages × PAGE_WALK_BYTES (48)` | 45.78 MiB |
+| parse | phase | `(max_objects_per_parse × size_of::<(Vec<u8>, Object)>() (56) + max_string_bytes_per_parse) × 3` | 512.43 MiB |
 | decode | phase | `max_decoded_bytes_per_stream + max_decode_working_bytes` | 512 MiB |
 | raster | phase | `max_raster_working_bytes` | 512 MiB |
-| reserve | fixed | binary, thread stacks, allocator metadata and fragmentation | 256 MiB |
+| reserve | fixed | itemized below | 256 MiB |
 
-Peak at the defaults: 1168.06 + 512.4 + 256 = 1936.5 MiB, which leaves about 111 MiB of the
-2 GiB unused.
+Peak at the defaults: 1213.84 + 512.43 + 256 = 1982.27 MiB, which leaves about 65.7 MiB of
+the 2 GiB unused.
 
+- **Reserve, itemized** (`reserve_is_itemized`): binary and fixed mappings 64 MiB; thread
+  stacks 32 MiB (main 8 MiB plus the engine thread, #114); one glibc thread arena 64 MiB
+  (glibc reserves a 64 MiB heap region for each thread other than the main one, and
+  `RLIMIT_AS` counts it); fragmentation and small bookkeeping 96 MiB. Per-allocation chunk
+  overhead is **not** in the reserve. Each term already charges it (retained) or bounds it
+  with its factor (the others).
+- **Retained is real memory.** The resolve cache charges every allocation as a glibc chunk:
+  an 8-byte header, rounded up to 16, at least 32 bytes (`alloc_bytes`,
+  specs/core/resolve-cache.md). Before #109 a dictionary of one-byte entries was charged
+  72 bytes per entry while glibc held 120.
 - **Growth factor 3.** A `Vec` grown by pushing holds up to twice its length. While it
   reallocates, the old buffer (one length) and the new one (two lengths) are both alive. The
   xref table's stable sort runs after the growth, and its scratch buffer is at most one length,
   so it fits in the same factor.
 - **Spans.** `XrefDocument` records one byte span per xref section and per resolved object in a
   `BTreeMap<usize, usize>`. Resolve goes through the entry table, so there is at most one
-  object span per entry. A std B-tree leaf is a 192-byte node holding up to 11 pairs. A split
-  leaves at least 5 pairs per node. Mostly ascending inserts leave the left halves at 5.
-  Internal nodes add up to 48 bytes per leaf. That makes 48 bytes per span; 64 allows for
-  allocator rounding.
+  object span per entry. A std B-tree leaf is a 192-byte node holding up to 11 pairs. Nothing
+  is removed, and a split leaves at least 5 pairs in each half, so every leaf holds at least
+  5 whatever the insertion order. Internal nodes add a geometric sum of about 58 bytes per
+  leaf. That makes about 50 bytes per span, about 54 with glibc chunk headers; 64 leaves room
+  above that.
+- **Page walk.** `jpdf_cos::flat_page_count` keeps the kid references (8 bytes each, collected
+  by doubling: up to 24) and a duplicate-check `HashSet` with capacity for every kid (at most
+  16/7 buckets per kid at 9 bytes each, about 21) while it resolves each kid. That overlaps
+  the parse phase, so it is persistent. The `/Pages` node itself is dropped once the kid
+  references are extracted.
 - **Parse.** Each produced object costs at most one dictionary slot (56 bytes on 64-bit,
   which is larger than an array slot of 32). String and name bytes are decoded into growing
-  buffers. Parsing keeps one top-level object alive at a time; a finished object is either
-  dropped or moved into the resolve cache, which charges it to `retained`.
+  buffers.
 - **Phases run one at a time.** A document parses an object, decodes a stream or renders a
-  tile, never two at once, so only the largest phase counts. The model is per process with one
-  document and one job at a time. That is what the judge runs. A front end that renders
-  several pages or documents in parallel must divide the budgets among them (future work in
-  `jpdf-render` and the bindings).
+  tile, never two at once, so only the largest phase counts. What a phase produces and is
+  still alive in a later phase must be charged to `retained` (see the requirements). The model
+  is per process with one document and one job at a time. That is what the judge runs. A
+  front end that renders several pages or documents in parallel must divide the budgets among
+  them (future work in `jpdf-render` and the bindings).
 
 **New defaults** (lowered; CONSTITUTION 4 forbids only raising):
 - `max_xref_entries` 10 000 000 → 4 194 304 (2^22). The old value alone cost 360 MiB for the
   table and 640 MiB for the spans. 4M objects is far above real documents: a 512 MiB file with
   that many objects averages 128 bytes per object.
 - `max_raster_working_bytes` 1 GiB → 512 MiB.
-- `max_canvas_pixels` 2^24 → 2^23 (e.g. a 4096 × 2048 tile), so a full tile with 4 layers and
-  32 clips still fits: 2^23 × (4 × 5 + 32) = 416 MiB ≤ 512 MiB
-  (`default_raster_limits_fit_the_memory_budget`). The engine renders larger views in tiles.
+- `max_canvas_pixels` 2^24 → 2^23 (e.g. a 4096 × 2048 tile). A full tile with 4 soft-masked
+  layers, 32 clips and one canvas-sized image still fits. `check_scene`'s formula gives
+  2^23 × (4 + 4 × 5 + 32) + 4 × 2^23 = 480 MiB ≤ 512 MiB
+  (`default_raster_limits_fit_the_memory_budget`).
 
 **Requirements on future code** (the model holds only if they do):
-- `jpdf-filters`: a filter chain keeps at most one intermediate output alive while the next
-  stage runs. The decode term counts one 256 MiB intermediate output plus the decoder.
-- `jpdf-render`: decoded images a display list borrows are charged to `retained` (one counter
-  with every other cache, #138). The display list's own memory (commands, paths) is charged to
-  `retained` or kept within the raster phase.
+- **Phase outputs that outlive their phase are charged to `retained`, or rejected.**
+  `XrefDocument::resolve` returns an uncached `Arc` when the cache is full. A caller that keeps
+  it into another phase (a stream dictionary held while its stream decodes, a decoded content
+  stream held while it is interpreted and rendered) must charge it to `retained` (one counter,
+  #138) or drop it first. The current page walk drops every handle before the next resolve.
+- `jpdf-filters`: an output buffer never reallocates past the output cap. It reserves the cap
+  (or a known length) up front or writes in fixed chunks, so it never holds 1.5 × the cap
+  during a realloc. A stage drops its input before the next stage grows its output. The decode
+  term counts one 256 MiB intermediate output plus the image decoder's working bytes.
+- `jpdf-render` and rasterizer adapters: geometry memory that grows with input (flattened
+  edges, curve subdivision, dash output up to `max_path_segments`, the display-list commands)
+  counts within `max_raster_working_bytes`. `jpdf-render` passes the adapter the working-bytes
+  limit minus what its display list and geometry hold. Decoded images a display list borrows
+  are charged to `retained`.
+- `jpdf-render` picks tiles small enough that `check_scene` passes; it doesn't exist yet.
 - Font loading (program ≤ `max_font_program_bytes` 64 MiB plus face tables) stays below the
   decode phase. A cached face charges its program to `retained`.
 - Any new structure that grows with input gets its own term here, or is charged to an existing
@@ -82,8 +111,9 @@ Not applicable.
 ## Errors
 No new error. A file with more than 4 194 304 xref entries now fails with
 `LimitExceeded("cross-reference entries")` (CLI exit 2). A render target larger than 2^23
-pixels, or over 512 MiB of working bytes, fails with `BackendError::LimitExceeded`. The engine
-picks smaller tiles before it gets there.
+pixels, or over 512 MiB of working bytes, fails with `BackendError::LimitExceeded`.
+Objects are charged more to the resolve cache than before (allocator chunks), so fewer stay
+cached; past the budget they are re-parsed, with no error until the lexing budget runs out.
 
 ## Limits
 - Exact-boundary tests:
@@ -93,32 +123,42 @@ picks smaller tiles before it gets there.
     subsections, 1 + 4 194 303 passes the count check and 1 + 4 194 304 is refused.
   - The canvas and working-bytes checks (`check_scene`) keep their boundary tests in the
     raster suite. Those tests take the limit as a parameter, so the new defaults change no test.
+  - The retained-bytes boundary tests (`retained_budget_boundary_for_one_object`, at the cost
+    and one byte less) compute the cost with `retained_cost`, so they cover the chunk model.
   - `defaults_fit_the_process_budget_with_the_reserve`: peak + 64 MiB ≤ 2 GiB at the
     defaults. The 64 MiB margin means a small increase to one term fails the test before it
     eats into the reserve.
-- `MemoryBudget::of` uses saturating arithmetic (`u64`), so loose caller limits (e.g.
-  `usize::MAX`) give `u64::MAX`, never an overflow (`peak_is_persistent_plus_largest_phase_plus_reserve`).
+- `MemoryBudget::of` and `alloc_bytes` use saturating arithmetic (`u64`), so loose caller limits
+  (e.g. `usize::MAX`) give `u64::MAX`, never an overflow
+  (`peak_is_persistent_plus_largest_phase_plus_reserve`, `alloc_bytes_follow_glibc_chunks`).
 
 ## Security
 - Threat: a hostile file that drives every limit to its maximum at once must not exhaust the
   address space (a crash). The model is a sum of upper bounds; it is conservative, not a
   measurement.
 - Self-check:
-  - Arithmetic: every product and sum in `MemoryBudget::of` is `saturating_*` on `u64`; the
-    inputs are limits, not file data, but loose caller limits could be huge.
-  - What broken formula still passes? Each term is pinned twice: `default_terms` pins every
-    term at the defaults as a literal, and `each_term_follows_its_fields` raises each
-    contributing field by one and checks that exactly the right term moves by the right amount.
-    A term that drops a field, uses the wrong field, the wrong factor or the wrong type size
-    fails one of them. `type_sizes_are_pinned` catches a change to `Entry` or the
+  - Arithmetic: every product and sum in `MemoryBudget::of` and `alloc_bytes` is `saturating_*`
+    on `u64`. The inputs are limits and capacities, not file data, but loose caller limits could
+    be huge.
+  - What broken formula still passes? Each term is pinned twice. `default_terms` pins every
+    term at the defaults as a literal. `each_term_follows_its_fields` lowers **every** `Limits`
+    field by one, and checks that exactly the right terms move by the right amounts and that
+    all other fields move nothing. Its exhaustive destructuring fails to compile when a field
+    is added. A term that drops a field, reads an extra field, or uses the wrong field, factor
+    or type size fails one of them. `type_sizes_are_pinned` catches a change to `Entry` or the
     dictionary slot. `peak_is_persistent_plus_largest_phase_plus_reserve` uses distinct powers
-    of two, so a dropped or double-counted term and a wrong phase choice both show up. A
-    budget that is wrong because the *model* misses a structure can't be caught by these
-    tests. That is what the reserve and the "requirements on future code" list are for.
+    of two, so a dropped or double-counted term and a wrong phase choice both show up.
+    Still passing: a formula that reads an extra field only through a `max` that doesn't bind
+    at the defaults (e.g. `raster.max(max_canvas_pixels)`); lowering that field by one changes
+    nothing (checked by hand mutation). `reserve_is_itemized` pins each reserve item. `alloc_bytes_follow_glibc_chunks` pins the
+    minimum, header and rounding at their boundaries (24 → 32, 25 → 48). A budget that is
+    wrong because the *model* misses a structure can't be caught by these tests. The
+    "requirements on future code" list and the review of each new structure cover that.
   - What the tests can't see: real allocation sizes (no counting allocator; a global
-    allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) measures the
-    real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans and growth factors
-    are reasoned from std's B-tree layout and `Vec` doubling, not measured.
+    allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) is meant to
+    measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,
+    page-walk and growth factors are reasoned from std's B-tree, hash set and `Vec` layouts,
+    not measured.
 - Known gap: `read_capped` in jpdf-cli reserves the size from `stat`. A file that grows
   during the read (below `max_file_size`) makes `read_to_end` double the buffer, up to 3 ×
   `max_file_size` at the realloc peak. It needs a local attacker who can write to the file
@@ -128,17 +168,21 @@ picks smaller tiles before it gets there.
 Not applicable.
 
 ## Platforms
-`type_sizes_are_pinned` and `default_terms` run on 64-bit targets only. On wasm32 the pointer
-and `Vec` sizes are smaller, so every term is smaller and the budget still fits.
-`defaults_fit_the_process_budget_with_the_reserve` runs on every target.
+`type_sizes_are_pinned`, `default_terms`, `each_term_follows_its_fields` and
+`retained_cost_counts_every_allocation` run on 64-bit targets only. On wasm32 the pointer and
+`Vec` sizes are smaller, so every term is smaller and the budget still fits.
+`defaults_fit_the_process_budget_with_the_reserve` runs on every target. The chunk model is
+glibc's; macOS and wasm allocators differ, but neither runs under the judge's limit.
 
 ## Performance
-No runtime cost: `MemoryBudget` is computed in tests and by tools.
+No runtime cost for `MemoryBudget` (tests only). `alloc_bytes` adds a few integer operations
+per allocation counted by `retained_cost`, which already walks the object once.
 
 ## Tests
-- crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `default_terms`,
-  `defaults_fit_the_process_budget_with_the_reserve`, `each_term_follows_its_fields`,
-  `peak_is_persistent_plus_largest_phase_plus_reserve`.
-- crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`.
-- crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now pins
-  512 MiB working bytes and 2^23 canvas pixels.
+- crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
+  `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
+  `each_term_follows_its_fields`, `peak_is_persistent_plus_largest_phase_plus_reserve`.
+- crates/jpdf-syntax/src/xref.rs: `default_entry_limit_is_exact`,
+  `alloc_bytes_follow_glibc_chunks`, `retained_cost_counts_every_allocation` (new literals).
+- crates/jpdf-traits/src/limits.rs: `default_raster_limits_fit_the_memory_budget` now uses
+  `check_scene`'s full formula and pins 512 MiB working bytes and 2^23 canvas pixels.
