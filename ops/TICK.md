@@ -120,7 +120,7 @@ still come first). Do these in order, one per session:
    - `cargo clippy --workspace --all-targets --locked -- -D warnings`
    - `cargo nextest run --workspace --locked`
    - plus whatever `cargo xtask` checks touch your change
-4. **PR:** `gh pr create --draft -t "..." -b "🤖 jpdf-agent ..."` early. The final description links the issue, spec and ADRs,
+4. **PR:** `gh pr create --draft -t "..." -b "🤖 jpdf-agent ..."` early. The final description says `Closes #<issue>`, links the spec and ADRs,
    and **explains any change to an existing test assertion**. Mark it ready when local checks pass.
 
 ## 4. Independent review (required)
@@ -163,8 +163,9 @@ whose behavior it changes):
 **Round 1 is a full review; rounds 2 and later are delta reviews.** Tell a delta reviewer to check
 that each fix in the ledger works, that the fix diff adds no blocker or major, and whether each
 dispute or regrade holds. On lines the fix diff doesn't touch, it reports blockers only.
-It must give each regrade and dispute in the ledger one line, `<ID>: regrade accepted` or
-`<ID>: rejected, stays <grade>`; a missing line counts as rejected. A rejected regrade or
+It must give each regrade and dispute in the ledger one line: `<ID>: regrade accepted`,
+`<ID>: dispute accepted` (the finding is dropped) or `<ID>: rejected, stays <grade>`; a missing
+line counts as rejected. A rejected regrade or
 dispute is final: you can't regrade or dispute that finding again.
 
 **Codex second opinion (trial, ops/proposals/codex-second-reviewer.md):** for PRs touching
@@ -184,8 +185,10 @@ stand alone and cite repo-relative paths only, with no preamble or header: one l
 
 **Post every review on the PR** (owner, #124), so the owner can read it without the session log.
 K = 1 + the highest K in an `AI review, round K` header already on the PR **or on any earlier PR
-for the same issue**, else 1 (a resumed or replacement PR continues; `gh pr list --state all
---search "<issue number>"` finds them).
+for the same issue**, else 1 (a resumed or replacement PR continues). Every task PR body says
+`Closes #<issue>`, so `gh pr list --state all --search '"Closes #<issue>" in:body'` finds them.
+**K ≥ 5, or any round after a final check, is the owner's call:** run no review round until an
+owner comment on the PR or issue says what to run.
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
@@ -211,8 +214,9 @@ Each round K runs in this order:
      issue (`deferred: #N`). A deferred security finding gets its `sev:*` label from the ADR 0009
      table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
-     input, say) is never deferred: it is fixed in the PR, or dropped only when a reviewer
-     accepts a dispute or regrade saying it isn't real.
+     input, say) is never deferred once it reproduces: it is fixed in the PR. If a reviewer
+     accepts a dispute that it isn't real, it is dropped. If a reviewer accepts a regrade because
+     it didn't reproduce, file it as a `sev:high` issue with the attempt, so rule d picks it up.
    - **Fix only what was found.** Answer "not proven" by stating the limitation in the text.
      Never build new enforcement tooling (scanners, tripwires, extra checkers) in answer to a
      finding: file an issue for it.
@@ -227,16 +231,19 @@ Each round K runs in this order:
      passes after it, both runs recorded in the triage line; a false statement: the corrected
      text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
      reproduce);
-   - if round 4 had no blocker or major, post `ai-review`. Otherwise, if the fix diff since
+   - if nothing changed since round 4's commit and no blocker or major from any round is open,
+     disputed or regraded without a ruling, post `ai-review`. Otherwise, if the diff since
      round 4's commit adds ≤ 100 lines and no new file, one **final check** runs (header
-     `AI review, round 5 (final check)`): a fresh reviewer gets that fix diff, the round-4
-     findings with their triage, and the rubric. It confirms that each fix closes its finding,
-     rules on each dispute and regrade (one line each, as in a delta round), and reports any
-     blocker or major the fix diff adds;
+     `AI review, round 5 (final check)`): a fresh reviewer gets that diff, the ledger entries
+     for every finding fixed, disputed or regraded since round 4's commit, the rubric and
+     CONSTITUTION.md. It confirms that each fix closes its finding, rules on each dispute and
+     regrade (one line each, as in a delta round), and reports any blocker or major the diff
+     adds;
    - **anything** the final check reports (a fix that doesn't close its finding, a rejected
      dispute or regrade, a new blocker or major), or a fix diff over the size limit: turn the
      PR back into a draft (`gh pr ready N --undo`), label the issue `blocked`, comment the
-     ledger on it, post `ai-review` with `state=failure`, and leave the decision to the owner;
+     ledger on it, post `ai-review` with `state=failure`, and leave the decision to the owner
+     (see K ≥ 5 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
 
 Mechanics (the guard wants one simple command with the text inline, no files):
