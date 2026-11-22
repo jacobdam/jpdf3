@@ -29,7 +29,7 @@ Status: implemented
    writers remain: engine tests that need hand-placed or broken sections (incremental updates,
    `/Prev` chains, overlapping objects or sections) write those files or sections inline, and
    the unit tests in `crates/jpdf-syntax/src/xref.rs` keep a private writer (`file`,
-   `with_xref`). Seeds are generated, never committed: CONSTITUTION 18
+   `with_xref`) and write some hand-placed or broken sections inline. Seeds are generated, never committed: CONSTITUTION 18
    keeps PDFs out of the repo except minimized repros in `tests/regress/`. `fuzz/corpus/` and
    `fuzz/artifacts/` are git-ignored.
 4. **`cargo xtask fuzz [--short] [--seconds N] [--target NAME]`** writes the seeds into
