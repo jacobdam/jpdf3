@@ -222,16 +222,18 @@ working memory) and give up mostly speed (retained), the largest images (output 
     image path a stage grows its output in chunks, never reserving the cap speculatively: a
     stage reserved at the whole allowance that wrote less leaves the rest of the chain nothing.
     A length the file declares (`/DL`) is an untrusted hint, not a known length (a stream can
-    declare `/DL 134217728` and decode to ten bytes). Only a size the engine computed and
-    checked against the limits may be reserved up front: the final stage's decoded image size
-    in bytes, ceil(width × components × bits per component / 8) × height (rows padded to whole
-    bytes; computed with checked arithmetic), after the image limits. A chunked output that
-    must become one slice is copied into a buffer whose length the caller charges with `charge` **before allocating it**, alongside
-    the chunks still alive (any capacity beyond the request is charged right after, and the
-    buffer dropped if that doesn't fit); each chunk is released once dropped. That buffer is
-    the stage's output and is already charged by its capacity, with no spare capacity, so the
-    caller doesn't pass it to `charge_output` (that would charge it twice and refuse later
-    stages early);
+    declare `/DL 134217728` and decode to ten bytes). Only a size the engine computed and checked
+    against the limits may be reserved up front, and only for a stage whose output is the image
+    samples themselves (no image filter after it, so never the Flate stage before `/JBIG2Decode` or
+    `/DCTDecode`, whose output is encoded data): the decoded image size in bytes, ceil(width ×
+    components × bits per component / 8) × height (rows padded to whole bytes; a PNG predictor stage
+    holds one more byte per row before it un-predicts), computed with checked arithmetic after the
+    image limits. A chunked output that must become one slice is copied into a buffer whose length
+    the caller charges with `charge` **before allocating it**, alongside the chunks still alive (any
+    capacity beyond the request is charged right after, and the buffer dropped if that doesn't fit);
+    each chunk is released once dropped. That buffer is the stage's output and is already charged by
+    its whole capacity, so the caller doesn't pass it to `charge_output` (that would charge it twice
+    and refuse later stages early);
 
   So between stages every decoded buffer alive during the image decode is within the allowance.
   The copy that gives spare capacity back is inside the allowance too (#187): `charge_output`
@@ -397,15 +399,16 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     that never uses the budget (decodes globals with plain `decode_limits`), calls `charge`
     with a length instead of `charge_output`, or releases a buffer it still holds. No caller
     exists yet; the JBIG2 caller's review must check it (requirement above, #231).
-    `charge_output` (#187): hand mutants (charge the length, never copy, copy without the fit
-    check, copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to
-    release the old buffer or release its length, keep the old buffer after the copy, charge
-    the copy's whole capacity twice) each fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
-    or returns more capacity than asked for (std returns exactly the request). A failed
-    reservation keeps the old buffer and gives back the copy's charge; a larger one is kept and
-    its extra charged when that fits, else dropped with the copy's charge given back. Also still
-    passing: a mutant that leaks the old buffer (`mem::forget` instead of dropping it) while
-    releasing its charge, since no test can see an allocation (no counting allocator, below).
+    `charge_output` (#187): hand mutants (charge the length, never copy, copy without the fit check,
+    copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to release the
+    old buffer or release its length, keep the old buffer after the copy, charge the copy's whole
+    capacity twice) each fail at least one test. Not reached by any test: the paths where
+    `try_reserve_exact` fails or returns more capacity than asked for (std returns exactly the
+    request). A failed reservation keeps the old buffer and gives back the copy's charge; a larger
+    one is kept and its extra charged when that fits, else dropped with the copy's charge given
+    back. Also still passing: a mutant that leaks the old buffer (`mem::forget` instead of dropping
+    it) while releasing its charge, since no test can see an allocation (no counting allocator,
+    below).
   - What the tests can't see: real allocation sizes (no counting allocator; a global
     allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) is meant to
     measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,
