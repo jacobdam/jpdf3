@@ -134,7 +134,9 @@ test("the CSP blocks inline script and inline style", {
     (p) =>
       (p.startsWith("console error: ") &&
         /Content Security Policy|TrustedScript|TrustedHTML|Trusted Type/.test(p)) ||
-      /^csp violation: (script-src-elem|style-src-elem|require-trusted-types-for) /.test(p),
+      /^csp violation: ((script-src-elem|style-src-elem) inline|require-trusted-types-for trusted-types-sink)$/.test(
+        p,
+      ),
   );
   await page.goto("./");
   await expect(page.getByRole("heading", { level: 1, name: "jpdf" })).toBeVisible();

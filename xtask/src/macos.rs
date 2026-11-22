@@ -134,6 +134,19 @@ pub fn final_results(
     (results, errors)
 }
 
+/// `final_results`, then the known-ID check (`web::check_known_ids`) against the journeys'
+/// test IDs: what `ci` writes to `e2e.json`, and its errors in order.
+pub fn graded(
+    tests: Result<(), String>,
+    read: (BTreeMap<String, Status>, Vec<String>),
+    shipped: Result<(), String>,
+    known: Result<std::collections::BTreeSet<String>, String>,
+) -> (BTreeMap<String, Status>, Vec<String>) {
+    let (mut results, mut errors) = final_results(tests, read, shipped);
+    errors.extend(check_known_ids(&mut results, known));
+    (results, errors)
+}
+
 /// Checks a signed bundle's entitlements (`plutil -convert json` of `codesign -d
 /// --entitlements`): exactly `expected`, each `true`.
 pub fn check_entitlements(doc: &Value, expected: &[&str]) -> Result<(), String> {
@@ -277,12 +290,7 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
             // both, and before e2e.json is written, so its failure also turns every pass
             // into a fail.
             let shipped = check_release(&repo, &derived);
-            let (mut results, mut errors) = final_results(tests, read, shipped);
-            errors.extend(check_known_ids(
-                &mut results,
-                crate::specs::journey_test_ids(&repo),
-            ));
-            (results, errors)
+            graded(tests, read, shipped, crate::specs::journey_test_ids(&repo))
         }
         Err(e) => (BTreeMap::new(), vec![e]),
     };
@@ -581,6 +589,36 @@ mod tests {
         let (r, e) = final_results(Ok(()), read(&["unmapped"]), Ok(()));
         assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
         assert_eq!(e, ["unmapped"]);
+    }
+
+    #[test]
+    fn an_unknown_id_reports_no_pass() {
+        let read = || {
+            let mut r = BTreeMap::new();
+            r.insert("e2e.macos.a".to_owned(), Status::Pass);
+            r.insert("e2e.macos.app_start_empty".to_owned(), Status::Pass);
+            (r, Vec::new())
+        };
+        let known = |ids: &[&str]| Ok(ids.iter().map(|s| (*s).to_owned()).collect());
+        // Journey ID plus the harness ID: a clean run keeps its passes.
+        let (r, e) = graded(Ok(()), read(), Ok(()), known(&["e2e.macos.a"]));
+        assert!(e.is_empty(), "{e:?}");
+        assert!(r.values().all(|s| *s == Status::Pass));
+        // e2e.macos.a is in no journey: named, and no ID passes.
+        let (r, e) = graded(Ok(()), read(), Ok(()), known(&["e2e.macos.b"]));
+        assert_eq!(
+            e,
+            ["test ids that no journey lists and that are not harness ids: e2e.macos.a"]
+        );
+        assert!(r.values().all(|s| *s == Status::Fail));
+        // Journeys that can't be read: no pass, the error comes after the run's own.
+        let (r, e) = graded(err_s("test"), read(), Ok(()), Err("boom".to_owned()));
+        assert_eq!(e, ["test", "cannot read the journeys' test ids: boom"]);
+        assert!(r.values().all(|s| *s == Status::Fail));
+    }
+
+    fn err_s(e: &str) -> Result<(), String> {
+        Err(e.to_owned())
     }
 
     #[test]

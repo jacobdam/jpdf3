@@ -73,7 +73,8 @@ It has no backend and makes no network requests other than loading its own files
    listed in `xtask/src/web.rs` `HARNESS_IDS`). If any step, including the Playwright run,
    failed, an ID is unknown or the journeys can't be read, every `pass` is written as
    `fail`. The web part passes only if every step passed, every ID is known, at least one
-   test ID was reported and every reported ID is `pass`.
+   test ID was reported and every reported ID is `pass`. Every error is printed; the first
+   is the summary line.
 
 ## Persistence
 None. The skeleton stores nothing (no localStorage, IndexedDB or cookies).
@@ -131,8 +132,10 @@ tests:
   `apps/web/e2e/fixtures.ts`, which every test in `start-screen.spec.ts` imports) fails
   after its body on any console error or warning, uncaught error, CSP violation (also on a
   page the test navigated away from) or request outside the app's origin. The CSP test
-  allows only the CSP / Trusted Types console errors and `script-src-elem`,
-  `style-src-elem` and `require-trusted-types-for` violations it provokes;
+  allows only what it provokes: the CSP / Trusted Types console errors and the violations
+  `script-src-elem inline`, `style-src-elem inline` and
+  `require-trusted-types-for trusted-types-sink`. Not checked: that a new spec file using
+  `page` imports `test` from the fixture rather than from `@playwright/test` (#205);
 - dark appearance uses the dark palette, and an unfocused hover changes neither background
   nor shadow;
 - reduced motion leaves no transition on the button;
@@ -157,8 +160,9 @@ tests:
   any reporter passes today). The fixture probes (`fixture-*.probe.ts`, pages served by
   routing from the probe config's `origin`): a clean page exits 0 and reports `pass`
   (control); a CSP violation on the last page, a CSP violation on a page the test left
-  (both with every console message allowed, so the violation itself is what fails), and a
-  request to another host each exit non-zero and report `fail`.
+  (both with every console message allowed, so the violation itself is what fails), a
+  request to another host, a console warning, and an uncaught error in the page (with every
+  console message allowed) each exit non-zero and report `fail`.
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
 lines), a failed run downgrades every pass (and damaged results are an error and an empty set), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
 tree copy; known IDs (journey and harness IDs stand; one unknown ID, a near miss of a harness
@@ -170,7 +174,9 @@ journey test IDs come from `specs/journeys/*.md` only (not subdirectories or oth
 extensions), an unreadable file, a directory named `*.md` or a missing directory is an error,
 and the repository's journeys list no harness ID. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step
 writes a `pass` line writes it as `pass` when that step exits 0 and as `fail` when it exits 1,
-and when it also reports an ID no journey lists, both are written as `fail` and the run names it;
+and when it also reports an ID no journey lists, both are written as `fail` and the run names it
+(also when the step failed too: the failed step is the summary line, the unknown ID is printed
+after it);
 `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs;
 `ci linux` with stub `node`/`npm` on PATH and `npm_config_ignore_scripts=false` must call the

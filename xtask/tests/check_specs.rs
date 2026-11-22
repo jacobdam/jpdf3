@@ -339,7 +339,16 @@ fn ci_linux_writes_no_pass_when_playwright_fails() {
     let (err, json) = run_with("1");
     // Playwright exits 0, but one reported ID is in no journey (a typo in a tag): no pass.
     let (typo_err, typo_json) = run_lines("0", "e2e.web.a\\tpass\\ne2e.web.b\\tpass\\n");
+    // Both at once: the failed step is the summary, the unknown ID is still named.
+    let (both_err, _) = run_lines("1", "e2e.web.a\\tpass\\ne2e.web.b\\tpass\\n");
     let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        both_err.contains("xtask: web: step `e2e` failed")
+            && both_err.contains(
+                "xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b"
+            ),
+        "{both_err}"
+    );
     assert!(
         typo_err.contains(
             "xtask: web: test ids that no journey lists and that are not harness ids: e2e.web.b"

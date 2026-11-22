@@ -203,6 +203,8 @@ test.describe("a real Playwright run with the journey reporter", () => {
     ["fixture-csp-stay.probe", "a CSP violation on the last page"],
     ["fixture-csp-away.probe", "a CSP violation on a page left earlier"],
     ["fixture-foreign.probe", "a foreign request"],
+    ["fixture-console.probe", "a console warning"],
+    ["fixture-uncaught.probe", "an uncaught error in the page"],
   ] as const) {
     test(`the shared fixture fails a test on ${what}`, () => {
       const r = probe([file]);

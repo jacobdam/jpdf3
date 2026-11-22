@@ -252,17 +252,24 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
         e2e_json.display(),
         results.len()
     );
-    run?;
-    if let Some(e) = parse_err.or(id_err) {
-        return Err(e);
+    // Every error is printed; the first is the summary (as in `ci macos`).
+    let mut errors: Vec<String> = run
+        .err()
+        .into_iter()
+        .chain(parse_err)
+        .chain(id_err)
+        .collect();
+    if errors.is_empty() {
+        if results.is_empty() {
+            errors.push("Playwright reported no journey test ids".to_owned());
+        } else if let Some((id, s)) = results.iter().find(|(_, s)| **s != Status::Pass) {
+            errors.push(format!("{id}: {}", s.as_str()));
+        }
     }
-    if results.is_empty() {
-        return Err("Playwright reported no journey test ids".to_owned());
+    for e in errors.iter().skip(1) {
+        eprintln!("xtask: web: {e}");
     }
-    if let Some((id, s)) = results.iter().find(|(_, s)| **s != Status::Pass) {
-        return Err(format!("{id}: {}", s.as_str()));
-    }
-    Ok(())
+    errors.into_iter().next().map_or(Ok(()), Err)
 }
 
 /// Reads at most `MAX_RESULTS_BYTES` (+1 to detect overflow) in one pass; a missing file
