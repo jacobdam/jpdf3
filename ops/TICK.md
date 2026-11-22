@@ -55,7 +55,7 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   `--search '"Closes #<issue>" in:body'`): merged → post "done:"; open → work it under rule c;
   closed unmerged → the instruction is not done, resume it under rule a. A merge that closes an
   owner issue drops it from the feed (it lists open issues only), so §1 also lists recently closed
-  owner issues; post the missing "done:" on any of them.
+  owner issues; post the missing "done:" on any of them that has a "picked up" reply.
 
   The link is the URL exactly as GitHub gives it (`…#issuecomment-N`, `…#discussion_rN`,
   `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply. The proposed
@@ -94,8 +94,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 ```sh
 cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3
 ops/driver/owner-issues.sh
-# owner issues (untagged) closed in the last 14 days: each one opened from 2026-11-23 on needs a
-# "done:" reply from the agent (§0)
+# owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
+# "done:" reply needs the "done:" reply (§0)
 gh issue list --state closed --author jacobdam --search "closed:>=$(date -u -v-14d +%F)" \
   --json number,title,createdAt,body \
   --jq '.[] | select(.body | test("^\\s*🤖 jpdf-agent") | not) | [.number, .createdAt, .title] | @tsv'
