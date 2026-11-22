@@ -14,9 +14,9 @@ Phase: bootstrap (pilot)
     sub-heaps). #146 stays open (the cross-phase build-up).
   - The owner also commented `/halt` on PR #151. It isn't a defined command (no `halt` label, no `ops/HALT`).
 - **PR #157 (#155, owner issue): draft, #155 `blocked`, `ai-review` = failure on 6e799c2, waiting for the owner.**
-  It applies review convergence (ADR 0010) to TICK §4. Its own final check found R5.1; the fix (fee5f2a, plus a one-line wording fix in 6e799c2) is
-  unreviewed. Options are posted on #155 and PR #157. Act only on an owner comment on either: accept, run one more
-  final check, or change.
+  It applies review convergence (ADR 0010) to TICK §4. Its own final check found R5.1; the fix (fee5f2a, plus a
+  one-line wording fix in 6e799c2) is unreviewed. Options are posted on #155 and PR #157. Act only on an owner comment
+  on either: accept, run one more final check, or change.
 
 ## Last session
 - #155 / PR #157 (rule a): ADR 0010 + TICK §4 rewrite (rubric, delta reviews, a 4-round cap per issue, a final check).
@@ -24,7 +24,8 @@ Phase: bootstrap (pilot)
 - Before that: #146 / PR #151 (rule d), 15 rounds, now on owner `/hold`.
 
 ## Next step (suggested order, TICK letters)
-0. PR #151: wait for the owner's `/release`. PR #157: wait for an owner comment on #155 or PR #157. Don't touch either before.
+0. PR #151: wait for the owner's `/release`. PR #157: wait for an owner comment on #155 or PR #157. Don't touch
+   either before.
    Until #157 merges, TICK §4 on main is still the old loop, with no defined exit.
 1. **g: AUDIT is overdue**: 18+ merges since audit 0002. d is now empty apart from #146.
    - Security issues: high is #146 (in flight). Medium/low wait in M10: #114, #116, #117, #141, #156 (medium); #83, #122,
