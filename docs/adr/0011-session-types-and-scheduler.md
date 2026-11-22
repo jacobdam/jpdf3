@@ -53,7 +53,7 @@ is needed (no session grades its own work), or when outputs need a scope.
 | **QC** (run and break) | a spec newly `Status: implemented`; 5 product merges in one area since its last QC; untriaged fuzz or differential crashes; a milestone gate (replaces rule j's gate check) | the spec and journeys, the built binaries and public APIs; **not** PR discussions or implementation reasoning (black-box) | tests, fixtures, corpus manifests, fuzz targets; **no product code** | failing tests as `#[ignore = "<issue URL>"]` plus `bug`/`crash` issues (CONSTITUTION 14), or "no escape found" in the journal; an escape line per bug (§6) | one area or one gate per session |
 | **User advocate** | every 2nd audit slot (slots are numbered by the count of `docs/audits/NNNN.md` plus `docs/advocate/NNNN.md` records; an even next number is the advocate's), once a journey assigned to M4 or later passes on main | `docs/PRODUCT.md`, journeys, the running apps | `docs/advocate/NNNN.md`, screenshots (ours in `target/`, PDFgear's in `~/jpdf-research/`), `ux` issues, `docs/ux-scores.md` | findings sent to product or UI design | one per slot |
 | **Retro** | 7 days since the last retro, or an incident (TICK rule h) | `cargo xtask metrics`, per-area ratios (§4) | `docs/retros/NNNN.md`, at most 3 measured process changes, `ops/LESSONS.md` curation | the retro PR | weekly |
-| **Planner** | a milestone starts, 7 days since the last plan, the work-mix budget is breached (§3), or no `ready` issue has its dependencies met | the milestone's issues and dependencies, `ops/QUEUE.md`, PLAN §8, metrics | `ready`/`deferred` labels, milestone moves, new milestone issues from PLAN §8 and the journeys, `ops/QUEUE.md`; **the only gate into `ready`** besides the owner | `ops/QUEUE.md` (ordered ready list, critical path, work-mix reading) | at most once a day: it ran today if `ops/QUEUE.md` on origin/main or on the head of an open agent PR was committed today (UTC); if it ran today and nothing is ready, the scheduler prints "idle" and the session exits at once with no record |
+| **Planner** | a milestone starts, 7 days since the last plan, the work-mix budget is breached (§3), or no `ready` issue has its dependencies met | the milestone's issues and dependencies, `ops/QUEUE.md`, PLAN §8, metrics | `ready`/`deferred` labels, milestone moves, new milestone issues from PLAN §8 and the journeys, `ops/QUEUE.md`; **the only gate into `ready`** besides the owner | `ops/QUEUE.md` (ordered ready list, critical path, work-mix reading) | at most once a day: it ran today if a `Session: planner` record dated today (UTC) is on origin/main or on the head of an open agent PR (every Planner session writes one, in its `ops/QUEUE.md` PR or a records PR); if it ran today and nothing is ready, the scheduler prints "idle" and the session exits at once with no record |
 | **Gardener** | daily | labels and issues | mostly `cargo xtask garden` (§2); a session only for its judgement items | label fixes, closed duplicates, a docs-drift list | once a day, read from its `Session:` record (§3) |
 
 Mutation testing moves from the audit to QC. The dogfooding and completeness parts of the audit
@@ -97,10 +97,12 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   scheduler is broken: the session falls back to the legacy rules that TICK keeps for this case
   (today's rules b and c), then finds or files the `bug` issue titled
   `next-session: <first line of the error>` and fixes it as a Worker. Each failing session adds a
-  comment `failed again in session <time>` to that issue, except while an open PR for it exists
-  (rule c then works that PR); the issue is the persistent counter. At 3 such comments, the issue
-  gets `owner-todo`, and from then on sessions work only the legacy rules b and c and exit when
-  neither applies, until the owner's part is done.
+  comment `failed again in session <time>` to that issue; the issue is the persistent counter.
+  While an open PR links the issue, sessions add no comment and open no second PR: they work that
+  PR under rule c if it fails CI or review, else only the legacy rules a and b. At 3 such
+  comments, the issue gets `owner-todo`, and from then on sessions work only the legacy rules a,
+  b and c (rule a carries any owner comment on the issue) and exit when none applies, until the
+  owner's part is done.
 - **Transition.** Until task 1a (§9) merges, TICK rules a–j stay in force. From 1a until 1b,
   the scheduler decides steps 1–5 and prints `legacy` when none applies; the session then uses
   TICK rules g–j. Task 3 (which needs only 1a) adds step 6 ahead of that `legacy` exit. Each
@@ -111,18 +113,23 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   Process areas are the autonomy system itself: `area:process` (TICK, AUTOMATION, the
   scheduler, metrics, proposals) and `area:records`. **Until task 4 adds area labels**, a product
   merge is a merge that changes at least one file under `crates/`, `bindings/`, `apps/`,
-  `fuzz/` or `tools/jpdf-cli/` (the code that ships or is graded), whatever else it changes. Audit, QC and planner cadences count product merges only. The
-  7-day fallback still runs an audit in a week with none.
-- **Records go into the work PR.** The journal, STATUS and LESSONS update is committed to the
-  work PR before `ai-review` is posted, on the head commit that includes it (its `Result:` line
+  `fuzz/` or `tools/jpdf-cli/` (the code that ships or is graded), whatever else it changes.
+  Audit, QC and planner cadences count product merges only. The 7-day fallback still runs an
+  audit in a week with none.
+- **Records go into the work PR.** The journal and STATUS update is committed to the work PR
+  before `ai-review` is posted, on the head commit that includes it (its `Result:` line
   says what was known then: "auto-merge on", "parked"). A commit that changes only files under
   `ops/journal/` and `ops/STATUS.md` is a **record commit**: it doesn't count as "changed after
   the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
   `git show --remerge-diff` is empty or touches only those two paths; any other merge resolution
   counts, as TICK §4 step 6 says today. The check is by path: a commit touching any other file
-  counts, `ops/LESSONS.md` included (every session reads it, so a change to it is reviewed). A
-  merge of origin/main that conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
-- **Sessions without a work PR** (a Gardener run, a "done:" reply) still record themselves: one
+  counts, `ops/LESSONS.md` included (every session reads it, so a change to it is reviewed). So
+  a LESSONS change goes into the PR before its last review round runs. A lesson found after that
+  goes only into the journal entry's `Lesson:` line, and the next session that opens a work PR
+  copies it into `ops/LESSONS.md` before that PR's round 1. A merge of origin/main that
+  conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
+- **Sessions without a work PR** (a Gardener run, a "done:" reply, a Planner run with nothing
+  to change in `ops/QUEUE.md`) still record themselves: one
   records PR with only record files, which is never a product merge. Record PRs exist only for
   those sessions. An "idle" pick and a scheduler exit 2 write no record: the session exits at
   once (the driver starts the next one after its pause, so an idle loop costs a short session
@@ -133,11 +140,12 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   self-reported: the scheduler saves no inputs, so nothing can replay its pick. The retro checks
   each line only against what GitHub shows (the issue or PR the entry names, and its labels and
   milestone) and reports mismatches; a session that lies consistently is not caught.
-- **Work-mix budget:** at least 70% of the last 20 sessions are on milestone work (a Worker,
-  Design or QC session whose issue is in the current milestone and is a product issue: a product
-  `area:` label, or before task 4, a session whose PR is an interim product merge as defined
-  above). Owner-instruction sessions (rule a) are not
-  counted. The budget **orders**, it never blocks: below 70%, step 10 picks the lowest-numbered
+- **Work-mix budget:** at least 70% of the last 20 sessions (by their `Session:` records) are
+  on milestone work: a Worker, Design or QC session whose issue is in the current milestone and
+  is a product issue. A product issue has a product `area:` label; before task 4, a Worker or QC
+  session counts if its PR changes a path of the interim product-merge rule above (whether the
+  PR is open, merged or closed), and a Design session counts if its issue is in the current
+  milestone. Owner-instruction sessions (rule a) are not counted. The budget **orders**, it never blocks: below 70%, step 10 picks the lowest-numbered
   product issue first and a process issue only when no product issue is ready, and the Planner
   becomes due (once a day) to add product issues from PLAN §8. The Planner may move process
   issues to a later milestone or label them `deferred`, never close them.
@@ -184,7 +192,7 @@ was over 100 lines or added a file, so no final check ran. Its output is exactly
 A design ruling counts as the owner comment that ADR 0010 requires for any round K ≥ 6, and it
 must say which review, if any, runs next. Outputs 1 and 3 run **one** final check (the ADR 0010
 round-5 rules, on the diff since the last reviewed commit, record commits excepted), and only
-  if that diff adds ≤ 100 lines and no new file; otherwise the design goes to output 4. Its brief
+if that diff adds ≤ 100 lines and no new file; otherwise the design goes to output 4. Its brief
 also holds every ruling, and it gives each one line, `<ID>: ruling accepted` or
 `<ID>: ruling rejected` (a missing line counts as rejected), as ADR 0010 does for disputes. It
 then posts `ai-review`; anything that check reports, a rejected ruling included, goes to output 4.
