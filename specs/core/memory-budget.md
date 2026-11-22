@@ -158,13 +158,17 @@ the 2 GiB unused.
     the codec, image, cipher, font and rasterizer traits, `inflate`, `FlateDecode`, calls to their methods such as `.decode`, `.render`
     and `.load` (whitespace removed, the name followed by `(`, `::` or a comment, so a
     turbofish or a comment before the call still matches; it fails closed on prose, literals
-    and same-named methods such as an atomic's `.load`)), or use any `#[path]` or `include!` (they
-    compile source the scan doesn't read);
-    or one of the five manifests mentions `features` or `optional` (so workspace feature
-    unification can't add a dependency the graph check misses). A PR that brings a phase onto the path must satisfy the
+    and same-named methods such as an atomic's `.load`)), or use any `#[path]`, `path = "..."` (as in
+    `cfg_attr`) or `include!` (they compile source the scan doesn't read); or one of the five
+    manifests mentions `features` or `optional` (so workspace feature unification can't add a
+    dependency the graph check misses), has a table other than `[package]`, `[lints]`,
+    `[dependencies]`, `[dev-dependencies]`, or a `build`/`auto*` key (so Cargo compiles only
+    the auto-discovered `.rs` files the scan reads). A PR that brings a phase onto the path must satisfy the
     gate and update the test. **Limit:** the graph check sees crates, not phases, and the name
     scan is a text search: a decoder written inside an allowed crate under another name passes
-    both. Review against the gate covers that case.
+    both, and so does a call with a comment between the dot and the method name when a string
+    literal holding `/*` comes before it in the file (the comment-stripping pass doesn't know
+    literals). Review against the gate covers that case.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
     the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
     sub-heaps, which are also trimmed only from the top.

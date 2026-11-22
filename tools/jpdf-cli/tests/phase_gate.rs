@@ -63,8 +63,12 @@ const SCANNED: [&str; 4] = [
 
 /// Backend methods. After all whitespace is removed, `.name` followed by `(`, `::` or `/` is
 /// flagged: a call `.render(`, a turbofish `.decode::<T>(`, and a call with any comment
-/// (nested or not) between the name and the parenthesis (`.decode/*...*/(`). A field of the
-/// same name (`budget.decode`) is not a call and is not flagged. Comments and string literals are not parsed, so prose or a
+/// (nested or not) between the name and the parenthesis (`.decode/*...*/(`). The same match
+/// also runs on the text with comments removed (nesting counted), which catches a comment
+/// between the dot and the name (`r./*x*/render(`); that pass doesn't know string literals,
+/// so a literal holding `/*` can hide such a call from it (a stated limit). A field of the
+/// same name (`budget.decode`) is not flagged, unless `/` follows it (`budget.decode / 2`
+/// fails closed). Comments and string literals are not parsed otherwise, so prose or a
 /// literal that quotes `x.render(` is also flagged (fail closed), and so is an unrelated method
 /// of the same name, e.g. an atomic's `.load(`: write `AtomicBool::load(&flag, ..)` instead.
 /// The receiver's type may be inferred (a factory's result), so only the call shows that a
@@ -83,17 +87,67 @@ const PHASE_METHODS: [&str; 10] = [
 ];
 
 /// Constructs that compile source the scan doesn't read (a file with another extension, or one
-/// outside the scanned roots), so they are refused outright. Matched with whitespace removed.
-const UNSCANNED_SOURCE: [&str; 4] = ["#[path", "include!", "include_str!", "include_bytes!"];
+/// outside the scanned roots), so they are refused outright. Matched with whitespace removed;
+/// `path="` also catches `#[cfg_attr(.., path = "..")]` (and fails closed on a string assigned
+/// to a variable named `path`).
+const UNSCANNED_SOURCE: [&str; 5] = [
+    "#[path",
+    "path=\"",
+    "include!",
+    "include_str!",
+    "include_bytes!",
+];
+
+/// `text` without `//` and `/* */` comments, counting nested block comments. String literals
+/// are not recognized (see `PHASE_METHODS`).
+fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('/') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        if let Some(after) = tail.strip_prefix("//") {
+            rest = after.find('\n').map_or("", |j| &after[j..]);
+        } else if let Some(mut after) = tail.strip_prefix("/*") {
+            let mut depth = 1_u32;
+            while depth > 0 {
+                match (after.find("/*"), after.find("*/")) {
+                    (Some(o), Some(c)) if o < c => {
+                        depth = depth.saturating_add(1);
+                        after = &after[o + 2..];
+                    }
+                    (_, Some(c)) => {
+                        depth -= 1;
+                        after = &after[c + 2..];
+                    }
+                    (_, None) => {
+                        after = "";
+                        depth = 0;
+                    }
+                }
+            }
+            out.push(' ');
+            rest = after;
+        } else {
+            out.push('/');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
 
 /// Every entry-point name, backend method use and unscanned-source construct in `text`.
 fn phase_names_in(text: &str) -> Vec<&'static str> {
-    let squashed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (squashed, uncommented) = (squash(text), squash(&without_comments(text)));
     let method_used = |m: &str| {
         let pat = format!(".{m}");
-        squashed.match_indices(&pat).any(|(i, _)| {
-            let next = &squashed[i + pat.len()..];
-            next.starts_with('(') || next.starts_with("::") || next.starts_with('/')
+        [&squashed, &uncommented].iter().any(|t| {
+            t.match_indices(&pat).any(|(i, _)| {
+                let next = &t[i + pat.len()..];
+                next.starts_with('(') || next.starts_with("::") || next.starts_with('/')
+            })
         })
     };
     let names = PHASE_ENTRY_POINTS.iter().filter(|n| text.contains(*n));
@@ -120,8 +174,20 @@ fn phase_scan_sees_method_calls_on_inferred_receivers() {
     );
     assert_eq!(hits("d.decode::<u8>(data)"), vec!["decode"]);
     assert_eq!(hits("e.load // font\n (data, prog, &l)"), vec!["load"]);
-    assert_eq!(hits("#[path = \"decode.inc\"]\nmod d;"), vec!["#[path"]);
+    assert_eq!(
+        hits("#[path = \"decode.inc\"]\nmod d;"),
+        vec!["#[path", "path=\""]
+    );
     assert_eq!(hits("include ! (\"x.in\");"), vec!["include!"]);
+    assert_eq!(
+        hits("#[cfg_attr(all(), path = \"decode.inc\")]\nmod d;"),
+        vec!["path=\""]
+    );
+    assert_eq!(
+        hits("r. /* render the tile */ render(&s, &l)"),
+        vec!["render"]
+    );
+    assert_eq!(hits("r. /* a /* b */ */ // c\n decode(d)"), vec!["decode"]);
     // A longer identifier that starts with a method name is not that method, and a field of
     // the same name is not a call.
     assert!(hits("x.decoded_len(); x.rendering = 1; x.loader()").is_empty());
@@ -196,6 +262,29 @@ fn parse_crates_declare_no_features_until_the_146_gate_opens() {
         let manifest = root.join(dir).join("Cargo.toml");
         let text = std::fs::read_to_string(&manifest).expect("manifest is readable");
         assert!(text.contains("[package]"), "{}", manifest.display());
+        // Shape allowlist: only these tables, and no key that moves a target's source
+        // (`[lib]`/`[[bin]]` paths, a `build` script, target auto-discovery switches), so Cargo
+        // compiles only the auto-discovered `.rs` files the source scan reads.
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                assert!(
+                    [
+                        "[package]",
+                        "[lints]",
+                        "[dependencies]",
+                        "[dev-dependencies]"
+                    ]
+                    .contains(&line),
+                    "{}: table {line} (#146 gate, specs/core/memory-budget.md)",
+                    manifest.display()
+                );
+            }
+            assert!(
+                !(line.starts_with("build") || line.starts_with("auto")),
+                "{}: key {line} (#146 gate, specs/core/memory-budget.md)",
+                manifest.display()
+            );
+        }
         for word in ["features", "optional"] {
             assert!(
                 !text.contains(word),
