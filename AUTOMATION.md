@@ -27,7 +27,8 @@ Mac mini (always on)
         claude -p "$(cat ops/TICK.md)" --permission-mode auto --output-format stream-json
              └─ one session = one task (fresh context)
                   ├─ does the work in its own git worktree
-                  └─ reviewer subagent (fresh context, sees only diff + spec + rules)
+                  └─ reviewer subagent (fresh context, sees only diff + spec + rules),
+                     plus Codex as a second reviewer for crates/ and tools/ PRs (trial)
         log → ops/logs/<timestamp>.jsonl (session id kept for --resume)
         usage limit → sleep until the window resets; crash → log, back off, continue
 
@@ -83,7 +84,8 @@ GitHub (public repo jacobdam/jpdf3)
 5. WORK in a worktree: spec (with checklist §5.2) → failing tests → code →
    local checks. Push WIP commits often (draft PR), so a usage limit loses nothing.
 6. PR: links issue, spec, ADRs; explains any change to an existing test assertion.
-7. REVIEW: reviewer subagent → posts commit status `ai-review`.
+7. REVIEW: reviewer subagent (plus Codex for crates/ and tools/ PRs); every review and triage is posted
+   on the PR → posts commit status `ai-review`.
 8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
 9. RECORD: journal, STATUS.md, new issues for discoveries, ADRs. Exit.
@@ -257,7 +259,10 @@ corpus hosts. This matters because building Rust dependencies executes their bui
 ### 6.7 Outward actions
 The agent never posts outside this repo: no upstream issues or PRs, emails or forum posts.
 If a third-party crate has a bug, the agent routes around it (another crate or our own
-implementation) and records an ADR.
+implementation) and records an ADR. The one exception is the model providers the owner configured
+(CONSTITUTION 1.2): tracked files (except the sealed corpus manifest) and review briefs go to
+Anthropic, and to OpenAI Codex only through `ops/driver/codex-review.sh`; nothing else (not the corpora,
+`~/jpdf-research`, credentials or other home-directory files). #161 tracks the launcher's read isolation.
 
 ### 6.8 Independent review (`ai-review`)
 A fresh subagent receives the diff, the spec and CONSTITUTION, but none of the implementation reasoning. It checks:
@@ -268,6 +273,9 @@ A fresh subagent receives the diff, the spec and CONSTITUTION, but none of the i
 - missing tests or spec references
 - **changed or weakened existing test assertions**
 - code resembling known engines
+
+For PRs touching `crates/` or `tools/`, a Codex second reviewer (`ops/driver/codex-review.sh`, a
+trial) reviews the same brief. Every review and its triage is posted on the PR (ops/TICK.md §4).
 
 This check is softer than the judge: it runs locally and could in principle be faked.
 The judge is the hard backstop.
@@ -309,7 +317,8 @@ The judge is the hard backstop.
 
 Each milestone's exit criteria (PLAN §8) are encoded in `ops/judge/gates.toml`
 (protected, written in M0). It holds thresholds on judge metrics, exam-corpus scores
-and the milestone's journeys. `cargo xtask gate mN` asks the judge for a verdict. On pass:
+and the milestone's journeys. The nightly judge writes the verdict to `gates/gates.json` in the `judge-report` artifact (TICK
+rule j reads it; there is no `cargo xtask gate` command yet). On pass:
 1. tag `mN`
 2. `docs/milestones/mN.md` report
 3. generate the next backlog
@@ -318,7 +327,8 @@ and the milestone's journeys. `cargo xtask gate mN` asks the judge for a verdict
 ## 10. Audit sessions (self-correction)
 
 These run every 10 merges or 7 days and do no feature work. They cover:
-- security review + code review of everything merged since the last audit (fresh agents)
+- security review + code review of everything merged since the last audit (fresh agents), plus a
+  Codex security review of the same range; each report is posted on the audit PR
 - mutation testing (`cargo-mutants`) on changed crates, to measure test strength;
   weak spots become issues
 - completeness audit (§5.3)

@@ -29,8 +29,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   ([journal](journal/2026-11-21.md), PR #140).
 - Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
   `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests).
-  Use `--in-diff <range diff>`, set `TMPDIR=$PWD/target/scratch/…` (it is unset), and for jpdf-traits (about 26 s per
-  mutant) narrow it with `-f` to the non-suite files ([journal](journal/2026-11-21.md), audit 0001, audit 0002).
+  Use `--in-diff <range diff>`, set `TMPDIR` (it is unset) to the session scratchpad **outside the repo**: under
+  `target/scratch/` the jpdf-corpus tests refuse a cache inside the git tree and the baseline fails, so no mutant runs
+  (audit 0003). For jpdf-traits (about 26 s per mutant) narrow it with `-f` to the non-suite files
+  ([journal](journal/2026-11-21.md), audit 0001, audit 0002, [audit 0003](journal/2026-11-22.md)).
 - Judge-like memory checks: macOS RSS ≠ address space → run the Linux build in docker
   (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
