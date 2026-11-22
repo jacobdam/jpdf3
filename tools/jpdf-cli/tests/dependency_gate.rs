@@ -104,11 +104,14 @@ fn violations(pkgs: &[Pkg], root: &Path) -> Vec<String> {
 /// Runs `cargo tree` for `roots` with every feature of every root, on every target, normal and
 /// build edges, no deduplication. Fails on a non-zero exit.
 fn resolved(roots: &[&str]) -> Result<Vec<Pkg>, String> {
+    resolved_in(&workspace_root().join("Cargo.toml"), roots)
+}
+
+/// `resolved` for the workspace at `manifest` (the fixture control uses its own).
+fn resolved_in(manifest: &Path, roots: &[&str]) -> Result<Vec<Pkg>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut cmd = Command::new(cargo);
-    cmd.arg("tree")
-        .arg("--manifest-path")
-        .arg(workspace_root().join("Cargo.toml"));
+    cmd.arg("tree").arg("--manifest-path").arg(manifest);
     for r in roots {
         cmd.args(["-p", r]);
     }
@@ -199,6 +202,72 @@ fn control_a_real_graph_outside_the_list_is_reported() {
 fn control_cargo_tree_failure_is_an_error() {
     let err = resolved(&["no-such-package-jpdf"]).unwrap_err();
     assert!(err.starts_with("cargo tree failed"), "{err}");
+}
+
+/// Writes a fixture workspace under `CARGO_TARGET_TMPDIR`: `root` depends on `mid`, which has
+/// an optional `opt` behind feature `f`; `root` has a `cfg(windows)` dependency `win` and a
+/// build-dependency `bld`. Returns the root manifest path after generating its lockfile.
+fn fixture_workspace() -> std::io::Result<PathBuf> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("dependency-gate-fixture-{}", std::process::id()));
+    let pkg = |name: &str, extra: &str| -> std::io::Result<()> {
+        let d = if name == "root" {
+            dir.clone()
+        } else {
+            dir.join(name)
+        };
+        std::fs::create_dir_all(d.join("src"))?;
+        std::fs::write(d.join("src/lib.rs"), "")?;
+        std::fs::write(
+            d.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+                 publish = false\n{extra}"
+            ),
+        )
+    };
+    for leaf in ["opt", "win", "bld"] {
+        pkg(leaf, "")?;
+    }
+    pkg(
+        "mid",
+        "\n[dependencies]\nopt = { path = \"../opt\", optional = true }\n\n\
+         [features]\nf = [\"dep:opt\"]\n",
+    )?;
+    pkg(
+        "root",
+        "build = \"build.rs\"\n\n[workspace]\n\n[dependencies]\nmid = { path = \"mid\" }\n\n\
+         [target.'cfg(windows)'.dependencies]\nwin = { path = \"win\" }\n\n\
+         [build-dependencies]\nbld = { path = \"bld\" }\n",
+    )?;
+    std::fs::write(dir.join("build.rs"), "fn main() {}\n")?;
+    let manifest = dir.join("Cargo.toml");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let st = Command::new(cargo)
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .status()?;
+    if !st.success() {
+        return Err(std::io::Error::other(format!("generate-lockfile: {st}")));
+    }
+    Ok(manifest)
+}
+
+/// Control for the command's flags: on the fixture, the feature-gated optional dependency
+/// (`--all-features` with `mid` as a root), the `cfg(windows)` dependency (`--target all`) and
+/// the build-dependency (`-e build`) are each listed. Dropping any of those flags fails here.
+#[test]
+fn control_flags_reach_features_other_targets_and_build_edges() {
+    let manifest = fixture_workspace().unwrap();
+    let pkgs = resolved_in(&manifest, &["root", "mid"]).unwrap();
+    let got = names(&pkgs);
+    for want in ["root", "mid", "opt", "win", "bld"] {
+        assert!(got.contains(want), "{want} not listed: {got:?}");
+    }
+    // Near miss: from `root` alone, `f` is off and `opt` is not listed (so the gate needs every
+    // allowed crate as a root).
+    let pkgs = resolved_in(&manifest, &["root"]).unwrap();
+    assert!(!names(&pkgs).contains("opt"), "{pkgs:?}");
 }
 
 // Parser and checker cases on synthetic output: each one should-fail case has a near miss that
