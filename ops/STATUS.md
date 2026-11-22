@@ -4,27 +4,21 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #151 (#146, sev:high), draft, `ai-review` = failure on 26295fa. Resume it first (rule c).**
-  - The budget change itself converged: the subagent approved it in round 8.
-    - `heap_high_water`: the peak counts the largest phase twice.
-    - Six lowered defaults: xref entries 2^21; retained 128 MiB; strings per parse 32 MiB; decoded per stream
-      128 MiB; raster working 256 MiB; canvas 2^22.
-    - Peak estimate 1909.84 MiB.
-  - Still open: two Codex majors in the tripwire, tools/jpdf-cli/tests/phase_gate.rs (S14.1, S14.2; see the round-14
-    triage).
-  - Plan:
-    - replace the manifest text scan with `cargo metadata --no-deps` target `src_path`/kind checks;
-    - make the source name scan advisory, or move it to its own issue;
-    - keep the `cargo tree` crate and package-identity check as the enforced part;
-    - re-review, post `ai-review`, merge.
-  - #146 stays open after the merge: the cross-phase heap build-up is a stated, unbounded gap. Its gate needs a
-    structural fix or an enforced runtime budget before decode or raster reaches the jpdf-cli path.
+- **PR #151 (#146, sev:high): on owner `/hold`. Draft, `ai-review` = success on f3a22d0. Do not mark it ready or
+  enable auto-merge until the owner comments `/release`; then enable auto-merge.**
+  - It carries out the owner's scope-cut instruction (comment on PR #151, 02:31 UTC). The tripwire is removed. The gate
+    is a plain spec rule: no decode or raster on the jpdf-cli path until #146 closes.
+  - Content: `heap_high_water` (the largest phase counted twice); six lowered defaults; peak estimate 1909.84 MiB.
+    The subagent approved in rounds 8 and 15.
+  - Follow-ups: #154 (enforce the gate structurally), #156 (sev:medium, M10: what closes #146; non-main arena
+    sub-heaps). #146 stays open (the cross-phase build-up).
+  - The owner also commented `/halt` on PR #151. It isn't a defined command (no `halt` label, no `ops/HALT`).
 
 ## Last session
-- #146 / PR #151 (rule d): 14 review rounds, not merged (see In flight). Journal 2026-11-22 02:28.
+- #146 / PR #151 (rule d): 15 review rounds, then the owner's scope cut. Journal 2026-11-22 02:28.
 
 ## Next step (suggested order, TICK letters)
-0. c: finish PR #151 (above).
+0. PR #151: wait for the owner's `/release`. Don't touch the PR before then.
 1. **g: AUDIT is overdue**: 18+ merges since audit 0002. d is now empty apart from #146.
    - Security issues: high is #146 (in flight). Medium/low wait in M10: #114, #116, #117, #141 (medium); #83, #122,
      #132, #134, #136, #137 (low).
@@ -32,9 +26,9 @@ Phase: bootstrap (pilot)
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - **Next retro (rule h): by 2026-11-28.** Inputs:
-  - review rounds: PR #121 took 4, PR #142 took 6 and PR #151 took 14+. Rule c's 3-attempt cap isn't applied to
-    review rounds. Decide a cap, and when a second reviewer's majors may be deferred.
-  - PR #151: a text-scan tripwire turned review into a bypass hunt (LESSONS).
+  - review rounds: PR #121 took 4, PR #142 took 6, PR #151 took 15. The owner asked for
+    ops/proposals/review-round-cap.md (cap 3 re-review rounds, then defer second-reviewer-only findings). Apply it to
+    TICK §4.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - the template's `Area:` list lacks `tooling`.
 
