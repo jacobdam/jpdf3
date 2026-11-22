@@ -34,14 +34,19 @@ pub struct Manifest {
     pub entries: Vec<Entry>,
 }
 
-/// Reads and parses a manifest file (read bounded at the cap + 1 byte).
+/// Reads and parses a manifest file (read bounded at the cap + 1 byte). The open never
+/// waits for a FIFO writer where `jpdf_fsio::OPEN_FLAGS` is set (specs/tooling/fsio.md), and anything but a regular file is refused from the opened
+/// handle.
 pub fn load(path: &Path) -> Result<Manifest, Error> {
     let name = path.display().to_string();
     let io = |source| Error::Io {
         path: name.clone(),
         source,
     };
-    let file = std::fs::File::open(path).map_err(io)?;
+    let file = jpdf_fsio::open_nonblocking(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(io(std::io::Error::other("not a regular file")));
+    }
     let mut bytes = Vec::new();
     file.take(MAX_MANIFEST_BYTES + 1)
         .read_to_end(&mut bytes)

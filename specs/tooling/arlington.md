@@ -151,8 +151,9 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
    3. lists `tsv/`; every entry must be a regular file (symlinks and directories refused)
       with a UTF-8 name ending in `.tsv`;
    4. reads each file once, bounded as in Limits; the opened handle is checked again to be a
-      regular file, so a swap to a device after the first check is refused (a swap to a FIFO
-      can still block `open`; that only hangs a local run, out of scope like the cache);
+      regular file, so a swap to a device or FIFO after the first check is refused (the open
+      is non-blocking where `jpdf_fsio::OPEN_FLAGS` is set, specs/tooling/fsio.md, so a FIFO
+      can't make it wait for a writer there);
    5. computes the git tree id of those bytes (entries sorted by name in byte order, mode
       `100644`; blob id = SHA-1 of `blob <len>\0<bytes>`, tree id = SHA-1 of
       `tree <len>\0` + `100644 <name>\0<20-byte blob id>` per entry) and compares it with
@@ -168,13 +169,27 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
       normal,build -i jpdf-arlington`), no package under `crates/` or `bindings/` depends on
       `jpdf-arlington`, directly or transitively, on any target or feature; a positive control
       requires `xtask` (a known dependent) to appear with the same path prefix;
-    - no file under `crates/*/src`, `crates/*/build.rs`, `bindings/`, `apps/web` or
-      `apps/macos` (outside `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`,
-      `dist` and `target` directories) contains "arlington" in any case; each of those roots
-      except `bindings/` must exist.
+    - scanned: every file under each `crates/*` directory except its own top-level `tests`
+      and `target` directories (so `build.rs`, `benches/`, data directories and a `src/tests/`
+      module count), and every file under `bindings/`, `apps/web` and `apps/macos` outside
+      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist` and `target`
+      directories (at any depth) and the Playwright output directories `apps/web/test-results`
+      and `apps/web/playwright-report` (at exactly those paths: `apps/web/src/test-results/`
+      is scanned). Each root except `bindings/` must exist (only NotFound counts as absent
+      for `bindings/`; any other metadata error is a finding), and every root (and `apps` above two of them) must be a real directory, not a
+      file or a symlink (#115 item 1);
+    - no scanned file contains "arlington" in any case or has the git blob id of a vendored
+      TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
+      non-regular entry it meets, and every directory or file it can't read. Files are opened
+      non-blocking (where `OPEN_FLAGS` is set, specs/tooling/fsio.md; the scan assumes a stable
+      checkout: a file swapped for a symlink after the walk is followed), the opened handle
+      must be a regular file, and a
+      file over 64 MiB is a finding, read no further than one byte past the cap.
     So dev-dependencies are usable only from `tests/` integration tests, not from
     `#[cfg(test)]` modules in `src/`, and engine sources can't mention Arlington even in
-    comments.
+    comments. Not seen: an edited or embedded copy of a TSV (only whole files are compared),
+    and a path to the data that the word match misses (`include_str!(concat!(…))` reaching
+    `tools/` from a shipped crate); #225 tracks a check on what the compiler actually reads.
     Changing that needs the owner.
 
 ## Persistence
@@ -336,9 +351,21 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   pinned commit; the CLI checks the vendored copy by default (run from a directory outside
   the checkout), exits 1 with a `vendored:`
   message on a copy that doesn't match the pins, and `vendor` refuses an existing target
-  without creating the cache; no shipped crate depends on the tool or its data (item 10).
-- `src/main.rs` unit test: argument parsing (including `--vendored`, `vendor`, and refused
-  combinations).
+  without creating the cache; no shipped crate depends on the tool or its data (item 10);
+  the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
+  `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
+  `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
+  directory and file (skipped as root), a regular file in place of `crates`, `apps`, `apps/web`, `apps/macos` or `bindings`, a symlink
+  to a clean directory in place of each of them, the word under
+  `apps/web/src/test-results` and `apps/web/src/playwright-report`, and the per-file cap one byte below the largest file gives exactly its one finding
+  (at that file's size: none), and an endless source read through the cap stops with the cap
+  error after exactly cap + 1 bytes (`scan_reads_stop_one_byte_past_the_cap`, which also pins the 64 MiB value), while the same word,
+  copy and link inside skipped directories give none; files below the app roots
+  (`apps/web/src`, `apps/macos/JPDF`) are scanned; a missing `apps/macos` is a finding. On the
+  real tree, `apps/web/src/main.tsx` and `apps/macos/JPDF/StartView.swift` must be scanned.
+- `src/main.rs` unit test: argument parsing into the typed command (`check`, `generate`
+  and `vendor` each carry only their own fields; including `--vendored`, `vendor --cache`,
+  and refused combinations).
 - `xtask/tests/check_specs.rs`: `arlington <extra>` exits 2; `ci linux` outside the repo
   fails fast on the missing `tools/arlington/Cargo.toml`.
 - `cargo xtask ci linux` runs `cargo xtask arlington` on the real vendored model on every PR,

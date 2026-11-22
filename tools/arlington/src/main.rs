@@ -25,11 +25,13 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// A parsed command line: each command carries exactly the fields it needs, so `main`
+/// never re-checks what `parse` guarantees.
 #[derive(Debug, PartialEq)]
-struct Args {
-    command: String,
-    source: CliSource,
-    out: Option<PathBuf>,
+enum Args {
+    Check(CliSource),
+    Generate { source: CliSource, out: PathBuf },
+    Vendor { cache: PathBuf, out: PathBuf },
 }
 
 #[derive(Debug, PartialEq)]
@@ -60,22 +62,27 @@ fn parse(args: &[String]) -> Result<Args, String> {
             return Err(format!("{flag} given twice"));
         }
     }
+    if vendor {
+        // `--tsv` and `--vendored` were refused above.
+        let out = out.ok_or("vendor needs --out")?;
+        return Ok(Args::Vendor {
+            cache: cache.unwrap_or_else(default_cache),
+            out,
+        });
+    }
     let source = match (cache, tsv, vendored) {
-        (None, None, None) if vendor => CliSource::Cache(default_cache()),
         (None, None, None) => CliSource::Vendored(default_vendored()),
         (Some(c), None, None) => CliSource::Cache(c),
         (None, Some(t), None) => CliSource::Tsv(t),
         (None, None, Some(v)) => CliSource::Vendored(v),
         _ => return Err("give one of --vendored, --tsv or --cache".into()),
     };
-    if command != "check" && out.is_none() {
-        return Err(format!("{command} needs --out"));
+    match out {
+        // `--out` was refused above for `check`.
+        None if command == "check" => Ok(Args::Check(source)),
+        None => Err(format!("{command} needs --out")),
+        Some(out) => Ok(Args::Generate { source, out }),
     }
-    Ok(Args {
-        command,
-        source,
-        out,
-    })
 }
 
 fn main() -> ExitCode {
@@ -87,26 +94,12 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if args.command == "vendor" {
-        let (CliSource::Cache(cache), Some(out)) = (&args.source, &args.out) else {
-            eprintln!("jpdf-arlington: vendor needs --out\n{USAGE}");
-            return ExitCode::from(2);
-        };
-        return match vendor::vendor_pinned(cache, out) {
-            Ok(n) => {
-                eprintln!(
-                    "jpdf-arlington: wrote {} ({n} files, git ids match the pins)",
-                    out.display()
-                );
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("jpdf-arlington: {e}");
-                ExitCode::from(1)
-            }
-        };
-    }
-    let source = match args.source {
+    let (source, out) = match args {
+        Args::Vendor { cache, out } => return vendor_cmd(&cache, &out),
+        Args::Check(source) => (source, None),
+        Args::Generate { source, out } => (source, Some(out)),
+    };
+    let source = match source {
         CliSource::Vendored(v) => Source::Vendored(v),
         CliSource::Cache(c) => Source::Pinned(c),
         CliSource::Tsv(t) => Source::Dir(t),
@@ -124,7 +117,7 @@ fn main() -> ExitCode {
         model.objects.len(),
         model.key_count()
     );
-    if let Some(out) = args.out {
+    if let Some(out) = out {
         let text = generate::render(&model, &source.describe());
         if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty())
             && let Err(e) = std::fs::create_dir_all(parent)
@@ -141,6 +134,23 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `vendor --out DIR [--cache DIR]`.
+fn vendor_cmd(cache: &Path, out: &Path) -> ExitCode {
+    match vendor::vendor_pinned(cache, out) {
+        Ok(n) => {
+            eprintln!(
+                "jpdf-arlington: wrote {} ({n} files, git ids match the pins)",
+                out.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("jpdf-arlington: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,25 +162,65 @@ mod tests {
     #[test]
     fn arguments() {
         assert_eq!(
-            p(&["check"]).map(|a| a.source),
-            Ok(CliSource::Vendored(default_vendored()))
+            p(&["check"]),
+            Ok(Args::Check(CliSource::Vendored(default_vendored())))
         );
         assert_eq!(
-            p(&["check", "--cache", "c"]).map(|a| a.source),
-            Ok(CliSource::Cache("c".into()))
+            p(&["check", "--cache", "c"]),
+            Ok(Args::Check(CliSource::Cache("c".into())))
         );
         assert_eq!(
-            p(&["check", "--vendored", "v"]).map(|a| a.source),
-            Ok(CliSource::Vendored("v".into()))
+            p(&["check", "--vendored", "v"]),
+            Ok(Args::Check(CliSource::Vendored("v".into())))
         );
         assert_eq!(
-            p(&["vendor", "--out", "o"]).map(|a| (a.source, a.out)),
-            Ok((CliSource::Cache(default_cache()), Some("o".into())))
+            p(&["check", "--tsv", "t"]),
+            Ok(Args::Check(CliSource::Tsv("t".into())))
         );
         assert_eq!(
-            p(&["generate", "--out", "x.rs", "--tsv", "d"]).map(|a| (a.source, a.out)),
-            Ok((CliSource::Tsv("d".into()), Some("x.rs".into())))
+            p(&["vendor", "--out", "o"]),
+            Ok(Args::Vendor {
+                cache: default_cache(),
+                out: "o".into()
+            })
         );
+        assert_eq!(
+            p(&["vendor", "--cache", "c", "--out", "o"]),
+            Ok(Args::Vendor {
+                cache: "c".into(),
+                out: "o".into()
+            })
+        );
+        assert_eq!(
+            p(&["generate", "--out", "x.rs", "--tsv", "d"]),
+            Ok(Args::Generate {
+                source: CliSource::Tsv("d".into()),
+                out: "x.rs".into()
+            })
+        );
+        assert_eq!(
+            p(&["generate", "--out", "x.rs"]),
+            Ok(Args::Generate {
+                source: CliSource::Vendored(default_vendored()),
+                out: "x.rs".into()
+            })
+        );
+        assert_eq!(
+            p(&["generate", "--cache", "c", "--out", "x.rs"]),
+            Ok(Args::Generate {
+                source: CliSource::Cache("c".into()),
+                out: "x.rs".into()
+            })
+        );
+        assert_eq!(
+            p(&["generate", "--vendored", "v", "--out", "x.rs"]),
+            Ok(Args::Generate {
+                source: CliSource::Vendored("v".into()),
+                out: "x.rs".into()
+            })
+        );
+        assert_eq!(p(&["vendor"]), Err("vendor needs --out".into()));
+        assert_eq!(p(&["generate"]), Err("generate needs --out".into()));
         for bad in [
             &[][..],
             &["fetch"],

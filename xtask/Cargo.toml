@@ -12,4 +12,5 @@ workspace = true
 
 [dependencies]
 jpdf-arlington = { path = "../tools/arlington" }
+jpdf-fsio = { path = "../tools/fsio" }
 jpdf-testgen = { path = "../tools/jpdf-testgen" }

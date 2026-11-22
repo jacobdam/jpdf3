@@ -7,7 +7,7 @@
 #![deny(clippy::arithmetic_side_effects)]
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, Metadata};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -241,59 +241,6 @@ fn info(inv: &Invocation) -> Result<(), Failure> {
         .map_err(|e| Failure::usage(format!("cannot write output: {e}")))
 }
 
-/// Linux architectures whose `<fcntl.h>` uses the generic values below (`O_NONBLOCK` 0o4000,
-/// `O_NOCTTY` 0o400). mips, sparc, alpha and parisc differ; there the open falls back to plain
-/// flags, and only the `stat` check guards against FIFOs.
-#[cfg(all(
-    target_os = "linux",
-    any(
-        target_arch = "x86_64",
-        target_arch = "x86",
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "riscv64",
-        target_arch = "powerpc64",
-        target_arch = "s390x"
-    )
-))]
-const OPEN_FLAGS: Option<i32> = Some(0o4000 | 0o400);
-/// macOS `O_NONBLOCK` (0x0004). An open never acquires a controlling terminal there, so no
-/// `O_NOCTTY` is needed.
-#[cfg(target_os = "macos")]
-const OPEN_FLAGS: Option<i32> = Some(0x0004);
-#[cfg(not(any(
-    target_os = "macos",
-    all(
-        target_os = "linux",
-        any(
-            target_arch = "x86_64",
-            target_arch = "x86",
-            target_arch = "aarch64",
-            target_arch = "arm",
-            target_arch = "riscv64",
-            target_arch = "powerpc64",
-            target_arch = "s390x"
-        )
-    )
-)))]
-const OPEN_FLAGS: Option<i32> = None;
-
-/// Opens `path` for reading with `O_NONBLOCK` (and `O_NOCTTY` on Linux) where [`OPEN_FLAGS`]
-/// knows the values: opening a FIFO that has no writer then returns at once instead of
-/// blocking (a hang would be a judge timeout), and a terminal swapped in never becomes the
-/// controlling terminal. Neither flag changes reads from regular files.
-/// `tests::open_never_blocks_on_a_fifo` checks the values; Linux CI runs it, macOS runs it
-/// locally only (the macOS CI job doesn't run the Rust tests).
-fn open_nonblocking(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    if let Some(flags) = OPEN_FLAGS {
-        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, flags);
-    }
-    options.open(path)
-}
-
 /// Accepts only a regular file of at most `max` bytes, judged from metadata alone, and
 /// returns its length.
 fn check_metadata(path: &Path, meta: &Metadata, max: usize) -> Result<usize, Failure> {
@@ -311,12 +258,13 @@ fn check_metadata(path: &Path, meta: &Metadata, max: usize) -> Result<usize, Fai
 
 /// Reads at most `max` bytes. Non-regular files (FIFOs, devices, directories) and files larger
 /// than `max` are rejected from `stat` before the file is opened, so nothing is read. The open
-/// never blocks; the opened file is checked again (the path may have been swapped), and the
+/// never waits for a FIFO writer where `jpdf_fsio::OPEN_FLAGS` is set; the opened file is
+/// checked again (the path may have been swapped), and the
 /// read stops after `max + 1` bytes in case the file grows while we read it.
 fn read_limited(path: &Path, max: usize) -> Result<Vec<u8>, Failure> {
     let cannot = |e: io::Error| Failure::usage(format!("cannot read {}: {e}", path.display()));
     check_metadata(path, &fs::metadata(path).map_err(cannot)?, max)?;
-    let file = open_nonblocking(path).map_err(cannot)?;
+    let file = jpdf_fsio::open_nonblocking(path).map_err(cannot)?;
     let expected = check_metadata(path, &file.metadata().map_err(cannot)?, max)?;
     read_capped(file, expected, max).map_err(|e| match e {
         Capped::Io(e) => cannot(e),
@@ -379,6 +327,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn open_never_blocks_on_a_fifo() {
+        // A plain open of a FIFO blocks by design where the flags are unknown.
+        if jpdf_fsio::OPEN_FLAGS.is_none() {
+            return;
+        }
         use std::process::Command;
         use std::sync::mpsc;
         use std::time::Duration;
@@ -396,7 +348,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let path = fifo.clone();
         std::thread::spawn(move || {
-            let checked = open_nonblocking(&path)
+            let checked = jpdf_fsio::open_nonblocking(&path)
                 .map(|f| f.metadata().map(|m| check_metadata(&path, &m, 1 << 20)));
             let _ = tx.send(match checked {
                 Ok(Ok(Err(f))) => f.message,
@@ -404,10 +356,8 @@ mod tests {
             });
         });
         let got = rx.recv_timeout(Duration::from_secs(10));
-        if got.is_err() {
-            // Unblock the stuck thread so the test process can exit.
-            let _ = fs::OpenOptions::new().write(true).open(&fifo);
-        }
+        // On a timeout the reader thread stays blocked in its open; it ends with the test
+        // process (nothing can unblock it once the FIFO is removed below).
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             got,

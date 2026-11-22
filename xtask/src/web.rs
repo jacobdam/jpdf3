@@ -273,14 +273,22 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
 }
 
 /// Reads at most `MAX_RESULTS_BYTES` (+1 to detect overflow) in one pass; a missing file
-/// means no tests reported anything.
+/// means no tests reported anything. The open never waits for a FIFO writer where [`jpdf_fsio::OPEN_FLAGS`] is
+/// set,
+/// and anything but a regular file (a FIFO, a directory) is refused from the opened handle.
 fn read_results(tsv: &Path) -> Result<BTreeMap<String, Status>, String> {
     use std::io::Read as _;
-    let file = match fs::File::open(tsv) {
+    let file = match jpdf_fsio::open_nonblocking(tsv) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(e) => return Err(format!("open {}: {e}", tsv.display())),
     };
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("open {}: {e}", tsv.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", tsv.display()));
+    }
     let mut bytes = Vec::new();
     file.take(MAX_RESULTS_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -501,6 +509,25 @@ mod tests {
         let big = "e2e.web.a\tpass\n".repeat(80_000); // > 1 MiB
         assert!(fs::write(&f, big).is_ok());
         assert!(read_results(&f).is_err(), "too large");
+        // Anything but a regular file is refused from the opened handle, and a FIFO with no
+        // writer doesn't block the open (the test would hang).
+        let dir = base.join("dir.tsv");
+        assert!(fs::create_dir_all(&dir).is_ok());
+        let mut refused = vec![dir];
+        // Only where the open is non-blocking (jpdf_fsio::OPEN_FLAGS); a plain open of a FIFO
+        // blocks by design on the other targets.
+        if jpdf_fsio::OPEN_FLAGS.is_some() {
+            let fifo = base.join("fifo.tsv");
+            let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+            assert!(made.is_ok_and(|s| s.success()), "mkfifo failed");
+            refused.push(fifo);
+        }
+        for p in &refused {
+            assert_eq!(
+                read_results(p),
+                Err(format!("{}: not a regular file", p.display()))
+            );
+        }
         let _ = fs::remove_dir_all(&base);
     }
 

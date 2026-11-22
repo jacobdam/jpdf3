@@ -229,6 +229,40 @@ fn a_fifo_in_the_cache_is_replaced_not_read() {
     std::fs::remove_dir_all(&d).unwrap();
 }
 
+/// `manifest::load` refuses a FIFO or a directory from the opened handle, and a FIFO with no
+/// writer doesn't block the open (specs/tooling/fsio.md).
+#[test]
+fn manifest_load_refuses_non_regular_files() {
+    let d = scratch("manifest-fifo");
+    let dir = d.join("dir.tsv");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut refused = vec![dir];
+    // Only where the open is non-blocking; a plain open of a FIFO blocks by design elsewhere.
+    if jpdf_fsio::OPEN_FLAGS.is_some() {
+        let fifo = d.join("fifo.tsv");
+        let st = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        refused.push(fifo);
+    }
+    for p in refused {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p2 = p.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(manifest::load(&p2).map_err(|e| e.to_string()));
+        });
+        let r = rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("manifest::load blocked");
+        let e = r.unwrap_err();
+        assert!(e.contains("not a regular file"), "{e}");
+        assert!(e.contains(&p.display().to_string()), "{e}");
+    }
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
 #[test]
 fn download_failures_and_the_infra_threshold() {
     let d = scratch("fail");
