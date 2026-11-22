@@ -206,29 +206,29 @@ working memory) and give up mostly speed (retained), the largest images (output 
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
   - after the stage, the caller drops the stage's input buffer and gives its charge back with
-    `ImageInputBudget::release` (clamped to the allowance);
-  - then it charges the output with `ImageInputBudget::charge_output`
-    (#187), which takes the `Vec` itself and charges its **capacity**, not its length (a
-    10-byte output left in a buffer reserved at the cap would otherwise hide 128 MiB, PR #186
-    R1.1). It gives spare capacity back only by copying the bytes into a new buffer of their
-    length, and only when that length also fits in what remains after the capacity is
-    charged: the old and the new buffer are both charged while both are alive. When the copy
-    doesn't fit, the buffer keeps its whole capacity charged and the next stages get less room
-    (a later stage that needs more than its reduced cap fails with `LimitExceeded`, never over
-    the allowance). So on the image path a stage grows its output in chunks, never reserving
-    the cap speculatively: a stage reserved at the whole allowance that wrote less leaves the
-    rest of the chain nothing. A length the file declares (`/DL`, `/Length` of a later stage)
-    is an untrusted hint, not a known length (a stream can declare `/DL 134217728` and decode
-    to ten bytes); only a size the engine computed and checked against the limits (the final
-    stage's image dimensions × components × bits per component, after the image limits) may
-    be reserved up front. A chunked output that must become one slice is copied into a buffer
-    whose length the caller charges with `charge` **before allocating it**, alongside the
-    chunks still alive (any capacity beyond the request is charged right after, and the buffer
-    dropped if that doesn't fit); each chunk is released once dropped. Release comes first (PR #232 R1.1): the output's capacity was already within the
-    cap while the input was alive, so dropping the input first leaves the copy the input's room
-    too. With a 100-byte allowance, a 50-byte input and an output of capacity 50 holding 40,
-    charging first leaves no room for the copy (50 stay charged for the rest of the chain);
-    releasing first lets it copy and leaves 60.
+    `ImageInputBudget::release` (clamped to the allowance). Release comes first (PR #232 R1.1):
+    the output's capacity was already within the cap while the input was alive, so dropping the
+    input first gives the copy the input's room too. With a 100-byte allowance, a 50-byte
+    input and an output of capacity 50 holding 40, charging first leaves no room for the copy
+    (50 stay charged for the rest of the chain); releasing first lets it copy and leaves 60;
+  - then it charges the output with `ImageInputBudget::charge_output` (#187), which takes the
+    `Vec` itself and charges its **capacity**, not its length (a 10-byte output left in a
+    buffer reserved at the cap would otherwise hide 128 MiB, PR #186 R1.1). It gives spare
+    capacity back only by copying the bytes into a new buffer of their length, and only when
+    that length also fits in what remains after the capacity is charged: the old and the new
+    buffer are both charged while both are alive. When the copy doesn't fit, the buffer keeps
+    its whole capacity charged and the next stages get less room (a later stage that needs
+    more than its reduced cap fails with `LimitExceeded`, never over the allowance). So on the
+    image path a stage grows its output in chunks, never reserving the cap speculatively: a
+    stage reserved at the whole allowance that wrote less leaves the rest of the chain nothing.
+    A length the file declares (`/DL`) is an untrusted hint, not a known length (a stream can
+    declare `/DL 134217728` and decode to ten bytes). Only a size the engine computed and
+    checked against the limits may be reserved up front: the final stage's decoded image size
+    in bytes, ceil(width × components × bits per component / 8) × height (rows padded to whole
+    bytes), after the image limits. A chunked output that must become one slice is copied into
+    a buffer whose length the caller charges with `charge` **before allocating it**, alongside
+    the chunks still alive (any capacity beyond the request is charged right after, and the
+    buffer dropped if that doesn't fit); each chunk is released once dropped.
 
   So between stages every decoded buffer alive during the image decode is within the allowance.
   The copy that gives spare capacity back is inside the allowance too (#187): `charge_output`
@@ -395,9 +395,9 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     with a length instead of `charge_output`, or releases a buffer it still holds. No caller
     exists yet; the JBIG2 caller's review must check it (requirement above, #231).
     `charge_output` (#187): hand mutants (charge the length, never copy, copy without the fit
-    check, copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to release the old buffer or release its
-    length, keep the old buffer after the copy, charge the copy's whole capacity twice) each
-    fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
+    check, copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to
+    release the old buffer or release its length, keep the old buffer after the copy, charge
+    the copy's whole capacity twice) each fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
     or returns more capacity than asked for (std returns exactly the request). A failed
     reservation keeps the old buffer and gives back the copy's charge; a larger one is kept and
     its extra charged when that fits, else dropped with the copy's charge given back. Also still
