@@ -1,0 +1,2 @@
+[{"number":7,"title":"one","mergedAt":"2026-11-16T10:00:00Z","comments":[{"author":{"login":"jacobdam"},"body":"🤖 jpdf-agent **AI review, round 1** of aaa\n\nR1.1 [major] a.rs:1: x\nR1.2 [minor] b.rs:2: y\nVerdict: changes requested"},{"body":"🤖 jpdf-agent **AI review triage, round 1**\n\nR1.1: regraded minor: no input\nR1.2: deferred: #9"},{"body":"🤖 jpdf-agent **AI review, round 2** of bbb\n\nR1.1: regrade accepted\nVerdict: clean"}]},
+ {"number":8,"title":"two","mergedAt":"2026-11-22T23:00:00Z","comments":[]}]

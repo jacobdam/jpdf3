@@ -182,7 +182,11 @@ pub fn has_hardened_runtime(codesign_dv: &str) -> bool {
 }
 
 /// Runs a tool and returns its stdout and stderr; a failure exit or too much output is an error.
-fn capture(program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<(String, String), String> {
+pub(crate) fn capture(
+    program: &str,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<(String, String), String> {
     use std::io::Write as _;
     use std::process::Stdio;
     let mut cmd = Command::new(program);

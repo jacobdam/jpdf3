@@ -6,6 +6,7 @@ mod bench;
 mod fuzz;
 mod json;
 mod macos;
+mod metrics;
 mod specs;
 mod web;
 
@@ -14,7 +15,8 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
-     | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none]";
+     | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
+     | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -107,6 +109,27 @@ fn main() -> ExitCode {
                 Ok(code) => ExitCode::from(code),
                 Err(e) => {
                     eprintln!("xtask: bench: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/metrics.md: retro input (AUTOMATION §11); read-only git/gh queries.
+        (Some("metrics"), _) => {
+            let opts = match metrics::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: metrics: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match metrics::run(Path::new("."), &opts) {
+                Ok(md) => {
+                    print!("{md}");
+                    eprintln!("xtask: metrics: wrote {}", opts.out.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: metrics: {e}");
                     ExitCode::from(1)
                 }
             }

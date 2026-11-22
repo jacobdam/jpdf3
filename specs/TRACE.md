@@ -30,7 +30,7 @@ that builds each feature (PLAN §8).
 | R10 | Licensing: MIT, permissive deps, no committed corpora | | [specs/tooling/licenses.md](tooling/licenses.md) | judge license policy; `npm run licenses` in `ci linux` (production tree strict, test/build tools per CONSTITUTION 10; `scripts/licenses.test.mjs`) |
 | R11 | Web: static only, files never leave the device | J-RD-01, J-RD-03, J-RD-24, J-ANN-14, J-ANN-15, J-ANN-22, J-PG-13, J-OS-05, J-FM-07, J-SG-09, J-SG-10 | | |
 | R12 | Digital signatures: verify, PAdES, timestamps, LTV | J-SG-01, J-SG-02, J-SG-03, J-SG-06, J-SG-09 | | |
-| R13 | No human in the loop: specs, tests, ratchets decide | | [specs/tooling/check-specs.md](tooling/check-specs.md) | `cargo xtask check-specs` |
+| R13 | No human in the loop: specs, tests, ratchets decide | | [specs/tooling/check-specs.md](tooling/check-specs.md), [specs/tooling/metrics.md](tooling/metrics.md) | `cargo xtask check-specs`; `cargo xtask metrics` (retro input, AUTOMATION §11; xtask/tests/metrics.rs) |
 
 ## PLAN §4 features (Phase 1)
 
