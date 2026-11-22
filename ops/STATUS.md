@@ -4,24 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #151 (#146, sev:high): on owner `/hold`. Draft, `ai-review` = success on f3a22d0. Do not mark it ready or
-  enable auto-merge until the owner comments `/release`; then enable auto-merge.**
-  - Follow-ups: #154 (enforce the gate structurally), #156 (sev:medium, M10). #146 stays open.
-  - The owner's `/halt` on PR #151 isn't a defined command (no `halt` label, no `ops/HALT`).
-- PR #171 (#161, proposal: Codex launcher isolation): `ai-review` = success on 777beb9, auto-merge on. If it hasn't
-  merged, check its CI. Merging closes #161; the owner's apply and test steps are in #174.
+- PR #177 (#172, owner: `owner-todo` = "the owner can act now"): ops/TICK.md §0 rule + AUTOMATION.md. If it hasn't
+  merged, check its CI. Reply on #172 posted.
+- #146 stays open after PR #151 merged (2026-11-22, after the owner's `/release`): the decode/raster gate waits for a
+  #25 measurement or a structural fix (#154). Follow-up #156 (sev:medium, M10).
 
 ## Last session
-- d: #161 → PR #171: ops/proposals/codex-review-isolation.md and ops/proposals/codex-review-isolation/ (diffs for
-  protected ops/driver/codex-review.sh and driver.sh, tests: 45 + 18 checks). 3 review rounds (R1: 6 majors; R2, R3:
-  approve). New #174 (owner-todo, sev:high): owner applies and runs the test plan. Journal 2026-11-22 04:10.
+- a: #172 → PR #177. Relabeled: `owner-todo` off #161 (closed; the owner part is #174) and #162 (no proposal yet);
+  not added to #146 or #155 (their owner steps, `/release` and the #157 approval, were already done). Also a: PR
+  #151 marked ready and auto-merged after `/release`. Journal 2026-11-22 05:40.
 
 ## Next step (suggested order, TICK letters)
-0. PR #151: wait for `/release`. Don't touch it before.
 1. **d: #162** (sev:high, protected guard): write `ops/proposals/guard-tag-and-fail-closed.md` with the diff and a test
-   plan; `owner-todo` stays. #162's CX.4 is confirmed and small (drop the raw-text prefilter). Same pattern as #161:
+   plan; add `owner-todo` only when the proposal PR merges (TICK §0). #162's CX.4 is confirmed and small (drop the
+   raw-text prefilter). Same pattern as #161:
    diffs and test scripts in `ops/proposals/<topic>/`, close the issue with the PR, and open an owner-todo issue to
-   apply it. Then **#168** (sev:high, M2, engine work in budget.rs).
+   apply it once it merges. Then **#168** (sev:high, M2, engine work in budget.rs).
    - Skip **#174** under rule d: only the owner can act on it (apply and test the #161 proposal).
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
