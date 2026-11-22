@@ -14,15 +14,18 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
+- **PR #190** (#189, audit 0004): review, `ai-review`, auto-merge (this session).
+
 ## Last session
-- d: #168 → PR #186 (ImageInputBudget, spec, 7 tests), parked after the final check. Filed #187 (sev:high, M2).
-  Journal 2026-11-22 07:44.
+- g: audit 0004 (docs/audits/0004.md, PR #190). Codex unavailable (provider cyber filter). Filed #191 (sev:high, M0,
+  Codex read profile), #192 (ready, M0, proposal harness), #193 (sev:low, M10); comments on #87, #115, #179, #187.
+  Removed 11 merged worktrees. Journal 2026-11-22 08:37.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
-2. **d: #187** (sev:high, M2): its main item needs the image-decode caller; the doc and odd-count test items can be done
-   now. If it is judged not actionable before the caller, say so on the issue and go on.
-3. **g: AUDIT is due** (11 merges since audit 0003 on 2026-11-22).
+2. **d: #191** (sev:high, protected): write the proposal (Codex read profile → toolchain paths only, plus a test).
+   #187 waits on PR #186 (comment on #187).
+3. **#192** (M0, ready): fix the owner-comment tracking harness soon; the owner's #179 relies on it.
 4. **#76**: harness honesty. The judge relies on it.
 5. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
@@ -36,7 +39,11 @@ Phase: bootstrap (pilot)
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
   - the template's `Area:` list lacks `tooling`.
   - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
-- **Next audit:** due now (11 merges since audit 0003).
+  - audit 0004 AC.3: no rule for a CI fix after a clean final check (K = 6 is the owner's call, but nothing adds
+    `owner-todo`); AC.4: a proposal PR's `Closes #N` drops a sev:high issue from rule d before the fix is on main,
+    and the owner's new issue isn't told to keep `security`/`sev:*` (ops/TICK.md:29, AUTOMATION.md:295).
+  - Codex refused the audit 0004 security brief (provider cyber filter); decide how audits use it.
+- **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
 - #168 / PR #186: accept the final-check wording fix or ask for one more round (options on #168).
@@ -47,5 +54,6 @@ Phase: bootstrap (pilot)
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
   checked locally only.
-- #126 (open): the Codex second-reviewer trial is live; it also ran the audit 0003 security review (status ok).
+- #126 (open): the Codex second-reviewer trial is live; audit 0003's review ran (ok), audit 0004's was refused by the
+  provider's cybersecurity filter.
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.

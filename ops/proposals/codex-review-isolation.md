@@ -1,5 +1,7 @@
 # Proposal: isolate the Codex review launcher and stop session leftovers (#161)
 
+**Applied** by the owner in PR #181 (#174 closed; noted by audit 0004); kept as the design record.
+
 Status: proposed by a session for issue #161 (audit 0003 findings AS.52, AS.55, CX.1, CX.2, CX.3,
 CX.11, CX.16), 2026-11-22. Touches protected paths (`ops/driver/codex-review.sh`,
 `ops/driver/driver.sh`), so the owner applies it with signed commits. Agents can't run Codex outside

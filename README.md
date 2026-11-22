@@ -52,11 +52,13 @@ cargo nextest run --workspace --locked
 
 cargo build --release --locked -p jpdf-cli    # target/release/jpdf-cli
 cargo xtask check-specs                       # spec and journey checks
-cargo xtask ci linux --out DIR                # web build + Playwright E2E
+cargo xtask ci linux --out DIR                # web build + Playwright E2E, specs, short fuzz, Arlington
 cargo xtask ci macos --out DIR                # macOS app build + XCUITest E2E (macOS only)
 ```
 
-Run `cargo xtask` with no arguments for the full list. The web app's own scripts
+Run `cargo xtask` with no arguments for the full list. Locally, `ci linux` expects the fuzz tools
+(cargo-fuzz and the nightly toolchain pinned in specs/tooling/fuzz.md) to be installed already; it installs them
+itself only when `CI` is set. The web app's own scripts
 (`npm run dev`, `typecheck`, `lint`, `e2e`, `licenses`) are in
 [apps/web/package.json](apps/web/package.json); install with `npm ci --ignore-scripts` first.
 
