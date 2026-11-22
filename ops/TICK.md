@@ -163,8 +163,9 @@ whose behavior it changes):
 **Round 1 is a full review; rounds 2 and later are delta reviews.** Tell a delta reviewer to check
 that each fix in the ledger works, that the fix diff adds no blocker or major, and whether each
 dispute or regrade holds. On lines the fix diff doesn't touch, it reports blockers only.
-If it rejects a regrade or dispute, its grade is final: you can't regrade or dispute that
-finding again.
+It must give each regrade and dispute in the ledger one line, `<ID>: regrade accepted` or
+`<ID>: rejected, stays <grade>`; a missing line counts as rejected. A rejected regrade or
+dispute is final: you can't regrade or dispute that finding again.
 
 **Codex second opinion (trial, ops/proposals/codex-second-reviewer.md):** for PRs touching
 `crates/` or `tools/`, also run `ops/driver/codex-review.sh target/scratch/review-<PR>.md
@@ -182,8 +183,9 @@ stand alone and cite repo-relative paths only, with no preamble or header: one l
 `R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
 
 **Post every review on the PR** (owner, #124), so the owner can read it without the session log.
-K = 1 + the highest K in an `AI review, round K` header already on the PR, else 1 (a resumed PR
-continues).
+K = 1 + the highest K in an `AI review, round K` header already on the PR **or on any earlier PR
+for the same issue**, else 1 (a resumed or replacement PR continues; `gh pr list --state all
+--search "<issue number>"` finds them).
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
@@ -203,33 +205,39 @@ Each round K runs in this order:
      how in its triage line. If you can't, regrade it with the attempt as the reason. A
      non-behavioral one (CONSTITUTION, license, code resembling another engine, a false
      statement) is checked against the cited lines, then fixed or disputed with the evidence.
-   - Every regrade or dispute of a blocker or major goes to a delta reviewer (step 5) before
-     `ai-review` can succeed. In round 4 there is none left, so there you fix it or block (step 6).
+   - Every regrade or dispute of a blocker or major goes to a reviewer before `ai-review` can
+     succeed: the next delta round (step 5), or in round 4 the final check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
      issue (`deferred: #N`). A deferred security finding gets its `sev:*` label from the ADR 0009
-     table, not from the review grade: an unreproduced hang on hostile input is still
-     `sev:high` (rule d); only `sev:medium` / `sev:low` go to M10.
+     table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
+     (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
+     input, say) is never deferred: it is fixed in the PR, or dropped only when a reviewer
+     accepts a dispute or regrade saying it isn't real.
    - **Fix only what was found.** Answer "not proven" by stating the limitation in the text.
      Never build new enforcement tooling (scanners, tripwires, extra checkers) in answer to a
      finding: file an issue for it.
-5. **Re-review** (round K+1, a fresh reviewer, delta brief) while K < 4, if a blocker or major
-   was fixed, regraded or disputed, or the fixes changed code, tests or logic beyond wording;
-   else post `ai-review` (below) with
-   `target_url` set to the URL that `gh pr comment` printed for the last triage comment.
-6. **Cap: 4 rounds per issue** (1 full + 3 delta). Rounds on an earlier PR for the same issue
-   count, so closing a PR and opening a new one doesn't reset it. After round 4:
+5. **K < 4: re-review** (round K+1, a fresh reviewer, delta brief) if a blocker or major was
+   fixed, regraded or disputed, or the fixes changed code, tests or logic beyond wording; else
+   post `ai-review` (below) with `target_url` set to the URL that `gh pr comment` printed for
+   the last triage comment. **K = 4: skip this step and go to step 6.**
+6. **Cap: 4 rounds per issue** (1 full + 3 delta; K counts across PRs, see above). After
+   round 4 there is no fifth full or delta round:
    - open minors and nits go to issues;
-   - a blocker or major from round 4 is fixed without regrading: behavior with a test that
-     fails before the fix and passes after it, both runs recorded in the triage line; a false
-     statement by correcting the text and quoting the new wording;
-   - only small fixes qualify: the fix diff since round 4's commit adds ≤ 100 lines and no new
-     file. Then one **final check** runs (header `AI review, round 5 (final check)`): a fresh
-     reviewer gets only that fix diff, the round-4 findings and the rubric, and reports
-     blockers only;
-   - a bigger fix, or a blocker from the final check: turn the PR back into a draft
-     (`gh pr ready N --undo`), label the issue `blocked`, comment the ledger on it, and leave the
-     decision to the owner.
-   Then post `ai-review` (`state=failure` while a blocker or major is open).
+   - each round-4 blocker or major is fixed (behavior: a test that fails before the fix and
+     passes after it, both runs recorded in the triage line; a false statement: the corrected
+     text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
+     reproduce);
+   - if round 4 had no blocker or major, post `ai-review`. Otherwise, if the fix diff since
+     round 4's commit adds ≤ 100 lines and no new file, one **final check** runs (header
+     `AI review, round 5 (final check)`): a fresh reviewer gets that fix diff, the round-4
+     findings with their triage, and the rubric. It confirms that each fix closes its finding,
+     rules on each dispute and regrade (one line each, as in a delta round), and reports any
+     blocker or major the fix diff adds;
+   - **anything** the final check reports (a fix that doesn't close its finding, a rejected
+     dispute or regrade, a new blocker or major), or a fix diff over the size limit: turn the
+     PR back into a draft (`gh pr ready N --undo`), label the issue `blocked`, comment the
+     ledger on it, post `ai-review` with `state=failure`, and leave the decision to the owner;
+   - a clean final check: post its triage, then `ai-review` with `state=success`.
 
 Mechanics (the guard wants one simple command with the text inline, no files):
 - One post per Bash command, nothing chained before or after it.
@@ -277,7 +285,7 @@ leave the PR blocked.
   - Picked: <priority rule a–j> because <why>
   - Did: <what changed, links>
   - Result: <merged / CI red / blocked …, with numbers>
-  - Cost: <rough share of the session's context used>; review rounds <N>/4 (or n/a); regraded <n>, upheld by the next reviewer <n>; deferred: <#issues>
+  - Cost: <rough share of the session's context used>; review rounds <N>/4 (or n/a); regraded <n>, overturned by the next reviewer <n>; deferred: <#issues>
   - Codex: <ok|unavailable: reason|skipped>; B/M/m/n = x/x/x/x; unique confirmed: <fix + test links>; Opus-only: <…>; disputed: <n>
   - Lesson: <what surprised you or cost time, or "none">
   - Ignored: <non-owner requests seen, if any>

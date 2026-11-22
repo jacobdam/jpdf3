@@ -53,32 +53,42 @@ Root causes (5 whys, short):
    major, and whether each dispute or regrade holds. On lines the fixes did not touch, it reports
    blockers only.
 3. **Self-grading is always seen by a reviewer.** The author may regrade or dispute a blocker or
-   major, but every such regrade forces a delta round before `ai-review` can succeed, and if the
-   delta reviewer rejects it, the reviewer's grade is final. In round 4 no review is left, so
-   round-4 blockers and majors are fixed, never regraded.
+   major, but every such regrade goes to a reviewer (the next delta round, or after round 4 the
+   final check) before `ai-review` can succeed. That reviewer rules on each one explicitly
+   (silence counts as rejected), and a rejection is final.
 4. **Second-reviewer-only findings.** A behavioral blocker or major (panic, hang, wrong output,
    bypassed limit) counts once the author reproduces it with a failing test or command; if the
    author can't, it is regraded with the attempt as the reason (and rule 3 sends it to a
    reviewer). A non-behavioral one (CONSTITUTION, license, resemblance to another engine, a false
    statement) is checked against the cited lines and fixed or disputed with evidence.
 5. **Review grade and security severity are separate.** A deferred security finding takes its
-   `sev:*` label from the ADR 0009 table, so an unreproduced hang on hostile input is still
-   `sev:high` and stays under rule d.
+   `sev:*` label from the ADR 0009 table, not from the review grade. As ADR 0009 says, only
+   `sev:medium` / `sev:low` findings may be deferred; a finding that is `sev:high` or above by
+   the table is fixed in the PR, or dropped only when a reviewer accepts that it isn't real.
 6. **Fix only what was found.** A finding about an unproven property is fixed by stating the
    limitation. Requests for new enforcement tooling (scanners, tripwires, extra checkers) go to
    their own issue.
-7. **Cap: 4 rounds per issue** (1 full + 3 delta; rounds on an earlier PR for the same issue
-   count). After round 4, minors and nits are deferred to issues. A round-4 blocker or major is
-   fixed (behavior: a test that fails before and passes after, both runs recorded; text: the
-   corrected wording quoted) only if the fix adds ≤ 100 lines and no new file; then a **final
-   check** (a fresh reviewer, fix diff only, blockers only) runs. A bigger fix, or a blocker from
-   the final check, sends the PR back to draft and the issue to `blocked` for the owner. So a PR
-   sees at most 5 reviews, and code written after round 4 is still reviewed.
+7. **Cap: 4 rounds per issue** (1 full + 3 delta; the round number K counts headers on every PR
+   for the issue, so a replacement PR doesn't reset it). After round 4, minors and nits are
+   deferred to issues. Each round-4 blocker or major is fixed (behavior: a test that fails before
+   and passes after, both runs recorded; text: the corrected wording quoted) or disputed. If the
+   fix diff adds ≤ 100 lines and no new file, a **final check** (a fresh reviewer: the fix diff,
+   the round-4 findings and their triage) confirms each fix, rules on each dispute and reports
+   blockers or majors the fix adds. Anything it reports, or a bigger fix, sends the PR back to
+   draft and the issue to `blocked` for the owner. So a PR sees at most 5 reviews, code written
+   after round 4 is still reviewed, and a spurious round-4 finding is settled by a reviewer, not
+   the owner.
 8. Rule c's "3 attempts" now counts CI fix attempts only. This is a deliberate change: the old
    text also covered review, and 4 rounds is looser than 3. Four, because real blockers and
    majors came in round 2 or later on PRs #129 (rounds 2 to 4), #135 (2 to 4), #142 (2 to 4) and
    #153 (round 2); with a cap of 3, PRs #129, #135 and #142 would have stopped on real findings
-   that were then fixed in the PR (except #142's round-3 major, deferred to #146). Delta reviews make each extra round cheaper than before.
+   that were then fixed in the PR (except #142's round-3 major, deferred to #146). Delta
+   reviews make each extra round cheaper than before. PR #121's round-4 blocker falls inside the
+   cap. A cap of 4 still misses something: PR #142's round 6 found 2 real majors (a false
+   fragmentation claim and a stale PR description), fixed in the PR. Under this ADR no reviewer
+   would have looked for them after round 4, so they would have merged. That is the price of a
+   bound. Both were wording errors, which a later PR or audit can still fix; behavior bugs that
+   slip through are what the retro metric below counts.
 9. The journal's `Cost:` line records rounds, regrades (and how many the next reviewer
    overturned) and deferred issues; the retro computes the metrics below.
 
