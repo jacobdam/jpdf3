@@ -40,7 +40,8 @@ Phase: bootstrap (pilot)
   - the template's `Area:` list lacks `tooling`.
   - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
   - audit 0004 AC.3 (no rule for a CI fix after a clean final check) and AC.4 (a proposal PR's `Closes #N` drops a
-    sev:high issue from rule d before the fix is on main, and the owner's new issue isn't told to keep `security`/`sev:*`) (ops/TICK.md:29,
+    sev:high issue from rule d before the fix is on main, and the owner's new issue isn't told to keep
+    `security`/`sev:*`) (ops/TICK.md:29,
     AUTOMATION.md:295).
   - Codex on audits: audit 0005's brief (no ops/driver diff) ran ok (7 findings, 0 Codex-only bugs above sev:low),
     but like PR #212's 3 runs it said its workspace commands timed out (brief-only review).
