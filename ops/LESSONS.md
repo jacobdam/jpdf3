@@ -181,7 +181,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   terminators other than LF (CR, U+2028/9), plus `data:`/`file:` modules and config files the
   tool loads on its own (tsconfig, PostCSS, up the tree). Allow-list characters and file
   shapes instead of decoding or deny-listing; the #112 review took 3 rounds
-  ([journal](journal/2026-11-22.md), PR #121).
+  ([journal](journal/2026-11-22.md), PR #121). A file-tree walk (the #115 Arlington scan) needs, before the first
+  review, one fixture per root × kind (regular file, symlink, unreadable, other metadata error), skip
+  directories by exact path rather than name (a `src/test-results/` module ships), a bounded non-blocking read with
+  a counted-bytes test, and "never blocks" written as "a FIFO open doesn't wait for a writer where the flags are
+  known"; each of these was a finding in rounds 1 to 4 (a non-EACCES fixture and the EACCES root message are still open, #229) ([journal](journal/2026-11-22.md), PR #227).
 - Drawing wireframes or naming UI components → check each component's real constraints before
   writing sizes or behavior: MUI small fields are 40 px, `Tab` has `minWidth` 90, no focusable
   control inside `role="tab"`, temporary drawers are modal; SwiftUI `.disabled()` drops out of
