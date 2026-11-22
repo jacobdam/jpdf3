@@ -76,8 +76,9 @@ b. **main is red.** Read the failing run. Infra failure (network, outage, a miss
      issue labeled `owner-todo` with the diagnosis and a fix in `ops/proposals/`, and write the
      current epoch time to `ops/state/judge-alarm-since` (local state, not committed). Then
      continue with work that doesn't need a merge. Delete that file once the judge is green.
-c. **Your own open PR** failing CI or review → fix it. Max 3 attempts per PR. Then label the
-   issue `blocked`, write hypotheses and evidence on it, and close or park the PR.
+c. **Your own open PR** failing CI or review → fix it. Max 3 CI fix attempts per PR. Then label
+   the issue `blocked`, write hypotheses and evidence on it, and close or park the PR. Review
+   rounds follow §4's cap (4 rounds, ADR 0010).
 d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`.** Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
    When you file one, set it, and put `sev:medium` / `sev:low` issues in milestone M10: they
@@ -129,6 +130,9 @@ spawn a **fresh reviewer subagent** that reads it. The brief contains ONLY:
   `gh pr diff` can still return the previous commit)
 - the linked spec
 - CONSTITUTION.md
+- the severity rubric below
+- from round 2 on: the **ledger** (every earlier finding, R and S, with its triage line) and the
+  **fix diff** `git diff <last reviewed sha>..HEAD`
 
 Not your reasoning. Ask it to review adversarially for:
 - CONSTITUTION violations
@@ -143,6 +147,21 @@ Not your reasoning. Ask it to review adversarially for:
 Ask it also, for every checker, suite or validator in the diff: **what broken implementation
 still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
 past fails)?
+
+**Severity rubric** (ADR 0010; copy it into the brief). A blocker or major needs a concrete
+failing input or scenario in code, tests or text that the PR adds or changes:
+- **blocker:** a CONSTITUTION violation, a panic or hang on hostile input, a bypassed limit, a
+  security hole, or a weakened test assertion;
+- **major:** wrong behavior or a false statement (spec, comment, PR description) for a concrete
+  input, or a missing test for a behavior or limit the PR claims;
+- **minor:** real but not shown to fail: hardening, an unproven bound the text already calls an
+  estimate, a bypass of best-effort or heuristic tooling, a test that could be stronger, a
+  problem in code the PR doesn't touch;
+- **nit:** wording, style.
+
+**Round 1 is a full review; rounds 2 and later are delta reviews.** Tell a delta reviewer to check
+that each fix in the ledger works, that the fix diff adds no blocker or major, and whether each
+dispute or regrade holds. On lines the fix diff doesn't touch, it reports blockers only.
 
 **Codex second opinion (trial, ops/proposals/codex-second-reviewer.md):** for PRs touching
 `crates/` or `tools/`, also run `ops/driver/codex-review.sh target/scratch/review-<PR>.md
@@ -173,12 +192,30 @@ Each round K runs in this order:
 3. Fix, commit and **push**.
 4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
    finding (R and S): `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
-   round gets one too ("no findings"). Blockers and majors are fixed in the PR; a minor or nit
-   security finding that isn't a quick fix may be deferred to a `sev:medium` / `sev:low` issue in
-   M10 (ADR 0009).
-5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
-   changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
-   set to the URL that `gh pr comment` printed for the last triage comment.
+   round gets one too ("no findings"). Triage rules (ADR 0010):
+   - Grade every finding by the rubric yourself. A blocker or major with no concrete failing
+     input or scenario is regraded: `regraded minor: <why>`, then deferred or fixed.
+   - A blocker or major that only the second reviewer (S) found counts only if you reproduce it
+     with a failing test or command; say how in its triage line. Otherwise regrade it minor.
+   - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
+     issue (`deferred: #N`); security ones become `sev:medium` / `sev:low` issues in M10
+     (ADR 0009).
+   - **Fix only what was found.** Answer "not proven" by stating the limitation in the text.
+     Never build new enforcement tooling (scanners, tripwires, extra checkers) in answer to a
+     finding: file an issue for it.
+5. **Re-review** (round K+1, a fresh reviewer, delta brief) if a blocker or major was fixed, or
+   the fixes changed code, tests or logic beyond wording; else post `ai-review` (below) with
+   `target_url` set to the URL that `gh pr comment` printed for the last triage comment.
+6. **Cap: 4 rounds per PR** (1 full + 3 delta; a resumed PR counts its earlier rounds). After
+   round 4 there is no further review round:
+   - open minors and nits go to issues;
+   - each remaining blocker or major is fixed with a test that fails before the fix and passes
+     after it, both runs recorded in the triage line (a false statement is fixed by correcting
+     the text and quoting the new wording);
+   - if such a fix is more than a local change, turn the PR back into a draft
+     (`gh pr ready N --undo`), label the issue `blocked`, comment the ledger on it, and leave the
+     decision to the owner.
+   Then post `ai-review` (`state=failure` while a blocker or major is open).
 
 Mechanics (the guard wants one simple command with the text inline, no files):
 - One post per Bash command, nothing chained before or after it.
@@ -226,7 +263,7 @@ leave the PR blocked.
   - Picked: <priority rule a–j> because <why>
   - Did: <what changed, links>
   - Result: <merged / CI red / blocked …, with numbers>
-  - Cost: <rough share of the session's context used; fix rounds>
+  - Cost: <rough share of the session's context used>; review rounds <N>/4; regraded <n>; deferred: <#issues>
   - Codex: <ok|unavailable: reason|skipped>; B/M/m/n = x/x/x/x; unique confirmed: <fix + test links>; Opus-only: <…>; disputed: <n>
   - Lesson: <what surprised you or cost time, or "none">
   - Ignored: <non-owner requests seen, if any>
