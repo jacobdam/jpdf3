@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use jpdf_testgen::minimal_pdf;
+
 fn cli(args: &[&str]) -> io::Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
         .args(args)
@@ -21,37 +23,6 @@ fn temp_file(bytes: &[u8]) -> io::Result<PathBuf> {
     let path = dir.join(format!("{n}.pdf"));
     std::fs::write(&path, bytes)?;
     Ok(path)
-}
-
-fn minimal_pdf(pages: usize) -> Vec<u8> {
-    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
-    let mut objs = vec![
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        format!(
-            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
-            kids.join(" ")
-        ),
-    ];
-    objs.extend((0..pages).map(|_| "<< /Type /Page /Parent 2 0 R >>".to_string()));
-    let mut out = b"%PDF-1.7\n".to_vec();
-    let mut offsets = Vec::new();
-    for (i, body) in objs.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
-    }
-    let xref_at = out.len();
-    out.extend(format!("xref\n0 {}\n0000000000 65535 f\r\n", objs.len() + 1).as_bytes());
-    for o in offsets {
-        out.extend(format!("{o:010} 00000 n\r\n").as_bytes());
-    }
-    out.extend(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
-            objs.len() + 1
-        )
-        .as_bytes(),
-    );
-    out
 }
 
 fn code(o: &Output) -> Option<i32> {

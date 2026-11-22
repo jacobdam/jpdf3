@@ -12,3 +12,6 @@ workspace = true
 
 [dependencies]
 jpdf-engine = { path = "../../crates/jpdf-engine" }
+
+[dev-dependencies]
+jpdf-testgen = { path = "../jpdf-testgen" }

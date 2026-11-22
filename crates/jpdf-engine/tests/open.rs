@@ -1,65 +1,29 @@
 //! `Document::open` on generated files. Spec: specs/cli/jpdf-cli.md.
 
 use jpdf_engine::{Document, EngineError, Limits};
+use jpdf_testgen::{Revision, minimal_pdf, page_tree, write_revision};
 
-/// Writes `objects` (numbered from 1) followed by a classic xref table and trailer.
-/// Returns the file and the xref offset.
-fn build(
+/// Writes `objects` (numbered from `first_num`) followed by a classic xref table and trailer,
+/// through `jpdf_testgen::write_revision`. Returns the file and the xref offset.
+fn build<T: AsRef<[u8]>>(
     prefix: &[u8],
     first_num: usize,
-    objects: &[String],
+    objects: &[T],
     trailer_extra: &str,
 ) -> (Vec<u8>, usize) {
     let mut out = prefix.to_vec();
-    let mut offsets = Vec::new();
-    for (i, body) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend(format!("{} 0 obj\n{body}\nendobj\n", first_num + i).as_bytes());
-    }
-    let xref_at = out.len();
-    out.extend(b"xref\n");
-    if first_num == 1 {
-        out.extend(format!("0 {}\n", objects.len() + 1).as_bytes());
-        out.extend(b"0000000000 65535 f\r\n");
-    } else {
-        out.extend(format!("{first_num} {}\n", objects.len()).as_bytes());
-    }
-    for o in offsets {
-        out.extend(format!("{o:010} 00000 n\r\n").as_bytes());
-    }
-    out.extend(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R {trailer_extra} >>\nstartxref\n{xref_at}\n%%EOF\n",
-            first_num + objects.len()
-        )
-        .as_bytes(),
+    let bodies: Vec<&[u8]> = objects.iter().map(AsRef::as_ref).collect();
+    let xref_at = write_revision(
+        &mut out,
+        &Revision {
+            first_num,
+            objects: &bodies,
+            size: first_num + objects.len(),
+            prev: None,
+            trailer_extra: trailer_extra.as_bytes(),
+        },
     );
     (out, xref_at)
-}
-
-fn page_objects(pages: usize) -> Vec<String> {
-    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
-    let mut objs = vec![
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        format!(
-            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
-            kids.join(" ")
-        ),
-    ];
-    for _ in 0..pages {
-        objs.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>".to_string());
-    }
-    objs
-}
-
-fn minimal_pdf(pages: usize) -> Vec<u8> {
-    build(
-        b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n",
-        1,
-        &page_objects(pages),
-        "",
-    )
-    .0
 }
 
 fn open(bytes: &[u8]) -> Result<usize, EngineError> {
@@ -75,7 +39,7 @@ fn counts_pages_of_minimal_files() {
 
 #[test]
 fn follows_prev_into_older_sections() {
-    let (mut file, first_xref) = build(b"%PDF-1.7\n", 1, &page_objects(1), "");
+    let (mut file, first_xref) = build(b"%PDF-1.7\n", 1, &page_tree(1), "");
     // Incremental update (ISO 32000-2 §7.5.6): redefine object 2 with two kids, add page 4.
     let update = [
         (2, "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>"),
@@ -106,13 +70,8 @@ fn follows_prev_into_older_sections() {
 fn prev_loop_is_malformed() {
     // The xref offset does not depend on the trailer, so build once to learn it, then point
     // /Prev back at the same section.
-    let (_, xref_at) = build(b"%PDF-1.7\n", 1, &page_objects(1), "");
-    let (looped, _) = build(
-        b"%PDF-1.7\n",
-        1,
-        &page_objects(1),
-        &format!("/Prev {xref_at}"),
-    );
+    let (_, xref_at) = build(b"%PDF-1.7\n", 1, &page_tree(1), "");
+    let (looped, _) = build(b"%PDF-1.7\n", 1, &page_tree(1), &format!("/Prev {xref_at}"));
     assert_eq!(
         open(&looped),
         Err(EngineError::Malformed {
@@ -124,7 +83,7 @@ fn prev_loop_is_malformed() {
 
 #[test]
 fn unsupported_structures_are_reported_as_unsupported() {
-    let (enc, _) = build(b"%PDF-1.7\n", 1, &page_objects(1), "/Encrypt 9 0 R");
+    let (enc, _) = build(b"%PDF-1.7\n", 1, &page_tree(1), "/Encrypt 9 0 R");
     assert_eq!(
         open(&enc),
         Err(EngineError::Unsupported("encrypted documents"))
@@ -361,7 +320,7 @@ fn caller_limits_cannot_loosen_the_defaults() {
 /// catalog, chained by `/Prev`: `updates + 1` cross-reference sections in total.
 fn prev_chain_pdf(updates: usize) -> Vec<u8> {
     let prefix = b"%PDF-1.7\n";
-    let (mut file, mut prev) = build(prefix, 1, &page_objects(1), "");
+    let (mut file, mut prev) = build(prefix, 1, &page_tree(1), "");
     for _ in 0..updates {
         let xref_at = file.len();
         file.extend(

@@ -101,16 +101,6 @@ impl Outline {
             .fold(0u32, |n, s| n.saturating_add(s.point_count()))
     }
 
-    /// `[x_min, y_min, x_max, y_max]` over every point, control points included, or `None`
-    /// for an empty outline.
-    pub fn control_box(&self) -> Option<[f32; 4]> {
-        let mut points = self.segments.iter().flat_map(PathSegment::points);
-        let first = points.next()?;
-        Some(points.fold([first.x, first.y, first.x, first.y], |b, p| {
-            [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)]
-        }))
-    }
-
     /// Whether every contour starts with `MoveTo` and ends with `Close`, with no segment
     /// outside a contour.
     pub fn is_well_formed(&self) -> bool {
@@ -272,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn outline_point_count_and_control_box() {
+    fn outline_point_count() {
         let outline = Outline {
             segments: vec![
                 PathSegment::MoveTo(p(0.0, 0.0)),
@@ -283,9 +273,7 @@ mod tests {
             ],
         };
         assert_eq!(outline.point_count(), 7);
-        assert_eq!(outline.control_box(), Some([-3.0, 0.0, 20.0, 12.0]));
         assert!(outline.is_finite());
-        assert_eq!(Outline::default().control_box(), None);
         assert_eq!(Outline::default().point_count(), 0);
     }
 
