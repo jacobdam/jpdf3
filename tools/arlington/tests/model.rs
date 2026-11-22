@@ -1003,7 +1003,14 @@ fn no_shipped_crate_uses_the_arlington_data() {
     // 613 files; some share their contents, so 610 distinct blob ids.
     assert_eq!(ids.len(), 610);
     let (scanned, hits) = shipped_hits(&root, &ids);
-    for want in ["lib.rs", "Cargo.toml", "vite.config.ts", "index.html"] {
+    for want in [
+        "lib.rs",
+        "Cargo.toml",
+        "vite.config.ts",
+        "index.html",
+        "src/main.tsx",
+        "JPDF/StartView.swift",
+    ] {
         assert!(
             scanned.iter().any(|f| f.ends_with(want)),
             "{want} not scanned"
@@ -1089,6 +1096,8 @@ fn shipped_hits(
                 "node_modules",
                 "dist",
                 "target",
+                "test-results",
+                "playwright-report",
             ]
             .iter()
             .any(|s| n == *s)
@@ -1149,7 +1158,11 @@ fn shipped_scan_finds_links_copies_and_names() {
             ("apps/web/index.html", "<html></html>\n"),
             ("apps/web/node_modules/m/Arlington.txt", "arlington\n"),
             ("apps/web/e2e/x.ts", "// Arlington\n"),
+            ("apps/web/src/main.tsx", "// main\n"),
+            ("apps/web/test-results/r.txt", "arlington\n"),
+            ("apps/web/playwright-report/r.html", "arlington\n"),
             ("apps/macos/App.swift", "// app\n"),
+            ("apps/macos/JPDF/View.swift", "// view\n"),
         ] {
             let p = root.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1162,7 +1175,7 @@ fn shipped_scan_finds_links_copies_and_names() {
     let clean = tree("scan-clean");
     let (files, hits) = shipped_hits(&clean, &ids);
     assert!(hits.is_empty(), "{hits:#?}");
-    assert_eq!(files.len(), 4, "{files:#?}");
+    assert_eq!(files.len(), 6, "{files:#?}");
 
     type Plant = fn(&Path, &Path, &[u8]);
     let cases: [(&str, Plant, &str); 6] = [
@@ -1217,12 +1230,39 @@ fn shipped_scan_finds_links_copies_and_names() {
             root.join(want.split(": ").next().unwrap()).display()
         ) + want.split_once(": ").unwrap().1;
         assert_eq!(hits, [want], "{name}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    // An unreadable directory or file is a finding, not skipped (as root, modes don't stop
+    // reads, so that half is skipped).
+    let root_user = Command::new("id")
+        .arg("-u")
+        .output()
+        .is_ok_and(|o| o.stdout.starts_with(b"0\n"));
+    if !root_user {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path, m: u32| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap()
+        };
+        for target in ["crates/a/src", "crates/a/src/lib.rs"] {
+            let root = tree(&format!("scan-locked-{}", target.len()));
+            let p = root.join(target);
+            mode(&p, 0o000);
+            let (_, hits) = shipped_hits(&root, &ids);
+            mode(&p, 0o755);
+            assert_eq!(hits.len(), 1, "{target}: {hits:#?}");
+            assert!(
+                hits[0].starts_with(&format!("{}: ", p.display())),
+                "{target}: {hits:#?}"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     // A missing app root is a finding; a missing bindings/ isn't.
     std::fs::remove_dir_all(clean.join("apps/macos")).unwrap();
     let (_, hits) = shipped_hits(&clean, &ids);
     assert_eq!(hits.len(), 1, "{hits:#?}");
     assert!(hits[0].starts_with(&format!("{}: ", clean.join("apps/macos").display())));
+    std::fs::remove_dir_all(clean).unwrap();
 }
 
 /// Every cap of the vendored loader at its exact boundary: at the cap the files load, one

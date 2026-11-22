@@ -171,8 +171,8 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
     - scanned: every file under each `crates/*` directory except its own top-level `tests`
       and `target` directories (so `build.rs`, `benches/`, data directories and a `src/tests/`
       module count), and every file under `bindings/`, `apps/web` and `apps/macos` outside
-      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist` and `target`
-      directories. Each root except `bindings/` must exist (#115 item 1);
+      `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist`, `target`,
+      `test-results` and `playwright-report` directories. Each root except `bindings/` must exist (#115 item 1);
     - no scanned file contains "arlington" in any case or has the git blob id of a vendored
       TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
       non-regular entry it meets, and every directory or file it can't read.
@@ -345,9 +345,11 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   without creating the cache; no shipped crate depends on the tool or its data (item 10);
   the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
   `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
-  `apps/web`, the word in `benches/` and in a `src/tests/` module gives exactly its one
-  finding, while the same word, copy and link inside skipped directories give none; a missing
-  `apps/macos` is a finding.
+  `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
+  directory and file (skipped as root) gives exactly its one finding, while the same word,
+  copy and link inside skipped directories give none; files below the app roots
+  (`apps/web/src`, `apps/macos/JPDF`) are scanned; a missing `apps/macos` is a finding. On the
+  real tree, `apps/web/src/main.tsx` and `apps/macos/JPDF/StartView.swift` must be scanned.
 - `src/main.rs` unit test: argument parsing into the typed command (`check`, `generate`
   and `vendor` each carry only their own fields; including `--vendored`, `vendor --cache`,
   and refused combinations).

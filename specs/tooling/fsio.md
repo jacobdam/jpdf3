@@ -24,7 +24,12 @@ file whose type they have just checked (#115 items 2 and 5, audit 0002).
 Callers (each keeps its own type checks, caps and errors):
 - `jpdf-cli` `read_limited` (specs/cli/jpdf-cli.md, "Reading FILE" step 2);
 - `jpdf-arlington` `vendor.rs` `read_capped` (specs/tooling/arlington.md item 9 step 4);
+- `jpdf-arlington` `read_dir` (the `--tsv` source; the opened handle must still be a regular
+  file, `not a regular file` otherwise);
 - `jpdf-corpus` `fetch.rs` `verify` (specs/tooling/corpus.md, the cached-file check);
+- `jpdf-corpus` `manifest::load`, which also gains the opened-handle check: a FIFO or a
+  directory is `<path>: not a regular file` (before: a FIFO blocked the open, a directory failed
+  the read);
 - `xtask` `specs.rs` `read_text` (specs/tooling/check-specs.md);
 - `xtask` `web.rs` `read_results`, which also gains the opened-handle check: a FIFO or a
   directory at the results path is `<path>: not a regular file` (before: a FIFO blocked the
@@ -54,8 +59,8 @@ changes whether the open can block.
   x86_64/aarch64 hangs `open_never_blocks_on_a_fifo` (10 s timeout) and fails
   `flags_are_known_on_ci_targets` on macOS and Linux x86_64. A wrong `O_NOCTTY` value on Linux
   fails the flags test only (no test opens a terminal). A caller that drops its handle check
-  is caught only in `read_results`, which has no pre-open type check, so its FIFO and
-  directory test reaches the handle check. The other callers check the type before opening,
+  is caught only in `read_results` and `manifest::load`, which have no pre-open type check, so
+  their FIFO and directory tests reach the handle check. The other callers check the type before opening,
   so their FIFO tests stop there; dropping their handle check still passes (the swap between
   the two checks is a race no test stages deterministically; specs/cli/jpdf-cli.md lists the
   same for `read_limited`).
@@ -78,5 +83,7 @@ One flag on an open; nothing measurable.
   handle is not a regular file).
 - `xtask/src/web.rs` `reads_results_files`: a directory and a FIFO at the results path give
   `<path>: not a regular file` without blocking.
+- `tools/corpus/tests/corpus.rs` `manifest_load_refuses_non_regular_files`: the same for a
+  manifest path (30 s timeout).
 - `tools/jpdf-cli/src/main.rs` `open_never_blocks_on_a_fifo` (unchanged, now through the
   crate).
