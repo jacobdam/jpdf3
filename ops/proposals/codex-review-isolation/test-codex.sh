@@ -75,20 +75,22 @@ ok tc_ok "$REPO" "$(sed -nE 's/^channel = "(.*)"$/\1/p' "$REPO/rust-toolchain.to
 
 # 5. .cargo above the export (CX.3, R1.3): only the worktree, the main checkout and $HOME.
 WALK="$(extract 'MAIN="$(common "$TOP")"' 'done')"
-walk() {  # walk <dir with a .cargo, or "">: 0 if the walk accepts the layout
+walk() {  # walk <dir with a .cargo, or ""> [file to create in it]: 0 if the walk accepts the layout
   # The layout sits inside this repo, whose real ancestors have .cargo directories, so above $L the
   # walk jumps straight to / (which has none).
   ( fail() { exit 1; }; common() { printf '%s\n' "$L/main/.git"; }
     dirname() { if [[ "$2" == "$L" ]]; then echo /; else command dirname "$@"; fi; }
     [[ ! -e /.cargo ]] || exit 3
-    rm -rf "$L"; mkdir -p "$L/main/.git" "$L/home" "$L/main/.claude/worktrees/wt/target/scratch"
-    TOP="$L/main/.claude/worktrees/wt"; SCR="$TOP/target/scratch"; HOME="$L/home"
+    rm -rf "$L"; mkdir -p "$L/home" "$L/main/.claude/worktrees/wt/target/scratch"; git init -q "$L/main"
+    TOP="$L/main/.claude/worktrees/wt"; SCR="$TOP/target/scratch"; HOME="$L/home"; XGIT=(git)
     [[ -n "$1" ]] && mkdir "$1/.cargo"
+    [[ -n "${2:-}" ]] && echo x > "$1/.cargo/$2"
     eval "$WALK" ) >/dev/null 2>&1
 }
 L="$W/layout"
 ok walk ""
 ok walk "$L/main/.claude/worktrees/wt"; ok walk "$L/main"; ok walk "$L/home"
+ok not walk "$L/main" config.toml   # an untracked config in the main checkout's .cargo (R2.2)
 ok not walk "$L/main/.claude/worktrees"; ok not walk "$L/main/.claude"
 ok not walk "$L/main/.claude/worktrees/wt/target"; ok not walk "$L/main/.claude/worktrees/wt/target/scratch"
 ok not walk "$L"

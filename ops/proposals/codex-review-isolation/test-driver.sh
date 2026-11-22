@@ -13,7 +13,8 @@ for f in 'secs_since()' 'ps_snap()' 'tree_keys()' 'track_tree()' 'alive_keys()' 
   body="$(extract "$f")"; [[ -n "$body" ]] || { echo "not found in $D: $f" >&2; exit 2; }
   eval "$body"
 done
-grep -q '^  stop_leftovers "\$pid"$' "$D" || { echo "run_session doesn't call stop_leftovers" >&2; exit 2; }
+grep -q '^  leader=\$pid; pid=""$' "$D" && grep -q '^  stop_leftovers "\$leader"$' "$D" \
+  || { echo "run_session doesn't clear pid and call stop_leftovers" >&2; exit 2; }
 grep -q '^    track_tree "\$pid"$' "$D" || { echo "the poll loop doesn't call track_tree" >&2; exit 2; }
 log() { echo "log: $*"; }
 pass=0; failn=0
@@ -80,6 +81,11 @@ kill() { echo "$*" >> kills.log; [[ "$1" == -0 ]] && return 1; return 0; }
 SESSION_PIDS="1|$(lstart 1)"$'\n'"0|$(lstart 1)"$'\n'"x|y"$'\n'"-1|$(lstart 1)"
 stop_leftovers "$leader" >/dev/null
 ok not grep -qE 'TERM|KILL' kills.log
+# An empty or junk leader (the trap after run_session cleared pid) never reaches a group signal.
+kill() { echo "$*" >> kills.log; return 0; }   # here every group "has members"
+: > kills.log; SESSION_PIDS=""
+stop_leftovers "" >/dev/null; stop_leftovers "1x" >/dev/null
+ok test ! -s kills.log
 unset -f kill
 
 echo "pass=$pass fail=$failn"; (( failn == 0 ))

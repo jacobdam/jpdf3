@@ -13,10 +13,10 @@ plan (§4) runs it before the change is trusted.
 |---|---|---|---|
 | AS.52, CX.1 (codex): Codex's commands can read any file the owner can: the sealed manifest in the main checkout, `~/.codex/auth.json`, `~/.ssh`, `~/jpdf-corpus`, `~/jpdf-research`. What it reads reaches OpenAI and can be posted on the PR (CONSTITUTION 1.2, 13). | `codex-review.sh:171` (`--sandbox workspace-write` limits writes and network, not reads) | Replace the legacy sandbox flags with a Codex permission profile: `:root` = deny, `:minimal` = read, the export = the writable workspace, plus read-only toolchain paths (§2). | Not run (§4 test plan T1–T4). Key names from the docs and the 0.171.0 binary. |
 | CX.2 (codex): a reviewed HEAD whose `ops/judge` (or `ops`, `ops/judge/corpus`) is a symlink makes the following `rm -f` delete a file of the manifest's name wherever the link points, before the symlink check runs. | `codex-review.sh:118-122` | Refuse any symlink (mode 120000) in HEAD's tree before extracting; drop the `rm -f` (the `--exclude` keeps the file out and the byte-for-byte check already fails if it is there). | **Reproduced** with a scratch repo (a probe file name): `git archive \| tar --exclude` exits 0, then the `rm -f` deleted the target file through the link. The new pre-check refuses that repo (tests §4). bsdtar itself refuses to extract *through* a symlink, so the `rm` was the only path. |
-| CX.3 (codex): `cargo fetch` runs outside the sandbox in the export, so a branch-controlled `.cargo/config.toml` (credential provider, `build.rustc`, source replacement) runs a program with the driver's permissions. Same for a toolchain file: rustup accepts a `path` entry, which runs a toolchain binary of the file writer's choice, and it searches every directory upward for one. | `codex-review.sh:156` | Before the fetch: `.cargo/` in HEAD must have origin/main's tree id (it is protected). Above the export, a `.cargo` may exist only in this worktree (which must be clean), the main checkout (protected, synced by the driver) and `$HOME`; one anywhere else (`target/`, `target/scratch/`, `.claude/worktrees/`, all writable by sessions) fails the run. The export must have a `rust-toolchain.toml` with only `[toolchain]`, one exact `channel`, `components`, `targets`, `profile`, comments and blank lines, and no legacy `rust-toolchain`; `RUSTUP_TOOLCHAIN` is set to that channel, which wins over every toolchain file and directory override. | Tests §4: the repo's real file passes; `path = …`, `nightly`, CRLF, two channels, no channel, no file and the legacy file fail; the walk accepts `.cargo` in the worktree, the main checkout and `$HOME`, and refuses it in `.claude/worktrees/`, `.claude/`, `target/`, `target/scratch/` and above the main checkout. Run on this machine's real layout, the walk accepts it. |
+| CX.3 (codex): `cargo fetch` runs outside the sandbox in the export, so a branch-controlled `.cargo/config.toml` (credential provider, `build.rustc`, source replacement) runs a program with the driver's permissions. Same for a toolchain file: rustup accepts a `path` entry, which runs a toolchain binary of the file writer's choice, and it searches every directory upward for one. | `codex-review.sh:156` | Before the fetch: `.cargo/` in HEAD must have origin/main's tree id (it is protected). Above the export, a `.cargo` may exist only in this worktree and the main checkout (both must have no local changes, untracked or ignored files included) and `$HOME`; one anywhere else (`target/`, `target/scratch/`, `.claude/worktrees/`, all writable by sessions) fails the run. The export must have a `rust-toolchain.toml` with only `[toolchain]`, one exact `channel`, `components`, `targets`, `profile`, comments and blank lines, and no legacy `rust-toolchain`; `RUSTUP_TOOLCHAIN` is set to that channel, which wins over every toolchain file and directory override. | Tests §4: the repo's real file passes; `path = …`, `nightly`, CRLF, two channels, no channel, no file and the legacy file fail; the walk accepts `.cargo` in the worktree, the main checkout and `$HOME`, and refuses it in `.claude/worktrees/`, `.claude/`, `target/`, `target/scratch/` and above the main checkout, and an untracked `config.toml` in the main checkout's `.cargo`. Run on this machine's real layout, the walk accepts it. |
 | AS.55: `chflags -R nouchg` and `chmod -R u+w` before `rm -rf` change the mode of any same-volume file Codex hard-linked into the export (probe in audit 0003: a 0444 file became 0644). | `codex-review.sh:48`, `:73` | `rmtree`: give `u+w` to directories only (a directory can't be hard-linked; unlinking a file needs only a writable parent), never touch file modes or flags. A file Codex made immutable stays behind and the run says so on stderr. The leftover sweep reads `find -print0` NUL-separated, so a crafted entry name can't expand to other paths. | Tests §4: the outside 0444 file stays 0444 and the read-only tree is gone; the old pass on the same layout makes it 0644. Sweep: entries named `.codex-review-tmp.x *` and `.codex-review-tmp.x victim` are removed and nothing else (`victim`, the brief, a fresh temp entry) is. |
 | CX.16 (codex): the output check accepts `findings: [null]`, findings without `severity`/`detail`, unknown severities, extra keys. | `codex-review.sh:185` | Check the schema's shape in jq, in slurp mode: the file must hold exactly one JSON value (plain `jq -e` judges only the last of several), exact key sets, the severity enum, `line` an integer or null, string fields. The written output is that one object. | Tests §4: 3 valid shapes pass; 13 bad inputs fail, including two values (a malformed one first) and an empty file. |
-| CX.11 (codex): a helper the CLI starts in its own session (setsid) survives a normal CLI exit: it has left the session's process group and, once the CLI is gone, is reparented to launchd, so neither the group kill nor the descendant list finds it. | `driver.sh:190` | At each poll, record `pid|start-time` of every descendant of the CLI, in the driver's memory (a file the session can write would let it name any process). After the CLI exits (however it ends, the driver's own signal trap included), signal each recorded process whose start time still matches, its current descendants, and the session's group while it has members: TERM, KILL after 15 s, re-checking start times before every signal. Pids 0 and 1 and the driver itself are never recorded or entered. One `ps` snapshot per pass. | Tests §4: a fake CLI starts a setsid helper and exits 0; the helper survives (the bug), then is stopped; its child started after the last poll is stopped too; a bystander recorded with a wrong start time is untouched; a TERM-ignoring helper is killed after the grace period; records naming pid 1 (with launchd's real start time), 0, -1 and junk signal nothing (`kill` swapped for a recorder). |
+| CX.11 (codex): a helper the CLI starts in its own session (setsid) survives a normal CLI exit: it has left the session's process group and, once the CLI is gone, is reparented to launchd, so neither the group kill nor the descendant list finds it. | `driver.sh:190` | At each poll, record `pid|start-time` of every descendant of the CLI, in the driver's memory (a file the session can write would let it name any process). After the CLI exits (however it ends, the driver's own signal trap included; the trap stops using the pid once it is reaped), signal each recorded process whose start time still matches, its current descendants, and the session's group while it has members: TERM, KILL after 15 s, re-checking start times before every signal. Pids 0 and 1 and the driver itself are never recorded or entered. One `ps` snapshot per pass. | Tests §4: a fake CLI starts a setsid helper and exits 0; the helper survives (the bug), then is stopped; its child started after the last poll is stopped too; a bystander recorded with a wrong start time is untouched; a TERM-ignoring helper is killed after the grace period; records naming pid 1 (with launchd's real start time), 0, -1 and junk signal nothing (`kill` swapped for a recorder). |
 
 ## 2. The permission profile (AS.52, CX.1)
 
@@ -75,6 +75,10 @@ CLI, not the model's commands.
 - The `.cargo/` trust anchor is the local ref `refs/remotes/origin/main`. A session that moves it
   (`git update-ref`) can make a changed `.cargo/` look like main's; that is a deliberately hostile
   local process, which the script's header already puts out of scope.
+- `~/.cargo` is writable by sessions (the guard protects only `~/.claude`): its `config.toml` and
+  the cargo/rustup proxies in `~/.cargo/bin` (on the fetch's `PATH`) still configure or replace the
+  fetch, as they did before this proposal. Also a deliberately hostile local process; pointing
+  `CARGO_HOME` at a launcher-owned directory would close the config half, not the proxies.
 - Codex's own built-in file tools, if any run in the CLI process rather than in the sandbox, are
   not covered by any sandbox setting. T2 asks for a read through a tool call, not only a shell
   command.
@@ -153,7 +157,7 @@ unchanged code.
  [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
  # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
  # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
-@@ -153,12 +172,67 @@
+@@ -153,12 +172,71 @@
    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
    TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
  # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
@@ -169,7 +173,9 @@ unchanged code.
 +#   that pins only an exact channel, components, targets and profile, and RUSTUP_TOOLCHAIN (which
 +#   wins over every toolchain file and directory override) is set to that channel.
 +# Not covered: a session that moves the local ref refs/remotes/origin/main (git update-ref) can make
-+# a changed .cargo/ look like main's; that needs a deliberately hostile local process (see the top).
++# a changed .cargo/ look like main's; and ~/.cargo (its config.toml, the cargo/rustup proxies in
++# ~/.cargo/bin on PATH) is writable by sessions, as it was before this check. Both need a deliberately
++# hostile local process (see the top); the guard doesn't protect ~/.cargo.
 +XG=("${XGIT[@]}" -C "$TOP")
 +[[ "$("${XG[@]}" rev-parse -q --verify HEAD:.cargo 2>/dev/null)" == \
 +   "$("${XG[@]}" rev-parse -q --verify refs/remotes/origin/main:.cargo 2>/dev/null)" ]] \
@@ -177,6 +183,8 @@ unchanged code.
 +[[ -z "$("${XG[@]}" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
 +  || fail "this worktree's .cargo/ has local changes"
 +MAIN="$(common "$TOP")"; [[ "${MAIN##*/}" == .git ]] && MAIN="${MAIN%/*}" || fail "main checkout not found"
++[[ -z "$("${XGIT[@]}" -C "$MAIN" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
++  || fail "the main checkout's .cargo/ has local changes"
 +HOMEP="$(cd "$HOME" && pwd -P)" || fail "HOME"
 +d="$SCR"
 +while :; do
@@ -221,7 +229,7 @@ unchanged code.
  RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
  TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
  run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
-@@ -168,10 +242,10 @@
+@@ -168,10 +246,10 @@
    --disable apps --disable plugins --disable shell_snapshot --disable hooks \
    --disable computer_use --disable browser_use --disable browser_use_external \
    --disable in_app_browser --disable image_generation \
@@ -236,7 +244,7 @@ unchanged code.
    -c web_search=disabled \
    -C "$SCR/$SRC" \
    --output-schema "$SCHEMA" \
-@@ -182,7 +256,14 @@
+@@ -182,7 +260,14 @@
  
  [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
  (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
@@ -260,12 +268,10 @@ unchanged code.
 ```diff
 --- a/ops/driver/driver.sh
 +++ b/ops/driver/driver.sh
-@@ -144,7 +144,73 @@
-   done
-   kill -KILL -- "-$pid" 2>/dev/null
+@@ -146,14 +146,81 @@
    for p in $pids; do kill -KILL "$p" 2>/dev/null; done
-+}
-+
+ }
+ 
 +# Session helpers that outlive the CLI (CX.11): a helper that calls setsid leaves the session's
 +# process group, and once the CLI exits it is reparented to launchd, so neither the group nor the
 +# descendant list finds it after a normal exit. track_tree records "pid|start-time" for every
@@ -306,16 +312,17 @@ unchanged code.
 +  # (BSD awk takes no newline in -v, so the keys come through the environment.)
 +  ps_snap | KEYS="$1" awk 'BEGIN { n = split(ENVIRON["KEYS"], k, "\n"); for (i = 1; i <= n; i++) want[k[i]] = 1 }
 +    { if (($1 "|" $3 " " $4 " " $5 " " $6 " " $7) in want) print $1 }'
- }
++}
 +stop_leftovers() {  # stop_leftovers <reaped leader pid>: uses SESSION_PIDS, then clears it
 +  local leader=$1 roots keys grp=0 t alive p
++  [[ "$leader" =~ ^[0-9]+$ ]] || leader=""
 +  # Recorded processes still alive with the same start time, then their current descendants.
 +  roots=$(alive_keys "$SESSION_PIDS" | tr '\n' ' ')
 +  keys=""; [[ -n "${roots// /}" ]] && keys=$(ps_snap | tree_keys "$roots" self)
 +  SESSION_PIDS=""
 +  # A process group id is not reused while the group has members, so -leader is ours as long as
 +  # kill -0 finds members; once it doesn't, the group is never signalled again.
-+  kill -0 -- "-$leader" 2>/dev/null && grp=1
++  [[ -n "$leader" ]] && kill -0 -- "-$leader" 2>/dev/null && grp=1
 +  [[ -z "$keys" ]] && (( ! grp )) && return 0
 +  log "stopping session leftovers: group $leader (members: $grp), pids $(printf '%s\n' "$keys" | cut -d'|' -f1 | tr '\n' ' ')"
 +  (( grp )) && kill -TERM -- "-$leader" 2>/dev/null
@@ -331,10 +338,12 @@ unchanged code.
 +  (( grp )) && kill -0 -- "-$leader" 2>/dev/null && kill -KILL -- "-$leader" 2>/dev/null
 +  for p in $(alive_keys "$keys"); do kill -KILL "$p" 2>/dev/null; done
 +}
- 
++
  run_session() {
-   local ts out err start t0 rc res sid pid="" idle state why=""
-@@ -153,7 +219,7 @@
+-  local ts out err start t0 rc res sid pid="" idle state why=""
++  local ts out err start t0 rc res sid pid="" leader idle state why=""
+   ts=$(date -u +%Y%m%dT%H%M%SZ); out="ops/logs/$ts.jsonl"; err="ops/logs/$ts.stderr"; start=$(date +%s)
+   t0=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
    log "session $ts starting"
    # Its own group no longer gets the terminal's HUP/INT (closing tmux, Ctrl-C), so pass them on.
    # Set before the launch so no signal falls in between; stop_group ignores an empty pid.
@@ -343,7 +352,7 @@ unchanged code.
    # Agent sessions get only the project MCP config (an isolated headless Chrome), never the
    # owner's claude.ai connectors (mail, drive, calendar) or the owner's own browser.
    # perl puts the session in its own process group (pgid = pid) for stop_group; stderr goes to
-@@ -164,6 +230,7 @@
+@@ -164,6 +231,7 @@
        --strict-mcp-config --mcp-config ops/driver/mcp.json \
        --permission-mode auto --output-format stream-json --verbose > "$out" 2> "$err" &
    pid=$!
@@ -351,7 +360,7 @@ unchanged code.
    # A finished `claude -p` can stay alive (a pending ScheduleWakeup; #125). Stop it once its last
    # turn event is a result, no background task runs, and the log has been quiet for SETTLE_GRACE
    # seconds. A background task's notification starts a new turn (system/init), so waits on agents
-@@ -171,6 +238,7 @@
+@@ -171,6 +239,7 @@
    # BG_QUIET_MAX quiet seconds, and SESSION_MAX caps everything.
    while kill -0 "$pid" 2>/dev/null; do
      sleep "$POLL"
@@ -359,12 +368,14 @@ unchanged code.
      if (( $(secs_since "$t0") >= SESSION_MAX )); then
        why="SESSION_MAX"; log "session $ts reached SESSION_MAX (${SESSION_MAX}s): stopping"
        stop_group "$pid"; break
-@@ -188,6 +256,8 @@
+@@ -188,6 +257,10 @@
      fi
    done
    wait "$pid"; rc=$?
-+  # However it ended (normal exit included), stop what it left behind before the next session.
-+  stop_leftovers "$pid"
++  # Reaped: the pid may be reused from now on, so the signal trap must not use it (stop_group
++  # ignores an empty pid). However it ended (normal exit included), stop what it left behind.
++  leader=$pid; pid=""
++  stop_leftovers "$leader"
    trap - HUP INT TERM
    # Stopped by us after its final result (however the CLI exits on TERM), or killed by the
    # owner's signal after it had answered: report what the session itself reported in its final
@@ -379,7 +390,7 @@ the repository root against the patched files (after applying, the real ones):
 `ops/proposals/codex-review-isolation/test-driver.sh ops/driver/driver.sh`. Each piece under test
 is pulled out of the patched script by its exact text, so the tests run the proposed code, not a
 copy of it.
-- `test-codex.sh`: 44 checks, all pass:
+- `test-codex.sh`: 45 checks, all pass:
   - `rmtree` (3): a 0444 file hard-linked into a 0555 tree keeps mode 0444 and the tree is gone;
     the old `chmod -R` pass on the same layout makes it 0644 (the AS.55 bug);
   - the leftover sweep (1): old entries named `.codex-review-tmp.x *` and `.codex-review-tmp.x
@@ -391,16 +402,18 @@ copy of it.
     `rust-toolchain` next to a good file, two channels, no channel and no file fail. (Writing the
     first tests caught a fail-open bug: BSD grep rejects an empty alternative in `(…|)$`, exits 2,
     and `! grep` passed everything. The check takes only exit 1 as success);
-  - `.cargo` walk (9): accepted with none, or one in the worktree, the main checkout or `$HOME`;
+  - `.cargo` walk (10): accepted with none, or one in the worktree, the main checkout or `$HOME`;
     refused in `.claude/worktrees/`, `.claude/`, `target/`, `target/scratch/` and above the main
-    checkout;
+    checkout, and with an untracked `config.toml` in the main checkout's `.cargo`;
   - symlink pre-check (3): a plain repo passes; a repo with `ops/judge` → symlink and an empty repo
     are refused;
   - output check (17): 3 valid shapes pass; `[null]`, `[{}]`, an unknown severity, a missing key,
     `line` 3.5, a non-string `detail`, an extra top-level key, a top-level array, a numeric verdict,
     an empty file, non-JSON, two values with a malformed one first, and two valid values fail; the
     write step uses `jq -s '.[0] + …'`.
-- `test-driver.sh`: 17 checks, all pass (about 20 s; the KILL case waits 15 s).
+- `test-driver.sh`: 18 checks, all pass (about 20 s; the KILL case waits 15 s), including: an empty
+  or junk leader pid (what the signal trap sees once `run_session` has cleared it) never reaches a
+  group signal.
 - Hand mutants, each caught: dropping the start-time match in `alive_keys` (the bystander is
   killed); dropping the pid ≤ 1 guard (pid 1 gets signalled, seen by the recorder); dropping the
   descendant expansion (the helper's late child survives); `chmod u+w` on files in `rmtree`;

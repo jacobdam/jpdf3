@@ -61,7 +61,7 @@
  [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
  # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
  # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
-@@ -153,12 +172,67 @@
+@@ -153,12 +172,71 @@
    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
    TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
  # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
@@ -77,7 +77,9 @@
 +#   that pins only an exact channel, components, targets and profile, and RUSTUP_TOOLCHAIN (which
 +#   wins over every toolchain file and directory override) is set to that channel.
 +# Not covered: a session that moves the local ref refs/remotes/origin/main (git update-ref) can make
-+# a changed .cargo/ look like main's; that needs a deliberately hostile local process (see the top).
++# a changed .cargo/ look like main's; and ~/.cargo (its config.toml, the cargo/rustup proxies in
++# ~/.cargo/bin on PATH) is writable by sessions, as it was before this check. Both need a deliberately
++# hostile local process (see the top); the guard doesn't protect ~/.cargo.
 +XG=("${XGIT[@]}" -C "$TOP")
 +[[ "$("${XG[@]}" rev-parse -q --verify HEAD:.cargo 2>/dev/null)" == \
 +   "$("${XG[@]}" rev-parse -q --verify refs/remotes/origin/main:.cargo 2>/dev/null)" ]] \
@@ -85,6 +87,8 @@
 +[[ -z "$("${XG[@]}" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
 +  || fail "this worktree's .cargo/ has local changes"
 +MAIN="$(common "$TOP")"; [[ "${MAIN##*/}" == .git ]] && MAIN="${MAIN%/*}" || fail "main checkout not found"
++[[ -z "$("${XGIT[@]}" -C "$MAIN" status --porcelain --ignored --untracked-files=all -- .cargo 2>&1)" ]] \
++  || fail "the main checkout's .cargo/ has local changes"
 +HOMEP="$(cd "$HOME" && pwd -P)" || fail "HOME"
 +d="$SCR"
 +while :; do
@@ -129,7 +133,7 @@
  RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
  TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
  run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
-@@ -168,10 +242,10 @@
+@@ -168,10 +246,10 @@
    --disable apps --disable plugins --disable shell_snapshot --disable hooks \
    --disable computer_use --disable browser_use --disable browser_use_external \
    --disable in_app_browser --disable image_generation \
@@ -144,7 +148,7 @@
    -c web_search=disabled \
    -C "$SCR/$SRC" \
    --output-schema "$SCHEMA" \
-@@ -182,7 +256,14 @@
+@@ -182,7 +260,14 @@
  
  [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
  (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
