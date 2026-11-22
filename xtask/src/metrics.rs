@@ -130,6 +130,10 @@ fn parse_date(s: &str) -> Option<i64> {
 
 /// The UTC day of a Unix time in seconds (`%ct`), years 1970..=9999 only.
 fn utc_day(secs: &str) -> Option<i64> {
+    // Digits only: `i64::from_str` would also take a leading `+` (PR #220 R2.2).
+    if secs.is_empty() || !secs.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
     let secs: i64 = secs.parse().ok()?;
     let max = days_from_civil(9999, 12, 31)?
         .checked_mul(86_400)?
@@ -998,16 +1002,14 @@ mod tests {
                 Some(PathBuf::from("z"))
             )
         );
+        // `today` before and after the call, so a run across midnight UTC can't fail (R2.1).
+        let before = today().unwrap();
         let o = a(&[]).unwrap();
+        let after = today().unwrap();
+        assert!(o.until.is_some_and(|u| (before..=after).contains(&u)));
         assert_eq!(
-            (o.since, o.until, o.out, o.from, o.index),
-            (
-                None,
-                Some(today().unwrap()),
-                PathBuf::from("target/metrics"),
-                None,
-                None
-            )
+            (o.since, o.out, o.from, o.index),
+            (None, PathBuf::from("target/metrics"), None, None)
         );
         // An explicit --since after the default --until (today) is refused too (PR #220 R1.2).
         assert!(a(&["--since", "9999-12-31"]).unwrap_err().contains("after"));
@@ -1083,6 +1085,8 @@ mod tests {
             "@@c\tnot-a-date\ts\n",
             "@@c\t2026-11-22\ts\n",
             "@@c\t-1\ts\n",
+            "@@c\t+1795391999\ts\n",
+            "@@c\t\ts\n",
             "@@c\t253402300800\ts\n",
             "@@c\t0\ts\n1\tsrc\n",
             "@@c\t0\ts\nx\t1\tp\n",
