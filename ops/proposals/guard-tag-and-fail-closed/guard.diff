@@ -31,7 +31,7 @@
  # Codex tripwire: does a Bash command run `codex` as a command? A small one-pass shell tokenizer
  # instead of a regex, so there is no backtracking. It finds the command word of every simple command
  # (after ; & | newline ( ) { $( ) and backticks, also inside double quotes), skipping VAR=value
-@@ -47,13 +53,14 @@
+@@ -47,13 +53,15 @@
  _CODEX_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
  
  
@@ -47,10 +47,44 @@
      cmds, words, cur, started, skip = [], [], [], False, False
      mode, stack, heredocs = "n", [], []  # mode: n = unquoted, d = inside "...", s = inside '...'
 +    arith = 0  # open (( / $(( frames: inside one, << is a shift, never a heredoc (#162, CX.5)
++    brace = 0  # open ${ at this substitution level: inside, only quotes, $( and backticks count (#162, R3.1)
      i, n = 0, len(s)
  
      def flush_word():
-@@ -126,12 +133,13 @@
+@@ -73,14 +81,14 @@
+         skip = False
+ 
+     def open_sub(closer):
+-        nonlocal words, cur, started, mode, skip
+-        stack.append((closer, mode, words, cur, started, skip))
+-        words, cur, started, mode, skip = [], [], False, "n", False
++        nonlocal words, cur, started, mode, skip, brace
++        stack.append((closer, mode, words, cur, started, skip, brace))
++        words, cur, started, mode, skip, brace = [], [], False, "n", False, 0
+ 
+     def close_sub():
+-        nonlocal words, cur, started, mode, skip
++        nonlocal words, cur, started, mode, skip, brace
+         flush_cmd()
+-        _, mode, words, cur, _, skip = stack.pop()
++        _, mode, words, cur, _, skip, brace = stack.pop()
+         started = True
+ 
+     while i < n:
+@@ -116,6 +124,12 @@
+                 cur.append(c)
+             i += 1
+             continue
++        if brace and c in " \t\n;&|<>()}":  # literal inside ${...}; } closes one
++            brace -= c == "}"
++            cur.append(c)
++            started = True
++            i += 1
++            continue
+         if c in " \t":
+             flush_word()
+         elif c == "'":
+@@ -126,12 +140,14 @@
              j = s.find("\n", i)
              i = n if j < 0 else j
              continue
@@ -62,32 +96,52 @@
 -            j = n if j < 0 else j + 1
 -            cur.append(s[i:j])
 +            cur.append("${")  # scan on: a $( or backtick inside ${x:-...} runs too (#162, R2.1)
++            brace += 1
              started = True
 -            i = j
 +            i += 2
              continue
          elif c in "<>" or (c == "&" and s.startswith("&>", i)):
              if started and "".join(cur).isdigit():
-@@ -149,19 +157,27 @@
+@@ -149,19 +165,45 @@
                      op, j = "<<-", j + 1
                  while j < n and s[j] in " \t":
                      j += 1
 -                k = j
 -                while k < n and s[k] not in " \t\n;&|<>()":
-+                k, q = j, ""  # the delimiter word ends at an unquoted, unescaped blank (#162, R2.2)
++                # The delimiter word, quotes removed as the shell does: it ends at an unquoted,
++                # unescaped blank; \ escapes anything outside quotes, only \ " $ ` inside "...",
++                # nothing inside '...' (#162, R2.2, R3.2).
++                k, q, d = j, "", []
 +                while k < n:
-+                    if q:
-+                        q = "" if s[k] == q else q
-+                    elif s[k] in "'\"":
-+                        q = s[k]
-+                    elif s[k] == "\\" and k + 1 < n:
++                    ch = s[k]
++                    if q == "'":
++                        if ch == "'":
++                            q = ""
++                        else:
++                            d.append(ch)
++                    elif q == '"':
++                        if ch == '"':
++                            q = ""
++                        elif ch == "\\" and k + 1 < n and s[k + 1] in '\\"$`':
++                            k += 1
++                            d.append(s[k])
++                        else:
++                            d.append(ch)
++                    elif ch in "'\"":
++                        q = ch
++                    elif ch == "\\" and k + 1 < n:
 +                        k += 1
-+                    elif s[k] in " \t\n;&|<>()":
++                        d.append(s[k])
++                    elif ch in " \t\n;&|<>()":
 +                        break
++                    else:
++                        d.append(ch)
                      k += 1
-                 delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
+-                delim = s[j:k].replace("'", "").replace('"', "").replace("\\", "")
 -                if delim[:1].isdigit() or delim[:1] in ("", "$", "("):
 -                    cur.append(op)  # arithmetic shift (1<<3, $((1 << n))), not a heredoc
++                delim = "".join(d)
 +                if arith or delim[:1].isdigit() or delim[:1] in ("", "$", "("):
 +                    cur.append(op)  # arithmetic shift (1<<3, $((a << b))), not a heredoc
                      started = True
@@ -101,7 +155,7 @@
              i = j
              continue
          elif c in ";&|\n":
-@@ -181,20 +197,23 @@
+@@ -181,20 +223,23 @@
                  continue
          elif c == "(":
              flush_cmd()
@@ -109,7 +163,7 @@
 +            # the second ( of (( or $((: arithmetic. Erring this way only scans more text as commands.
 +            kind = "a" if i and s[i - 1] == "(" else "g"
 +            arith += kind == "a"
-+            stack.append((kind, mode, None, None, False, False))
++            stack.append((kind, mode, None, None, False, False, 0))
          elif c == ")":
              if stack and stack[-1][0] == ")":
                  close_sub()
@@ -129,7 +183,7 @@
              stack.pop()
          else:
              close_sub()
-@@ -202,17 +221,23 @@
+@@ -202,17 +247,23 @@
      return cmds
  
  
@@ -157,7 +211,7 @@
          if low in CODEX_KEYWORDS or _CODEX_ASSIGN.match(w):
              i += 1
          elif base in CODEX_SHELLS:
-@@ -228,7 +253,7 @@
+@@ -228,7 +279,7 @@
                  if opt[-1] in "oO":
                      i += 1  # -o pipefail, -O extglob
              if want_c:
@@ -166,7 +220,7 @@
          elif base in CODEX_WRAPPERS:
              argopts = CODEX_WRAPPERS[base]
              i += 1
-@@ -248,22 +273,36 @@
+@@ -248,22 +299,36 @@
      return False
  
  
@@ -208,7 +262,7 @@
  
  
  def codex_command(cmd):
-@@ -397,6 +436,8 @@
+@@ -397,6 +462,8 @@
          raise Block("cmux control is not allowed: it can type into other terminals, including the owner's")
      # The full command, not the inert view: quoted gh text is never a command word to the
      # tokenizer, and stripping it can be fooled (#130).
@@ -217,7 +271,7 @@
      if codex_command(cmd):
          raise Block("run Codex only through ops/driver/codex-review.sh (fixed sandbox flags)")
      if re.search(r"\bosascript\b", low) and re.search(r"keystroke|key code|do script|system events", low):
-@@ -498,49 +539,81 @@
+@@ -498,49 +565,81 @@
                 "--web", "-w", "--template", "-T", "--recover"}
  
  
@@ -335,7 +389,7 @@
      return texts
  
  
-@@ -609,7 +682,11 @@
+@@ -609,7 +708,11 @@
          fp = ti.get("file_path") or ti.get("notebook_path") or ""
          check_write_path(fp, cwd)
          if tool == "Write":
@@ -348,7 +402,7 @@
          elif tool == "Edit":
              new, old = ti.get("new_string", ""), ti.get("old_string", "")
          elif tool == "MultiEdit":
-@@ -627,21 +704,26 @@
+@@ -627,21 +730,26 @@
          check_bash(ti.get("command", ""), cwd)
  
  
@@ -385,7 +439,7 @@
  
  
  # ---------------------------------------------------------------- self-test
-@@ -830,6 +912,77 @@
+@@ -830,6 +938,92 @@
          ("Bash", {"command": "gh pr review 5 --approve"}, True),
          ("Bash", {"command": "gh api repos/jacobdam/jpdf3/issues/5/comments -f body=x"}, True),
          ("Bash", {"command": "gh pr merge 5 --auto --squash --body 'x'"}, False),
@@ -424,6 +478,21 @@
 +        ("Bash", {"command": "cat <<\"E F\"\nx\nE F\ncodex exec x"}, True),
 +        ("Bash", {"command": "cat <<'E F'\ncodex exec x\nE F\nls"}, False),
 +        ("Bash", {"command": "echo ${HOME} ${#x} ${x:-a} codex"}, False),
++        ("Bash", {"command": "echo \"`echo ${x/(/}`\"; codex exec x; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"`echo ${x/(/}`\"; cat ~/.ssh/id_rsa; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"`echo ${x/(/}`\"; ls;gh issue comment 5 --body hi; echo \"x\""}, True),
++        ("Bash", {"command": "echo \"$(echo ${x/(/})\"; codex exec x; echo \"x\""}, True),
++        ("Bash", {"command": "echo ${x/)/}; codex exec x"}, True),
++        ("Bash", {"command": "echo ${x:-a b} ${y:-${z}}; codex exec x"}, True),
++        ("Bash", {"command": "echo ${x:-$(echo a) ${y/(/}}; codex exec x"}, True),
++        ("Bash", {"command": "echo ${x/(/} ${y:-a;codex} codex"}, False),
++        ("Bash", {"command": "echo ${x:-$(echo a; codex exec x)}"}, True),
++        ("Bash", {"command": "cat <<'E\\'\nx\nE\\\nls;gh issue comment 5 --body hi"}, True),
++        ("Bash", {"command": "cat <<'E\\'\nx\nE\\\ncodex exec x"}, True),
++        ("Bash", {"command": "cat <<'E\\'\nx\nE\\\ncat ~/.ssh/id_rsa"}, True),
++        ("Bash", {"command": "cat <<\"E\\\\\"\nx\nE\\\ncodex exec x"}, True),
++        ("Bash", {"command": "cat <<\"E\\x\"\nx\nE\\x\ncodex exec x"}, True),
++        ("Bash", {"command": "cat <<'E\\'\ncodex exec x\nE\\\nls"}, False),
 +        ("Bash", {"command": "gh issue comment 5 --body '%s x'" % TAG}, False),
 +        ("Bash", {"command": "{ gh issue comment 5 --body '%s x'; }" % TAG}, False),
 +        ("Bash", {"command": "echo 'run gh issue comment 5 later'"}, False),
@@ -463,7 +532,7 @@
      ]
      failures = 0
      for tool, ti, should in cases:
-@@ -869,6 +1022,61 @@
+@@ -869,6 +1063,61 @@
          if got != want:
              failures += 1
              print("FAIL: inert_view(%r) -> %r, expected %r" % (cmd, got, want))

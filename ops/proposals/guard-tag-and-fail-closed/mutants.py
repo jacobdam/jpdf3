@@ -28,10 +28,14 @@ MUTANTS = [
     ("secret raw prefilter", 'if not re.search(r"\\.(?:ssh|codex|config)", flat):',
      'if not re.search(r"\\.(?:ssh|codex|config)", cmd):'),
     ("${ swallowed", 'cur.append("${")  # scan on', 'cur.append(s[i:(s.find("}", i) + 1) or n]); i = (s.find("}", i) + 1 or n) - 2  # scan on'),
-    ("heredoc delim at blank", """elif s[k] in "'\\"":
-                        q = s[k]""",
-     """elif False:
-                        q = s[k]"""),
+    ("heredoc delim quotes off", """elif ch in "'\\"":\n                        q = ch""",
+     """elif False:\n                        q = ch"""),
+    ("heredoc delim drops all", 'delim = "".join(d)',
+     """delim = s[j:k].replace("'", "").replace('"', "").replace("\\\\", "")"""),
+    ("brace literal off", 'if brace and c in " \\t\\n;&|<>()}":', 'if False and c in " \\t\\n;&|<>()}":'),
+    ("brace never closes", 'brace -= c == "}"', "pass"),
+    ("brace kept in sub", 'words, cur, started, mode, skip, brace = [], [], False, "n", False, 0',
+     'words, cur, started, mode, skip = [], [], False, "n", False'),
     ("secret substring", '_SECRET_WORD = re.compile(r"(?:^|[/~=:])(?:\\.ssh|\\.codex|\\.config/gh)(?:/|$)")',
      '_SECRET_WORD = re.compile(r"(?:\\.ssh|\\.codex|\\.config/gh)")'),
 ]
