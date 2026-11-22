@@ -139,10 +139,9 @@ impl MemoryBudget {
     /// later small requests, but a request above the threshold gets a new mapping. So the
     /// worst case for one phase transition is one phase's whole memory left in the heap
     /// (every phase can allocate below the threshold) plus the next phase's whole memory in
-    /// new mappings. The same holds in a
-    /// non-main arena (a thread other than the main one, #114): its 64 MiB sub-heaps are also
-    /// trimmed only from the top. This covers one
-    /// earlier phase; holes several phases leave that no later request fits are not bounded
+    /// new mappings. The same holds in a non-main arena (a thread other than the main one,
+    /// #114): its 64 MiB sub-heaps are also trimmed only from the top. This covers one earlier
+    /// phase; holes several phases leave that no later request fits are not bounded
     /// (specs/core/memory-budget.md, known gap, #146).
     pub fn heap_high_water(&self) -> u64 {
         self.largest_phase()

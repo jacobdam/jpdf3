@@ -131,11 +131,18 @@ the 2 GiB unused.
     limits under `RLIMIT_AS` = 2 GiB as the judge runs `jpdf-cli`, and the process neither
     crashes nor fails an allocation, and its measured peak address space stays at or below
     `peak()`; or (b) the structural fix above lands, covering both index storage and payloads.
-    A measurement that finds the process over the limit doesn't open the gate. A passing run
-    validates only the workloads and phases it ran: enabling another phase on the jpdf-cli
-    path needs a new run that includes it. Today parse is the only phase
-    on that path; parse after parse can build up holes the same way (already true before #146),
-    which the same measurement covers.
+    The run must also show that each phase reached its stress allocations in that order: it
+    records the allocation sizes each phase reached (e.g. the decoder's working buffers at
+    `max_decode_working_bytes`), and a phase that ended early (a limit rejection before its
+    buffers, a fallback, a skipped phase) is not evidence. A measurement that finds the process
+    over the limit doesn't open the gate. A passing run validates only the workloads and phases
+    it ran: enabling another phase on the jpdf-cli path needs a new run that includes it. Today
+    parse is the only phase on that path; parse after parse can build up holes the same way
+    (already true before #146), which the same measurement covers.
+  - **Tripwire:** tools/jpdf-cli/tests/phase_gate.rs fails, naming #146, as soon as jpdf-cli's
+    normal or build dependency graph (`cargo tree`) holds any crate beyond the parse-only set
+    (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax, jpdf-traits). A PR that brings a filter,
+    backend or render crate onto the path must satisfy the gate and update that allowlist.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
     the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
     sub-heaps, which are also trimmed only from the top.
@@ -149,7 +156,8 @@ the 2 GiB unused.
   them (future work in `jpdf-render` and the bindings).
 
 **New defaults** (lowered; CONSTITUTION 4 forbids only raising). #109 lowered the first four;
-#146 lowered them again where needed, so the defaults fit with the largest phase counted twice:
+#146 lowered three of them again and three more fields, so the defaults fit the estimate with
+the largest phase counted twice:
 - `max_objects_per_parse` 2 000 000 → 1 048 576 (2^20, #109). At 272 bytes per object, 2 M objects
   alone were 519 MiB. 2^20 still holds a flat `/Kids` array of `max_pages` (1 000 000)
   references.
@@ -319,6 +327,8 @@ No runtime cost for `MemoryBudget` (tests only). `alloc_bytes` adds a few intege
 per allocation counted by `retained_cost`, which already walks the object once.
 
 ## Tests
+- tools/jpdf-cli/tests/phase_gate.rs: `jpdf_cli_links_only_parse_crates_until_the_146_gate_opens`
+  (new, #146; the gate's tripwire).
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,

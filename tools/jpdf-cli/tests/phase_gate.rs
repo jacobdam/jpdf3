@@ -1,0 +1,60 @@
+//! Tripwire for the #146 gate (specs/core/memory-budget.md, "Gate"): no decode or raster phase
+//! runs on the jpdf-cli path until the cross-phase heap build-up is measured or fixed. Today the
+//! path only parses, so its whole normal and build dependency graph is the parse-only crates
+//! below. A change that pulls in a filter, backend or render crate (or any other crate) fails
+//! here and must first satisfy the gate, then update this allowlist in the same PR.
+
+use std::collections::BTreeSet;
+use std::process::Command;
+
+/// Every crate the jpdf-cli binary may link while the #146 gate is closed.
+const PARSE_ONLY: [&str; 5] = [
+    "jpdf-cli",
+    "jpdf-cos",
+    "jpdf-engine",
+    "jpdf-syntax",
+    "jpdf-traits",
+];
+
+#[test]
+fn jpdf_cli_links_only_parse_crates_until_the_146_gate_opens() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let out = Command::new(cargo)
+        .args([
+            "tree",
+            "-p",
+            "jpdf-cli",
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--offline",
+            "--locked",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo tree runs");
+    // Fail closed: a cargo tree failure is not an empty graph.
+    assert!(
+        out.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("cargo tree prints UTF-8");
+    let crates: BTreeSet<&str> = stdout
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    // The graph is really listed (the binary's own crate and the parser are in it).
+    assert!(
+        crates.contains("jpdf-cli") && crates.contains("jpdf-syntax"),
+        "{crates:?}"
+    );
+    let extra: Vec<&&str> = crates.iter().filter(|c| !PARSE_ONLY.contains(c)).collect();
+    assert!(
+        extra.is_empty(),
+        "jpdf-cli now links {extra:?}. The #146 gate (specs/core/memory-budget.md) must be \
+         satisfied before a decode or raster phase reaches the jpdf-cli path; then update \
+         PARSE_ONLY in this test"
+    );
+}
