@@ -83,6 +83,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major in
   rounds 6, 7 and 9 to 14). Now a TICK §4 triage rule (ADR 0010) ([journal](journal/2026-11-22.md), PR #151).
 
+- Writing a process rule that bounds a loop (review rounds, retries) → before the first review, write the state table:
+  every counter value (below the cap, at the cap, the extra check, past it) and every exit (clean, open finding,
+  regrade, dispute, a merge from main), each with its next step. PR #157's reviewers found at least one unhandled
+  state in every round, 5 in a row ([journal](journal/2026-11-22.md), PR #157).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).

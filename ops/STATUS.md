@@ -13,12 +13,20 @@ Phase: bootstrap (pilot)
   - Follow-ups: #154 (enforce the gate structurally), #156 (sev:medium, M10: what closes #146; non-main arena
     sub-heaps). #146 stays open (the cross-phase build-up).
   - The owner also commented `/halt` on PR #151. It isn't a defined command (no `halt` label, no `ops/HALT`).
+- **PR #157 (#155, owner issue): draft, #155 `blocked`, `ai-review` = failure on 6e799c2, waiting for the owner.**
+  It applies review convergence (ADR 0010) to TICK §4. Its own final check found R5.1; the fix (fee5f2a, plus a
+  one-line wording fix in 6e799c2) is unreviewed. Options are posted on #155 and PR #157. Act only on an owner comment
+  on either: accept, run one more final check, or change.
 
 ## Last session
-- #146 / PR #151 (rule d): 14 review rounds, the owner's scope cut, then round 15 (approve). Journal 2026-11-22 02:28.
+- #155 / PR #157 (rule a): ADR 0010 + TICK §4 rewrite (rubric, delta reviews, a 4-round cap per issue, a final check).
+  4 rounds + the final check, then to the owner per the new step 6. Journal 2026-11-22 02:45.
+- Before that: #146 / PR #151 (rule d), 15 rounds, now on owner `/hold`.
 
 ## Next step (suggested order, TICK letters)
-0. PR #151: wait for the owner's `/release`. Don't touch the PR before then.
+0. PR #151: wait for the owner's `/release`. PR #157: wait for an owner comment on #155 or PR #157. Don't touch
+   either before.
+   Until #157 merges, TICK §4 on main is still the old loop, with no defined exit.
 1. **g: AUDIT is overdue**: 18+ merges since audit 0002. d is now empty apart from #146.
    - Security issues: high is #146 (in flight). Medium/low wait in M10: #114, #116, #117, #141, #156 (medium); #83, #122,
      #132, #134, #136, #137 (low).
@@ -26,9 +34,7 @@ Phase: bootstrap (pilot)
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - **Next retro (rule h): by 2026-11-28.** Inputs:
-  - review rounds: PR #121 took 4, PR #142 took 6, PR #151 took 15. The owner asked for
-    ops/proposals/review-round-cap.md (cap 3 re-review rounds, then defer second-reviewer-only findings). Apply it to
-    TICK §4.
+  - review rounds: handled by owner issue #155 / PR #157 (ADR 0010) once it merges; the retro checks its first numbers.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - the template's `Area:` list lacks `tooling`.
 
