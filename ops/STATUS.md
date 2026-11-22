@@ -14,28 +14,27 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
-- **PR #209** (#21 part 1/2, pilot fire drill record docs/retros/0000-pilot.md): `ai-review` = success (2 rounds),
-  auto-merge on. It says `Refs #21`, not `Closes`: #21 closes once the owner's drills (#208) are added.
-  The /hold drill **fails**: #210 (owner-commands can't turn off auto-merge and says it did; protected).
+- PR #209 merged (#21 part 1/2). #21 stays open until the owner's drills (#208) are added. The /hold drill
+  **fails**: #210 (owner-commands can't turn off auto-merge and says it did; protected).
 - Scratch drill PR #207 closed unmerged; its remote branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #21 → drills (crash PR #207, weakened-test reviewer, guard probes), record PR #209, owner part #208, bug #210.
-  PR #204 and #206 merged. Removed worktrees e2e-honesty, e2e-honesty-2, record-200;
-  left pilot-drill (PR #209) and record-21 (this record) until they merge. Journal 2026-11-22 10:30.
+- i: #86 → PR #212 merged (one minimal-PDF generator for engine and CLI tests; `Outline::control_box` removed), 3
+  review rounds. PR #211 merged. Journal 2026-11-22 10:37.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. **#210** (`ready`, M0): write ops/proposals/ for the owner-commands permission fix (not owner-todo until the
-   proposal merges). Then the `ready` backlog (rule i) in M0, lowest number first: #86, #91, #115, #154.
-4. When #208 has the owner's results: add them to docs/retros/0000-pilot.md and close #21.
+3. **g: audit 0005 is due** (11 merges since audit 0004 with PR #212 and this record PR).
+4. Then the `ready` backlog (rule i) in M0, lowest number first: #91, #115, #154, #210 (#210: write ops/proposals/
+   for the owner-commands permission fix; not owner-todo until the proposal merges).
+5. When #208 has the owner's results: add them to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
   #132, #134, #136, #137, #166, #193, #203.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2.
+    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
@@ -44,7 +43,9 @@ Phase: bootstrap (pilot)
   - audit 0004 AC.3: no rule for a CI fix after a clean final check (K = 6 is the owner's call, but nothing adds
     `owner-todo`); AC.4: a proposal PR's `Closes #N` drops a sev:high issue from rule d before the fix is on main,
     and the owner's new issue isn't told to keep `security`/`sev:*` (ops/TICK.md:29, AUTOMATION.md:295).
-  - Codex refused the audit 0004 security brief (provider cyber filter); decide how audits use it.
+  - Codex refused the audit 0004 security brief (provider cyber filter); decide how audits use it. In PR #212 all 3
+    Codex runs said its workspace commands timed out (brief-only review).
+  - ops/LESSONS.md has 63 entries (cap 60).
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
