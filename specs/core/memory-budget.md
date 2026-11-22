@@ -389,7 +389,7 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     with a length instead of `charge_output`, or releases a buffer it still holds. No caller
     exists yet; the JBIG2 caller's review must check it (requirement above, #231).
     `charge_output` (#187): hand mutants (charge the length, never copy, copy without the fit
-    check, skip or ignore the capacity charge, forget to release the old buffer or release its
+    check, copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to release the old buffer or release its
     length, keep the old buffer after the copy, charge the copy's whole capacity twice) each
     fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
     or returns more capacity than asked for (std returns exactly the request); both keep the
