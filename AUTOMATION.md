@@ -292,7 +292,7 @@ The judge is the hard backstop.
 | Third-party crate bug or failed admission | switch crates or write our own behind the trait; ADR |
 | Milestone order wrong (e.g. a journey can't pass yet) | reorder PLAN.md via ADR; pull the minimal prerequisite forward |
 | Justified slowdown (security check costs speed) | close the perf issue with an ADR; absolute targets are still checked at M2/M10 gates |
-| Would need to break CONSTITUTION or change a protected file | `ops/proposals/` note, label `deferred`, work on something else |
+| Would need to break CONSTITUTION or change a protected file | `ops/proposals/` note through a normal PR; once it merges, the issue gets `owner-todo` (#172); work on something else |
 | Owner instruction conflicts with CONSTITUTION | explain in the issue; the owner must edit CONSTITUTION themselves |
 
 ## 8. Stuck, failure and recovery

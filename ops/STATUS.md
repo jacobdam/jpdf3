@@ -16,7 +16,8 @@ Phase: bootstrap (pilot)
 
 ## Next step (suggested order, TICK letters)
 1. **d: #162** (sev:high, protected guard): write `ops/proposals/guard-tag-and-fail-closed.md` with the diff and a test
-   plan; add `owner-todo` only when the proposal PR merges (TICK §0). #162's CX.4 is confirmed and small (drop the raw-text prefilter). Same pattern as #161:
+   plan; add `owner-todo` only when the proposal PR merges (TICK §0). #162's CX.4 is confirmed and small (drop the
+   raw-text prefilter). Same pattern as #161:
    diffs and test scripts in `ops/proposals/<topic>/`, close the issue with the PR, and open an owner-todo issue to
    apply it once it merges. Then **#168** (sev:high, M2, engine work in budget.rs).
    - Skip **#174** under rule d: only the owner can act on it (apply and test the #161 proposal).

@@ -24,15 +24,19 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **`owner-todo` means "the owner can act right now"** (owner, #172), never "needs the owner
   eventually". The owner reads the label list to see whose turn it is, so:
   - File a finding that needs a protected change (audit, rule d, judge alarm) with its usual
-    labels and **without** `owner-todo`; work it like any issue and write the `ops/proposals/` file.
+    labels and **without** `owner-todo`; work it like any issue and write the
+    `ops/proposals/` file.
   - When that proposal PR merges (judge alarm: once its review passes, §2 b), add `owner-todo`
-    to the issue (or to a new issue for the owner's part, if the PR closes it) and comment `ready for owner: apply ops/proposals/<x>.md,
-    test plan in §N`.
-  - When you park a PR waiting for the owner (a `/hold` waiting for `/release`, a `blocked`
-    review waiting for an owner decision), add `owner-todo` to its issue with a one-line note
-    on what the owner needs to do.
-  - Remove `owner-todo` once the owner's part is done (an owner-signed commit applying it, or
-    the owner comment it waited for). The owner may also remove it.
+    to the issue (or to a new issue for the owner's part, if the PR closes it) and comment
+    `ready for owner: apply ops/proposals/<x>.md, test plan in §N`. Proposal PRs usually merge
+    after their session exits, so the §1 `owner-todo` check catches them.
+  - When a PR waits for the owner, add `owner-todo` to its issue with a one-line note on what
+    the owner needs to do: an owner `/hold` (note: waiting for `/release`; add it as soon as
+    you see the `/hold`), or a PR you parked for an owner decision (§2 c, §4 step 6).
+  - Remove `owner-todo` once the owner's part is done (a merge on main applying it, which for a
+    protected path needs the owner's signed commits, or the owner comment it waited for). The
+    owner may also remove it.
+  - Rules d and i skip issues labeled `owner-todo`: it is the owner's turn.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
@@ -63,6 +67,12 @@ ops/driver/owner-issues.sh
 gh run list --branch main --limit 5
 gh pr list --author @me --state open
 gh issue list --state open --limit 50 --json number,title,labels,milestone
+# owner-todo check (§0): your PRs merged since the last journal entry that add or change
+# ops/proposals/ (label their issue), and merges that change protected paths, which only the
+# owner's signed commits can do (unlabel what they applied)
+gh pr list --author @me --state merged --limit 10 --json number,title,mergedAt,files \
+  --jq '.[] | select(any(.files[]; .path | startswith("ops/proposals/"))) | [.number,.mergedAt,.title] | @tsv'
+git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protected.txt)
 git fetch -q origin
 # audit due? commit that ADDED the last audit record, then merges since it
 # (due at >= 10 merges or 7 days; if the first line is empty, no audit exists yet: due now)
@@ -89,12 +99,16 @@ b. **main is red.** Read the failing run. Infra failure (network, outage, a miss
      time to `ops/state/judge-alarm-since` (local state, not committed). Then
      continue with work that doesn't need a merge. Delete that file once the judge is green.
      The proposal PR can't merge while the judge is down, so add `owner-todo` (§0) as soon as
-     its `ai-review` is `success`, with `ready for owner: apply the proposal in PR #N`.
+     its `ai-review` is `success`, with `ready for owner: apply the proposal in PR #N`. Once
+     the owner's fix is on main, remove the label and close the proposal PR (comment: applied
+     in <sha>).
 c. **Your own open PR** failing CI or review → fix it. Max 3 CI fix attempts per PR. Then label
-   the issue `blocked`, write hypotheses and evidence on it, and close or park the PR (a PR
-   parked for an owner decision also gets `owner-todo` on its issue, §0). Review
+   the issue `blocked`, write hypotheses and evidence on it, and close or park the PR. Park it
+   for the owner (`owner-todo` on its issue, §0) only when the next step needs the owner (a
+   decision, a protected change, an infra fix only the owner can make); otherwise close it. Review
    rounds follow §4's cap (4 rounds, ADR 0010).
-d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`.** Every
+d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`** (not
+   `owner-todo`, §0). Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
    When you file one, set it, and put `sev:medium` / `sev:low` issues in milestone M10: they
    wait for the release gate and are not picked before then. An unlabeled `security` issue →
@@ -104,7 +118,8 @@ f. **A leftover branch/worktree from a dead session** → resume it if valuable,
 g. **AUDIT session due** (§1 shows ≥ 10 merges since the last audit, or 7 days) → §6.
 h. **RETRO session due** (7 days since the last one, a gate just passed, or an incident: revert,
    main red > 2 sessions, judge alarm, ≥ 3 issues blocked this week) → §7.
-i. **A `ready` issue in the current milestone** with dependencies met (lowest number first).
+i. **A `ready` issue in the current milestone** with dependencies met, not `owner-todo` (lowest
+   number first).
 j. **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
    read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
    and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
@@ -305,8 +320,9 @@ leave the PR blocked.
 ## 5. Merge and record
 - **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
   into a draft (a workflow does it). Never mark a held PR ready or re-enable its auto-merge until
-  the owner comments `/release`. While a PR is held, its issue carries `owner-todo` (§0); after
-  `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real gate. Read its summary on failure:
+  the owner comments `/release`. On seeing a `/hold`, add `owner-todo` to the PR's issue (§0);
+  after `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real
+  gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
 - **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
   ```
