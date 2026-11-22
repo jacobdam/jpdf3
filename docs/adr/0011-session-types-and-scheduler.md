@@ -99,10 +99,11 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   `next-session: <first line of the error>` and fixes it as a Worker. Each failing session adds a
   comment `failed again in session <time>` to that issue; the issue is the persistent counter.
   While an open PR links the issue, sessions add no comment and open no second PR: they work that
-  PR under rule c if it fails CI or review, else only the legacy rules a and b. At 3 such
-  comments, the issue gets `owner-todo`, and from then on sessions work only the legacy rules a,
-  b and c (rule a carries any owner comment on the issue) and exit when none applies, until the
-  owner's part is done.
+  PR under rule c if it fails CI or review or has no `ai-review` result on its head (a session
+  that died before review), else only the legacy rules a, b and f. At 3 such comments, the issue
+  gets `owner-todo`, and from then on sessions work only the legacy rules a, b, c and f (rule a
+  carries any owner comment on the issue) and exit when none applies, until the owner's part is
+  done.
 - **Transition.** Until task 1a (§9) merges, TICK rules a–j stay in force. From 1a until 1b,
   the scheduler decides steps 1–5 and prints `legacy` when none applies; the session then uses
   TICK rules g–j. Task 3 (which needs only 1a) adds step 6 ahead of that `legacy` exit. Each
@@ -125,9 +126,9 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   counts, as TICK §4 step 6 says today. The check is by path: a commit touching any other file
   counts, `ops/LESSONS.md` included (every session reads it, so a change to it is reviewed). So
   a LESSONS change goes into the PR before its last review round runs. A lesson found after that
-  goes only into the journal entry's `Lesson:` line, and the next session that opens a work PR
-  copies it into `ops/LESSONS.md` before that PR's round 1. A merge of origin/main that
-  conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
+  goes into a `Pending lessons` list in `ops/STATUS.md`; the next session that opens a work PR
+  moves each one into `ops/LESSONS.md` before that PR's round 1 and deletes it from the list. A
+  merge of origin/main that conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
 - **Sessions without a work PR** (a Gardener run, a "done:" reply, a Planner run with nothing
   to change in `ops/QUEUE.md`) still record themselves: one
   records PR with only record files, which is never a product merge. Record PRs exist only for
@@ -142,12 +143,13 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   milestone) and reports mismatches; a session that lies consistently is not caught.
 - **Work-mix budget:** at least 70% of the last 20 sessions (by their `Session:` records) are
   on milestone work: a Worker, Design or QC session whose issue is in the current milestone and
-  is a product issue. A product issue has a product `area:` label; before task 4, a Worker or QC
-  session counts if its PR changes a path of the interim product-merge rule above (whether the
-  PR is open, merged or closed), and a Design session counts if its issue is in the current
-  milestone. Owner-instruction sessions (rule a) are not counted. The budget **orders**, it never blocks: below 70%, step 10 picks the lowest-numbered
-  product issue first and a process issue only when no product issue is ready, and the Planner
-  becomes due (once a day) to add product issues from PLAN §8. The Planner may move process
+  is a product issue. A product issue has a product `area:` label. Before task 4, a Worker or QC
+  session on an issue in the current milestone counts if its PR changes a path of the interim
+  product-merge rule above (whether the PR is open, merged or closed), and Design sessions are
+  left out of the window (neither counted nor in the 20). Owner-instruction sessions (rule a)
+  are not counted. The budget **orders**, it never blocks: below 70%, step 10 picks the
+  lowest-numbered product issue first and a process issue only when no product issue is ready,
+  and the Planner becomes due (once a day) to add product issues from PLAN §8. The Planner may move process
   issues to a later milestone or label them `deferred`, never close them.
 
 ### 4. Detection is mechanical: `area:` and `origin:` labels
@@ -251,7 +253,8 @@ records).
 - **Owner direction filed by an interactive session.** Such text is tagged (the guard requires
   it), so it is data under CONSTITUTION 1, and a `human` label on it proves nothing: the agent
   account can add labels too. #223 and #224 were lost this way. The interactive session adds
-  `human` (as #238 asks; harmless now that rule a ignores it on tagged text) and asks the owner to post one untagged comment on the issue (any text). The scheduler picks it then,
+  `human` (as #238 asks; harmless now that rule a ignores it on tagged text) and asks the owner
+  to post one untagged comment on the issue (any text). The scheduler picks it then,
   because `ops/driver/owner-issues.sh` already lists untagged owner comments without a "done:"
   reply. TICK rule a says the same from this PR on: a `human` label on tagged text is not an
   instruction. No protected change is needed.
