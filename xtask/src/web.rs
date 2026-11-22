@@ -70,6 +70,34 @@ pub fn parse_results(text: &str) -> Result<BTreeMap<String, Status>, String> {
     Ok(out)
 }
 
+/// Turns every `pass` into `fail`. Used when the run itself failed (a step exited non-zero, a
+/// result couldn't be mapped, a check of the built app failed): such a run may have dropped
+/// tests of an ID that another test passed, so no ID from it counts as passing (#76).
+pub fn downgrade_passes(results: &mut BTreeMap<String, Status>) {
+    for s in results.values_mut() {
+        if *s == Status::Pass {
+            *s = Status::Fail;
+        }
+    }
+}
+
+/// What `e2e.json` gets from a web run: the reporter's results, with every pass downgraded
+/// when the Playwright run (or an earlier step) failed; damaged results become an empty set
+/// and an error.
+pub fn final_results(
+    run: &Result<(), String>,
+    read: Result<BTreeMap<String, Status>, String>,
+) -> (BTreeMap<String, Status>, Option<String>) {
+    let (mut results, parse_err) = match read {
+        Ok(r) => (r, None),
+        Err(e) => (BTreeMap::new(), Some(e)),
+    };
+    if run.is_err() {
+        downgrade_passes(&mut results);
+    }
+    (results, parse_err)
+}
+
 /// Renders CONTRACT §2's `{"results": {...}}`. IDs are validated, so they need no escaping.
 pub fn render_e2e(results: &BTreeMap<String, Status>) -> String {
     let mut s = String::from("{\"results\": {");
@@ -142,7 +170,8 @@ pub fn step(
 }
 
 /// The web part of `cargo xtask ci linux`. Always writes `out/e2e.json` (empty or partial
-/// results when a step fails); writes `out/site/` only after a successful build.
+/// results when a step fails, with no `pass` if any step failed); writes `out/site/` only
+/// after a successful build.
 /// Returns Err with the first failure.
 pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
@@ -168,11 +197,7 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
         return Err(e);
     }
     let run = run_web(repo, &out, &tsv);
-    let results = read_results(&tsv);
-    let (results, parse_err) = match results {
-        Ok(r) => (r, None),
-        Err(e) => (BTreeMap::new(), Some(e)),
-    };
+    let (results, parse_err) = final_results(&run, read_results(&tsv));
     fs::write(&e2e_json, render_e2e(&results))
         .map_err(|e| format!("write {}: {e}", e2e_json.display()))?;
     eprintln!(
@@ -307,6 +332,62 @@ mod tests {
         ] {
             assert!(parse_results(bad).is_err(), "{bad:?}");
         }
+    }
+
+    fn all(pairs: &[(&str, Status)]) -> BTreeMap<String, Status> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
+    }
+
+    #[test]
+    fn a_failed_run_reports_no_pass() {
+        let read = || {
+            Ok(all(&[
+                ("e2e.web.a", Status::Pass),
+                ("e2e.web.b", Status::Skip),
+                ("e2e.web.c", Status::Fail),
+            ]))
+        };
+        // Playwright exited 0: the reporter's results stand.
+        assert_eq!(
+            final_results(&Ok(()), read()),
+            (
+                all(&[
+                    ("e2e.web.a", Status::Pass),
+                    ("e2e.web.b", Status::Skip),
+                    ("e2e.web.c", Status::Fail),
+                ]),
+                None
+            )
+        );
+        // Playwright exited non-zero (an unloadable spec file, a throwing hook): no pass.
+        assert_eq!(
+            final_results(&Err("step `e2e` failed".to_owned()), read()),
+            (
+                all(&[
+                    ("e2e.web.a", Status::Fail),
+                    ("e2e.web.b", Status::Skip),
+                    ("e2e.web.c", Status::Fail),
+                ]),
+                None
+            )
+        );
+        // A damaged file is an error and an empty set, whatever the run did.
+        for run in [Ok(()), Err("x".to_owned())] {
+            assert_eq!(
+                final_results(&run, Err("bad".to_owned())),
+                (BTreeMap::new(), Some("bad".to_owned()))
+            );
+        }
+    }
+
+    #[test]
+    fn downgrades_passes() {
+        let mut r = all(&[("e2e.web.a", Status::Pass), ("e2e.web.b", Status::Skip)]);
+        downgrade_passes(&mut r);
+        assert_eq!(
+            r,
+            all(&[("e2e.web.a", Status::Fail), ("e2e.web.b", Status::Skip)])
+        );
     }
 
     #[test]

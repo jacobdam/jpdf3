@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::json::{self, Value};
-use crate::web::{Status, render_e2e, step};
+use crate::web::{Status, downgrade_passes, render_e2e, step};
 
 /// Largest tool output we read (xcresulttool JSON, entitlements, codesign text).
 const MAX_TOOL_OUTPUT: usize = 16 << 20;
@@ -112,13 +112,26 @@ pub fn collect_results(doc: &Value) -> (BTreeMap<String, Status>, Vec<String>) {
     (results, errors)
 }
 
-/// Turns every `pass` into `fail` (used when the run itself is damaged).
-pub fn downgrade_passes(results: &mut BTreeMap<String, Status>) {
-    for s in results.values_mut() {
-        if *s == Status::Pass {
-            *s = Status::Fail;
-        }
+/// What `e2e.json` gets from a macOS run, and every error in order (the first is the
+/// summary). Any error (the `xcodebuild test` step, an unmapped or unreadable result, the
+/// Release signature check) downgrades every `pass` to `fail`: such a run may not have run
+/// every test, or its tests ran against a build that doesn't ship as checked (#76).
+pub fn final_results(
+    tests: Result<(), String>,
+    read: (BTreeMap<String, Status>, Vec<String>),
+    shipped: Result<(), String>,
+) -> (BTreeMap<String, Status>, Vec<String>) {
+    let (mut results, mut errors) = read;
+    if let Err(e) = tests {
+        errors.insert(0, e);
     }
+    if let Err(e) = shipped {
+        errors.push(e);
+    }
+    if !errors.is_empty() {
+        downgrade_passes(&mut results);
+    }
+    (results, errors)
 }
 
 /// Checks a signed bundle's entitlements (`plutil -convert json` of `codesign -d
@@ -256,7 +269,7 @@ fn remove_stale(path: &Path) -> Result<(), String> {
 }
 
 /// `cargo xtask ci macos`. Always writes `out/e2e.json` (empty or partial results when a step
-/// fails). Returns Err with the first failure.
+/// fails, with no `pass` if any step or check failed). Returns Err with the first failure.
 pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
     let out = fs::canonicalize(out).map_err(|e| format!("resolve {}: {e}", out.display()))?;
@@ -270,12 +283,11 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
     }
 
     let tests = run_tests(&repo, &derived, &bundle);
-    let (mut results, mut errors) = read_results(&bundle);
-    if !errors.is_empty() {
-        // An unmapped case (e.g. Xcode's "System Failures") means tests may not have run;
-        // no ID is reported as passing from such a run.
-        downgrade_passes(&mut results);
-    }
+    let read = read_results(&bundle);
+    // The shipped configuration is checked even when tests fail, so one run shows both, and
+    // before e2e.json is written, so its failure also turns every pass into a fail.
+    let shipped = check_release(&repo, &derived);
+    let (results, mut errors) = final_results(tests, read, shipped);
     fs::write(&e2e_json, render_e2e(&results))
         .map_err(|e| format!("write {}: {e}", e2e_json.display()))?;
     eprintln!(
@@ -283,14 +295,6 @@ pub fn ci(repo: &Path, out: &Path) -> Result<(), String> {
         e2e_json.display(),
         results.len()
     );
-    // The shipped configuration is checked even when tests fail, so one run shows both.
-    let shipped = check_release(&repo, &derived);
-    if let Err(e) = tests {
-        errors.insert(0, e);
-    }
-    if let Err(e) = shipped {
-        errors.push(e);
-    }
     if results.is_empty() {
         errors.push("XCUITest reported no journey test ids".to_owned());
     }
@@ -542,13 +546,43 @@ mod tests {
     }
 
     #[test]
-    fn downgrades_passes() {
-        let mut r = BTreeMap::new();
-        r.insert("e2e.macos.a".to_owned(), Status::Pass);
-        r.insert("e2e.macos.b".to_owned(), Status::Skip);
-        downgrade_passes(&mut r);
-        assert_eq!(r.get("e2e.macos.a"), Some(&Status::Fail));
-        assert_eq!(r.get("e2e.macos.b"), Some(&Status::Skip));
+    fn any_error_reports_no_pass() {
+        let read = |errors: &[&str]| {
+            let mut r = BTreeMap::new();
+            r.insert("e2e.macos.a".to_owned(), Status::Pass);
+            r.insert("e2e.macos.b".to_owned(), Status::Skip);
+            (
+                r,
+                errors.iter().map(|e| (*e).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        let get = |r: &BTreeMap<String, Status>| {
+            (r.get("e2e.macos.a").copied(), r.get("e2e.macos.b").copied())
+        };
+        let err = |e: &str| Err(e.to_owned());
+        // A clean run keeps its passes.
+        let (r, e) = final_results(Ok(()), read(&[]), Ok(()));
+        assert_eq!(get(&r), (Some(Status::Pass), Some(Status::Skip)));
+        assert!(e.is_empty());
+        // xcodebuild test failed (#76 item 2): no pass, and its error comes first.
+        let (r, e) = final_results(err("test"), read(&["read"]), Ok(()));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["test", "read"]);
+        // xcodebuild test failed although every case mapped cleanly: still no pass.
+        let (r, e) = final_results(err("test"), read(&[]), Ok(()));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["test"]);
+        // Only the Release check failed (#76 item 2): no pass, its error comes last.
+        let (r, e) = final_results(Ok(()), read(&["read"]), err("release"));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["read", "release"]);
+        let (r, e) = final_results(Ok(()), read(&[]), err("release"));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["release"]);
+        // Only an unmapped result (the "System Failures" case): no pass.
+        let (r, e) = final_results(Ok(()), read(&["unmapped"]), Ok(()));
+        assert_eq!(get(&r), (Some(Status::Fail), Some(Status::Skip)));
+        assert_eq!(e, ["unmapped"]);
     }
 
     #[test]

@@ -281,3 +281,62 @@ fn ci_linux_installs_with_scripts_off_even_if_the_env_turns_them_on() {
     assert_eq!(logged, "ci --ignore-scripts\n", "{err}");
     assert!(err.contains("xtask: web: step `install` failed"), "{err}");
 }
+
+#[cfg(unix)]
+#[test]
+fn ci_linux_writes_no_pass_when_playwright_fails() {
+    // specs/ui-web/app-skeleton.md Behavior 5 (#76): the reporter may have written `pass`
+    // lines, but a Playwright step that exits non-zero must leave no `pass` in e2e.json.
+    // A stub npm passes every step; its `playwright test` writes a pass and exits 1.
+    use std::os::unix::fs::PermissionsExt;
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("xtask-e2e-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("apps/web/dist")).unwrap();
+    std::fs::write(root.join("apps/web/package.json"), "{}\n").unwrap();
+    std::fs::write(root.join("apps/web/dist/index.html"), "i").unwrap();
+    for (name, body) in [
+        ("node", "echo v24.0.0"),
+        (
+            "npm",
+            "[ \"$1\" = --version ] && { echo 11.0.0; exit 0; }\n\
+             case \"$*\" in *'playwright test'*) \
+             printf 'e2e.web.a\\tpass\\n' > \"$JPDF_E2E_RESULTS\"; exit $E2E_EXIT;; esac\nexit 0",
+        ),
+    ] {
+        let p = bin.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let run_with = |exit: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["ci", "linux", "--out"])
+            .arg(root.join("out"))
+            .current_dir(&root)
+            .env("PATH", &path)
+            .env("E2E_EXIT", exit)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let json = std::fs::read_to_string(root.join("out/e2e.json")).unwrap_or_default();
+        (err, json)
+    };
+    // Control: Playwright exits 0, so the pass stands and the web part is ok.
+    let (ok_err, ok_json) = run_with("0");
+    // Playwright exits 1 after the reporter wrote a pass.
+    let (err, json) = run_with("1");
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(ok_err.contains("xtask: web: ok"), "{ok_err}");
+    assert_eq!(
+        ok_json, "{\"results\": {\n  \"e2e.web.a\": \"pass\"\n}}\n",
+        "{ok_err}"
+    );
+    assert!(err.contains("xtask: web: step `e2e` failed"), "{err}");
+    assert_eq!(
+        json, "{\"results\": {\n  \"e2e.web.a\": \"fail\"\n}}\n",
+        "{err}"
+    );
+}
