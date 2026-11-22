@@ -27,7 +27,7 @@ Phase: bootstrap (pilot)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
 3. Rule i, M0, lowest number first: #154, #210 (write ops/proposals/ for the owner-commands fix), #216
-   (do it before the owner merges PR #184 if possible: it is the harness the owner's test plan relies on), #219.
+   (the harness the owner's test step 3 relies on; PR #184 already merged), #219.
 4. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
