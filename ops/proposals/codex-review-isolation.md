@@ -157,7 +157,7 @@ unchanged code.
  [[ -z "$(find "$SRC" -type l -print -quit)" ]] || fail "export contains symlinks"
  # Attributes (export-ignore, export-subst, working-tree-encoding, ident, eol, filters) can drop or
  # rewrite files during `git archive`, so check that the export is byte for byte HEAD's blobs.
-@@ -153,12 +172,71 @@
+@@ -153,12 +172,72 @@
    PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.cargo/bin"
    TMPDIR="$SCR/$SRC/target/tmp" CARGO_TARGET_DIR="$SCR/$SRC/target" GIT_CEILING_DIRECTORIES="$SCR")
  # Fetch crates (and the pinned toolchain) now, outside the sandbox, so Codex can build offline.
@@ -165,8 +165,9 @@ unchanged code.
 +# configure it (CX.3):
 +# - cargo reads .cargo/config.toml from the export and from every directory above it. .cargo/ in
 +#   HEAD must be origin/main's tree (it is protected, CONSTITUTION 12); above the export, a .cargo
-+#   may exist only in this worktree (and must be clean: it is HEAD's), the main checkout (protected,
-+#   synced to main by the driver) and $HOME (cargo's own home). Any other one (target/,
++#   may exist only in this worktree (it is HEAD's) and the main checkout (protected, synced to main
++#   by the driver), both clean (no local changes, untracked or ignored files), and in $HOME (cargo's
++#   own home). Any other one (target/,
 +#   target/scratch/, .claude/worktrees/, which sessions can write) fails the run.
 +# - rustup takes the toolchain from the first toolchain file it finds upward, and a `path` entry
 +#   there would run a toolchain binary of anyone's choice. The export must have a rust-toolchain.toml
@@ -229,7 +230,7 @@ unchanged code.
  RAW="$(mktemp .codex-review-tmp.out.XXXXXX)" || fail "mktemp"
  TLOG="$(mktemp .codex-review-tmp.log.XXXXXX)" || fail "mktemp"
  run_limited "$LIMIT" "${BASE_ENV[@]}" CARGO_NET_OFFLINE=true CMUX_COMPUTER_USE_MCP_DISABLED=1 \
-@@ -168,10 +246,10 @@
+@@ -168,10 +247,10 @@
    --disable apps --disable plugins --disable shell_snapshot --disable hooks \
    --disable computer_use --disable browser_use --disable browser_use_external \
    --disable in_app_browser --disable image_generation \
@@ -244,7 +245,7 @@ unchanged code.
    -c web_search=disabled \
    -C "$SCR/$SRC" \
    --output-schema "$SCHEMA" \
-@@ -182,7 +260,14 @@
+@@ -182,7 +261,14 @@
  
  [[ -e "$TMARK" ]] && fail "timeout after ${LIMIT}s (see target/scratch/$LOG)"
  (( rc == 0 )) || fail "codex exit $rc (see target/scratch/$LOG)"
