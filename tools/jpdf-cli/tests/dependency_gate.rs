@@ -123,6 +123,28 @@ fn violations(pkgs: &[Pkg], root: &Path) -> Vec<String> {
     bad.into_iter().collect()
 }
 
+/// The `cargo tree` arguments after the roots. `tree_args_are_exactly_these` pins the list, so
+/// no flag can be dropped or narrowed (`--target all` to a set of triples, R3.1) without a test
+/// failing; the fixture control shows what each one is for.
+const TREE_ARGS: &[&str] = &[
+    "-e",
+    "normal,build",
+    "--all-features",
+    "--target",
+    "all",
+    "--prefix",
+    "none",
+    "--no-dedupe",
+    "--format",
+    "{p}",
+    "--charset",
+    "ascii",
+    "--color",
+    "never",
+    "--locked",
+    "--offline",
+];
+
 /// Runs `cargo tree` for `roots` with every feature of every root, on every target, normal and
 /// build edges, no deduplication. Fails on a non-zero exit.
 fn resolved(roots: &[&str]) -> Result<Vec<Pkg>, String> {
@@ -137,24 +159,7 @@ fn resolved_in(manifest: &Path, roots: &[&str]) -> Result<Vec<Pkg>, String> {
     for r in roots {
         cmd.args(["-p", r]);
     }
-    cmd.args([
-        "-e",
-        "normal,build",
-        "--all-features",
-        "--target",
-        "all",
-        "--prefix",
-        "none",
-        "--no-dedupe",
-        "--format",
-        "{p}",
-        "--charset",
-        "ascii",
-        "--color",
-        "never",
-        "--locked",
-        "--offline",
-    ]);
+    cmd.args(TREE_ARGS);
     let out = cmd
         .output()
         .map_err(|e| format!("running cargo tree: {e}"))?;
@@ -217,6 +222,15 @@ fn control_a_real_graph_outside_the_list_is_reported() {
     assert!(
         !bad.iter().any(|b| b.starts_with("jpdf-fsio (")),
         "allowed crate reported: {bad:?}"
+    );
+}
+
+#[test]
+fn tree_args_are_exactly_these() {
+    assert_eq!(
+        TREE_ARGS.join(" "),
+        "-e normal,build --all-features --target all --prefix none --no-dedupe --format {p} \
+         --charset ascii --color never --locked --offline"
     );
 }
 
