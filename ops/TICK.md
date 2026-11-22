@@ -58,15 +58,13 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   owner issues; post the missing "done:" on any of them that has a "picked up" reply.
 
   The link is the URL exactly as GitHub gives it (`…#issuecomment-N`, `…#discussion_rN`,
-  `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply. The proposed
-  feed (`ops/proposals/owner-comment-tracking.md`) drops a comment once a "done:" reply that starts
-  this way links it. Owner comments from before 2026-11-23 need no replies (the proposal's `FLOOR`;
-  change both together). Until the owner applies that proposal (#179), `owner-issues.sh` shows only
-  conversation comments, without their URL (take it from the issue's or PR's comment list), shows
-  every comment for 14 days after its last update, handled or not (skip those with a "done:"
-  reply), then drops it, handled or not, and shows no inline review comments or review bodies, so
-  those get no replies yet. Until then, list every picked-up owner comment still without "done:"
-  under "In flight" in `ops/STATUS.md`, with its link, so it isn't lost when it leaves the feed.
+  `…#pullrequestreview-N`; the issue URL for an owner issue), one per "done:" reply.
+  `owner-issues.sh` (#179) lists each owner comment with its `url`: conversation comments, inline
+  review comments (repo-wide) and review bodies (open PRs only), and keeps it until a "done:"
+  reply that starts this way links it (a comment edited after its latest "done:" reply is
+  pending again). Unhandled comments older than 14 days carry `"stale": true` and a stderr
+  warning. Owner comments from before 2026-11-23 need no replies (the script's `FLOOR`; change
+  both together) and are shown for 14 days after their last update, handled or not.
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
