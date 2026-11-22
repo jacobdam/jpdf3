@@ -134,10 +134,40 @@ pub fn nightly_listed(list: &str) -> bool {
     })
 }
 
-/// Whether `cargo fuzz --version` output is the pinned [`CARGO_FUZZ_VERSION`].
+/// Whether `cargo fuzz --version` output is exactly `cargo-fuzz <CARGO_FUZZ_VERSION>`
+/// (surrounding whitespace aside).
 pub fn cargo_fuzz_pinned(version: &str) -> bool {
-    version.split_whitespace().nth(1) == Some(CARGO_FUZZ_VERSION)
+    version.trim() == format!("cargo-fuzz {CARGO_FUZZ_VERSION}")
 }
+
+/// Whether CI must install [`NIGHTLY`], given `rustup toolchain list` output (`None` when
+/// the command failed).
+pub fn needs_nightly(list: Option<&str>) -> bool {
+    !list.is_some_and(nightly_listed)
+}
+
+/// Whether CI must install cargo-fuzz, given `cargo +NIGHTLY fuzz --version` output (`None`
+/// when the command failed, e.g. no cargo-fuzz on PATH).
+pub fn needs_cargo_fuzz(version: Option<&str>) -> bool {
+    !version.is_some_and(cargo_fuzz_pinned)
+}
+
+const NIGHTLY_INSTALL: [&str; 6] = [
+    "rustup",
+    "toolchain",
+    "install",
+    NIGHTLY,
+    "--profile",
+    "minimal",
+];
+const CARGO_FUZZ_INSTALL: [&str; 6] = [
+    "cargo",
+    "install",
+    "cargo-fuzz",
+    "--locked",
+    "--version",
+    CARGO_FUZZ_VERSION,
+];
 
 fn output_of(root: &Path, program: &str, args: &[&str]) -> Option<String> {
     Command::new(program)
@@ -153,30 +183,14 @@ fn output_of(root: &Path, program: &str, args: &[&str]) -> Option<String> {
 /// cached toolchain) is not built or downloaded again. The nightly is looked up in the
 /// `rustup toolchain list`, not by running it, which could make rustup install it itself.
 fn install_missing_tools(root: &Path) -> Result<(), String> {
-    let nightly = [
-        "rustup",
-        "toolchain",
-        "install",
-        NIGHTLY,
-        "--profile",
-        "minimal",
-    ];
-    let fuzz = [
-        "cargo",
-        "install",
-        "cargo-fuzz",
-        "--locked",
-        "--version",
-        CARGO_FUZZ_VERSION,
-    ];
-    if !output_of(root, "rustup", &["toolchain", "list"]).is_some_and(|l| nightly_listed(&l)) {
-        install(&nightly)?;
+    if needs_nightly(output_of(root, "rustup", &["toolchain", "list"]).as_deref()) {
+        install(&NIGHTLY_INSTALL)?;
     }
+    // Checked after the nightly is there: `cargo +NIGHTLY` fails without it.
     let plus = plus_nightly();
-    if !output_of(root, "cargo", &[plus.as_str(), "fuzz", "--version"])
-        .is_some_and(|v| cargo_fuzz_pinned(&v))
+    if needs_cargo_fuzz(output_of(root, "cargo", &[plus.as_str(), "fuzz", "--version"]).as_deref())
     {
-        install(&fuzz)?;
+        install(&CARGO_FUZZ_INSTALL)?;
     }
     Ok(())
 }
@@ -254,23 +268,41 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
             opts.seconds
         );
         let mut cmd = Command::new("cargo");
-        cmd.arg(plus_nightly())
-            .args(["fuzz", "run", "--debug-assertions", t, "--"])
-            .arg(format!("-max_total_time={}", opts.seconds))
-            .arg(format!("-rss_limit_mb={RSS_LIMIT_MB}"))
-            .arg(format!("-timeout={INPUT_TIMEOUT_SECONDS}"))
-            .current_dir(root);
+        cmd.args(fuzz_run_args(t, opts.seconds)).current_dir(root);
         runs.push((t.clone(), cmd));
     }
-    let failed = run_all(runs, jobs, &root.join("target").join("fuzz-logs"))?;
-    if failed.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
+    let log_dir = root.join("target").join("fuzz-logs");
+    let outcome = run_all(runs, jobs, &log_dir, &mut std::io::stderr());
+    let crashed = |failed: &[String]| {
+        format!(
             "crash, hang or out-of-memory in {failed:?}; artifacts are in fuzz/artifacts/ \
              (minimize with `cargo +{NIGHTLY} fuzz tmin`, then add the repro to tests/regress/)"
-        ))
+        )
+    };
+    match outcome {
+        Ok(failed) if failed.is_empty() => Ok(()),
+        Ok(failed) => Err(crashed(&failed)),
+        Err((e, failed)) if failed.is_empty() => Err(e),
+        Err((e, failed)) => Err(format!("{e}; {}", crashed(&failed))),
     }
+}
+
+/// The arguments after `cargo` for one target's run, with the judge's limits (CONTRACT §3).
+pub fn fuzz_run_args(target: &str, seconds: u32) -> Vec<String> {
+    let mut args = vec![plus_nightly()];
+    args.extend(["fuzz", "run", "--debug-assertions", target, "--"].map(str::to_owned));
+    args.push(format!("-max_total_time={seconds}"));
+    args.push(format!("-rss_limit_mb={RSS_LIMIT_MB}"));
+    args.push(format!("-timeout={INPUT_TIMEOUT_SECONDS}"));
+    args
+}
+
+/// The line `run_all` writes before a finished run's log.
+pub fn log_header(name: &str, ok: bool) -> String {
+    format!(
+        "xtask: fuzz: ---- {name} ({}) ----",
+        if ok { "ok" } else { "FAILED" }
+    )
 }
 
 /// How many targets run at once: one per core, never more than there are targets, at least 1.
@@ -281,17 +313,23 @@ pub fn jobs(cores: usize, targets: usize) -> usize {
 }
 
 /// Runs the named commands, at most `jobs` at a time, in the given order. Each command's
-/// stdout and stderr go to `<log_dir>/<name>.log`, which is copied to stderr, with a header,
-/// once the command ends, so parallel runs do not interleave their output. Returns the names
-/// whose command exited non-zero or was killed by a signal. A command that cannot start, or a
-/// log that cannot be written, is an error, returned only after every started command ended.
+/// stdout and stderr go to `<log_dir>/<name>.log`, which is copied to `out` after a
+/// [`log_header`] once the command ends, so parallel runs do not interleave their output.
+/// Returns the names whose command exited non-zero or was killed by a signal. A command that
+/// cannot start, or a log that cannot be created, is an error, returned with the names that
+/// failed so far, only after every started command ended; no later batch starts.
 pub fn run_all(
     runs: Vec<(String, Command)>,
     jobs: usize,
     log_dir: &Path,
-) -> Result<Vec<String>, String> {
-    std::fs::create_dir_all(log_dir)
-        .map_err(|e| format!("cannot create {}: {e}", log_dir.display()))?;
+    out: &mut dyn std::io::Write,
+) -> Result<Vec<String>, (String, Vec<String>)> {
+    std::fs::create_dir_all(log_dir).map_err(|e| {
+        (
+            format!("cannot create {}: {e}", log_dir.display()),
+            Vec::new(),
+        )
+    })?;
     let mut failed = Vec::new();
     let mut error = None;
     let mut pending = runs.into_iter();
@@ -323,12 +361,12 @@ pub fn run_all(
         }
         for (name, log, mut child) in started {
             let ok = child.wait().is_ok_and(|s| s.success());
-            let text = std::fs::read(&log).unwrap_or_default();
-            eprintln!(
-                "xtask: fuzz: ---- {name} ({}) ----",
-                if ok { "ok" } else { "FAILED" }
-            );
-            eprint!("{}", String::from_utf8_lossy(&text));
+            // Writing to `out` (stderr) is best effort: a closed stderr must not hide a crash.
+            writeln!(out, "{}", log_header(&name, ok)).ok();
+            match std::fs::read(&log) {
+                Ok(text) => write!(out, "{}", String::from_utf8_lossy(&text)).ok(),
+                Err(e) => writeln!(out, "xtask: fuzz: cannot read {}: {e}", log.display()).ok(),
+            };
             if !ok {
                 failed.push(name);
             }
@@ -338,7 +376,7 @@ pub fn run_all(
         }
     }
     match error {
-        Some(e) => Err(e),
+        Some(e) => Err((e, failed)),
         None => Ok(failed),
     }
 }
@@ -394,7 +432,65 @@ mod tests {
         assert!(!cargo_fuzz_pinned(&format!(
             "cargo-fuzz {CARGO_FUZZ_VERSION}.1"
         )));
+        assert!(!cargo_fuzz_pinned(&format!(
+            "other-tool {CARGO_FUZZ_VERSION}"
+        )));
+        assert!(!cargo_fuzz_pinned(&format!(
+            "cargo-fuzz {CARGO_FUZZ_VERSION} extra"
+        )));
         assert!(!cargo_fuzz_pinned(""));
+    }
+
+    #[test]
+    fn installs_only_what_is_missing() {
+        let listed = format!("{NIGHTLY}-x86_64-unknown-linux-gnu\n");
+        assert!(!needs_nightly(Some(&listed)));
+        assert!(needs_nightly(Some("1.100.0-x86_64-unknown-linux-gnu\n")));
+        assert!(needs_nightly(None));
+        let pinned = format!("cargo-fuzz {CARGO_FUZZ_VERSION}\n");
+        assert!(!needs_cargo_fuzz(Some(&pinned)));
+        assert!(needs_cargo_fuzz(Some("cargo-fuzz 0.12.0\n")));
+        assert!(needs_cargo_fuzz(None));
+        assert_eq!(
+            NIGHTLY_INSTALL,
+            [
+                "rustup",
+                "toolchain",
+                "install",
+                NIGHTLY,
+                "--profile",
+                "minimal"
+            ]
+        );
+        assert_eq!(
+            CARGO_FUZZ_INSTALL,
+            [
+                "cargo",
+                "install",
+                "cargo-fuzz",
+                "--locked",
+                "--version",
+                "0.13.2"
+            ]
+        );
+    }
+
+    #[test]
+    fn run_args_carry_the_judge_limits() {
+        assert_eq!(
+            fuzz_run_args("engine_open", 30),
+            [
+                "+nightly-2026-11-20",
+                "fuzz",
+                "run",
+                "--debug-assertions",
+                "engine_open",
+                "--",
+                "-max_total_time=30",
+                "-rss_limit_mb=2048",
+                "-timeout=10",
+            ]
+        );
     }
 
     #[test]
@@ -415,7 +511,10 @@ mod tests {
             ("a".to_owned(), rendezvous(&dir, "a", "b", 200)),
             ("b".to_owned(), rendezvous(&dir, "b", "a", 200)),
         ];
-        assert_eq!(run_all(runs, 2, &dir.join("logs")), Ok(vec![]));
+        assert_eq!(
+            run_all(runs, 2, &dir.join("logs"), &mut Vec::new()),
+            Ok(vec![])
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -429,7 +528,7 @@ mod tests {
             ("b".to_owned(), rendezvous(&dir, "b", "a", 10)),
         ];
         assert_eq!(
-            run_all(runs, 1, &dir.join("logs")),
+            run_all(runs, 1, &dir.join("logs"), &mut Vec::new()),
             Ok(vec!["a".to_owned()])
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -445,8 +544,9 @@ mod tests {
             ("signal".to_owned(), sh("kill -9 $$")),
             ("later".to_owned(), sh("exit 1")),
         ];
+        let mut out = Vec::new();
         assert_eq!(
-            run_all(runs, 3, &logs),
+            run_all(runs, 3, &logs, &mut out),
             Ok(vec![
                 "exit".to_owned(),
                 "signal".to_owned(),
@@ -456,6 +556,14 @@ mod tests {
         let read = |n: &str| std::fs::read_to_string(logs.join(format!("{n}.log")));
         assert_eq!(read("ok").ok().as_deref(), Some("out-ok\nerr-ok\n"));
         assert_eq!(read("exit").ok().as_deref(), Some("out-exit\n"));
+        // Each log is copied to `out` after its header, in the given order.
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            "xtask: fuzz: ---- ok (ok) ----\nout-ok\nerr-ok\n\
+             xtask: fuzz: ---- exit (FAILED) ----\nout-exit\n\
+             xtask: fuzz: ---- signal (FAILED) ----\n\
+             xtask: fuzz: ---- later (FAILED) ----\n"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -466,7 +574,7 @@ mod tests {
         let runs = vec![
             (
                 "first".to_owned(),
-                sh(&format!("sleep 0.2; touch '{}'", marker.display())),
+                sh(&format!("sleep 0.2; touch '{}'; exit 1", marker.display())),
             ),
             (
                 "missing".to_owned(),
@@ -474,12 +582,13 @@ mod tests {
             ),
             ("never".to_owned(), sh("exit 0")),
         ];
-        let got = run_all(runs, 3, &dir.join("logs"));
-        assert!(
-            got.as_ref()
-                .is_err_and(|e| e.contains("cannot run missing")),
-            "{got:?}"
-        );
+        let got = run_all(runs, 3, &dir.join("logs"), &mut Vec::new());
+        // The spawn error keeps the failure found before it.
+        let Err((e, failed)) = &got else {
+            panic!("{got:?}")
+        };
+        assert!(e.contains("cannot run missing"), "{e}");
+        assert_eq!(failed, &["first".to_owned()]);
         // `first` was waited for, not left running; `never` was not started.
         assert!(marker.is_file());
         assert!(!dir.join("logs/never.log").exists());

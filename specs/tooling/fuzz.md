@@ -42,9 +42,13 @@ Status: implemented
    libFuzzer process uses one core. Each run's stdout and stderr go to
    `target/fuzz-logs/<target>.log`, which is copied to stderr under a
    `xtask: fuzz: ---- <target> (ok|FAILED) ----` header once that run ends, so the output of
-   parallel runs never interleaves. Every started run is waited for before the command
-   returns, also when a later run cannot start (then exit 1 with `cannot run <target>: …`
-   and no later batch starts). Default N = 300
+   parallel runs never interleaves; a log that cannot be read is reported as
+   `xtask: fuzz: cannot read <log>: …` in its place. A run's output therefore appears only
+   when it ends: if CI kills the job mid-batch, the partial output is only in
+   `target/fuzz-logs/`. Every started run is waited for before the command returns, also
+   when a later run cannot start (then exit 1 with `cannot run <target>: …`, followed by the
+   crash message for any target that already failed, and no later batch starts).
+   Default N = 300
    (as the judge), `--short` = 30, `--seconds` takes 1–3600. Exit 0 when no target fails,
    1 when the build fails or any target crashes, hangs or runs out of memory (the message
    names the targets and how to minimize), 2 with the usage line on a usage error.
@@ -58,7 +62,8 @@ Status: implemented
    nightly (`rustup toolchain install nightly-2026-11-20 --profile minimal`) unless
    `rustup toolchain list` names it (looked up, not run, so rustup cannot install it with
    another profile), then cargo-fuzz 0.13.2 (`cargo install --locked --version`) unless
-   `cargo +nightly-2026-11-20 fuzz --version` prints exactly `cargo-fuzz 0.13.2`. Locally a missing tool fails with
+   `cargo +nightly-2026-11-20 fuzz --version` prints exactly `cargo-fuzz 0.13.2` (leading
+   and trailing whitespace aside). Locally a missing tool fails with
    the install hint. It also runs `cargo fmt --manifest-path fuzz/Cargo.toml --check`,
    because `cargo fmt --all` does not see the excluded project.
 6. **Rule for new code** (`fuzz/README.md`): every new parser, filter, backend adapter and
@@ -87,7 +92,10 @@ Not applicable (tooling).
 Targets use `Limits::default()`, the same as `jpdf-cli`, so a finding is a real-world bug.
 The run limits mirror the judge: 2048 MB RSS per target process (parallel runs can use up to
 `jobs` × 2048 MB together: 6 GB for 3 targets on the 4-core, 16 GB `ubuntu-24.04` runner, the
-same per-process limit as the judge's one-at-a-time runs); 10 s per input (the judge uses libFuzzer's
+same per-process limit as the judge's one-at-a-time runs; only that runner is sized for it:
+`jobs` caps by cores, not memory, so on a machine with less than `jobs` × 2 GB free the
+kernel can kill a run, which is then reported as a crash in that target; use `--target` there);
+10 s per input (the judge uses libFuzzer's
 default 1200 s, so our gate is stricter); inputs up to libFuzzer's default 4096 bytes.
 `from_fuzz_chunks` writes at most 64 objects; its output is linear in the input size.
 Overflow checks (`[profile.release]` in `fuzz/Cargo.toml`) and debug assertions are on.
@@ -125,13 +133,16 @@ without seeds (≈ 1150 with seeds).
   correct offsets and open without panicking, raw and through the template.
 - `xtask/src/fuzz.rs` unit tests: argument parsing (bounds, unknown flags), every target in
   `fuzz/Cargo.toml` has seeds, seed writing keeps fuzzer-found files; `jobs` (cores capped by
-  targets, at least 1); `run_all` with `sh` commands: a batch of 2 runs at the same time (each
-  waits for the other's marker file), with 1 job they run one at a time in order, every
-  failure is reported (exit code and signal), each log holds that command's stdout and
-  stderr, and a command that cannot start is an error returned only after the started ones
-  ended, with no later command started; the tool checks (`nightly_listed` matches the pinned
-  date only as a whole toolchain name, `cargo_fuzz_pinned` only the exact version). The
-  install steps themselves run only on CI and have no unit test.
+  targets, at least 1); `fuzz_run_args` (the exact `cargo fuzz run` arguments with the judge's
+  limits); `run_all` with `sh` commands: a batch of 2 runs at the same time (each waits for
+  the other's marker file), with 1 job they run one at a time in order, every failure is
+  reported (exit code and signal), each log holds that command's stdout and stderr and is
+  copied after its `---- <name> (ok|FAILED) ----` header in order, and a command that cannot
+  start is an error returned only after the started ones ended, keeping the failures found
+  before it, with no later command started; the tool checks (`nightly_listed` matches the
+  pinned date only as a whole toolchain name, `cargo_fuzz_pinned` only the exact
+  `cargo-fuzz <version>` line, `needs_nightly`/`needs_cargo_fuzz` and the two install
+  commands). Running the install commands happens only on CI and has no unit test.
 - `xtask/tests/check_specs.rs`: `fuzz` usage errors exit 2; `ci linux` in a tree without
   `fuzz/` ends with the fuzz error line and exits 1.
 - `cargo fuzz list` (as the judge runs it) lists the three targets; `cargo xtask fuzz --short` runs them.

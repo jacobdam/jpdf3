@@ -26,22 +26,23 @@ the file.
        - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
          with:
            node-version: "24"
-+      # #240: cargo-fuzz, built from source by `cargo xtask ci linux` once per version. xtask
-+      # reinstalls it unless `cargo fuzz --version` is exactly its CARGO_FUZZ_VERSION, so a
-+      # stale entry costs one rebuild, never a wrong version.
++      # #240: cargo-fuzz, built from source by `cargo xtask ci linux`. The key follows
++      # xtask/src/fuzz.rs, which holds CARGO_FUZZ_VERSION, so a version bump gets a new entry
++      # (built once, then saved). xtask reinstalls unless `cargo fuzz --version` is exactly
++      # that version, so a restored binary is never used at a wrong version.
 +      - name: Cache cargo-fuzz
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
 +          path: ~/.cargo/bin/cargo-fuzz
-+          key: cargo-fuzz-0.13.2-${{ runner.os }}-${{ runner.arch }}
-+      # #240: the fuzz targets' build output. Cargo's fingerprints decide what to rebuild,
-+      # so a restore from an older key is only slower, never wrong.
++          key: cargo-fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/xtask/src/fuzz.rs') }}
++      # #240: the fuzz targets' build output, for one exact fuzz/Cargo.lock and
++      # xtask/src/fuzz.rs (which holds NIGHTLY). No restore-keys: restoring an older entry
++      # would make the new entry hold two toolchains' output and grow with every change.
 +      - name: Cache fuzz build
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
 +          path: pr/fuzz/target
 +          key: fuzz-target-${{ runner.os }}-${{ hashFiles('pr/fuzz/Cargo.lock', 'pr/xtask/src/fuzz.rs') }}
-+          restore-keys: fuzz-target-${{ runner.os }}-
 +      # #240: the Playwright browser download (`--with-deps` still installs the apt packages).
 +      - name: Cache Playwright browsers
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -53,15 +54,25 @@ the file.
          run: cargo xtask ci linux --out ../e2e-linux
 ```
 
-`pr/xtask/src/fuzz.rs` is in the fuzz-build key because it holds the dated `NIGHTLY`: a bump
-gets a new entry instead of growing the old one with a second toolchain's output.
+`pr/xtask/src/fuzz.rs` is in both keys because it holds `CARGO_FUZZ_VERSION` and the dated
+`NIGHTLY`. Because the fuzz-build cache has no `restore-keys`, each entry holds the output of
+one toolchain and one lockfile. The cost is a cold build (about 34 s, as today) on any run
+whose `fuzz/Cargo.lock` or `xtask/src/fuzz.rs` differs from every saved entry: the first run
+after such a change on `main`, and every run of a PR that changes either file.
 
 ## Expected effect
 
-About 15 s (cargo-fuzz) + 20–30 s (fuzz build: only the workspace crates the PR changed and
-the targets rebuild; libFuzzer's C++ and the dependencies are cached) + the browser download
-share of 37 s. These are estimates, to be checked against the first two runs after the change
-(the second one hits the caches). Nightly runs (`project-nightly`) do not get the caches.
+All estimates, to be checked against the first two runs after the change (the second one hits
+the caches):
+- cargo-fuzz: saves about 15 s (no build).
+- Fuzz build: saves the third-party part of the 34 s (libfuzzer-sys's C++ and the other
+  dependencies). The workspace crates the targets depend on still rebuild on every run,
+  changed or not, because Cargo fingerprints path dependencies by file mtime and every
+  checkout gives the sources new mtimes. Guess: 10–20 s saved.
+- Playwright: saves the browser download, part of the 37 s; the apt packages
+  (`--with-deps`) still install. Guess: 10–20 s saved.
+
+Total: about 35–55 s saved per run. Nightly runs (`project-nightly`) do not get the caches.
 
 ## Rejected alternative
 
@@ -76,12 +87,17 @@ without a checksum. The cache keeps the binary we build ourselves from crates.io
 - `project-linux` already runs PR code, and nothing in these caches reaches the grading job
   (`judge-verdict`), which restores none of them.
 - GitHub scopes caches by ref: a PR run reads its own and the base branch's entries, and
-  writes only its own, so a PR cannot change what `main` or other PRs restore. A PR that
-  writes a bad `cargo-fuzz` or build output into its own entry only affects its own later runs,
-  which already run its code.
+  writes only its own, so a PR cannot change what `main` or other PRs restore. A bad
+  `cargo-fuzz` or build output in a PR's own entry reaches only that PR's later
+  `project-linux` runs, which already run its code.
+- Not solved here, and not caused by this proposal: the trusted `judge-verdict` job restores
+  its own caches (`corpus-smoke-…`, `ref-smoke-v1-…`) from the same PR scope, which PR code
+  holding the run's cache token could write. That is #252, with its own fix. These three new
+  keys are not ones the judge restores.
 - The cargo-fuzz entry on `main` is written by `cargo install --locked` in a `main` run.
-- Size: the fuzz build output is a few hundred MB per entry, inside the 10 GB repository
-  cache limit, and GitHub evicts old entries first.
+- Size: the fuzz build output is a few hundred MB per entry (one toolchain, no
+  `restore-keys`, so entries don't accumulate), inside the 10 GB repository cache limit;
+  GitHub evicts the least recently used entries first.
 
 ## Test plan
 
@@ -94,4 +110,5 @@ without a checksum. The cache keeps the binary we build ourselves from crates.io
 
 ## Risk if not applied
 
-`project-linux` stays about 70–80 s slower than needed on every PR; nothing breaks.
+`project-linux` stays about 35–55 s slower than needed on every PR (the estimate above);
+nothing breaks.
