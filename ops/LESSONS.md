@@ -53,9 +53,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   all block. Use Write/Edit for scripts, reword the token, and disclose it. A body with an apostrophe (`'\''`) is never
   treated as inert ([journal](journal/2026-11-21.md), PR #129). Separately, Claude Code's own safety check refuses a
   long post whose single-quoted body holds `$` + quote (`$'\''`) or `$$`+brace; split the post or space the token and
-  disclose it ([journal](journal/2026-11-22.md), PR #183). Any `>` followed by a protected path reads as a
-  redirect, also inside a quoted body: a reviewer's `<patched> ops/driver/x.sh` blocks; find each `>` before a
-  protected path and reword that token (`PATCHED`) ([journal](journal/2026-11-22.md), PR #194).
+  disclose it ([journal](journal/2026-11-22.md), PR #183).
+- Post or heredoc text with a `>` before a protected path (a reviewer's `<patched> ops/driver/x.sh`) → the guard
+  reads it as a redirect, quoted or not; reword that token (`PATCHED`), or write files with Write/Edit, and disclose
+  it ([journal](journal/2026-11-22.md), PR #194).
 - Proposing a guard/hook change that "skips quoted text" → shlex is not the shell: `#` comments, zsh `=word`, newlines
   inside quoted text and duplicated copies elsewhere in the command all differ. Allowlist the remainder word by word,
   pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH).
