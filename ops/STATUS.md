@@ -15,8 +15,8 @@ Phase: bootstrap (pilot)
 ## Last session
 - Audit 0003 (rule g, 20 merges since audit 0002), PR #160, record docs/audits/0003.md. Three subagent reviews plus
   the first Codex audit review (34 findings in all), all posted on PR #160. New issues: #161 and #162 (sev:high,
-  owner-todo, protected files: Codex launcher isolation, guard tag check), #163, #164, #165 (sev:medium, M10), #166
-  (sev:low, M10); #87 comment; proposal ops/proposals/security-gates-in-gate-tool.md. Journal 2026-11-22 03:10.
+  owner-todo, protected files: Codex launcher isolation, guard tag check), #168 (sev:high, M2: JBIG2 page data +
+  globals budget), #163, #164, #165 (sev:medium, M10), #166 (sev:low, M10); #87 comment; proposal ops/proposals/security-gates-in-gate-tool.md. Journal 2026-11-22 03:10.
 
 ## Next step (suggested order, TICK letters)
 0. PR #151: wait for `/release`. PR #157: wait for an owner comment. Don't touch either before.
@@ -24,6 +24,7 @@ Phase: bootstrap (pilot)
 1. **d: #161, then #162** (sev:high). Both are in protected files, so the work is a proposal each
    (`ops/proposals/codex-review-isolation.md`, `ops/proposals/guard-tag-and-fail-closed.md`) with the diff and a
    test plan; label `owner-todo` stays. #162's CX.4 is confirmed and small (drop the raw-text prefilter).
+   #168 (sev:high, M2) is engine work in budget.rs and can go before or after them.
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).

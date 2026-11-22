@@ -1,8 +1,9 @@
 # Proposal: check the ADR 0009 security gates in the gate tool, and rate policy-gate bypasses
 
-Status: proposed by audit 0003 (issue #159, PR #160), 2026-11-22. Touches protected paths
-(`ops/judge/gates.toml`, `ops/judge/gate.py`, `.github/workflows/`), so the owner applies it with
-signed commits. Part 2 changes ADR 0009, an owner decision, so it is also left to the owner.
+Status: proposed by audit 0003 (issue #159, PR #160), 2026-11-22; revised after review round 1.
+Touches protected paths (`ops/judge/gates.toml`, `ops/judge/gate.py`, a new `ops/judge/sev_counts.py`,
+`.github/workflows/ci.yml`), so the owner applies it with signed commits. Part 2 changes ADR 0009,
+an owner decision, so it is also left to the owner.
 
 ## 1. The gate tool doesn't check the security gates (audit finding AC.2)
 
@@ -14,52 +15,103 @@ ADR 0009 and PLAN §8 say:
 AUTOMATION §9 says every milestone's exit criteria are in `ops/judge/gates.toml` and the gate tool
 gives the verdict. But `[M4]` has no criteria ("journeys only"), `[M10]` lists only render, bench
 and fuzz metrics, and `ops/judge/gate.py` reads no issues or labels. With a `sev:high` issue open,
-M4 would still pass, and TICK rule j would tag `m4`.
+the nightly gate report (`gates/gates.json` in `judge-report`, which TICK rule j reads) would show
+M4 passing.
 
 ### Proposed change
 gate.py stays offline. The nightly workflow, which already has a token, counts open issues per
-label and passes the counts in a file.
+label in its own step and passes the counts in a file. Design rules: a failed count must never stop
+the existing exam-sealing loop, and a missing or malformed count must make the gates that use it
+fail (fail closed), never pass.
 
-Workflow step, before the gate step (the job needs `issues: read`):
-```sh
-for s in critical high medium; do
-  printf '"open_sev_%s": %s\n' "$s" "$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
-    --label security --label "sev:$s" --limit 1000 --json number --jq length)"
-done | paste -sd, - | sed 's/^/{/; s/$/}/' > sev-counts.json
+`.github/workflows/ci.yml`, job `verdict`: add `issues: read` to its `permissions`, and add this step
+right before "Grade exam (aggregate only) and evaluate gates (nightly)". Being a separate step with
+`continue-on-error`, its failure can't skip the sealing loop in the grade step (which keeps
+`if: always()`); the grade step then runs without a counts file and M4 fails closed.
+```yaml
+      - name: Count open security issues (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh issue list --state open --limit 1000 --json number,labels > open-issues.json
+          python3 judge/ops/judge/sev_counts.py open-issues.json > sev-counts.json
 ```
-(and pass `--sev-counts sev-counts.json` to gate.py).
+(`gh` picks the repository from `GH_REPO` or the checkout; set `GH_REPO: ${{ github.repository }}`
+in `env` if the step's working directory isn't this repo's checkout.)
 
-ops/judge/gate.py:
+New `ops/judge/sev_counts.py`. It counts by the `sev:*` label alone, so a `sev:high` issue missing
+the `security` label still counts; it counts open `security` issues with no or several `sev:*`
+labels separately; and it refuses a list of 1000, which may be truncated:
+```python
+import json, sys
+issues = json.load(open(sys.argv[1]))
+if not isinstance(issues, list) or len(issues) >= 1000:
+    sys.exit("sev_counts: unexpected or possibly truncated issue list")
+out = {"open_sev_critical": 0, "open_sev_high": 0, "open_sev_medium": 0, "open_sev_unlabeled": 0}
+for i in issues:
+    names = {l["name"] for l in i["labels"]}
+    sev = [n for n in names if n.startswith("sev:")]
+    for n in sev:
+        k = "open_sev_" + n[4:]
+        if k in out:
+            out[k] += 1
+    if "security" in names and len(sev) != 1:
+        out["open_sev_unlabeled"] += 1
+print(json.dumps(out))
+```
+Add `--sev-counts sev-counts.json` to the gate.py call in the grade step.
+
+ops/judge/gate.py (a missing, malformed or partial file leaves the metrics unset, so M4 fails with
+`open_sev_high = None > 0`; the existing `max` branch reports `None` because it checks
+`got is None` first):
 ```diff
      ap.add_argument("--selftest", choices=["pass", "fail"], default="fail")
 +    ap.add_argument("--sev-counts", type=Path)
      ap.add_argument("--out", type=Path, required=True)
 @@
      m["journeys"] = smoke["metrics"].get("journeys", 0)
-+    # ADR 0009 gates. A missing file leaves the metrics unset, so a gate that uses them fails.
-+    if a.sev_counts:
-+        sev = C.load(a.sev_counts, {})
-+        for k in ("open_sev_critical", "open_sev_high", "open_sev_medium"):
-+            if isinstance(sev.get(k), int):
-+                m[k] = sev[k]
++    # ADR 0009 gates. Missing, malformed or partial counts leave the metrics unset (fail closed).
++    try:
++        sev = C.load(a.sev_counts, {}) if a.sev_counts else {}
++    except (OSError, ValueError):
++        sev = {}
++    keys = ("open_sev_critical", "open_sev_high", "open_sev_medium", "open_sev_unlabeled")
++    if isinstance(sev, dict) and all(type(sev.get(k)) is int and sev[k] >= 0 for k in keys):
++        m.update({k: sev[k] for k in keys})
 ```
 
 ops/judge/gates.toml:
 ```diff
 -[M4]   # engine API + reader apps: journeys only
 +[M4]   # engine API + reader apps; owner preview: no open sev:critical/high (ADR 0009)
-+max = { open_sev_critical = 0, open_sev_high = 0 }
++max = { open_sev_critical = 0, open_sev_high = 0, open_sev_unlabeled = 0 }
 @@
  [M10]  # hardening + 1.0
  min = { smoke_render_match = 0.97, exam_render_match = 0.95, fuzz_clean_nights = 30 }
 -max = { smoke_bench_ratio = 1.5 }
 +max = { smoke_bench_ratio = 1.5, open_sev_medium = 0 }
 ```
-Gates are cumulative, so M10 also inherits M4's critical/high criterion.
+Gates are cumulative, so M10 also inherits M4's criteria.
 
-Test plan: run gate.py on a saved report with counts `{0,0,0}` (M4's own criteria pass), `{0,1,0}`
-(M4 fails with `open_sev_high = 1 > 0`), no file (M4 fails with `= None`), and `{0,0,1}` (M4 passes,
-M10 fails).
+### Test plan
+A self-test next to the judge's others, on a **synthetic** smoke/exam report in which every metric
+and journey passes, so the only failures are the new ones. Each case asserts the exact strings in
+each gate's `failing` list, not just `pass`:
+- counts all 0: no `open_sev_` string in any gate's `failing`; M4's and M10's own criteria pass.
+- `open_sev_critical = 1`: M4 has `open_sev_critical = 1 > 0`.
+- `open_sev_high = 1`: M4 has `open_sev_high = 1 > 0`.
+- `open_sev_unlabeled = 1`: M4 has `open_sev_unlabeled = 1 > 0`.
+- `open_sev_medium = 1`: M4 has no `open_sev_` string; M10 has `open_sev_medium = 1 > 0`.
+- no file, an empty file, `{"open_sev_high": ""}`, a negative count, and a file missing one key:
+  M4 has `open_sev_high = None > 0`, and gate.py exits 0 with gates.json written.
+- sev_counts.py on a fixture list with a `sev:high` issue without `security` (counted high), a
+  `security` issue with no `sev:*` (unlabeled 1), one with two `sev:*` labels (unlabeled 1, both
+  counted), and a list of 1000 entries (exits non-zero, writes nothing).
+- One dry nightly on a branch with a deliberately failing count step: the sealing loop still runs
+  (the `results-exam` artifact is gone afterwards) and `gates-report` is uploaded.
 
 ### Risk if not applied
 The M4 and M10 gates can pass with open high or medium security issues. Sessions would have to

@@ -258,8 +258,9 @@ corpus hosts. This matters because building Rust dependencies executes their bui
 The agent never posts outside this repo: no upstream issues or PRs, emails or forum posts.
 If a third-party crate has a bug, the agent routes around it (another crate or our own
 implementation) and records an ADR. The one exception is the model providers the owner configured
-(CONSTITUTION 1.2): tracked files and review briefs go to Anthropic, and to OpenAI Codex only
-through `ops/driver/codex-review.sh` (#161 tracks its read isolation).
+(CONSTITUTION 1.2): tracked files (except the sealed corpus manifest) and review briefs go to
+Anthropic, and to OpenAI Codex only through `ops/driver/codex-review.sh`; nothing else (not the corpora,
+`~/jpdf-research`, credentials or other home-directory files). #161 tracks the launcher's read isolation.
 
 ### 6.8 Independent review (`ai-review`)
 A fresh subagent receives the diff, the spec and CONSTITUTION, but none of the implementation reasoning. It checks:
