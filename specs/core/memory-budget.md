@@ -207,16 +207,16 @@ working memory) and give up mostly speed (retained), the largest images (output 
   So between stages every decoded buffer alive during the image decode is within the allowance.
   The shrink itself may copy: for a moment the old buffer (at most what remained) and the new one
   (its length) are both alive. That transient (up to the output's length on top of the allowance)
-  is not charged and no reserve item is sized for it (#187); glibc usually shrinks a large mapped buffer
-  in place (`mremap`), but nothing guarantees it, so the decode term is an estimate here too. An
-  input held in its own buffer is charged even when it is cached (a cached globals stream is then
-  counted in `retained` too: conservative). An input that borrows the file bytes (no filter before
-  the image filter, no encryption) holds no buffer and is not charged, so the slices the decoder
-  gets can be longer than 128 MiB together; the allowance bounds the buffers, not the slices.
-  Single-input decoders (DCT, JPX, CCITT) follow the same steps for every allocating stage of
-  their chain; at the backend call only the final input's charge is still live. This is a rule on
-  a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call site does not,
-  so the review of the JBIG2 caller (M2) must check it.
+  is not charged and no reserve item is sized for it (#187); glibc usually shrinks a large mapped
+  buffer in place (`mremap`), but nothing guarantees it, so the decode term is an estimate here
+  too. An input held in its own buffer is charged even when it is cached (a cached globals stream
+  is then counted in `retained` too: conservative). An input that borrows the file bytes (no
+  filter before the image filter, no encryption) holds no buffer and is not charged, so the slices
+  the decoder gets can be longer than 128 MiB together; the allowance bounds the buffers, not the
+  slices. Single-input decoders (DCT, JPX, CCITT) follow the same steps for every allocating stage
+  of their chain; at the backend call only the final input's charge is still live. This is a rule
+  on a caller that doesn't exist yet: `ImageInputBudget` and its tests exist, the call site does
+  not, so the review of the JBIG2 caller (M2) must check it.
 - `jpdf-render` and rasterizer adapters: geometry memory that grows with input (flattened
   edges, curve subdivision, dash output up to `max_path_segments`, the display-list commands)
   counts within `max_raster_working_bytes`. `jpdf-render` passes the adapter the working-bytes
