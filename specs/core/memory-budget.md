@@ -214,12 +214,17 @@ working memory) and give up mostly speed (retained), the largest images (output 
     length, and only when that length also fits in what remains after the capacity is
     charged: the old and the new buffer are both charged while both are alive. When the copy
     doesn't fit, the buffer keeps its whole capacity charged and the next stages get less room
-    (they fail with `LimitExceeded`, never over the allowance). So on the image path a stage
-    reserves only a known length (`/DL`, the image dimensions) or grows in chunks, never the cap
-    speculatively: a stage reserved at the whole allowance that wrote less leaves the rest of
-    the chain nothing. A chunked output that must become one slice is copied into a buffer the
-    caller charges by capacity (`charge`) before filling it, and each chunk is released once
-    dropped. Release comes first (PR #232 R1.1): the output's capacity was already within the
+    (a later stage that needs more than its reduced cap fails with `LimitExceeded`, never over
+    the allowance). So on the image path a stage grows its output in chunks, never reserving
+    the cap speculatively: a stage reserved at the whole allowance that wrote less leaves the
+    rest of the chain nothing. A length the file declares (`/DL`, `/Length` of a later stage)
+    is an untrusted hint, not a known length (a stream can declare `/DL 134217728` and decode
+    to ten bytes); only a size the engine computed and checked against the limits (the final
+    stage's image dimensions × components × bits per component, after the image limits) may
+    be reserved up front. A chunked output that must become one slice is copied into a buffer
+    whose length the caller charges with `charge` **before allocating it**, alongside the
+    chunks still alive (any capacity beyond the request is charged right after, and the buffer
+    dropped if that doesn't fit); each chunk is released once dropped. Release comes first (PR #232 R1.1): the output's capacity was already within the
     cap while the input was alive, so dropping the input first leaves the copy the input's room
     too. With a 100-byte allowance, a 50-byte input and an output of capacity 50 holding 40,
     charging first leaves no room for the copy (50 stay charged for the rest of the chain);
@@ -318,7 +323,8 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     remaining: copied, 100 left) and keeps the buffer one byte short of it (109: capacity 100
     stays charged, 9 left), also with another 50-byte buffer charged (10 bytes copied with 50
     remaining, 11 kept). `charge_output_boundaries`: a buffer of exactly what remains is
-    charged, one byte more is refused untouched and charges nothing; a full buffer is not
+    charged, one byte more is refused untouched and charges nothing (also with 30 bytes already
+    charged: 71 refused with 70 still remaining, 70 fits); a full buffer is not
     copied (100 bytes at capacity 100 with 300 remaining: same buffer, 200 left); an empty one
     with spare capacity gives all of it back.
     `charge_output_charges_capacity_not_length`: 10 bytes at capacity 100 take the whole
@@ -392,8 +398,11 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     check, copy a full buffer (no short-circuit), skip or ignore the capacity charge, forget to release the old buffer or release its
     length, keep the old buffer after the copy, charge the copy's whole capacity twice) each
     fail at least one test. Not reached by any test: the paths where `try_reserve_exact` fails
-    or returns more capacity than asked for (std returns exactly the request); both keep the
-    old buffer and give back the copy's charge.
+    or returns more capacity than asked for (std returns exactly the request). A failed
+    reservation keeps the old buffer and gives back the copy's charge; a larger one is kept and
+    its extra charged when that fits, else dropped with the copy's charge given back. Also still
+    passing: a mutant that leaks the old buffer (`mem::forget` instead of dropping it) while
+    releasing its charge, since no test can see an allocation (no counting allocator, below).
   - What the tests can't see: real allocation sizes (no counting allocator; a global
     allocator needs code CONSTITUTION 3 forbids). The resource-limit harness (#25) is meant to
     measure the real peak under `RLIMIT_AS` in the nightly. Until it exists, the spans,

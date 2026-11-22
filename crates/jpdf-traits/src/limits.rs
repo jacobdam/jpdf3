@@ -348,8 +348,9 @@ impl ImageInputBudget {
     /// `Vec<u8>` reports exactly the requested capacity, so this path isn't reached today).
     /// When the length doesn't fit (or the allocation fails), `output` stays as it is with its
     /// whole capacity charged: the next stages get less room and may be refused, but nothing
-    /// goes over the allowance. That is why a stage on the image path should reserve only a
-    /// known length, never the cap speculatively.
+    /// goes over the allowance. That is why a stage on the image path should grow its output in
+    /// chunks, never reserve the cap speculatively, and never reserve a length the file only
+    /// declares (`/DL`).
     pub fn charge_output(&mut self, output: &mut Vec<u8>) -> Result<(), BackendError> {
         let held = output.capacity();
         self.charge(held)?;
@@ -752,6 +753,19 @@ mod tests {
         assert_eq!((output.capacity(), output.len()), (101, 3));
         assert_eq!(budget.remaining(), 100);
         assert_eq!(budget.charge(100), Ok(()));
+
+        // The same with another buffer charged (PR #232 S1.5): 30 charged, 70 remain; a
+        // 71-byte buffer is refused untouched and 70 still remain, a 70-byte one fits.
+        let mut budget = budget_of(100);
+        assert_eq!(budget.charge(30), Ok(()));
+        let mut output = stage_output(71, 5);
+        assert_eq!(budget.charge_output(&mut output), Err(LIMIT_ERROR));
+        assert_eq!(output, stage_output(5, 5));
+        assert_eq!(output.capacity(), 71);
+        assert_eq!(budget.remaining(), 70);
+        let mut output = stage_output(70, 70);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(budget.remaining(), 0);
     }
 
     /// The documented stage cycle (specs/core/memory-budget.md), release first (PR #232 R1.1):
@@ -772,8 +786,9 @@ mod tests {
         assert_eq!(budget.charge_output(&mut input), Ok(()));
         assert_eq!(stage_cap(&budget), 50);
         let mut output = stage_output(50, 40);
-        budget.release(input.capacity());
+        let held = input.capacity();
         drop(input);
+        budget.release(held);
         assert_eq!(budget.charge_output(&mut output), Ok(()));
         assert_eq!(output.capacity(), 40);
         assert_eq!(budget.remaining(), 60);
@@ -786,8 +801,9 @@ mod tests {
         assert_eq!(budget.charge_output(&mut input), Ok(()));
         let mut output = stage_output(50, 40);
         assert_eq!(budget.charge_output(&mut output), Ok(()));
-        budget.release(input.capacity());
+        let held = input.capacity();
         drop(input);
+        budget.release(held);
         assert_eq!(output.capacity(), 50);
         assert_eq!(budget.remaining(), 50);
     }
