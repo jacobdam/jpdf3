@@ -120,7 +120,7 @@ git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0
 
 ## 2. Pick exactly one thing (strict priority)
 ADR 0011 (session types) will replace this section with `cargo xtask next-session`. Until its
-task 1 merges, these rules stay in force; each ADR 0011 task changes this file for its own part.
+task 1a merges, these rules stay in force; each ADR 0011 task changes this file for its own part.
 
 Since retro 0001, due audits and retros (g, h) come **before** the backlog (i, j); in the old
 order a non-empty backlog starved them. Older journals use the old letters (audit = i,

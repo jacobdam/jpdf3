@@ -53,7 +53,7 @@ is needed (no session grades its own work), or when outputs need a scope.
 | **QC** (run and break) | a spec newly `Status: implemented`; 5 product merges in one area since its last QC; untriaged fuzz or differential crashes; a milestone gate (replaces rule j's gate check) | the spec and journeys, the built binaries and public APIs; **not** PR discussions or implementation reasoning (black-box) | tests, fixtures, corpus manifests, fuzz targets; **no product code** | failing tests as `#[ignore = "<issue URL>"]` plus `bug`/`crash` issues (CONSTITUTION 14), or "no escape found" in the journal; an escape line per bug (§6) | one area or one gate per session |
 | **User advocate** | every 2nd audit slot (slots are numbered by the count of `docs/audits/NNNN.md` plus `docs/advocate/NNNN.md` records; an even next number is the advocate's), once a journey assigned to M4 or later passes on main | `docs/PRODUCT.md`, journeys, the running apps | `docs/advocate/NNNN.md`, screenshots (ours in `target/`, PDFgear's in `~/jpdf-research/`), `ux` issues, `docs/ux-scores.md` | findings sent to product or UI design | one per slot |
 | **Retro** | 7 days since the last retro, or an incident (TICK rule h) | `cargo xtask metrics`, per-area ratios (§4) | `docs/retros/NNNN.md`, at most 3 measured process changes, `ops/LESSONS.md` curation | the retro PR | weekly |
-| **Planner** | a milestone starts, 7 days since the last plan, the work-mix budget is breached (§3), or no `ready` issue has its dependencies met | the milestone's issues and dependencies, `ops/QUEUE.md`, PLAN §8, metrics | `ready`/`deferred` labels, milestone moves, new milestone issues from PLAN §8 and the journeys, `ops/QUEUE.md`; **the only gate into `ready`** besides the owner | `ops/QUEUE.md` (ordered ready list, critical path, work-mix reading) | at most once a day, read from `ops/QUEUE.md`'s commit date; if it ran today and nothing is ready, the scheduler prints "idle" and the session only records it |
+| **Planner** | a milestone starts, 7 days since the last plan, the work-mix budget is breached (§3), or no `ready` issue has its dependencies met | the milestone's issues and dependencies, `ops/QUEUE.md`, PLAN §8, metrics | `ready`/`deferred` labels, milestone moves, new milestone issues from PLAN §8 and the journeys, `ops/QUEUE.md`; **the only gate into `ready`** besides the owner | `ops/QUEUE.md` (ordered ready list, critical path, work-mix reading) | at most once a day: it ran today if `ops/QUEUE.md` on origin/main or on the head of an open agent PR was committed today (UTC); if it ran today and nothing is ready, the scheduler prints "idle" and the session exits at once with no record |
 | **Gardener** | daily | labels and issues | mostly `cargo xtask garden` (§2); a session only for its judgement items | label fixes, closed duplicates, a docs-drift list | once a day, read from its `Session:` record (§3) |
 
 Mutation testing moves from the audit to QC. The dogfooding and completeness parts of the audit
@@ -97,38 +97,46 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   scheduler is broken: the session falls back to the legacy rules that TICK keeps for this case
   (today's rules b and c), then finds or files the `bug` issue titled
   `next-session: <first line of the error>` and fixes it as a Worker. Each failing session adds a
-  comment `failed again in session <time>` to that issue; that issue is the persistent counter.
-  At 3 such comments, the issue gets `owner-todo`.
-- **Transition.** Until task 1 (§9) merges, TICK rules a–j stay in force. Each task changes TICK
-  and AUTOMATION.md for its own session type in its own PR.
+  comment `failed again in session <time>` to that issue, except while an open PR for it exists
+  (rule c then works that PR); the issue is the persistent counter. At 3 such comments, the issue
+  gets `owner-todo`, and from then on sessions work only the legacy rules b and c and exit when
+  neither applies, until the owner's part is done.
+- **Transition.** Until task 1a (§9) merges, TICK rules a–j stay in force. From 1a until 1b,
+  the scheduler decides steps 1–5 and prints `legacy` when none applies; the session then uses
+  TICK rules g–j. Task 3 (which needs only 1a) adds step 6 ahead of that `legacy` exit. Each
+  task changes TICK and AUTOMATION.md for its own part in its own PR.
 
 ### 3. Product merges, records and the work-mix budget
 - **Product merge:** a merge on main whose PR closes an issue with a product `area:` label (§4).
   Process areas are the autonomy system itself: `area:process` (TICK, AUTOMATION, the
   scheduler, metrics, proposals) and `area:records`. **Until task 4 adds area labels**, a product
-  merge is a merge that changes at least one file outside `ops/`, `docs/`, `specs/`, `*.md` at
-  the repo root and `xtask/`. Audit, QC and planner cadences count product merges only. The
+  merge is a merge that changes at least one file under `crates/`, `bindings/`, `apps/`,
+  `fuzz/` or `tools/jpdf-cli/` (the code that ships or is graded), whatever else it changes. Audit, QC and planner cadences count product merges only. The
   7-day fallback still runs an audit in a week with none.
 - **Records go into the work PR.** The journal, STATUS and LESSONS update is committed to the
   work PR before `ai-review` is posted, on the head commit that includes it (its `Result:` line
-  says what was known then: "auto-merge on", "parked"). A commit that changes only
-  `ops/journal/`, `ops/STATUS.md` and `ops/LESSONS.md` is a **record commit**: like a merge of
-  origin/main, it doesn't count as "changed after the last reviewed commit" for ADR 0010's final
-  check. The check is by path: a commit touching any other file counts. A merge of origin/main
-  that conflicts in `ops/STATUS.md` takes main's copy and rewrites it in a record commit.
-- **Sessions without a work PR** (a Gardener run, a "done:" reply, an "idle" pick, a scheduler
-  exit 2) still record themselves: one records PR with only record files, which is never a
-  product merge. Record PRs exist only for those sessions.
+  says what was known then: "auto-merge on", "parked"). A commit that changes only files under
+  `ops/journal/` and `ops/STATUS.md` is a **record commit**: it doesn't count as "changed after
+  the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
+  `git show --remerge-diff` is empty or touches only those two paths; any other merge resolution
+  counts, as TICK §4 step 6 says today. The check is by path: a commit touching any other file
+  counts, `ops/LESSONS.md` included (every session reads it, so a change to it is reviewed). A
+  merge of origin/main that conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
+- **Sessions without a work PR** (a Gardener run, a "done:" reply) still record themselves: one
+  records PR with only record files, which is never a product merge. Record PRs exist only for
+  those sessions. An "idle" pick and a scheduler exit 2 write no record: the session exits at
+  once (the driver starts the next one after its pause, so an idle loop costs a short session
+  per pause and leaves nothing on GitHub).
 - **Session records.** Every journal entry has a `Session: <type> <scheduler pick>` line, the
   type and the first line the scheduler printed. The scheduler reads them from origin/main and
   from the heads of open agent PRs, so a record PR still waiting for CI is seen. The lines are
-  self-reported; the retro cross-checks each against the pick the scheduler would have made on
-  that date (`--from` with the saved inputs, kept in the journal entry as the pick line) and
-  reports mismatches.
+  self-reported: the scheduler saves no inputs, so nothing can replay its pick. The retro checks
+  each line only against what GitHub shows (the issue or PR the entry names, and its labels and
+  milestone) and reports mismatches; a session that lies consistently is not caught.
 - **Work-mix budget:** at least 70% of the last 20 sessions are on milestone work (a Worker,
   Design or QC session whose issue is in the current milestone and is a product issue: a product
-  `area:` label, or before task 4, not labeled `audit`, `retro`, `digest` and not about
-  `ops/TICK.md`, `AUTOMATION.md` or the scheduler). Owner-instruction sessions (rule a) are not
+  `area:` label, or before task 4, a session whose PR is an interim product merge as defined
+  above). Owner-instruction sessions (rule a) are not
   counted. The budget **orders**, it never blocks: below 70%, step 10 picks the lowest-numbered
   product issue first and a process issue only when no product issue is ready, and the Planner
   becomes due (once a day) to add product issues from PLAN §8. The Planner may move process
@@ -175,7 +183,8 @@ was over 100 lines or added a file, so no final check ran. Its output is exactly
 
 A design ruling counts as the owner comment that ADR 0010 requires for any round K ≥ 6, and it
 must say which review, if any, runs next. Outputs 1 and 3 run **one** final check (the ADR 0010
-round-5 rules, on the diff since the last reviewed commit, record commits excepted). Its brief
+round-5 rules, on the diff since the last reviewed commit, record commits excepted), and only
+  if that diff adds ≤ 100 lines and no new file; otherwise the design goes to output 4. Its brief
 also holds every ruling, and it gives each one line, `<ID>: ruling accepted` or
 `<ID>: ruling rejected` (a missing line counts as rejected), as ADR 0010 does for disputes. It
 then posts `ai-review`; anything that check reports, a rejected ruling included, goes to output 4.
@@ -194,9 +203,11 @@ records).
 | the same, issue already escalated or carrying `Designed in:` (or area already escalated this cycle) | owner, both ledgers (`owner-todo`) |
 | design output 1 or 3, its final check clean and every ruling accepted | `ai-review` success, merge |
 | design output 1 or 3, its final check reports anything or rejects a ruling | output 4 |
+| design output 1 or 3, the diff since the last reviewed commit over 100 lines or with a new file | output 4 (no check runs) |
 | design output 2 | PR closed unmerged; tasks filed with `Designed in:` (`ready` only via the Planner) |
 | design output 4 | `owner-todo`; no review round until an owner comment |
-| a merge of origin/main or a record commit at any point | no new review (§3) |
+| a record commit, or a merge of origin/main whose remerge-diff is empty or record-only | no new review (§3) |
+| a merge of origin/main with any other resolution | counts as an author change (TICK §4 step 6) |
 | a `/hold` at any point | unchanged (TICK §5): nothing moves until `/release` |
 
 ### 6. Rules for every session type
@@ -231,8 +242,8 @@ records).
 - Only scope, taste or money questions go to the owner. Technical questions go to design.
 - **Owner direction filed by an interactive session.** Such text is tagged (the guard requires
   it), so it is data under CONSTITUTION 1, and a `human` label on it proves nothing: the agent
-  account can add labels too. #223 and #224 were lost this way. The interactive session asks
-  the owner to post one untagged comment on the issue (any text). The scheduler picks it then,
+  account can add labels too. #223 and #224 were lost this way. The interactive session adds
+  `human` (as #238 asks; harmless now that rule a ignores it on tagged text) and asks the owner to post one untagged comment on the issue (any text). The scheduler picks it then,
   because `ops/driver/owner-issues.sh` already lists untagged owner comments without a "done:"
   reply. TICK rule a says the same from this PR on: a `human` label on tagged text is not an
   instruction. No protected change is needed.
@@ -277,8 +288,10 @@ still carried one on 2026-11-22). Each gets the `design` label when it is queued
 - The scheduler is the new single point of failure. It is read-only; an "unknown" exit stops
   one session, and a broken scheduler sends the session to the legacy rules b and c and to the
   scheduler's own bug issue (§2), so the loop repairs it or reaches the owner after 3 sessions.
-- Record commits skip the final check by path only, so a record commit can't carry code. They
-  can still carry a false journal line; the owner reads the journal, as today.
+- Record commits skip the final check by path only, so a record commit can't carry code. The
+  journal and STATUS text after the last review is no longer reviewed (today record PRs are:
+  PR #233's round 1 found a false tally in a journal entry). A false line there is caught only
+  by the owner, the next session or an audit.
 - Labels carry more meaning (`design`, `design-pending`, `needs-design`, `area:`), and the agent
   account can set any of them. As with `human` today, the guard can't check labels; the journal
   and the owner feed show who changed what.
