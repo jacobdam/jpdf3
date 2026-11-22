@@ -5,14 +5,16 @@ The core is Rust with no `unsafe` code; the apps are a SwiftUI macOS app and a R
 License: [MIT](LICENSE).
 
 > **Status: early development (milestone M0, Foundation).** The judge, CI, test harnesses and
-> specs are in place, and the PDF syntax layer is being built. The apps don't open PDFs yet.
+> specs are in place, and parts of the syntax layer (lexer, xref) exist; M0 work remains.
+> The apps don't open PDFs yet.
 > See [ops/STATUS.md](ops/STATUS.md) for the current state and [PLAN.md](PLAN.md) §8 for the
 > milestones.
 
 ## Goals
 
-- **Security first.** Every first-party crate has `#![forbid(unsafe_code)]`, every limit is
-  enforced, all input is hostile, and the engine never runs PDF JavaScript or Launch actions.
+- **Security first.** Every first-party crate has `#![forbid(unsafe_code)]`. The design goals:
+  hard resource limits on every path, all input treated as hostile, and no PDF JavaScript or
+  Launch actions, ever.
 - **Our own engine.** Written from ISO 32000-2 (PDF 2.0), reading real-world PDF 1.x and
   broken files leniently and writing strictly. No code is copied from other PDF engines.
   Third-party crates (codecs, fonts, rasterizing, crypto) are used only behind our own traits.
@@ -29,8 +31,8 @@ License: [MIT](LICENSE).
 |---|---|
 | `crates/` | The Rust engine, one crate per layer (`jpdf-syntax`, `jpdf-cos`, … up to `jpdf-engine`); see PLAN.md §2.3 |
 | `tools/` | `jpdf-cli` (the headless CLI the judge drives), corpus, bench, Arlington model and test-generation tools |
-| `apps/macos/` | SwiftUI app; the PDF engine runs in a sandboxed XPC helper |
-| `apps/web/` | Vite + React + MUI + TypeScript web app; the engine runs in a Web Worker |
+| `apps/macos/` | SwiftUI app and a sandboxed XPC helper, which will host the PDF engine |
+| `apps/web/` | Vite + React + MUI + TypeScript web app; the engine is planned to run in a Web Worker (WASM) |
 | `xtask/` | Project tasks (`cargo xtask …`) |
 | `fuzz/` | `cargo-fuzz` targets |
 | `specs/` | Feature specs, user journeys and UI specs |
@@ -60,7 +62,8 @@ Run `cargo xtask` with no arguments for the full list. The web app's own scripts
 `jpdf-cli` commands and exit codes are defined in [ops/judge/CONTRACT.md](ops/judge/CONTRACT.md).
 Commands that aren't implemented yet exit with code 3.
 
-The web app and the metrics dashboard are published at <https://jacobdam.github.io/jpdf3/>.
+The web app is published at <https://jacobdam.github.io/jpdf3/>, with the raw judge report at
+`judge/report/summary.md`. A metrics dashboard is planned ([#15](https://github.com/jacobdam/jpdf3/issues/15)).
 
 ## How the project is run
 
