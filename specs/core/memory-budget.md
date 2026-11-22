@@ -205,7 +205,9 @@ working memory) and give up mostly speed (retained), the largest images (output 
   - each stage gets `ImageInputBudget::cap` applied to its `DecodeLimits`, so it fails with
     `LimitExceeded` before outgrowing what the buffers still alive left (the page data while
     the globals decode, an earlier stage's output while the next stage grows);
-  - after the stage, the caller charges the output with `ImageInputBudget::charge_output`
+  - after the stage, the caller drops the stage's input buffer and gives its charge back with
+    `ImageInputBudget::release` (clamped to the allowance);
+  - then it charges the output with `ImageInputBudget::charge_output`
     (#187), which takes the `Vec` itself and charges its **capacity**, not its length (a
     10-byte output left in a buffer reserved at the cap would otherwise hide 128 MiB, PR #186
     R1.1). It gives spare capacity back only by copying the bytes into a new buffer of their
@@ -217,14 +219,18 @@ working memory) and give up mostly speed (retained), the largest images (output 
     speculatively: a stage reserved at the whole allowance that wrote less leaves the rest of
     the chain nothing. A chunked output that must become one slice is copied into a buffer the
     caller charges by capacity (`charge`) before filling it, and each chunk is released once
-    dropped;
-  - then it drops the stage's input buffer and gives its charge back with
-    `ImageInputBudget::release` (clamped to the allowance).
+    dropped. Release comes first (PR #232 R1.1): the output's capacity was already within the
+    cap while the input was alive, so dropping the input first leaves the copy the input's room
+    too. With a 100-byte allowance, a 50-byte input and an output of capacity 50 holding 40,
+    charging first leaves no room for the copy (50 stay charged for the rest of the chain);
+    releasing first lets it copy and leaves 60.
 
   So between stages every decoded buffer alive during the image decode is within the allowance.
   The copy that gives spare capacity back is inside the allowance too (#187): `charge_output`
   charges the new buffer at its requested length before allocating it, so the old buffer (at
-  most what remained) and the new one together never pass it. It never calls
+  most what remained) and the new one together never pass it (an allocation larger than
+  requested is charged only after it exists and dropped if the extra doesn't fit; std's
+  `Vec<u8>` never returns one). It never calls
   `Vec::shrink_to_fit`, whose reallocation may copy uncharged and aborts the process if it
   fails; a failed `try_reserve_exact` just keeps the old buffer. Counted are requested
   capacities; allocator rounding and headers are outside the allowance, as everywhere in this
@@ -313,10 +319,12 @@ budget they are re-parsed, with no error until the lexing budget runs out.
     stays charged, 9 left), also with another 50-byte buffer charged (10 bytes copied with 50
     remaining, 11 kept). `charge_output_boundaries`: a buffer of exactly what remains is
     charged, one byte more is refused untouched and charges nothing; a full buffer is not
-    copied; an empty one with spare capacity gives all of it back.
+    copied (100 bytes at capacity 100 with 300 remaining: same buffer, 200 left); an empty one
+    with spare capacity gives all of it back.
     `charge_output_charges_capacity_not_length`: 10 bytes at capacity 100 take the whole
     100-byte allowance, so the next stage's cap is 0 (a caller charging the length would
-    leave 90). `charge_output_in_a_two_stage_chain` runs the stage cycle above.
+    leave 90). `charge_output_in_a_two_stage_chain` runs the stage cycle above, release first:
+    the R1.1 example copies and leaves 60, and charging before the release would leave 50.
   - `page_limit_boundary_opens_at_the_limit` (crates/jpdf-engine/tests/open.rs): 5 kids open
     with `max_pages` 5; `page_limit_is_enforced` refuses 5 with 4. The parameterized
     boundary tests in the raster suite are unchanged.

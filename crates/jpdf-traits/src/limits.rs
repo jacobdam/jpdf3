@@ -288,11 +288,13 @@ impl Limits {
 /// outgrows what the buffers still alive left (decryption is such a stage; a buffer the first stage
 /// reads that is already allocated, such as a cached stream, is charged before it runs). Each stage
 /// keeps its output buffer's capacity, not just its length, within the cap. After a stage the
-/// caller charges the output with [`ImageInputBudget::charge_output`] (its **capacity**; spare
-/// capacity is given back only through a copy that fits the allowance), then drops the stage's input buffer and gives its charge back with
-/// [`ImageInputBudget::release`]. An input that borrows the file bytes (no filter before the image
-/// filter, no encryption) holds no new buffer and is not charged; every input held in its own
-/// buffer is, cached ones included.
+/// caller first drops the stage's input buffer and gives its charge back with
+/// [`ImageInputBudget::release`], then charges the output with
+/// [`ImageInputBudget::charge_output`] (its **capacity**; spare capacity is given back only
+/// through a copy that fits the allowance). In that order the copy gets the input's room too:
+/// the output alone was already within the cap while the input was alive. An input that borrows
+/// the file bytes (no filter before the image filter, no encryption) holds no new buffer and is
+/// not charged; every input held in its own buffer is, cached ones included.
 ///
 /// Neither `Copy` nor `Clone`: a copy charged in place of the original would lose the charge.
 #[derive(Debug, PartialEq, Eq)]
@@ -339,13 +341,15 @@ impl ImageInputBudget {
     /// fails the decode. Otherwise, when `output` has spare capacity and its length also fits in
     /// what remains after the charge, the bytes move to a new buffer of that length
     /// (`try_reserve_exact`), the old buffer is dropped and its charge given back. The old and the
-    /// new buffer are alive together only during the copy, and both are charged (the new one at
-    /// its requested length before it is allocated), so the allowance holds then too. If the
-    /// new buffer's capacity comes out larger than requested and the difference doesn't fit, it
-    /// is dropped unused. When the length doesn't fit (or the allocation fails), `output`
-    /// stays as it is with its whole capacity charged: the next stages get less room and may be
-    /// refused, but nothing goes over the allowance. That is why a stage on the image path
-    /// should reserve only a known length, never the cap speculatively.
+    /// new buffer are alive together only during the copy. The new one is charged at its
+    /// requested length before it is allocated, so the allowance holds then too, with one
+    /// exception: if the allocation comes out larger than requested, the extra is charged only
+    /// after it exists, and when it doesn't fit the new buffer is dropped unused (std's
+    /// `Vec<u8>` reports exactly the requested capacity, so this path isn't reached today).
+    /// When the length doesn't fit (or the allocation fails), `output` stays as it is with its
+    /// whole capacity charged: the next stages get less room and may be refused, but nothing
+    /// goes over the allowance. That is why a stage on the image path should reserve only a
+    /// known length, never the cap speculatively.
     pub fn charge_output(&mut self, output: &mut Vec<u8>) -> Result<(), BackendError> {
         let held = output.capacity();
         self.charge(held)?;
@@ -727,6 +731,14 @@ mod tests {
         assert_eq!(budget.charge_output(&mut output), Ok(()));
         assert_eq!(output.capacity(), 100);
         assert_eq!(budget.remaining(), 0);
+        // A full buffer with room to spare is not copied either (PR #232 R1.2).
+        let mut budget = budget_of(300);
+        let mut output = stage_output(100, 100);
+        let before = output.as_ptr();
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.as_ptr(), before);
+        assert_eq!(output.capacity(), 100);
+        assert_eq!(budget.remaining(), 200);
 
         let mut budget = budget_of(50);
         let mut output = stage_output(50, 0);
@@ -742,27 +754,42 @@ mod tests {
         assert_eq!(budget.charge(100), Ok(()));
     }
 
-    /// The documented stage cycle (specs/core/memory-budget.md): stage 1's output is charged,
-    /// stage 2 grows within the cap while it is alive, then stage 1 is dropped and released.
+    /// The documented stage cycle (specs/core/memory-budget.md), release first (PR #232 R1.1):
+    /// a 50-byte input alive, the next stage capped at the 50 that remain reserves all of it and
+    /// writes 40. Dropping the input and releasing its charge before `charge_output` leaves room
+    /// for the copy: the output ends at 40, 60 remain, and the next stage may reach 60, not 61.
+    /// Charging first finds no room (0 remain), so 50 stay charged after the release.
     #[test]
     fn charge_output_in_a_two_stage_chain() {
         let limits = Limits {
             max_decoded_bytes_per_stream: 100,
             ..Limits::default()
         };
+        let stage_cap =
+            |budget: &ImageInputBudget| budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes;
         let mut budget = limits.image_input_budget();
-        let mut stage1 = stage_output(40, 30);
-        assert_eq!(budget.charge_output(&mut stage1), Ok(()));
-        assert_eq!(budget.remaining(), 70);
-        let cap = budget.cap(limits.decode_limits(u64::MAX)).max_output_bytes;
-        assert_eq!(cap, 70);
-        let mut stage2 = stage_output(cap, cap);
-        assert_eq!(budget.charge_output(&mut stage2), Ok(()));
-        assert_eq!(budget.remaining(), 0);
-        budget.release(stage1.capacity());
-        drop(stage1);
-        assert_eq!(budget.remaining(), 30);
-        assert_eq!(budget.charge(31), Err(LIMIT_ERROR));
+        let mut input = stage_output(50, 50);
+        assert_eq!(budget.charge_output(&mut input), Ok(()));
+        assert_eq!(stage_cap(&budget), 50);
+        let mut output = stage_output(50, 40);
+        budget.release(input.capacity());
+        drop(input);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        assert_eq!(output.capacity(), 40);
+        assert_eq!(budget.remaining(), 60);
+        assert_eq!(stage_cap(&budget), 60);
+        assert_eq!(budget.charge(61), Err(LIMIT_ERROR));
+
+        // The other order keeps the spare capacity: why the cycle releases first.
+        let mut budget = limits.image_input_budget();
+        let mut input = stage_output(50, 50);
+        assert_eq!(budget.charge_output(&mut input), Ok(()));
+        let mut output = stage_output(50, 40);
+        assert_eq!(budget.charge_output(&mut output), Ok(()));
+        budget.release(input.capacity());
+        drop(input);
+        assert_eq!(output.capacity(), 50);
+        assert_eq!(budget.remaining(), 50);
     }
 
     #[test]
