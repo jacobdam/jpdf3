@@ -118,57 +118,17 @@ the 2 GiB unused.
     `heap_high_water` plus the 96 MiB fragmentation item: in theory up to one phase's worth for
     each size class a hostile file steps through. This was already possible before #146 (parse
     after parse), and it can't be bounded by a formula over the limits. Closing it (and #146) needs
-    the same as opening the gate below: a structural fix, or a runtime budget the engine
-    enforces. A #25 measurement (many cached growing containers, then phases making ever
-    larger sub-threshold requests) only characterizes the workloads it ran; it is regression
-    evidence, required with either fix, never enough on its own, for parse after parse as
-    much as for decode or raster. The structural fix keeps every long-lived allocation out of
-    the phases' heap region: the index
-    storage (span map, xref table, cache map) **and** the payloads (the cached objects' `Arc`s
-    and their buffers, which a parse allocates in the middle of its own scratch memory). Until then the peak is an
+    a #25 measurement (many cached growing containers, then phases making ever larger
+    sub-threshold requests, under `RLIMIT_AS` = 2 GiB) or a structural fix that keeps every
+    long-lived allocation out of the phases' heap region: the index storage (span map, xref
+    table, cache map) **and** the payloads (the cached objects' `Arc`s and their buffers, which a
+    parse allocates in the middle of its own scratch memory). Until then the peak is an
     estimate that accounts for one earlier phase, not a proven bound, and a peak under 2 GiB
     does not certify that a run fits.
-  - **Gate:** no decode or raster phase runs on the jpdf-cli path for unrestricted input until
-    one of these holds (#146): (a) the structural fix above lands, covering both index storage
-    and payloads, so stranded heap is bounded by construction; or (b) a runtime budget that the
-    engine enforces rejects work (with a typed `LimitExceeded`) before the process's address
-    space would pass the cap. A measurement alone does not open the gate: one workload can't
-    show that another, reaching the same sizes in a different order, reuses as many holes.
-    Either way, regression evidence is also required: #25 runs the cross-phase pattern above through the jpdf-cli path being
-    enabled, exercising **every** phase that path runs, each one after the heap the preceding
-    phases left (e.g. parse, then decode, then raster, if raster is enabled), at the default
-    limits under `RLIMIT_AS` = 2 GiB as the judge runs `jpdf-cli`, and the process neither
-    crashes nor fails an allocation, and its measured peak address space stays at or below
-    `peak()`. The run must also show that each phase reached its stress allocations in that order: it
-    records the allocation sizes each phase reached (e.g. the decoder's working buffers at
-    `max_decode_working_bytes`), and a phase that ended early (a limit rejection before its
-    buffers, a fallback, a skipped phase) is not evidence. A measurement that finds the process
-    over the limit blocks the gate. A passing run validates only the workloads and phases it
-    ran: enabling another phase on the jpdf-cli path needs a new run that includes it. Today
-    parse is the only phase on that path; parse after parse can build up holes the same way
-    (already true before #146); the same fixes close it, and the same measurement is its
-    regression evidence.
-  - **Tripwire:** tools/jpdf-cli/tests/phase_gate.rs fails, naming #146, as soon as jpdf-cli's
-    normal or build dependency graph (`cargo tree` with every feature and every target) holds
-    any crate beyond the parse-only set (jpdf-cli, jpdf-engine, jpdf-cos, jpdf-syntax,
-    jpdf-traits), or any package that doesn't resolve to its workspace directory (a fork with an
-    allowed name, a registry crate); or the Rust files anywhere in the jpdf-cli, jpdf-engine, jpdf-cos or
-    jpdf-syntax package (not only `src`; `target`, symlinks and the test file itself skipped) name a
-    decode or raster entry point (the decode, raster and font limit builders, `check_scene`,
-    the codec, image, cipher, font and rasterizer traits, `inflate`, `FlateDecode`, calls to their methods such as `.decode`, `.render`
-    and `.load` (whitespace removed, the name followed by `(`, `::` or a comment, so a
-    turbofish or a comment before the call still matches; it fails closed on prose, literals
-    and same-named methods such as an atomic's `.load`)), or use any `#[path]`, `path = "..."` (as in
-    `cfg_attr`) or `include!` (they compile source the scan doesn't read); or one of the five
-    manifests mentions `features` or `optional` (so workspace feature unification can't add a
-    dependency the graph check misses), has a table other than `[package]`, `[lints]`,
-    `[dependencies]`, `[dev-dependencies]`, or a `build`/`auto*` key (so Cargo compiles only
-    the auto-discovered `.rs` files the scan reads). A PR that brings a phase onto the path must satisfy the
-    gate and update the test. **Limit:** the graph check sees crates, not phases, and the name
-    scan is a text search: a decoder written inside an allowed crate under another name passes
-    both, and so does a call with a comment between the dot and the method name when a string
-    literal holding `/*` comes before it in the file (the comment-stripping pass doesn't know
-    literals). Review against the gate covers that case.
+  - **Gate:** no decode or raster phase runs on the jpdf-cli path until #146 is closed, by a
+    #25 measurement or by the structural fix above. Today parse is the only phase on that path.
+    The rule is not enforced by a test yet; #154 tracks enforcing it structurally (a check that
+    Cargo resolves, such as jpdf-cli's dependency graph).
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
     the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
     sub-heaps, which are also trimmed only from the top.
@@ -353,12 +313,6 @@ No runtime cost for `MemoryBudget` (tests only). `alloc_bytes` adds a few intege
 per allocation counted by `retained_cost`, which already walks the object once.
 
 ## Tests
-- tools/jpdf-cli/tests/phase_gate.rs: `jpdf_cli_links_only_parse_crates_until_the_146_gate_opens`,
-  `parse_crates_name_no_decode_or_raster_entry_point_until_the_146_gate_opens`,
-  `parse_crates_declare_no_features_until_the_146_gate_opens`,
-  `package_path_handles_parentheses_and_the_repeat_marker`,
-  `phase_scan_sees_method_calls_on_inferred_receivers` (new, #146; the gate's
-  tripwire).
 - crates/jpdf-syntax/src/budget.rs: `type_sizes_are_pinned`, `reserve_is_itemized`,
   `default_terms`, `defaults_fit_the_process_budget_with_the_reserve`,
   `each_term_follows_its_fields`, `loose_limits_saturate_every_term`,
