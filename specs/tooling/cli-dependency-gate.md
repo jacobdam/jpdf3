@@ -60,8 +60,7 @@ instruction, step 2).
     rejected shape, including a missing or malformed version, with version near misses
     (`0.0.0-rc.1+b2`); markers before and after the source, also on the allowed path and through a
     symlink alias that resolves to it (unix); parentheses (also `) (`) inside a path;
-    every allowed crate at its
-    path passes; each kind of outsider and a relative source that does name the allowed directory
+    every allowed crate at its path passes; each kind of outsider and a relative source that does name the allowed directory
     from the test's working directory are each exactly one violation; one outsider among the six
     allowed crates is reported by name.
 
