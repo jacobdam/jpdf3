@@ -8,6 +8,8 @@
 //! workspace path. It reads only what `cargo tree` resolves, never Rust sources or manifests
 //! as text (PR #151 showed any text scan can be bypassed).
 
+#![forbid(unsafe_code)]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,7 +41,10 @@ fn workspace_root() -> PathBuf {
 
 /// Parses `cargo tree --prefix none --format {p}` output. Blank lines (between roots) are
 /// skipped; any other line that is not `<name> v<version>[ (<source>)]` is an error, so an
-/// output format change fails the gate instead of passing it.
+/// output format change fails the gate instead of passing it. The version starts with a digit
+/// and holds only ASCII alphanumerics, `.`, `-` and `+`. The source is everything between the
+/// ` (` after the version and the line's final `)`, so a path may contain parentheses; a
+/// trailing marker such as `(*)` stays in the source text and then fails the path check.
 fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
     let mut pkgs = Vec::new();
     for line in out.lines() {
@@ -52,13 +57,24 @@ fn parse_tree(out: &str) -> Result<Vec<Pkg>, String> {
         if name.is_empty() || name.contains(char::is_whitespace) {
             return Err(format!("unparsable cargo tree line: {line:?}"));
         }
-        let source = match rest.split_once(' ') {
+        let (version, tail) = match rest.split_once(' ') {
+            None => (rest, None),
+            Some((v, t)) => (v, Some(t)),
+        };
+        let version_ok = version.starts_with(|c: char| c.is_ascii_digit())
+            && version
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+        if !version_ok {
+            return Err(format!("unparsable cargo tree line: {line:?}"));
+        }
+        let source = match tail {
             None => None,
-            Some((_version, tail)) => {
-                let inner = tail
+            Some(t) => {
+                let inner = t
                     .strip_prefix('(')
                     .and_then(|t| t.strip_suffix(')'))
-                    .filter(|t| !t.contains(')'))
+                    .filter(|t| !t.is_empty())
                     .ok_or_else(|| format!("unparsable cargo tree line: {line:?}"))?;
                 Some(inner.to_owned())
             }
@@ -87,10 +103,14 @@ fn violations(pkgs: &[Pkg], root: &Path) -> Vec<String> {
             continue;
         };
         let want = root.join(dir).canonicalize().ok();
+        // Only an absolute path is resolved: a relative one (a git URL is one on Unix) would be
+        // read against the working directory.
         let got = p
             .source
             .as_deref()
-            .and_then(|s| Path::new(s).canonicalize().ok());
+            .map(Path::new)
+            .filter(|s| s.is_absolute())
+            .and_then(|s| s.canonicalize().ok());
         if want.is_none() || got != want {
             bad.insert(format!(
                 "{} ({:?}): not at its workspace path {dir}",
@@ -321,11 +341,58 @@ mod synthetic {
             "jpdf cli v0.0.0 (/x)",
             "jpdf-cli v0.0.0 /x",
             "jpdf-cli v0.0.0 (/x",
-            "jpdf-cli v0.0.0 (/x) (*)",
-            "jpdf-cli v0.0.0 (/x) (proc-macro)",
+            // A missing or malformed version (S1.3), with and without a source.
+            "jpdf-cli v",
+            "jpdf-cli v (/x)",
+            "jpdf-cli v  (/x)",
+            "jpdf-cli vx.0 (/x)",
+            "jpdf-cli v0.0.0/x (/x)",
         ] {
             assert!(parse_tree(bad).is_err(), "accepted {bad:?}");
         }
+        // Near misses: pre-release and build-metadata versions parse.
+        for good in ["jpdf-cli v0.0.0-rc.1+b2 (/x)", "serde v1.0.200"] {
+            assert!(parse_tree(good).is_ok(), "rejected {good:?}");
+        }
+    }
+
+    /// A checkout directory with parentheses in its name is a valid source path (S1.2): the
+    /// source is everything between the first ` (` after the version and the final `)`.
+    #[test]
+    fn parser_keeps_parentheses_inside_a_path() {
+        let pkgs = parse_tree("jpdf-cli v0.0.0 (/work/jpdf (copy)/tools/jpdf-cli)").unwrap();
+        assert_eq!(
+            pkgs[0].source.as_deref(),
+            Some("/work/jpdf (copy)/tools/jpdf-cli")
+        );
+    }
+
+    /// A trailing marker (`(*)`, `(proc-macro)`) becomes part of the source text, which is then
+    /// not the allowed path: still one violation, never a pass.
+    #[test]
+    fn checker_rejects_marker_suffixes() {
+        let r = root();
+        for marker in [" (*)", " (proc-macro)"] {
+            let c = line("jpdf-syntax", "crates/jpdf-syntax") + marker;
+            let pkgs = parse_tree(&c).unwrap();
+            assert_eq!(violations(&pkgs, &r).len(), 1, "accepted {c:?}");
+        }
+    }
+
+    /// A relative source (a git URL is one on Unix) is never resolved against the working
+    /// directory (S1.6). Tests run in the package directory, so `../../crates/jpdf-syntax` names
+    /// the allowed directory from there (the control) and must still be refused.
+    #[test]
+    fn checker_rejects_relative_sources() {
+        let r = root();
+        let rel = "../../crates/jpdf-syntax";
+        assert_eq!(
+            Path::new(rel).canonicalize().unwrap(),
+            r.join("crates/jpdf-syntax").canonicalize().unwrap()
+        );
+        let c = format!("jpdf-syntax v0.0.0 ({rel})");
+        let pkgs = parse_tree(&c).unwrap();
+        assert_eq!(violations(&pkgs, &r).len(), 1, "accepted {c:?}");
     }
 
     #[test]

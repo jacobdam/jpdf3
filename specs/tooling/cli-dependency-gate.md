@@ -19,14 +19,20 @@ bypassed; owner instruction, step 2).
   --all-features --target all --prefix none --no-dedupe --format {p} --charset ascii --color
   never --locked --offline`, with `$CARGO` (falling back to `cargo` on `PATH`). A non-zero exit
   is an error, so a stale lockfile or a missing package fails the gate.
-- **Parse:** each non-blank line must be `<name> v<version>`, optionally followed by one
-  ` (<source>)` with no other `)`. Anything else (a `(*)` or `(proc-macro)` marker, a missing
-  version, a name with a space) is an error, and so is an output with no packages: a format
-  change fails the gate instead of passing it.
-- **Check:** every package must have an allowed name and a source path that, canonicalized,
-  equals its allowed directory, canonicalized. A registry package (no source), a git package,
-  an allowed name at another crate's path or at a path that doesn't exist, and any other name
-  are each one violation line. A `..` detour that resolves to the right directory passes.
+- **Parse:** each non-blank line must be `<name> v<version>`, optionally followed by
+  ` (<source>)`. The name has no whitespace; the version starts with a digit and holds only
+  ASCII letters, digits, `.`, `-` and `+`; the source is everything between that ` (` and the
+  line's final `)`, so a checkout path with parentheses in it (`/work/jpdf (copy)/…`) parses.
+  Anything else (no version, an empty or malformed one, a name with a space, a source without
+  its parentheses) is an error, and so is an output with no packages: a format change fails the
+  gate instead of passing it. A trailing marker such as `(*)` or `(proc-macro)` stays in the
+  source text, which then fails the path check below.
+- **Check:** every package must have an allowed name and a source that is an **absolute** path
+  which, canonicalized, equals its allowed directory, canonicalized. A registry package (no
+  source), a git package, a relative source (never resolved against the working directory; a
+  git URL is a relative path on Unix), an allowed name at another crate's path or at a path
+  that doesn't exist, a source with a marker after it, and any other name are each one
+  violation line. A `..` detour that resolves to the right directory passes.
 - **Tests** (all in `dependency_gate.rs`):
   - `cli_graph_is_parse_only`: roots are all six allowed crates, so `--all-features` turns on
     every feature of each. A feature of `jpdf-engine` that pulls in a decoder is caught even if
@@ -44,9 +50,12 @@ bypassed; owner instruction, step 2).
     generate-lockfile --offline`) lists a feature-gated optional dependency of a second root, a
     `cfg(windows)` dependency and a build-dependency; from the first root alone the optional one
     is not listed (why the gate takes every allowed crate as a root).
-  - Parser and checker cases on synthetic lines: path, registry and git lines; each rejected
-    shape; every allowed crate at its path passes; each kind of outsider is exactly one
-    violation; one outsider among the six allowed crates is reported by name.
+  - Parser and checker cases on synthetic lines (`synthetic::`): path, registry and git lines;
+    each rejected shape, including a missing or malformed version, with version near misses
+    (`0.0.0-rc.1+b2`); parentheses inside a path; every allowed crate at its path passes; each
+    kind of outsider, a marker suffix and a relative source that does name the allowed directory
+    from the test's working directory are each exactly one violation; one outsider among the
+    six allowed crates is reported by name.
 
 Changing the gate: when #146 closes, the gate and this test go away (or the allowed set grows)
 in the PR that closes it. Adding a parse-only crate to the CLI path means adding it to
@@ -86,8 +95,12 @@ None of its own; each graph test runs one `cargo tree` (about 40 ms), the fixtur
     branch: an optional `jpdf-filters` dependency behind a `jpdf-engine` feature fails
     `cli_graph_is_parse_only` (only that test: the feature is off from `jpdf-cli` alone); a
     `cfg(windows)` dependency and a build-dependency of `jpdf-cli` on `jpdf-render` fail both
-    graph tests with a `not a parse-only crate` line (the lockfile was updated first, so the
-    failure was not `--locked`).
+    graph tests: `cli_graph_is_parse_only` with a `not a parse-only crate` line,
+    `cli_graph_is_exactly_the_allowed_set` with the set difference (its first assertion). The
+    lockfile was updated first, so the failure was not `--locked`.
+  - Builds outside the declared graph: a build script that runs Cargo (or `rustc`) itself to
+    compile another package adds no dependency edge, so the gate doesn't see it. No workspace
+    crate has a build script today; review is the check.
   - The command's flags: no allowed crate has features or a target-limited dependency today,
     so the graph tests alone would pass without `--all-features`, `--target all` or the `build`
     edge kind. `control_flags_reach_features_other_targets_and_build_edges` pins all three on a
@@ -113,4 +126,5 @@ About 40 ms per graph test locally.
 `synthetic::parser_reads_path_registry_and_git_lines`,
 `synthetic::parser_rejects_unknown_shapes_and_empty_output`,
 `synthetic::checker_accepts_every_allowed_crate_at_its_path`, `synthetic::checker_rejects_each_kind_of_outsider`,
-`synthetic::checker_reports_one_outsider_among_allowed_crates`.
+`synthetic::checker_reports_one_outsider_among_allowed_crates`, `synthetic::parser_keeps_parentheses_inside_a_path`,
+`synthetic::checker_rejects_marker_suffixes`, `synthetic::checker_rejects_relative_sources`.
