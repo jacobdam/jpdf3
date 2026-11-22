@@ -22,7 +22,7 @@ Phase: bootstrap (pilot)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. **d: #187** (sev:high, M2): its main item needs the image-decode caller; the doc and odd-count test items can be done
    now. If it is judged not actionable before the caller, say so on the issue and go on.
-3. **g: AUDIT is due** (10 merges since audit 0003 on 2026-11-22).
+3. **g: AUDIT is due** (11 merges since audit 0003 on 2026-11-22).
 4. **#76**: harness honesty. The judge relies on it.
 5. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
@@ -36,7 +36,7 @@ Phase: bootstrap (pilot)
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
   - the template's `Area:` list lacks `tooling`.
   - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
-- **Next audit:** due now (10 merges since audit 0003).
+- **Next audit:** due now (11 merges since audit 0003).
 
 ## Blockers / owner-todo
 - #168 / PR #186: accept the final-check wording fix or ask for one more round (options on #168).

@@ -246,7 +246,8 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Writing a memory rule for a caller that doesn't exist yet (a budget helper plus "requirements on future code") →
   before round 1, walk every allocation the caller will make (decryption, each filter stage, the shrink copy, the final
   contiguous slice) and say for each whether it is capped, charged by capacity, or an uncharged estimate. PR #186
-  drew one such major per round for 5 rounds ([journal](journal/2026-11-22.md), PR #186).
+  drew such majors in each of rounds 1 to 4 (capacity, intermediates, decryption, shrink copy, cipher capacity)
+  ([journal](journal/2026-11-22.md), PR #186).
 - Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
   resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
   spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control
