@@ -196,6 +196,9 @@ impl Limits {
     }
 }
 
+/// The defaults fit the judge's 2 GiB address space (specs/core/memory-budget.md). #146 lowered
+/// the string, xref, decoded-stream, retained and raster defaults so that the heap one phase
+/// leaves mapped and the next phase's new mappings fit together.
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -203,15 +206,15 @@ impl Default for Limits {
             max_nesting_depth: 256,
             max_objects_per_parse: 1 << 20,
             max_objects_per_document: 20_000_000,
-            max_string_bytes_per_parse: 64 * 1024 * 1024,
-            max_xref_entries: 1 << 22,
+            max_string_bytes_per_parse: 32 * 1024 * 1024,
+            max_xref_entries: 1 << 21,
             max_xref_sections: 1024,
             max_pages: 1_000_000,
             lex_budget_factor: 4,
             lex_budget_slack: 1024 * 1024,
-            max_decoded_bytes_per_stream: 256 * 1024 * 1024,
+            max_decoded_bytes_per_stream: 128 * 1024 * 1024,
             max_decoded_bytes_per_document: 4 * 1024 * 1024 * 1024,
-            max_retained_bytes_per_document: 256 * 1024 * 1024,
+            max_retained_bytes_per_document: 128 * 1024 * 1024,
             max_image_pixels: 100_000_000,
             max_image_dimension: 1 << 20,
             max_decode_working_bytes: 256 * 1024 * 1024,
@@ -221,11 +224,11 @@ impl Default for Limits {
             max_font_glyphs: u16::MAX,
             max_outline_points: 1 << 17,
             max_outline_ops: 1 << 20,
-            max_canvas_pixels: 1 << 23,
+            max_canvas_pixels: 1 << 22,
             max_path_segments: 1 << 20,
             max_clip_depth: 64,
             max_layer_depth: 32,
-            max_raster_working_bytes: 512 * 1024 * 1024,
+            max_raster_working_bytes: 256 * 1024 * 1024,
         }
     }
 }
@@ -375,14 +378,14 @@ mod tests {
     fn default_raster_limits_fit_the_memory_budget() {
         // A full-size canvas (4 bytes per pixel) with 4 soft-masked layers (5 each), 32 clips
         // (1 each) and one canvas-sized image (4 per pixel) stays within the working bytes:
-        // 2^23 x 60 = 480 MiB. This is `check_scene`'s formula, `pixels x (4 + S) + 4 x I`.
+        // 2^22 x 60 = 240 MiB. This is `check_scene`'s formula, `pixels x (4 + S) + 4 x I`.
         let r = RasterLimits::default();
         let px = r.max_canvas_pixels;
         assert!(px * (4 + 4 * 5 + 32) + 4 * px <= r.max_working_bytes);
-        // A quarter of the 2 GiB process budget (jpdf_syntax::MemoryBudget checks the sum).
-        assert_eq!(r.max_working_bytes, 512 * 1024 * 1024);
-        // The canvas default: 2^23 pixels, e.g. a 4096 x 2048 tile.
-        assert_eq!(r.max_canvas_pixels, 1 << 23);
+        // An eighth of the 2 GiB process budget (#146; jpdf_syntax::MemoryBudget checks the sum).
+        assert_eq!(r.max_working_bytes, 256 * 1024 * 1024);
+        // The canvas default: 2^22 pixels, e.g. a 2048 x 2048 tile.
+        assert_eq!(r.max_canvas_pixels, 1 << 22);
     }
 
     /// Every field set to `v` (one literal, so a new field must be listed here too).

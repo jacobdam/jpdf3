@@ -605,26 +605,26 @@ mod tests {
         ]));
     }
 
-    /// The lowered default canvas (#109, specs/core/memory-budget.md) at its exact boundary:
-    /// 2^23 pixels pass with `RasterLimits::default()`, one pixel more fails.
+    /// The lowered default canvas (#109, #146, specs/core/memory-budget.md) at its exact
+    /// boundary: 2^22 pixels pass with `RasterLimits::default()`, one pixel more fails.
     #[test]
     fn default_canvas_limit_is_exact() {
         let l = RasterLimits::default();
-        assert!(check_scene(4096, 2048, &[], &l).is_ok());
-        assert!(check_scene(8_388_608, 1, &[], &l).is_ok());
+        assert!(check_scene(2048, 2048, &[], &l).is_ok());
+        assert!(check_scene(4_194_304, 1, &[], &l).is_ok());
         assert_eq!(
-            check_scene(8_388_609, 1, &[], &l),
+            check_scene(4_194_305, 1, &[], &l),
             Err(BackendError::LimitExceeded("canvas pixels"))
         );
         assert_eq!(
-            check_scene(4097, 2048, &[], &l),
+            check_scene(2049, 2048, &[], &l),
             Err(BackendError::LimitExceeded("canvas pixels"))
         );
     }
 
-    /// The lowered default working bytes (512 MiB, #109) at its exact boundary: a 4096 x 2048
-    /// canvas with 15 nested layers is 2^23 x (4 + 15 x 4) = exactly 512 MiB and passes; one
-    /// more clip (1 byte per pixel) fails.
+    /// The lowered default working bytes (256 MiB, #109, #146) at its exact boundary: a
+    /// 2048 x 2048 canvas with 15 nested layers is 2^22 x (4 + 15 x 4) = exactly 256 MiB and
+    /// passes; one more clip (1 byte per pixel) fails.
     #[test]
     fn default_working_bytes_limit_is_exact() {
         let path = [PathSegment::MoveTo(p(0.0, 0.0))];
@@ -649,13 +649,13 @@ mod tests {
             c
         };
         let l = RasterLimits::default();
-        assert_eq!(l.max_working_bytes, 512 << 20);
+        assert_eq!(l.max_working_bytes, 256 << 20);
         assert_eq!(
-            check_scene(4096, 2048, &layers(false), &l).map(|s| s.working_bytes),
-            Ok(512 << 20)
+            check_scene(2048, 2048, &layers(false), &l).map(|s| s.working_bytes),
+            Ok(256 << 20)
         );
         assert_eq!(
-            check_scene(4096, 2048, &layers(true), &l),
+            check_scene(2048, 2048, &layers(true), &l),
             Err(BackendError::LimitExceeded("working bytes"))
         );
     }

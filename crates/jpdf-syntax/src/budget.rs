@@ -59,8 +59,9 @@ const GROWTH_FACTOR: u64 = 3;
 
 /// Peak bytes per term for one document under a set of limits. Persistent terms live as long
 /// as the document (or overlap every phase); phase terms are alive one at a time (a document
-/// parses one object, decodes one stream or renders one tile at a time), so only the largest
-/// counts.
+/// parses one object, decodes one stream or renders one tile at a time), but a finished phase
+/// can leave its heap mapped, so the largest phase counts twice
+/// ([`MemoryBudget::heap_high_water`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryBudget {
     /// The file bytes (`max_file_size`), read into memory once with an exact reservation.
@@ -130,9 +131,22 @@ impl MemoryBudget {
         self.parse.max(self.decode).max(self.raster)
     }
 
-    /// Peak process memory: persistent terms, the largest phase and [`RESERVE_BYTES`].
+    /// Heap a finished phase can leave mapped while the next phase runs (#146). glibc serves
+    /// requests below its mmap threshold (128 KiB at first, up to 32 MiB once raised) from the
+    /// brk heap, which shrinks only from the top: one live allocation made during a phase (a
+    /// span, a cache node) keeps everything below it mapped. Freed heap memory is reused by
+    /// later small requests, but a request above the threshold gets a new mapping. So the
+    /// worst case is one phase's whole memory left in the heap (every phase can allocate below
+    /// the threshold) plus the next phase's whole memory in new mappings.
+    pub fn heap_high_water(&self) -> u64 {
+        self.largest_phase()
+    }
+
+    /// Peak process memory: persistent terms, the heap high-water mark of an earlier phase, the
+    /// largest phase and [`RESERVE_BYTES`].
     pub fn peak(&self) -> u64 {
         self.persistent()
+            .saturating_add(self.heap_high_water())
             .saturating_add(self.largest_phase())
             .saturating_add(RESERVE_BYTES)
     }
@@ -188,21 +202,26 @@ mod tests {
             b,
             MemoryBudget {
                 file: 512 * MIB,
-                retained: 256 * MIB,
-                // 4 194 304 entries × 12 bytes × 3.
-                xref_table: 144 * MIB,
-                // (4 194 304 + 1 024) spans × 64 bytes.
-                spans: 256 * MIB + 64 * 1024,
+                retained: 128 * MIB,
+                // 2 097 152 entries × 12 bytes × 3.
+                xref_table: 72 * MIB,
+                // (2 097 152 + 1 024) spans × 64 bytes.
+                spans: 128 * MIB + 64 * 1024,
                 // 1 000 000 pages × 48 bytes.
                 page_walk: 48_000_000,
-                // 1 048 576 × 272 + 64 MiB × 3.
-                parse: 272 * MIB + 192 * MIB,
-                decode: 512 * MIB,
-                raster: 512 * MIB,
+                // 1 048 576 × 272 + 32 MiB × 3.
+                parse: 272 * MIB + 96 * MIB,
+                // 128 MiB decoded + 256 MiB working.
+                decode: 384 * MIB,
+                raster: 256 * MIB,
             }
         );
-        assert_eq!(b.persistent(), 1168 * MIB + 64 * 1024 + 48_000_000);
-        assert_eq!(b.largest_phase(), 512 * MIB);
+        assert_eq!(b.persistent(), 840 * MIB + 64 * 1024 + 48_000_000);
+        assert_eq!(b.largest_phase(), 384 * MIB);
+        assert_eq!(b.heap_high_water(), 384 * MIB);
+        // 840 + 384 + 384 + 256 MiB, plus the odd spans and page-walk bytes: about
+        // 1909.84 MiB, 138.16 MiB under the 2 GiB.
+        assert_eq!(b.peak(), 1864 * MIB + 64 * 1024 + 48_000_000);
     }
 
     /// The defaults fit the judge's 2 GiB with the 256 MiB reserve, and with at least 64 MiB
@@ -408,9 +427,10 @@ mod tests {
         );
     }
 
-    /// Only the largest phase counts, whichever it is, and the peak adds the reserve.
+    /// Only the largest phase counts, whichever it is, twice (once as the heap an earlier phase
+    /// left mapped, #146), and the peak adds the reserve.
     #[test]
-    fn peak_is_persistent_plus_largest_phase_plus_reserve() {
+    fn peak_is_persistent_plus_largest_phase_twice_plus_reserve() {
         let b = MemoryBudget {
             file: 1,
             retained: 2,
@@ -422,7 +442,7 @@ mod tests {
             raster: 128,
         };
         assert_eq!(b.persistent(), 31);
-        assert_eq!(b.peak(), 31 + 128 + RESERVE_BYTES);
+        assert_eq!(b.peak(), 31 + 128 + 128 + RESERVE_BYTES);
         for (parse, decode, raster) in [(128, 64, 32), (32, 128, 64), (64, 32, 128)] {
             let b = MemoryBudget {
                 parse,
@@ -431,6 +451,8 @@ mod tests {
                 ..b
             };
             assert_eq!(b.largest_phase(), 128);
+            assert_eq!(b.heap_high_water(), 128);
+            assert_eq!(b.peak(), 31 + 256 + RESERVE_BYTES);
         }
         let max = MemoryBudget {
             file: u64::MAX,

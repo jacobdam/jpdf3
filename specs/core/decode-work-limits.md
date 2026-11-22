@@ -23,7 +23,7 @@ The change has four parts.
 
    | Field | Default | Why |
    |---|---|---|
-   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays at 2 GiB. A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
+   | `max_decode_working_bytes: u64` | 256 MiB | Peak memory one image decode holds, output included. It takes the place of "one stream being decoded" in the 2 GiB budget sum, so the sum stays at 2 GiB (the full budget is specs/core/memory-budget.md; #146 kept this at 256 MiB and lowered the output cap to 128 MiB). A decoder with a full-size coefficient plane (4 bytes per sample) therefore decodes at most about 51 MiB of 8-bit output; larger images fail with `LimitExceeded` (CONSTITUTION 4: security beats performance) |
    | `max_decode_ops: u64` | 2^32 | Operations one image decode may perform: about 43 per pixel at the 100,000,000-pixel limit. That leaves room for a several-stage decode of the largest legal image, and still bounds the time of one call |
 
    `Limits::decode_limits(remaining)` copies both into the new `DecodeLimits` fields
@@ -125,7 +125,7 @@ still renders (specs/core/backend-traits.md, Errors).
     `[/FlateDecode /DCTDecode]`, or with Flate-compressed `JBIG2Globals`, the up-to-256 MiB
     Flate output that feeds the image decoder is still alive while it runs, and nothing charges
     it. The real decode term is up to 512 MiB. specs/core/memory-budget.md now counts it
-    (decode term = 256 + 256 MiB). That holds only if `jpdf-filters`, which doesn't exist yet,
+    (decode term = 256 + 256 MiB; 128 + 256 MiB since #146 lowered the output cap). That holds only if `jpdf-filters`, which doesn't exist yet,
     keeps at most one intermediate output alive while the image decoder runs; the
     requirement is listed there.
 - The toy decoder in the suite's tests charges one operation per output sample plus 64 per

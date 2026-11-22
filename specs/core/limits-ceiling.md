@@ -26,7 +26,7 @@ and operations budget) and #107 (object resolve cache).
    - `jpdf_syntax::XrefDocument::parse` and `jpdf_cos` functions still take `&Limits` as
      given. They are internal layers below the engine facade; bindings reach only
      `jpdf-engine` (PLAN §2.3).
-3. **New field `max_retained_bytes_per_document: u64`, default 256 MiB.** It bounds what one
+3. **New field `max_retained_bytes_per_document: u64`, default 256 MiB** (128 MiB since #146). It bounds what one
    document keeps alive between calls: cached decoded streams, font programs held by cached
    faces (`FontFace` borrows its program), and parsed objects. The rule
    for every cache the engine adds: charge the bytes it holds, and evict or recompute instead
@@ -37,8 +37,11 @@ and operations budget) and #107 (object resolve cache).
    - Budgeted terms: the full process budget, with every uncharged term and a 256 MiB
      reserve, is specs/core/memory-budget.md (`jpdf_syntax::MemoryBudget`, #109). #109 lowered
      `max_xref_entries` to 2^22, `max_objects_per_parse` to 2^20, `max_raster_working_bytes`
-     to 512 MiB and `max_canvas_pixels` to 2^23, so the defaults fit with about 66 MiB to
-     spare. The phase model assumes heap reuse across phases (#146).
+     to 512 MiB and `max_canvas_pixels` to 2^23. #146 counts the heap an earlier phase leaves
+     mapped and lowered `max_xref_entries` to 2^21, this field to 128 MiB,
+     `max_string_bytes_per_parse` to 32 MiB, `max_decoded_bytes_per_stream` to 128 MiB,
+     `max_raster_working_bytes` to 256 MiB and `max_canvas_pixels` to 2^22, so the defaults fit
+     with about 138 MiB to spare.
    - Charged by the object resolve cache only (specs/core/resolve-cache.md). Docs say the
      future face cache "must" charge it, through one counter shared with the object cache
      (#138).

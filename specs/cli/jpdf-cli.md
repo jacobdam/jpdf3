@@ -97,7 +97,7 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   but costs an allocation). This is the effective ceiling for very large documents: 1 M
   pages with > 20 objects per page dictionary exit 2 even though `max_pages` allows them.
   Scaling it with the page count is a follow-up;
-- `max_string_bytes_per_parse` 64 MiB of decoded string and name bytes per indirect object (memory
+- `max_string_bytes_per_parse` 32 MiB (64 MiB before #146, specs/core/memory-budget.md) of decoded string and name bytes per indirect object (memory
   bound; the reference look-ahead never decodes strings). Exact for every token kind (#113): a
   total of exactly the limit parses, one decoded byte more is refused. Each finished name, hex or
   literal string is checked as a whole, so a name's last byte and an odd hex string's implied
@@ -106,8 +106,9 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
   the room. Boundary tests: `string_room_is_exact_for_every_token_kind`,
   `string_room_is_shared_and_exact_across_tokens`; `string_room_stops_the_scan_early` shows an
   over-long string, name or hex string fails after ≤ 16 lexed bytes, not at its end.
-- `max_xref_entries` 4 194 304 (2^22) across all sections (lowered from 10 000 000 by #109 so
-  the entry table and the overlap map fit the memory budget, specs/core/memory-budget.md);
+- `max_xref_entries` 2 097 152 (2^21) across all sections (lowered from 10 000 000 by #109
+  and from 2^22 by #146 so the entry table and the overlap map fit the memory budget,
+  specs/core/memory-budget.md);
 - `max_xref_sections` 1 024 `/Prev` hops (plus cycle detection on offsets);
 - `max_pages` 1 000 000 kids;
 - no overlapping indirect objects or xref sections: each parsed section's and resolved object's
