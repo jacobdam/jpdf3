@@ -19,16 +19,16 @@ instruction, step 2).
 - **Parse:** each non-blank line must be `<name> v<version>`, optionally followed by ` (<source>)`.
   The name has no whitespace; the version starts with a digit and holds only ASCII letters, digits,
   `.`, `-` and `+`; the source is everything between that ` (` and the line's final `)`, so a
-  checkout path with parentheses in it (`/work/jpdf (copy)/…`, `/work/jpdf (old) (copy)/…`)
-  parses. Anything else (no version, an empty or malformed one, a name with a space, a source
-  without its parentheses, a Cargo marker) is an error, and so is an output with no packages: a
-  format change fails the gate instead of passing it. Markers are recognized at their token
-  boundaries (`has_marker`): the text inside the outer parentheses starting with `proc-macro) (`
-  (Cargo prints `(proc-macro)` before the source) or ending with `) (*` or `) (proc-macro`. Such a
-  line is never resolved as a path (round 2, S2.2: a directory named `jpdf-syntax) (*` that is a
-  symlink to `crates/jpdf-syntax` would otherwise pass). A clean graph never matches: an allowed
-  source is absolute (so it doesn't start with `proc-macro`) and ends in its crate directory's
-  name, whatever the checkout path holds.
+  checkout path with parentheses in it (`/work/jpdf (copy)/…`, `/work/jpdf (old) (copy)/…`) parses.
+  Anything else (no version, an empty or malformed one, a name with a space, a source without its
+  parentheses, a Cargo marker) is an error, and so is an output with no packages: a format change
+  fails the gate instead of passing it. Markers are recognized at their token boundaries
+  (`has_marker`): the text inside the outer parentheses starting with `proc-macro) (` (Cargo prints
+  `(proc-macro)` before the source) or ending with `) (*` or `) (proc-macro`. Such a line is never
+  resolved as a path (round 2, S2.2: a directory named `jpdf-syntax) (*` that is a symlink to
+  `crates/jpdf-syntax` would otherwise pass). A clean graph never matches: an allowed source is
+  absolute (so it doesn't start with `proc-macro`) and ends in its crate directory's name, whatever
+  the checkout path holds.
 - **Check:** every package must have an allowed name and a source that is an **absolute** path
   which, canonicalized, equals its allowed directory, canonicalized. A registry package (no source),
   a git package, a relative source (never resolved against the working directory; a git URL is a
@@ -45,8 +45,8 @@ instruction, step 2).
     from holding crates the CLI no longer uses: removing a dependency means removing its entry.
   - `control_a_real_graph_outside_the_list_is_reported`: the same command on `xtask` reports
     `xtask`, `jpdf-arlington` and `jpdf-testgen`, and not the allowed `jpdf-fsio`.
-  - `tree_args_are_exactly_these`: the command's arguments after the roots are pinned as one
-    string, so no flag can be dropped or narrowed (`--target all` to a set of triples, R3.1).
+  - `tree_args_are_exactly_these`: the command's arguments after the roots are pinned as one string,
+    so no flag can be dropped or narrowed (`--target all` to a set of triples, R3.1).
   - `control_cargo_tree_failure_is_an_error`: an unknown `-p` package is `cargo tree failed`.
   - `control_flags_reach_features_other_targets_and_build_edges`: the same command on a fixture
     workspace written under `CARGO_TARGET_TMPDIR` (lockfile from `cargo generate-lockfile
@@ -59,10 +59,10 @@ instruction, step 2).
   - Parser and checker cases on synthetic lines (`synthetic::`): path, registry and git lines; each
     rejected shape, including a missing or malformed version, with version near misses
     (`0.0.0-rc.1+b2`); markers before and after the source, also on the allowed path and through a
-    symlink alias that resolves to it (unix); parentheses (also `) (`) inside a path;
-    every allowed crate at its path passes; each kind of outsider and a relative source that does name the allowed directory
-    from the test's working directory are each exactly one violation; one outsider among the six
-    allowed crates is reported by name.
+    symlink alias that resolves to it (unix); parentheses (also `) (`) inside a path; every allowed
+    crate at its path passes; each kind of outsider and a relative source that does name the allowed
+    directory from the test's working directory are each exactly one violation; one outsider among
+    the six allowed crates is reported by name.
 
 Changing the gate: when #146 closes, the gate and this test go away (or the allowed set grows) in
 the PR that closes it. Adding a parse-only crate to the CLI path means adding it to `ALLOWED` in a
