@@ -130,7 +130,11 @@ fn main() -> ExitCode {
 fn run(args: &[OsString]) -> Result<(), Failure> {
     let inv = parse_args(args)?;
     match inv.command {
-        "info" => info(&inv),
+        // DRILL (#21), never merged: every `info` dies by SIGABRT, so the judge must report crashes.
+        "info" => {
+            let _ = info(&inv);
+            std::process::abort()
+        }
         other => Err(Failure {
             code: EXIT_NOT_IMPLEMENTED,
             message: format!("not implemented: {other}"),
