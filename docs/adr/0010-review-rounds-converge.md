@@ -63,24 +63,28 @@ Root causes (5 whys, short):
    statement) is checked against the cited lines and fixed or disputed with evidence.
 5. **Review grade and security severity are separate.** A deferred security finding takes its
    `sev:*` label from the ADR 0009 table, not from the review grade. As ADR 0009 says, only
-   `sev:medium` / `sev:low` findings may be deferred; a finding that is `sev:high` or above by
-   the table is fixed in the PR once it reproduces; dropped when a reviewer accepts that it isn't
-   real; and filed as a `sev:high` issue (rule d) when a reviewer accepts that it didn't
-   reproduce, so it is tracked, never silently lost.
+   `sev:medium` / `sev:low` findings may be deferred. This ADR extends ADR 0009 for one case: a finding that is `sev:high` or above by
+   the table is fixed in the PR once it reproduces and dropped when a reviewer accepts that it
+   isn't real, but when a reviewer accepts that it didn't reproduce, the PR may merge and the
+   finding is filed as a `sev:high` issue with the attempt (rule d), so it is tracked, never
+   silently lost.
 6. **Fix only what was found.** A finding about an unproven property is fixed by stating the
    limitation. Requests for new enforcement tooling (scanners, tripwires, extra checkers) go to
    their own issue.
 7. **Cap: 4 rounds per issue** (1 full + 3 delta; the round number K counts headers on every PR
    for the issue, so a replacement PR doesn't reset it). After round 4, minors and nits are
    deferred to issues. Each round-4 blocker or major is fixed (behavior: a test that fails before
-   and passes after, both runs recorded; text: the corrected wording quoted) or disputed. If
+   and passes after, both runs recorded; text: the corrected wording quoted), disputed or
+   regraded. If
    anything changed after round 4's commit, or a blocker or major is still open or awaiting a
    ruling, and the diff adds ≤ 100 lines and no new file, a **final check** (a fresh reviewer:
    that diff, the ledger entries it concerns, the rubric, CONSTITUTION.md) confirms each fix,
    rules on each dispute and reports blockers or majors the diff adds. Anything it reports, or a bigger fix, sends the PR back to
-   draft and the issue to `blocked` for the owner. So a PR sees at most 5 reviews, code written
+   draft and the issue to `blocked` for the owner. So a PR sees at most 5 reviews without the
+   owner, code written
    after round 4 is still reviewed, and a spurious round-4 finding is settled by a reviewer, not
-   the owner. After that, any further round (K ≥ 5) needs an owner comment saying what to run.
+   the owner. After that, any further round (K ≥ 6) needs an owner comment saying what to run. "Changed
+   after round 4" counts only the author's changes, not main merged in.
 8. Rule c's "3 attempts" now counts CI fix attempts only. This is a deliberate change: the old
    text also covered review, and 4 rounds is looser than 3. Four, because real blockers and
    majors came in round 2 or later on PRs #129 (rounds 2 to 4), #135 (2 to 4), #142 (2 to 4) and
@@ -107,7 +111,7 @@ Root causes (5 whys, short):
   the backstop.
 
 ## Success check (next retro, then the one after; computed in TICK §7 step 1)
-- Over the next 10 merged PRs: no PR has more than 5 reviews (4 rounds + final check); median
+- Over the next 10 merged PRs: no PR has more than 5 reviews (4 rounds + final check) without an owner comment; median
   rounds ≤ 3; at most 2 of 10 reach the cap.
 - Every deferred finding has an issue, and every regrade went to a reviewer. Regrades the next
   reviewer overturned: target ≤ 1 in 4; above that, the author regrades too eagerly and the

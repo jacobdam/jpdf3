@@ -187,8 +187,9 @@ stand alone and cite repo-relative paths only, with no preamble or header: one l
 K = 1 + the highest K in an `AI review, round K` header already on the PR **or on any earlier PR
 for the same issue**, else 1 (a resumed or replacement PR continues). Every task PR body says
 `Closes #<issue>`, so `gh pr list --state all --search '"Closes #<issue>" in:body'` finds them.
-**K ≥ 5, or any round after a final check, is the owner's call:** run no review round until an
-owner comment on the PR or issue says what to run.
+The final check (step 6) is round 5. **K ≥ 6, or any round after step 6 posted `ai-review`
+failure, is the owner's call:** run no review round until an owner comment on the PR or issue
+says what to run.
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
    HEAD`, checked against `git ls-remote origin <branch>`.
@@ -216,7 +217,8 @@ Each round K runs in this order:
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
      input, say) is never deferred once it reproduces: it is fixed in the PR. If a reviewer
      accepts a dispute that it isn't real, it is dropped. If a reviewer accepts a regrade because
-     it didn't reproduce, file it as a `sev:high` issue with the attempt, so rule d picks it up.
+     it didn't reproduce, file it as a `sev:high` issue with the attempt, so rule d picks it up;
+     its triage line reads `filed: #N (sev:high, not reproduced)`.
    - **Fix only what was found.** Answer "not proven" by stating the limitation in the text.
      Never build new enforcement tooling (scanners, tripwires, extra checkers) in answer to a
      finding: file an issue for it.
@@ -231,9 +233,12 @@ Each round K runs in this order:
      passes after it, both runs recorded in the triage line; a false statement: the corrected
      text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
      reproduce);
-   - if nothing changed since round 4's commit and no blocker or major from any round is open,
-     disputed or regraded without a ruling, post `ai-review`. Otherwise, if the diff since
-     round 4's commit adds ≤ 100 lines and no new file, one **final check** runs (header
+   - "the post-cap diff" is your own changes since round 4: `git diff <M>..HEAD`. `<M>` is
+     round 4's commit; if you have merged origin/main since, `<M>` is the commit you get by
+     merging the same origin/main commit into round 4's commit on a scratch branch;
+   - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
+     regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
+     lines and no new file, one **final check** runs (header
      `AI review, round 5 (final check)`): a fresh reviewer gets that diff, the ledger entries
      for every finding fixed, disputed or regraded since round 4's commit, the rubric and
      CONSTITUTION.md. It confirms that each fix closes its finding, rules on each dispute and
@@ -243,7 +248,7 @@ Each round K runs in this order:
      dispute or regrade, a new blocker or major), or a fix diff over the size limit: turn the
      PR back into a draft (`gh pr ready N --undo`), label the issue `blocked`, comment the
      ledger on it, post `ai-review` with `state=failure`, and leave the decision to the owner
-     (see K ≥ 5 above);
+     (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
 
 Mechanics (the guard wants one simple command with the text inline, no files):
