@@ -23,10 +23,9 @@ Phase: bootstrap (pilot)
 
 ## Next step (suggested order, TICK letters)
 1. **d: #187** (sev:high, decoded image input buffers on ImageInputBudget from PR #186; read its deferred items).
-2. (none)
-3. Rule i, M0, lowest number first: #154, #210 (write ops/proposals/ for the owner-commands fix), #216
+2. Rule i, M0, lowest number first: #154, #210 (write ops/proposals/ for the owner-commands fix), #216
    (the harness the owner's test step 3 relies on; PR #184 already merged), #219.
-4. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
+3. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
   #132, #134, #136, #137, #166, #193, #203, #218.
