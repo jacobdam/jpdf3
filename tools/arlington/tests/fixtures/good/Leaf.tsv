@@ -1,0 +1,2 @@
+Key	Type	SinceVersion	DeprecatedIn	Required	IndirectReference	Inheritable	DefaultValue	PossibleValues	SpecialCase	Link	Note
+Size	number	fn:Extension(XY_1,1.6)		TRUE	FALSE	FALSE			fn:Eval(@Size>0)		

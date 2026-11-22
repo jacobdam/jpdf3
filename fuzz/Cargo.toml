@@ -1,0 +1,46 @@
+# cargo-fuzz project (ops/judge/CONTRACT.md §3, specs/tooling/fuzz.md). Not a workspace member:
+# it builds on nightly with sanitizers and has its own lockfile.
+[package]
+name = "jpdf-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jpdf-engine = { path = "../crates/jpdf-engine" }
+jpdf-syntax = { path = "../crates/jpdf-syntax" }
+jpdf-testgen = { path = "../tools/jpdf-testgen" }
+
+# Its own workspace, so the root workspace's lockfile and lints stay untouched.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "engine_open"
+path = "fuzz_targets/engine_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_objects"
+path = "fuzz_targets/engine_objects.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syntax_resolve"
+path = "fuzz_targets/syntax_resolve.rs"
+test = false
+doc = false
+bench = false

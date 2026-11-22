@@ -23,7 +23,10 @@ notify() { command -v cmux >/dev/null 2>&1 && cmux notify --title "jpdf" --body 
 halted() {
   [[ -f ops/HALT ]] && { log "HALT file present"; return 0; }
   local n
-  n=$(gh issue list -R "$GH_REPO" --label halt --author "$OWNER" --state open --json number -q 'length' 2>/dev/null || echo 0)
+  # A gh failure (network, auth, outage) is "unknown", not "no halt": return 2 and start nothing.
+  if ! n=$(gh issue list -R "$GH_REPO" --label halt --author "$OWNER" --state open --json number -q 'length' 2>/dev/null); then
+    log "halt check failed (gh error); not starting a session"; return 2
+  fi
   [[ "${n:-0}" != "0" ]] && { log "owner halt issue open"; return 0; }
   return 1
 }
@@ -83,7 +86,9 @@ run_session() {
 
 backoff=300; limit_wait=1800
 while true; do
-  if halted; then log "halted; exiting"; notify "loop halted"; exit 0; fi
+  halted; h=$?
+  if (( h == 0 )); then log "halted; exiting"; notify "loop halted"; exit 0; fi
+  if (( h == 2 )); then [[ "$MODE" == "once" ]] && exit 1; sleep 300; continue; fi
   if ! disk_ok; then sleep 3600; continue; fi
   sync_main || { log "git sync failed"; sleep 600; continue; }
   run_session; rc=$?

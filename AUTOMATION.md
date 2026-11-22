@@ -73,17 +73,18 @@ GitHub (public repo jacobdam/jpdf3)
    d. `crash` / `security` issues
    e. ratchet or nightly regressions, `flaky` tests
    f. leftover branch from a dead session → resume or discard
-   g. `ready` task in the current milestone (dependencies met, lowest number)
-   h. milestone backlog empty → run gate (§9) or generate next milestone's backlog
-   i. every 10th merge or 7 days → AUDIT session instead (§10)
-   j. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
+   g. every 10th merge or 7 days → AUDIT session instead (§10)
+   h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
+   i. `ready` task in the current milestone (dependencies met, lowest number)
+   j. milestone backlog empty → run gate (§9) or generate next milestone's backlog
 3. SIZE CHECK: will this fit in one session? If not → split into issues, exit.
 4. CLAIM: assign the issue + comment "claimed by session <id>", then re-read to confirm the claim.
 5. WORK in a worktree: spec (with checklist §5.2) → failing tests → code →
    local checks. Push WIP commits often (draft PR), so a usage limit loses nothing.
 6. PR: links issue, spec, ADRs; explains any change to an existing test assertion.
 7. REVIEW: reviewer subagent → posts commit status `ai-review`.
-8. MERGE: `gh pr merge --auto --squash` (skip if the owner commented `/hold`).
+8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
+   `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
 9. RECORD: journal, STATUS.md, new issues for discoveries, ADRs. Exit.
 ```
 
@@ -374,7 +375,7 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.
-2. `/hold` on a PR → not merged until `/release`.
+2. `/hold` on a PR → it becomes a draft (unmergeable) until `/release`.
 3. Issue labeled `halt` (or `touch ops/HALT`) → stops after the current session.
 4. Take over: halt, then `claude` in the repo, or `claude --resume <session-id>` from the log.
 5. Revert a merge → the next session sees the reopened issue.
@@ -397,8 +398,9 @@ crate areas) come once M1 is stable.
 2. Repo Settings → Pages → Source: **GitHub Actions**.
 3. System Settings → Privacy & Security: give the terminal app **Screen Recording** and
    **Accessibility** (macOS UI tests, PDFgear comparison).
-4. cmux Settings: set a **socket password** (any process can otherwise type into any cmux tab;
-   the guard also blocks agents from calling `cmux`).
+4. cmux Settings: optionally set a **socket password** (any process can otherwise type into any
+   cmux tab). The owner chose not to (2026-11-20), so the guard's `cmux` block is the only barrier;
+   it allows the word only as quoted text in a tagged GitHub post.
 5. Laptop: clone the repo and set `gpg.format=ssh`, `user.signingkey=<key>.pub`,
    `commit.gpgsign=true` (for protected changes, 6.1).
 6. Start: `cd ~/work/jpdf3 && ops/driver/driver.sh --pilot`.
@@ -441,6 +443,13 @@ hosting/domain, App Store listing). Phase 2 starts only when the owner opens a `
   owner's (the tag tells them apart), and the owner's local credentials (`~/.ssh`, keychain)
   are protected only by the guard, not by OS user separation. A separate macOS user for the
   agent closes the second gap if ever needed.
+- **A held PR can be marked ready by an agent.** `/hold` makes the PR a draft, but the agent
+  account can run `gh pr ready`. TICK forbids it and the journal would show it; the guard can't
+  check comments.
+- **A halt issue takes seconds to show up** (GitHub search indexing). `ops/HALT` is instant.
+- **cmux socket without a password.** Any local process could type into the owner's cmux tabs
+  (e.g. a shell outside the guard). Only the guard's `cmux` block stands in the way; a socket
+  password or a separate macOS user would close it.
 - **Weakened tests are hard to detect mechanically.** Mitigated by reviewer rules, mutation
   testing and corpus ratchets.
 - **The journey list bounds the product.** It is agent-written and unreviewed. It is

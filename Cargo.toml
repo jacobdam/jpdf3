@@ -18,8 +18,15 @@ members = [
     "crates/jpdf-sign",
     "crates/jpdf-engine",
     "crates/jpdf-backends",
+    "tools/bench",
+    "tools/jpdf-cli",
+    "tools/arlington",
+    "tools/corpus",
+    "tools/jpdf-testgen",
     "xtask",
 ]
+# cargo-fuzz project with its own lockfile (specs/tooling/fuzz.md).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0"

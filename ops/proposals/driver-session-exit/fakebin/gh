@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "fake $(basename "$0") called: the harness must never reach it" >&2
+exit 99

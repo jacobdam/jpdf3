@@ -11,3 +11,4 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+jpdf-syntax = { path = "../jpdf-syntax" }

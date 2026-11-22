@@ -1,0 +1,405 @@
+//! Exit-code contract of `jpdf-cli` (ops/judge/CONTRACT.md §1). Spec: specs/cli/jpdf-cli.md.
+
+use std::io;
+use std::path::PathBuf;
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn cli(args: &[&str]) -> io::Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
+        .args(args)
+        .output()
+}
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+/// Writes `bytes` to a fresh temp file and returns its path.
+fn temp_file(bytes: &[u8]) -> io::Result<PathBuf> {
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("jpdf-cli-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{n}.pdf"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+fn minimal_pdf(pages: usize) -> Vec<u8> {
+    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+    let mut objs = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        format!(
+            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+            kids.join(" ")
+        ),
+    ];
+    objs.extend((0..pages).map(|_| "<< /Type /Page /Parent 2 0 R >>".to_string()));
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref_at = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f\r\n", objs.len() + 1).as_bytes());
+    for o in offsets {
+        out.extend(format!("{o:010} 00000 n\r\n").as_bytes());
+    }
+    out.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n",
+            objs.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+fn code(o: &Output) -> Option<i32> {
+    o.status.code()
+}
+
+#[test]
+fn info_prints_page_count() -> io::Result<()> {
+    for n in [1, 2, 7] {
+        let f = temp_file(&minimal_pdf(n))?;
+        let o = cli(&["info", f.to_str().unwrap()])?;
+        assert_eq!(
+            code(&o),
+            Some(0),
+            "stderr: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            format!("{{\"pages\": {n}}}\n")
+        );
+    }
+    let f = temp_file(&minimal_pdf(1))?;
+    let o = cli(&["info", f.to_str().unwrap(), "--password", "x"])?;
+    assert_eq!(code(&o), Some(0));
+    Ok(())
+}
+
+#[test]
+fn every_other_contract_command_exits_3() -> io::Result<()> {
+    let f = temp_file(&minimal_pdf(1))?;
+    let f = f.to_str().unwrap();
+    let cases: &[&[&str]] = &[
+        &["render", f, "--page", "1", "--dpi", "72", "--out", "o.png"],
+        &[
+            "render",
+            f,
+            "--page",
+            "1",
+            "--dpi",
+            "72",
+            "--out",
+            "o.png",
+            "--password",
+            "p",
+        ],
+        &["text", f, "--page", "1"],
+        &["text", f, "--page", "1", "--password", "p"],
+        &[
+            "annotate",
+            f,
+            "--out",
+            "o.pdf",
+            "--page",
+            "1",
+            "--kind",
+            "highlight",
+            "--rect",
+            "10,20.5,30,40",
+            "--color",
+            "255,255,0",
+            "--save",
+            "incremental",
+        ],
+        &["rewrite", f, "--out", "o.pdf", "--mode", "full"],
+        &[
+            "encrypt",
+            f,
+            "--out",
+            "o.pdf",
+            "--user-password",
+            "u",
+            "--owner-password",
+            "o",
+        ],
+        &[
+            "fill", f, "--out", "o.pdf", "--field", "a.b", "--value", "v",
+        ],
+        &[
+            "redact", f, "--out", "o.pdf", "--page", "2", "--rect", "0,0,1,1",
+        ],
+        &[
+            "sign",
+            f,
+            "--out",
+            "o.pdf",
+            "--p12",
+            "k.p12",
+            "--p12-password",
+            "pw",
+            "--field",
+            "Sig1",
+        ],
+        &["verify-signatures", f],
+        // Flags in any order, FILE last.
+        &["text", "--page", "1", f],
+    ];
+    for args in cases {
+        let o = cli(args)?;
+        assert_eq!(code(&o), Some(3), "{args:?}");
+        assert!(o.stdout.is_empty(), "{args:?}");
+        assert!(!o.stderr.is_empty(), "{args:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn argument_errors_exit_2_with_empty_stdout() -> io::Result<()> {
+    let cases: &[&[&str]] = &[
+        &[],
+        &["bogus", "f.pdf"],
+        &["info"],
+        &["info", "a.pdf", "b.pdf"],
+        &["info", "a.pdf", "--password"],
+        &["info", "a.pdf", "--page", "1"],
+        &["info", "a.pdf", "--password", "a", "--password", "b"],
+        &["render", "a.pdf", "--page", "1", "--dpi", "72"],
+        &[
+            "render", "a.pdf", "--page", "0", "--dpi", "72", "--out", "o",
+        ],
+        &[
+            "render", "a.pdf", "--page", "-1", "--dpi", "72", "--out", "o",
+        ],
+        &["render", "a.pdf", "--page", "1", "--dpi", "0", "--out", "o"],
+        &[
+            "render", "a.pdf", "--page", "1", "--dpi", "99999", "--out", "o",
+        ],
+        &["text", "a.pdf", "--page", "x"],
+        &[
+            "annotate",
+            "a.pdf",
+            "--out",
+            "o",
+            "--page",
+            "1",
+            "--kind",
+            "ink",
+            "--rect",
+            "0,0,1,1",
+            "--color",
+            "1,2,3",
+            "--save",
+            "incremental",
+        ],
+        &[
+            "annotate",
+            "a.pdf",
+            "--out",
+            "o",
+            "--page",
+            "1",
+            "--kind",
+            "highlight",
+            "--rect",
+            "0,0,1",
+            "--color",
+            "1,2,3",
+            "--save",
+            "incremental",
+        ],
+        &[
+            "annotate",
+            "a.pdf",
+            "--out",
+            "o",
+            "--page",
+            "1",
+            "--kind",
+            "highlight",
+            "--rect",
+            "0,0,1,NaN",
+            "--color",
+            "1,2,3",
+            "--save",
+            "incremental",
+        ],
+        &[
+            "annotate",
+            "a.pdf",
+            "--out",
+            "o",
+            "--page",
+            "1",
+            "--kind",
+            "highlight",
+            "--rect",
+            "0,0,1,1",
+            "--color",
+            "1,2,256",
+            "--save",
+            "incremental",
+        ],
+        &[
+            "annotate",
+            "a.pdf",
+            "--out",
+            "o",
+            "--page",
+            "1",
+            "--kind",
+            "highlight",
+            "--rect",
+            "0,0,1,1",
+            "--color",
+            "1,2,3",
+            "--save",
+            "full",
+        ],
+        &["rewrite", "a.pdf", "--out", "o", "--mode", "incremental"],
+        &["encrypt", "a.pdf", "--out", "o", "--user-password", "u"],
+        &["verify-signatures", "a.pdf", "--out", "o"],
+    ];
+    for args in cases {
+        let o = cli(args)?;
+        assert_eq!(code(&o), Some(2), "{args:?}");
+        assert!(o.stdout.is_empty(), "{args:?}");
+        assert!(!o.stderr.is_empty(), "{args:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn bad_input_files_exit_2_or_3() -> io::Result<()> {
+    let valid = minimal_pdf(3);
+    let mut inputs: Vec<Vec<u8>> = vec![
+        Vec::new(),
+        b"not a pdf at all".to_vec(),
+        vec![0u8; 10_000],
+        valid[..valid.len() / 2].to_vec(),
+        valid[..valid.len() - 10].to_vec(),
+    ];
+    // An xref stream: valid PDF, not implemented yet.
+    inputs.push(b"%PDF-1.7\n1 0 obj\n<</Type/XRef>>\nendobj\nstartxref\n9\n%%EOF\n".to_vec());
+    for bytes in &inputs {
+        let f = temp_file(bytes)?;
+        let o = cli(&["info", f.to_str().unwrap()])?;
+        assert!(
+            matches!(code(&o), Some(2 | 3)),
+            "{:?}: {o:?}",
+            String::from_utf8_lossy(bytes)
+        );
+        assert!(o.stdout.is_empty());
+    }
+    let o = cli(&["info", "/nonexistent/jpdf/missing.pdf"])?;
+    assert_eq!(code(&o), Some(2));
+    let dir = std::env::temp_dir();
+    let o = cli(&["info", dir.to_str().unwrap()])?;
+    assert_eq!(code(&o), Some(2));
+    Ok(())
+}
+
+/// Default `Limits::max_file_size`, the bound `info` applies before reading.
+fn max_file_size() -> io::Result<u64> {
+    u64::try_from(jpdf_engine::Limits::default().max_file_size).map_err(io::Error::other)
+}
+
+/// A sparse file of `len` bytes that its owner may write but not read.
+#[cfg(unix)]
+fn write_only_sparse(len: u64) -> io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = temp_file(b"")?;
+    let f = std::fs::File::options().write(true).open(&path)?;
+    f.set_len(len)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200))?;
+    Ok(path)
+}
+
+/// Issue #77: the size is checked from `stat` before the file is opened, so an oversized file
+/// is never read. The file is write-only: an implementation that opens (or reads) before
+/// checking reports "Permission denied" instead of the limit. At exactly the limit the size
+/// check passes and the open is what fails.
+#[cfg(unix)]
+#[test]
+fn oversized_file_is_rejected_before_opening() -> io::Result<()> {
+    let max = max_file_size()?;
+    let over = write_only_sparse(max + 1)?;
+    let at = write_only_sparse(max)?;
+    let o = cli(&["info", over.to_str().unwrap()])?;
+    // Running as root, permissions don't stop the open: the ordering proof below needs a
+    // normal user (as root the CLI would read 512 MiB), but the limit message holds either way.
+    let enforced = std::fs::File::open(&at).is_err();
+    let at_o = if enforced {
+        Some(cli(&["info", at.to_str().unwrap()])?)
+    } else {
+        None
+    };
+    std::fs::remove_file(&over)?;
+    std::fs::remove_file(&at)?;
+    assert_eq!(code(&o), Some(2), "{o:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&o.stderr),
+        "jpdf-cli: limit exceeded: file size\n"
+    );
+    assert!(o.stdout.is_empty());
+    if let Some(at_o) = at_o {
+        assert_eq!(code(&at_o), Some(2), "{at_o:?}");
+        let err = String::from_utf8_lossy(&at_o.stderr);
+        assert!(
+            err.starts_with("jpdf-cli: cannot read ") && err.contains("ermission denied"),
+            "{err}"
+        );
+    } else {
+        eprintln!("at-limit ordering check skipped: permissions are not enforced for root");
+    }
+    Ok(())
+}
+
+/// Issue #77: a FIFO with no writer used to block `info` forever in `open`. It must exit 2 at
+/// once, without reading. Character devices are refused the same way (`/dev/zero` never ends).
+/// The `O_NONBLOCK` open behind the `stat` check is tested in `src/main.rs`.
+#[cfg(unix)]
+#[test]
+fn fifo_and_devices_exit_2_without_blocking() -> io::Result<()> {
+    use std::time::{Duration, Instant};
+    let fifo = temp_file(b"")?;
+    std::fs::remove_file(&fifo)?;
+    let made = Command::new("mkfifo").arg(&fifo).status()?;
+    assert!(made.success());
+    let dir = fifo.with_extension("dir");
+    std::fs::create_dir_all(&dir)?;
+    for path in [
+        fifo.to_str().unwrap(),
+        dir.to_str().unwrap(),
+        "/dev/null",
+        "/dev/zero",
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
+            .args(["info", path])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let start = Instant::now();
+        while child.try_wait()?.is_none() {
+            if start.elapsed() > Duration::from_secs(20) {
+                child.kill()?;
+                panic!("jpdf-cli info {path} hung");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let o = child.wait_with_output()?;
+        assert_eq!(code(&o), Some(2), "{path}: {o:?}");
+        assert!(o.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&o.stderr),
+            format!("jpdf-cli: cannot read {path}: not a regular file\n")
+        );
+    }
+    std::fs::remove_file(&fifo)?;
+    std::fs::remove_dir(&dir)?;
+    Ok(())
+}

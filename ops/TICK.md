@@ -24,8 +24,25 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **Work in a git worktree** on a branch `t/<issue>-<slug>`, never on main.
   Create one with `git worktree add .claude/worktrees/<slug> -b t/<issue>-<slug> origin/main`.
 - **Push WIP early and often** to a draft PR, so a usage limit or crash loses nothing.
+- **Leave nothing running.** `claude -p` stays alive while a ScheduleWakeup timer or a background
+  task is pending, and the driver waits for it (#125: sessions idled 2–20 min after their final
+  answer). Never use ScheduleWakeup or CronCreate: a session is not a `/loop`, and background
+  agents and background Bash calls re-invoke you when they finish, so a fallback timer only
+  delays the exit. When your next step needs a reviewer's answer, run it in the foreground
+  (`run_in_background: false`). Never end your turn while a background agent works:
+  `claude -p` stops background tasks still running 10 min after the last turn, and session
+  `20261121T180515Z` (PR #127) lost its re-review that way. Before your
+  final message, stop every background shell, Monitor and dev server with TaskStop.
 - **Keep the session small.** If the work won't fit comfortably (≈60% of your context), split
-  it into issues and do only the first part.
+  it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
+  at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
+  **≤ 1500 added lines** (generated data and lockfiles excluded). Size it before claiming; if
+  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1. When you
+  write new issues, give each one this size.
+- **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
+  merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
+  can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
+  single command.
 
 ## 1. Orient (keep it short)
 ```sh
@@ -34,9 +51,22 @@ ops/driver/owner-issues.sh
 gh run list --branch main --limit 5
 gh pr list --author @me --state open
 gh issue list --state open --limit 50 --json number,title,labels,milestone
+git fetch -q origin
+# audit due? commit that ADDED the last audit record, then merges since it
+# (due at >= 10 merges or 7 days; if the first line is empty, no audit exists yet: due now)
+git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md'
+a=$(git log -1 --diff-filter=A --format=%H origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md')
+[ -n "$a" ] && git rev-list --count --first-parent "$a"..origin/main || true
+# retro due? date the last retro record was ADDED (due after 7 days; empty: due 7 days after
+# bootstrap). The pattern is exact `NNNN.md`, so 0000-pilot.md doesn't reset the clock.
+git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0-9][0-9][0-9].md'
 ```
 
 ## 2. Pick exactly one thing (strict priority)
+Since retro 0001, due audits and retros (g, h) come **before** the backlog (i, j); in the old
+order a non-empty backlog starved them. Older journals use the old letters (audit = i,
+retro = j, ready issue = g).
+
 a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled).
    They override ADRs. Reply on the issue with what you did.
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
@@ -51,17 +81,17 @@ c. **Your own open PR** failing CI or review → fix it. Max 3 attempts per PR. 
 d. **`crash` / `security` issues.**
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
 f. **A leftover branch/worktree from a dead session** → resume it if valuable, else delete it.
-g. **A `ready` issue in the current milestone** with dependencies met (lowest number first).
-h. **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
+g. **AUDIT session due** (§1 shows ≥ 10 merges since the last audit, or 7 days) → §6.
+h. **RETRO session due** (7 days since the last one, a gate just passed, or an incident: revert,
+   main red > 2 sessions, judge alarm, ≥ 3 issues blocked this week) → §7.
+i. **A `ready` issue in the current milestone** with dependencies met (lowest number first).
+j. **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
    read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
    and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
    for every failing criterion.
-i. **AUDIT session** (every 10th merge since the last audit, or 7 days) → §6.
-j. **RETRO session** (7 days since the last one, a gate just passed, or an incident: revert,
-   main red > 2 sessions, judge alarm, ≥ 3 issues blocked this week) → §7.
 
-**M0 bootstrap.** While the milestone is M0, the backlog itself is the work. Do these in order,
-one per session:
+**M0 bootstrap.** While the milestone is M0, the backlog itself is the work (rule i; a–h
+still come first). Do these in order, one per session:
 1. Create the labels (`human, halt, owner-todo, ready, in-progress, blocked, deferred, bug, crash,
    security, perf, flaky, ux, discovery, spec-dispute, external, audit, retro`) and the milestones M0–M10.
 2. Write the M0 issue backlog from PLAN.md §8 (M0 row), AUTOMATION.md and ops/judge/CONTRACT.md.
@@ -77,7 +107,9 @@ one per session:
 1. **Claim:** `gh issue edit N --add-label in-progress --add-assignee @me` + comment
    `claimed by session <time>`. Re-read the issue to confirm nobody else claimed it.
 2. **Spec first** (`specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`, with every checklist
-   section), then **failing tests**, then **code**.
+   section), then **failing tests**, then **code**. Answer the template's Security
+   self-check and Limits boundary list in the spec **before** the review; they are the
+   reviewers' most frequent findings (retro 0001).
 3. **Local checks:**
    - `cargo fmt --all`
    - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -88,7 +120,8 @@ one per session:
 
 ## 4. Independent review (required)
 Spawn a **fresh reviewer subagent**. Give it ONLY:
-- the PR diff (`gh pr diff N`)
+- the PR diff: `git fetch origin && git diff origin/main...HEAD` from your worktree (right after a push,
+  `gh pr diff` can still return the previous commit)
 - the linked spec
 - CONSTITUTION.md
 
@@ -102,16 +135,73 @@ Not your reasoning. Ask it to review adversarially for:
 - code resembling a known PDF engine
 - security issues
 
-Fix what it finds (re-review if you changed much). Then post the status on the PR's head commit:
+Ask it also, for every checker, suite or validator in the diff: **what broken implementation
+still passes?** And for every limit: is there an exact-boundary test (at the limit passes, one
+past fails)?
+
+Tell it its round number K, and that its report is posted on the (public) PR as is, so it must
+stand alone and cite repo-relative paths only, with no preamble or header: one line per finding,
+`R<K>.<n> [blocker|major|minor|nit] <file>:<line>: <finding>`, then a verdict line.
+
+**Post every review on the PR** (owner, #124), so the owner can read it without the session log.
+K = 1 + the highest K in an `AI review, round K` header already on the PR, else 1 (a resumed PR
+continues).
+Each round K runs in this order:
+1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
+   HEAD`, checked against `git ls-remote origin <branch>`.
+2. As soon as the report returns, before fixing anything, post it **verbatim** as one comment (split only as the
+   mechanics below say):
+   `gh pr comment N --body '🤖 jpdf-agent **AI review, round K** of <sha>` + blank line + report + `'`.
+   A second reviewer's report (if one runs) goes right after it, headed `**AI review (second
+   reviewer), round K**`, with finding IDs `S<K>.<n>`.
+3. Fix, commit and **push**.
+4. Post one triage comment, `🤖 jpdf-agent **AI review triage, round K**`, with one line per
+   finding (R and S): `R<K>.<n>: fixed in <pushed sha>`, `disputed: <why>` or `deferred: #<issue>`. A clean
+   round gets one too ("no findings").
+5. **Re-review** (round K+1, a fresh reviewer) if any blocker or major was found, or the fixes
+   changed code, tests or logic beyond wording; else post `ai-review` (below) with `target_url`
+   set to the URL that `gh pr comment` printed for the last triage comment.
+
+Mechanics (the guard wants one simple command with the text inline, no files):
+- One post per Bash command, nothing chained before or after it.
+- Single-quote the body so `$`, backticks and `\` stay literal; write each `'` in the text as
+  `'\''` (close, escaped quote, reopen), which keeps it verbatim.
+- Over 60 000 characters → split into comments; each part starts with the tag and the round
+  header, then `(part i/n)`.
+- Replace any absolute local path with a repo-relative one (or `<local path>`), and list it with
+  the other changes.
+- If the guard blocks the post, change **only** the token that triggered it (hyphenate or reword
+  it), and list every such change at the end of the comment. Triggers seen so far, for example:
+  - the Rust keyword for unchecked code together with a `.rs` path and a write word (`>`, `tee`,
+    `sed -i`, `perl -i`): write it `un-safe` (until owner-todo #130 is applied);
+  - the terminal-multiplexer name in any body that contains a `'` (such a body never counts as
+    inert text); after #130, only in a post that is chained or has another quoted argument
+    (write labels and assignees bare);
+  - the sealed-corpus manifest name, the local settings file name, the GitHub API host;
+  - git push text with force or delete flags, a `+` word, or main; `-R <other repo>`;
+  - gh api writes to issue or comment endpoints, gh repo management, an admin merge, gh auth
+    commands;
+  - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
+    `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
+
+  Proposal: `ops/proposals/guard-inert-post-text.md`.
+
+Then post the status on the head commit:
+`git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
+--json headRefOid` can lag behind a push):
 ```sh
-gh api repos/jacobdam/jpdf3/statuses/$(gh pr view N --json headRefOid -q .headRefOid) \
-  -f state=success -f context=ai-review -f description="reviewed: <one line>"
+gh api repos/jacobdam/jpdf3/statuses/<sha> \
+  -f state=success -f context=ai-review -f description="reviewed: <one line>" \
+  -f target_url=<URL of the last triage comment>
 ```
-(`state=failure` if unresolved findings remain.)
+(`state=failure` if unresolved findings remain.) `ai-review` is a required check: post it
+**before** enabling auto-merge and writing the journal, so a session that ends early doesn't
+leave the PR blocked.
 
 ## 5. Merge and record
-- **Merge:** `gh pr merge N --auto --squash`, unless the owner commented `/hold` (wait for
-  `/release`). CI (`judge-verdict`) is the real gate. Read its summary on failure:
+- **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
+  into a draft (a workflow does it). Never mark a held PR ready or re-enable its auto-merge until
+  the owner comments `/release`; after `/release`, re-enable auto-merge. CI (`judge-verdict`) is the real gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
 - **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
   ```
@@ -131,11 +221,16 @@ gh api repos/jacobdam/jpdf3/statuses/$(gh pr view N --json headRefOid -q .headRe
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
-- Commit journal/STATUS/ADR changes through a small PR (or include them in your task PR). **Exit.**
+- Commit journal/STATUS/ADR changes through a small PR (or include them in your task PR). **Exit**,
+  with nothing left running (§0).
 
 ## 6. AUDIT session (no feature work)
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
-  the last audit. Findings → issues.
+  the last audit. Findings → issues. Tell each reviewer what §4 tells its reviewer (public,
+  repo-relative paths, one line per finding), with IDs `AS.<n>` (security) or `AC.<n>` (code).
+  Post each report verbatim on the audit PR (draft it early) with §4's mechanics, headed `🤖 jpdf-agent **Audit review (security)**` or `**Audit review
+  (code)**` (no round number, so §4's K is unaffected). Then post `**Audit findings → issues**`,
+  mapping each finding to its issue.
 - **Test strength:** `cargo mutants` on changed crates; weak spots → issues.
 - **Completeness:** compare journeys + PLAN §4 with PDFgear's feature inventory and platform
   conventions (Save As, unsaved-changes prompt, file changed on disk, recent files, shortcuts,

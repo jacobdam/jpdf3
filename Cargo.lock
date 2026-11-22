@@ -7,8 +7,26 @@ name = "jpdf-annot"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-arlington"
+version = "0.0.0"
+
+[[package]]
 name = "jpdf-backends"
 version = "0.0.0"
+
+[[package]]
+name = "jpdf-bench"
+version = "0.0.0"
+dependencies = [
+ "jpdf-testgen",
+]
+
+[[package]]
+name = "jpdf-cli"
+version = "0.0.0"
+dependencies = [
+ "jpdf-engine",
+]
 
 [[package]]
 name = "jpdf-color"
@@ -19,8 +37,18 @@ name = "jpdf-content"
 version = "0.0.0"
 
 [[package]]
+name = "jpdf-corpus"
+version = "0.0.0"
+dependencies = [
+ "jpdf-arlington",
+]
+
+[[package]]
 name = "jpdf-cos"
 version = "0.0.0"
+dependencies = [
+ "jpdf-syntax",
+]
 
 [[package]]
 name = "jpdf-crypt"
@@ -33,6 +61,10 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-engine"
 version = "0.0.0"
+dependencies = [
+ "jpdf-cos",
+ "jpdf-syntax",
+]
 
 [[package]]
 name = "jpdf-filters"
@@ -57,6 +89,16 @@ version = "0.0.0"
 [[package]]
 name = "jpdf-syntax"
 version = "0.0.0"
+dependencies = [
+ "jpdf-traits",
+]
+
+[[package]]
+name = "jpdf-testgen"
+version = "0.0.0"
+dependencies = [
+ "jpdf-engine",
+]
 
 [[package]]
 name = "jpdf-text"
@@ -73,3 +115,7 @@ version = "0.0.0"
 [[package]]
 name = "xtask"
 version = "0.0.0"
+dependencies = [
+ "jpdf-arlington",
+ "jpdf-testgen",
+]
