@@ -34,7 +34,7 @@ Scheduling (TICK §3):
   fixed in the PR (triage `deferred: #N`), unless the fix is small. Blocker and major findings
   are still fixed in the PR.
 
-Initial classification (2026-11-22): high #109, #146; medium #114, #116, #117, #141; low #83,
+Initial classification (2026-11-22): high #109 (closed by PR #142 the same day), #146; medium #114, #116, #117, #141; low #83,
 #122, #132, #134, #136, #137. #116 and #117 are suites (low by the table) raised to medium: their
 audit proved broken AES-CBC and inflate backends pass them, and these suites admit third-party
 crates (CONSTITUTION 11).
