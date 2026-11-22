@@ -55,9 +55,14 @@ It has no backend and makes no network requests other than loading its own files
    6. installs Playwright's Chromium (with system libraries on Linux CI); every `npm exec`
       uses `--no`, so nothing outside the lockfile is ever downloaded and run;
    7. runs Playwright against `vite preview` of the build; the journey reporter writes
-      `DIR/web-e2e.tsv`.
+      `DIR/web-e2e.tsv`. If the run as a whole didn't pass (Playwright's final status is
+      not `passed`: a spec file that failed to load, a throwing hook or global setup, a
+      timed-out or interrupted run) or Playwright reported any error (`onError`), the
+      reporter writes every `pass` as `fail`; an interrupted test is `fail` (ADR 0002), not
+      the `skip` Playwright's own outcome gives it (#76).
    Before step 1 it deletes `DIR/e2e.json`, `DIR/web-e2e.tsv` and `DIR/site/` from any
-   earlier run. It then always writes `DIR/e2e.json` from that file (empty results if no tests ran),
+   earlier run. It then always writes `DIR/e2e.json` from that file (empty results if no tests ran;
+   if any step, including the Playwright run, failed, every `pass` is written as `fail`),
    runs `check-specs`, and exits 0 only if every step passed, at least one test ID was
    reported and every reported ID is `pass`.
 
@@ -122,10 +127,18 @@ tests:
 - injected inline script doesn't run, injected inline style doesn't apply, and
   `insertAdjacentHTML` throws (Trusted Types);
 - `dragover`/`drop` with a PDF file are cancelled and the URL doesn't change;
-- reporter unit tests: outcome mapping (expected failures and flaky passes are failures;
-  skipped is skip), worst status wins per ID, foreign and malformed tags ignored.
+- reporter unit tests: outcome mapping (expected failures, flaky passes and interrupted
+  results are failures; skipped is skip), worst status wins per ID, foreign and malformed
+  tags ignored, a failed run downgrades every pass, and the reporter class itself writes
+  `fail` for a run status of `failed`, `timedout` or `interrupted` and after `onError`;
+- reporter runs (untagged): `journey-reporter.spec.ts` runs a child Playwright on the probe
+  project `apps/web/e2e/harness-probe/` (files `*.probe.ts`, which the app's config never
+  matches) with the journey reporter: the passing probe alone reports
+  `e2e.web.harness_probe` as `pass` and exits 0 (control); with a file whose `beforeAll`
+  throws it exits non-zero and reports `fail`; with an unloadable file it exits non-zero
+  and reports no ID (Playwright 1.65 runs nothing then).
 Rust unit tests in `xtask/src/web.rs`: ID validation, results parsing (good and damaged
-lines), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
+lines), a failed run downgrades every pass (and damaged results are an error and an empty set), reading the results file (missing, non-UTF-8, over 1 MiB), `e2e.json` rendering,
 tree copy. `xtask/tests/check_specs.rs`: `ci linux` outside a
 repository root writes empty results, reports the missing web app and still runs check-specs;
 `ci linux` with stub `node`/`npm` on PATH and `npm_config_ignore_scripts=false` must call the

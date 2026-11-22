@@ -14,7 +14,10 @@ CONSTITUTION 10 has to be enforced by us.
    `{ tag: "@e2e.web.<id>" }`; several tests may share an ID and one test may carry several.
    A custom reporter (`apps/web/e2e/journey-reporter.ts`) maps each ID to the worst outcome
    of its tests: `fail` (failed, timed out, interrupted, flaky, or an expected failure via
-   `test.fail`) > `skip` (skipped or never run) > `pass`. It writes `<id>\t<status>` lines;
+   `test.fail`) > `skip` (skipped or never run) > `pass`. A run that didn't pass as a whole
+   (final status not `passed`, or any `onError`) reports no `pass`: every pass becomes
+   `fail`, since such a run can drop tests of an ID that another test passed (#76). xtask
+   does the same when the Playwright step exits non-zero. The reporter writes `<id>\t<status>` lines;
    xtask validates every line (`e2e.web.[a-z0-9_]+`, known status, no duplicates, ≤ 1 MiB)
    and renders `e2e.json` itself. A damaged file fails the run.
 2. **Harness IDs** that no journey lists (today `e2e.web.app_start_empty`) are allowed. The

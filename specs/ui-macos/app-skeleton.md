@@ -62,14 +62,16 @@ Status: implemented
       "Test Case" node to a test ID: a method `test_<id>()` or `test_<id>__<detail>()`
       reports `e2e.macos.<id>`; an ID takes the worst result of its tests (fail > skip >
       pass; "Expected Failure" is fail). A test case that names no ID (a misnamed test, or
-      the "System Failures" case Xcode adds when the runner can't start) is an error, and
-      then every `pass` is written as `fail` (such a run may not have run every test);
-   5. always writes `DIR/e2e.json` (empty results if no tests ran);
-   6. builds Release and checks, with `codesign --verify --deep --strict`, `codesign -dv`
+      the "System Failures" case Xcode adds when the runner can't start) is an error;
+   5. builds Release and checks, with `codesign --verify --deep --strict`, `codesign -dv`
       and `codesign -d --entitlements - --xml` (converted by `plutil -convert json`), that
       the signatures are intact and that `jpdf.app` and its embedded
       `JPDFHelper.xpc` have the hardened runtime flag and exactly the entitlements of
       Behavior 4, each `true`; this runs even if the tests failed;
+   6. always writes `DIR/e2e.json` (empty results if no tests ran). If step 3 failed, step 4
+      found an error or step 5 failed, every `pass` is written as `fail`: such a run may not
+      have run every test, or its tests ran against a build that doesn't ship as checked
+      (#76);
    7. exits 0 only if every step passed, at least one ID was reported and every ID is
       `pass`. All errors are printed; the first is the summary line.
 
@@ -147,7 +149,8 @@ XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
   tested: that no New item remains (a single `Window` scene never offers one, so such a
   check couldn't fail) and the ⌘O shortcut.
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
-per ID, unmapped and unknown results are errors, passes downgraded, entitlement check incl. extra
+per ID, unmapped and unknown results are errors, passes downgraded on a failed `xcodebuild
+test`, an unmapped result or a failed Release check (each alone), entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
 `/bin/sh` tool that writes 300 000 bytes before reading 300 000 bytes of input finishes
 within 30 s, unread input is an error, a failed exit wins over it);
