@@ -4,6 +4,8 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **PR #220** (#91, `cargo xtask metrics` 1/2): `ai-review` = success on 681571f after 3 rounds, auto-merge on. Part 2
+  (CI failures by job, metrics.json) is #219.
 - **PR #186** (#168, sev:high, JBIG2 page data + globals share one input allowance): parked as draft for the owner,
   `ai-review` = failure (4 rounds + final check; the final check found one false sentence, corrected in 1533e26,
   unreviewed). #168 has `blocked` + `owner-todo` and the ledger with two options. No review round until an owner comment.
@@ -18,20 +20,21 @@ Phase: bootstrap (pilot)
   The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- g: audit 0005 → PR #215 (docs/audits/0005.md; spec wording for AC.2, AC.3, AC.5). Filed #216 (M0), #217
-  (sev:medium), #218 (sev:low). Mutants: xtask diff 47, 0 missed. Removed stale `in-progress` from #83 and #22;
-  deleted 8 merged local branches and the record-86 worktree. Journal 2026-11-22 11:25.
+- i: #91 → PR #220 (`cargo xtask metrics`: throughput, review rounds/findings from posted reviews, stuck issues,
+  audit/retro lag; split, part 2 = #219). 3 review rounds (R1: 3 majors, all fixed). Audit 0005 (PR #215) merged
+  before the pick. Journal 2026-11-22 12:15.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. Rule i, M0, lowest number first: #91, #115, #154, #210 (write ops/proposals/ for the owner-commands fix), #216
-   (do it before the owner merges PR #184 if possible: it is the harness the owner's test plan relies on).
+3. Rule i, M0, lowest number first: #115, #154, #210 (write ops/proposals/ for the owner-commands fix), #216
+   (do it before the owner merges PR #184 if possible: it is the harness the owner's test plan relies on), #219.
 4. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
   #132, #134, #136, #137, #166, #193, #203, #218.
-- **Next retro (rule h): by 2026-11-28.** Inputs:
+- **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index
+  <main checkout>/ops/logs/index.tsv` (specs/tooling/metrics.md; CI counts need #219). Inputs:
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
     final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
