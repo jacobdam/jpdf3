@@ -14,17 +14,18 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
-- **PR #190** (#189, audit 0004): review, `ai-review`, auto-merge (this session).
+- **PR #194** (#191, sev:high, Codex Homebrew read list): proposal, `ai-review` = success, auto-merge on. When it
+  merges, add `owner-todo` to #196 (owner applies the diff and runs T1–T6) with "ready for owner: apply
+  ops/proposals/codex-homebrew-read.md, test plan in §4".
 
 ## Last session
-- g: audit 0004 (docs/audits/0004.md, PR #190). Codex unavailable (provider cyber filter). Filed #191 (sev:high, M0,
-  Codex read profile), #192 (ready, M0, proposal harness), #193 (sev:low, M10); comments on #87, #115, #179, #187.
-  Removed 11 merged worktrees. Journal 2026-11-22 08:37.
+- d: #191 → PR #194 (proposal: HB_READ allow list instead of all of /opt/homebrew; test-policy.sh; 3 review rounds).
+  Filed #195 (deferred test minors), #196 (owner part, sev:high). Audit 0004 (PR #190) merged 08:48.
+  Journal 2026-11-22 09:05.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
-2. **d: #191** (sev:high, protected): write the proposal (Codex read profile → toolchain paths only, plus a test).
-   #187 waits on PR #186 (comment on #187).
+2. **§1 owner-todo check:** once PR #194 merges, `owner-todo` + "ready for owner" on #196. #187 waits on PR #186.
 3. **#192** (M0, ready): fix the owner-comment tracking harness soon; the owner's #179 relies on it.
 4. **#76**: harness honesty. The judge relies on it.
 5. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
@@ -46,6 +47,7 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
+- #196 (after PR #194 merges): apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
 - #168 / PR #186: accept the final-check wording fix or ask for one more round (options on #168).
 - #162 / PR #183: decide the next step for the guard proposal (options on #162).
 - #179: merge PR #184, then run test step 3 of ops/proposals/owner-comment-tracking.md.
