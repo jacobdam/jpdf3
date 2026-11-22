@@ -16,7 +16,7 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
-     | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR]";
+     | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

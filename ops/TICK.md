@@ -415,6 +415,9 @@ leave the PR blocked.
    (median, share that reached the cap or the final check), regrades per PR and how many the
    next reviewer overturned; and re-read every issue deferred from a review since the last retro:
    count the ones that were real bugs that should have blocked their merge.
+   `git fetch`, then `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv` prints the
+   throughput, review-round, stuck and audit/retro-lag numbers (specs/tooling/metrics.md); count
+   the rest by hand.
 2. Write `docs/retros/NNNN.md`:
    - what went well/badly, each with a number
    - top 3 root causes (5-whys)

@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 
 /// `--limit` for every `gh` list; a list that returns exactly this many may be cut off.
 pub const LIST_LIMIT: usize = 1000;
-/// Failed runs whose jobs are read (`gh run view`), newest first.
-pub const MAX_JOB_READS: usize = 100;
 /// The agent's tag (CONSTITUTION 1).
 const TAG: &str = "🤖 jpdf-agent";
 /// Default period when no retro record exists (TICK §2 h: a retro every 7 days).
@@ -25,6 +23,8 @@ pub struct Options {
     pub until: Option<i64>,
     pub out: PathBuf,
     pub from: Option<PathBuf>,
+    /// The driver's session index (default `ops/logs/index.tsv`, or `index.tsv` in `--from`).
+    pub index: Option<PathBuf>,
 }
 
 /// Parses the arguments after `metrics`.
@@ -34,6 +34,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         until: None,
         out: PathBuf::from("target/metrics"),
         from: None,
+        index: None,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -43,6 +44,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "--until" => opts.until = Some(parse_date_arg(value()?)?),
             "--out" => opts.out = PathBuf::from(value()?),
             "--from" => opts.from = Some(PathBuf::from(value()?)),
+            "--index" => opts.index = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
@@ -465,20 +467,6 @@ struct Issue {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Ci {
-    runs: u64,
-    by_conclusion: BTreeMap<String, u64>,
-    failed_main: u64,
-    failed_other: u64,
-    failing_jobs: BTreeMap<String, u64>,
-    jobs_read: u64,
-    jobs_unknown: u64,
-    jobs_capped: bool,
-    reruns: u64,
-    reruns_green: u64,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Report {
     since: i64,
     until: i64,
@@ -489,7 +477,6 @@ struct Report {
     closed_issues: u64,
     sessions: Option<Sessions>,
     reviews: Vec<Review>,
-    ci: Ci,
     blocked: Vec<Issue>,
     flaky: Vec<Issue>,
     /// (record, day, merges since the previous record; None for the first)
@@ -509,8 +496,6 @@ pub struct Inputs {
     prs: String,
     issues_closed: String,
     issues_open: String,
-    runs: String,
-    jobs: BTreeMap<u64, String>,
 }
 
 /// The default `--since`: the day the last retro record was added, else `until` − 7 days; a
@@ -521,30 +506,6 @@ fn default_since(commits: &[Commit], until: i64) -> i64 {
         .map(|(_, day, _)| *day)
         .filter(|d| *d <= until)
         .unwrap_or(until.saturating_sub(DEFAULT_DAYS))
-}
-
-/// Ids of the failed runs whose jobs are read: the newest `MAX_JOB_READS`.
-fn job_run_ids(runs_json: &str, since: i64, until: i64) -> Result<(Vec<u64>, bool), String> {
-    let runs = parse_list(runs_json, "runs.json")?;
-    let mut failed = Vec::new();
-    for r in array(&runs, "runs.json")? {
-        let day = day_of(r, "createdAt", "runs.json")?;
-        if day < since || day > until || string(r, "conclusion", "runs.json")? != "failure" {
-            continue;
-        }
-        let created = string(r, "createdAt", "runs.json")?.to_owned();
-        failed.push((created, num(r, "databaseId", "runs.json")?));
-    }
-    failed.sort_unstable_by(|a, b| b.cmp(a));
-    let capped = failed.len() > MAX_JOB_READS;
-    Ok((
-        failed
-            .into_iter()
-            .take(MAX_JOB_READS)
-            .map(|(_, id)| id)
-            .collect(),
-        capped,
-    ))
 }
 
 fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<Report, String> {
@@ -618,67 +579,6 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
         }
         if labels.contains(&"blocked") {
             rep.blocked.push(issue);
-        }
-    }
-
-    // CI runs.
-    let runs = parse_list(&inp.runs, "runs.json")?;
-    let runs = array(&runs, "runs.json")?;
-    if runs.len() >= LIST_LIMIT {
-        rep.truncated.push("CI runs");
-    }
-    for r in runs {
-        let what = "runs.json";
-        num(r, "databaseId", what)?;
-        if !in_period(day_of(r, "createdAt", what)?) {
-            continue;
-        }
-        let conclusion = string(r, "conclusion", what)?;
-        let attempt = num(r, "attempt", what)?;
-        let branch = string(r, "headBranch", what)?;
-        let ci = &mut rep.ci;
-        ci.runs = ci.runs.saturating_add(1);
-        let key = if conclusion.is_empty() {
-            "in progress"
-        } else {
-            conclusion
-        };
-        let n = ci.by_conclusion.entry(key.to_owned()).or_insert(0);
-        *n = n.saturating_add(1);
-        if conclusion == "failure" {
-            if branch == "main" {
-                ci.failed_main = ci.failed_main.saturating_add(1);
-            } else {
-                ci.failed_other = ci.failed_other.saturating_add(1);
-            }
-        }
-        if attempt > 1 {
-            ci.reruns = ci.reruns.saturating_add(1);
-            if conclusion == "success" {
-                ci.reruns_green = ci.reruns_green.saturating_add(1);
-            }
-        }
-    }
-    let (ids, capped) = job_run_ids(&inp.runs, since, until)?;
-    rep.ci.jobs_capped = capped;
-    for id in ids {
-        let Some(text) = inp.jobs.get(&id) else {
-            rep.ci.jobs_unknown = rep.ci.jobs_unknown.saturating_add(1);
-            continue;
-        };
-        let what = format!("jobs-{id}.json");
-        let v = parse_list(text, &what)?;
-        let jobs = v
-            .get("jobs")
-            .and_then(Value::as_array)
-            .ok_or_else(|| format!("{what}: missing array `jobs`"))?;
-        rep.ci.jobs_read = rep.ci.jobs_read.saturating_add(1);
-        for j in jobs {
-            if j.get("conclusion").and_then(Value::as_str) == Some("failure") {
-                let name = string(j, "name", &what)?;
-                let n = rep.ci.failing_jobs.entry(name.to_owned()).or_insert(0);
-                *n = n.saturating_add(1);
-            }
         }
     }
 
@@ -834,52 +734,6 @@ fn render_md(rep: &Report) -> String {
         }
     }
 
-    let ci = &rep.ci;
-    o.push_str("\n## CI (`ci` workflow)\n\n");
-    let by: Vec<String> = ci
-        .by_conclusion
-        .iter()
-        .map(|(k, v)| format!("{k} {v}"))
-        .collect();
-    let _ = writeln!(
-        o,
-        "Runs: {} ({}).",
-        ci.runs,
-        if by.is_empty() {
-            "none".to_owned()
-        } else {
-            by.join(", ")
-        }
-    );
-    let _ = writeln!(
-        o,
-        "Failed runs: main {}, other branches {}.",
-        ci.failed_main, ci.failed_other
-    );
-    let _ = writeln!(
-        o,
-        "Re-run (attempt > 1): {}, of which success: {}. Infra vs real failures are not classified (`gh run list` shows the latest attempt only).",
-        ci.reruns, ci.reruns_green
-    );
-    let mut jobs: Vec<(&String, &u64)> = ci.failing_jobs.iter().collect();
-    jobs.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    let _ = write!(o, "Failing jobs over {} failed runs read", ci.jobs_read);
-    if ci.jobs_unknown > 0 {
-        let _ = write!(o, " ({} without job data)", ci.jobs_unknown);
-    }
-    if ci.jobs_capped {
-        let _ = write!(o, " (only the {MAX_JOB_READS} newest failed runs)");
-    }
-    o.push_str(":\n\n");
-    if jobs.is_empty() {
-        o.push_str("none\n");
-    } else {
-        o.push_str("| Job | Failed runs |\n|---|---|\n");
-        for (name, n) in jobs {
-            let _ = writeln!(o, "| {} | {n} |", cell(name));
-        }
-    }
-
     o.push_str("\n## Stuck (open issues; age from creation to the period's end)\n\n");
     for (label, list) in [("blocked", &rep.blocked), ("flaky", &rep.flaky)] {
         let _ = writeln!(o, "`{label}`: {}", list.len());
@@ -943,9 +797,8 @@ fn read(dir: &Path, name: &str) -> Result<String, String> {
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
-fn read_optional(dir: &Path, name: &str) -> Result<Option<String>, String> {
-    let p = dir.join(name);
-    match fs::read_to_string(&p) {
+fn read_optional(p: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(p) {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("read {}: {e}", p.display())),
@@ -998,12 +851,6 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
                 "issue list --state open --limit {LIST_LIMIT} --json number,title,createdAt,labels"
             ),
         ),
-        (
-            "runs.json",
-            format!(
-                "run list --workflow ci.yml --created {range} --limit {LIST_LIMIT} --json databaseId,conclusion,event,headBranch,attempt,createdAt"
-            ),
-        ),
     ];
     let mut texts = Vec::new();
     for (file, args) in &lists {
@@ -1012,30 +859,19 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
             None => gh(args)?,
         });
     }
-    let mut it = texts.clone().into_iter();
-    let mut inp = Inputs {
+    let mut it = texts.into_iter();
+    let index_tsv = match (from, &opts.index) {
+        (_, Some(file)) => read_optional(file)?,
+        (Some(dir), None) => read_optional(&dir.join("index.tsv"))?,
+        (None, None) => read_optional(&repo.join("ops/logs/index.tsv"))?,
+    };
+    let inp = Inputs {
         git_log,
-        index_tsv: match from {
-            Some(dir) => read_optional(dir, "index.tsv")?,
-            None => read_optional(&repo.join("ops/logs"), "index.tsv")?,
-        },
+        index_tsv,
         prs: it.next().unwrap_or_default(),
         issues_closed: it.next().unwrap_or_default(),
         issues_open: it.next().unwrap_or_default(),
-        runs: it.next().unwrap_or_default(),
-        jobs: BTreeMap::new(),
     };
-    let (ids, _) = job_run_ids(&inp.runs, since, until)?;
-    for id in ids {
-        let name = format!("jobs-{id}.json");
-        let text = match from {
-            Some(dir) => read_optional(dir, &name)?,
-            None => Some(gh(&format!("run view {id} --json jobs"))?),
-        };
-        if let Some(t) = text {
-            inp.jobs.insert(id, t);
-        }
-    }
     let rep = compute(&inp, &commits, since, until)?;
     let md = render_md(&rep);
     let out = &opts.out;
@@ -1050,12 +886,9 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
         if let Some(t) = &inp.index_tsv {
             write("raw/index.tsv", t)?;
         }
-        for ((file, _), text) in lists.iter().zip(&texts) {
-            write(&format!("raw/{file}"), text)?;
-        }
-        for (id, t) in &inp.jobs {
-            write(&format!("raw/jobs-{id}.json"), t)?;
-        }
+        write("raw/prs.json", &inp.prs)?;
+        write("raw/issues-closed.json", &inp.issues_closed)?;
+        write("raw/issues-open.json", &inp.issues_open)?;
     } else {
         fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
     }
@@ -1119,15 +952,25 @@ mod tests {
             "x",
             "--from",
             "y",
+            "--index",
+            "z",
         ])
         .unwrap();
         assert_eq!(o.since, Some(d("2026-11-15")));
         assert_eq!(o.until, Some(d("2026-11-22")));
         assert_eq!(
-            (o.out, o.from),
-            (PathBuf::from("x"), Some(PathBuf::from("y")))
+            (o.out, o.from, o.index),
+            (
+                PathBuf::from("x"),
+                Some(PathBuf::from("y")),
+                Some(PathBuf::from("z"))
+            )
         );
-        assert_eq!(a(&[]).unwrap().out, PathBuf::from("target/metrics"));
+        let o = a(&[]).unwrap();
+        assert_eq!(
+            (o.since, o.until, o.out, o.from, o.index),
+            (None, None, PathBuf::from("target/metrics"), None, None)
+        );
         assert!(a(&["--since", "2026-11-22", "--until", "2026-11-22"]).is_ok());
         assert!(
             a(&["--since", "2026-11-23", "--until", "2026-11-22"])
@@ -1300,12 +1143,6 @@ mod tests {
         )
     }
 
-    fn run_json(id: u64, concl: &str, branch: &str, attempt: u64, created: &str) -> String {
-        format!(
-            "{{\"databaseId\":{id},\"conclusion\":\"{concl}\",\"event\":\"push\",\"headBranch\":\"{branch}\",\"attempt\":{attempt},\"createdAt\":\"{created}\"}}"
-        )
-    }
-
     fn inputs() -> Inputs {
         let review = "{\"body\":\"🤖 jpdf-agent **AI review, round 3** of x\\nR3.1 [major] y\"}";
         Inputs {
@@ -1320,21 +1157,6 @@ mod tests {
             ),
             issues_closed: "[{\"number\":1,\"closedAt\":\"2026-11-15T01:00:00Z\"},{\"number\":2,\"closedAt\":\"2026-11-14T01:00:00Z\"}]".to_owned(),
             issues_open: "[{\"number\":5,\"title\":\"a|b\\nc\",\"createdAt\":\"2026-11-12T00:00:00Z\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"flaky\"}]},{\"number\":6,\"title\":\"x\",\"createdAt\":\"2026-11-20T00:00:00Z\",\"labels\":[{\"name\":\"ready\"}]}]".to_owned(),
-            runs: format!(
-                "[{},{},{},{},{},{},{}]",
-                run_json(10, "failure", "main", 1, "2026-11-15T00:00:00Z"),
-                run_json(11, "failure", "t/x", 1, "2026-11-22T10:00:00Z"),
-                run_json(12, "success", "t/x", 2, "2026-11-21T10:00:00Z"),
-                run_json(13, "failure", "t/y", 3, "2026-11-20T10:00:00Z"),
-                run_json(14, "", "t/y", 1, "2026-11-20T10:00:00Z"),
-                run_json(15, "failure", "main", 1, "2026-11-14T10:00:00Z"),
-                run_json(16, "failure", "main", 1, "2026-11-23T00:00:00Z")
-            ),
-            jobs: BTreeMap::from([
-                (10, "{\"jobs\":[{\"name\":\"policy\",\"conclusion\":\"failure\"},{\"name\":\"judge-verdict\",\"conclusion\":\"failure\"},{\"name\":\"pages\",\"conclusion\":\"skipped\"}]}".to_owned()),
-                (11, "{\"jobs\":[{\"name\":\"judge-verdict\",\"conclusion\":\"failure\"}]}".to_owned()),
-                (15, "{\"jobs\":[{\"name\":\"outside\",\"conclusion\":\"failure\"}]}".to_owned()),
-            ]),
         }
     }
 
@@ -1348,26 +1170,6 @@ mod tests {
         assert_eq!(
             (rep.reviews[0].pr, rep.reviews[0].rounds, rep.reviews[0].r),
             (1, 3, [0, 1, 0, 0])
-        );
-        let ci = &rep.ci;
-        assert_eq!(ci.runs, 5);
-        assert_eq!(
-            ci.by_conclusion,
-            BTreeMap::from([
-                ("failure".to_owned(), 3),
-                ("in progress".to_owned(), 1),
-                ("success".to_owned(), 1)
-            ])
-        );
-        assert_eq!((ci.failed_main, ci.failed_other), (1, 2));
-        assert_eq!((ci.reruns, ci.reruns_green), (2, 1));
-        assert_eq!(
-            (ci.jobs_read, ci.jobs_unknown, ci.jobs_capped),
-            (2, 1, false)
-        );
-        assert_eq!(
-            ci.failing_jobs,
-            BTreeMap::from([("judge-verdict".to_owned(), 2), ("policy".to_owned(), 1)])
         );
         assert_eq!(
             rep.blocked,
@@ -1394,8 +1196,6 @@ mod tests {
         assert!(rep.truncated.is_empty());
         let md = render_md(&rep);
         assert!(md.contains("- #5 (10 days): a/b c\n"), "{md}");
-        assert!(md.contains("| judge-verdict | 2 |\n| policy | 1 |"), "{md}");
-        assert!(md.contains("(1 without job data)"), "{md}");
         assert!(md.contains("| Sessions | no ops/logs/index.tsv |"), "{md}");
     }
 
@@ -1409,17 +1209,6 @@ mod tests {
                 .unwrap_err()
                 .contains("prs.json: missing string `mergedAt`")
         );
-        let mut i = inputs();
-        i.runs = "{}".to_owned();
-        assert!(
-            compute(&i, &commits, 0, 1)
-                .unwrap_err()
-                .contains("runs.json: not a JSON array")
-        );
-        let mut i = inputs();
-        i.jobs.insert(10, "{\"nojobs\":1}".to_owned());
-        let err = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap_err();
-        assert!(err.contains("jobs-10.json: missing array `jobs`"), "{err}");
         let mut i = inputs();
         i.issues_open = "[{\"number\":-1,\"createdAt\":\"2026-11-12T00:00:00Z\"}]".to_owned();
         assert!(
@@ -1444,29 +1233,6 @@ mod tests {
         let rep = compute(&i, &commits, 0, 1).unwrap();
         assert_eq!(rep.truncated, ["closed issues"]);
         assert!(render_md(&rep).contains("the closed issues list returned 1000 entries"));
-    }
-
-    #[test]
-    fn job_reads_stop_at_the_newest_hundred() {
-        let runs = |n: u64| {
-            let items: Vec<String> = (0..n)
-                .map(|k| {
-                    run_json(
-                        k,
-                        "failure",
-                        "main",
-                        1,
-                        &format!("2026-11-15T00:{:02}:{:02}Z", k / 60, k % 60),
-                    )
-                })
-                .collect();
-            format!("[{}]", items.join(","))
-        };
-        let (ids, capped) = job_run_ids(&runs(100), 0, d("2026-12-01")).unwrap();
-        assert_eq!((ids.len(), capped), (100, false));
-        let (ids, capped) = job_run_ids(&runs(101), 0, d("2026-12-01")).unwrap();
-        assert_eq!((ids.len(), capped), (100, true));
-        assert_eq!((ids.first(), ids.last()), (Some(&100), Some(&1))); // newest first; run 0 dropped
     }
 
     #[test]
