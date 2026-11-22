@@ -1,4 +1,5 @@
 //! specs/tooling/fsio.md "Tests".
+#![forbid(unsafe_code)]
 
 use std::fs;
 use std::io::Read;
@@ -44,9 +45,13 @@ fn regular_files_read_normally() {
 
 /// Opening a FIFO with no writer blocks without `O_NONBLOCK`, so a wrong flag value hangs
 /// here and fails the timeout. The opened handle reports a FIFO, which callers refuse.
+/// Skipped where [`jpdf_fsio::OPEN_FLAGS`] is `None` (a plain open blocks there by design).
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn open_never_blocks_on_a_fifo() {
+    let Some(flags) = jpdf_fsio::OPEN_FLAGS else {
+        return;
+    };
     let fifo = scratch("fifo").join("fifo");
     assert!(
         Command::new("mkfifo")
@@ -65,8 +70,13 @@ fn open_never_blocks_on_a_fifo() {
     });
     let got = rx.recv_timeout(Duration::from_secs(10));
     if got.is_err() {
-        // Unblock the stuck thread so the test process can exit.
-        let _ = fs::OpenOptions::new().write(true).open(&fifo);
+        // Unblock the stuck thread so the test process can exit. The write end opens
+        // non-blocking too: with no reader left it fails at once (ENXIO) instead of waiting.
+        let _ = std::os::unix::fs::OpenOptionsExt::custom_flags(
+            fs::OpenOptions::new().write(true),
+            flags,
+        )
+        .open(&fifo);
     }
     let _ = fs::remove_file(&fifo);
     let got = got.expect("open of a FIFO blocked");

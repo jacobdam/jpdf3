@@ -1002,7 +1002,7 @@ fn no_shipped_crate_uses_the_arlington_data() {
     let ids = vendored_ids();
     // 613 files; some share their contents, so 610 distinct blob ids.
     assert_eq!(ids.len(), 610);
-    let (scanned, hits) = shipped_hits(&root, &ids);
+    let (scanned, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
     for want in [
         "lib.rs",
         "Cargo.toml",
@@ -1046,6 +1046,7 @@ fn vendored_ids() -> std::collections::HashSet<[u8; 20]> {
 fn shipped_hits(
     root: &Path,
     ids: &std::collections::HashSet<[u8; 20]>,
+    max_file_bytes: u64,
 ) -> (Vec<PathBuf>, Vec<String>) {
     /// Visits `p` without following symlinks; directories for which `skip` holds aren't
     /// entered.
@@ -1104,16 +1105,35 @@ fn shipped_hits(
         })
     };
     let (mut files, mut hits) = (Vec::new(), Vec::new());
-    visit(&crates, &crate_skip, &mut files, &mut hits);
-    for d in ["bindings", "apps/web", "apps/macos"] {
-        let dir = root.join(d);
-        if d == "bindings" && std::fs::symlink_metadata(&dir).is_err() {
-            continue;
+    // Every root, and `apps` above two of them, must be a real directory (not a file, not a
+    // symlink), so nothing on the way to a root is followed.
+    let real_dir = |p: &Path, hits: &mut Vec<String>| {
+        let ok = std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+        if !ok {
+            hits.push(format!(
+                "{}: not a directory (symlinks are refused)",
+                p.display()
+            ));
         }
-        visit(&dir, &other_skip, &mut files, &mut hits);
+        ok
+    };
+    if real_dir(&crates, &mut hits) {
+        visit(&crates, &crate_skip, &mut files, &mut hits);
+    }
+    let bindings = root.join("bindings");
+    if std::fs::symlink_metadata(&bindings).is_ok() && real_dir(&bindings, &mut hits) {
+        visit(&bindings, &other_skip, &mut files, &mut hits);
+    }
+    if real_dir(&root.join("apps"), &mut hits) {
+        for d in ["apps/web", "apps/macos"] {
+            let dir = root.join(d);
+            if real_dir(&dir, &mut hits) {
+                visit(&dir, &other_skip, &mut files, &mut hits);
+            }
+        }
     }
     for f in &files {
-        match std::fs::read(f) {
+        match read_scanned(f, max_file_bytes) {
             Ok(b) => {
                 if String::from_utf8_lossy(&b)
                     .to_lowercase()
@@ -1130,6 +1150,26 @@ fn shipped_hits(
     }
     (files, hits)
 }
+
+/// Reads a scanned file: a non-blocking open (a FIFO swapped in after the walk can't block
+/// it), the opened handle must be a regular file, and a file over `max` bytes is an error, read
+/// no further than `max + 1` bytes.
+fn read_scanned(f: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let file = jpdf_fsio::open_nonblocking(f)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut b = Vec::new();
+    file.take(max.saturating_add(1)).read_to_end(&mut b)?;
+    if u64::try_from(b.len()).unwrap_or(u64::MAX) > max {
+        return Err(std::io::Error::other(format!("over {max} bytes")));
+    }
+    Ok(b)
+}
+
+/// The per-file read cap of the real scan (no shipped file comes near it).
+const SCAN_MAX_FILE_BYTES: u64 = 64 << 20;
 
 /// [`shipped_hits`] on a fixture tree: a clean tree has no findings, and each way around
 /// the audit 0002 version of the scan (#115 item 1) is found: a symlink in a crate's `src/`,
@@ -1173,7 +1213,7 @@ fn shipped_scan_finds_links_copies_and_names() {
         root
     };
     let clean = tree("scan-clean");
-    let (files, hits) = shipped_hits(&clean, &ids);
+    let (files, hits) = shipped_hits(&clean, &ids, SCAN_MAX_FILE_BYTES);
     assert!(hits.is_empty(), "{hits:#?}");
     assert_eq!(files.len(), 6, "{files:#?}");
 
@@ -1224,7 +1264,7 @@ fn shipped_scan_finds_links_copies_and_names() {
     for (name, plant, want) in cases {
         let root = tree(&format!("scan-{name}"));
         plant(&root, &tsv, &copy);
-        let (_, hits) = shipped_hits(&root, &ids);
+        let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
         let want = format!(
             "{}: ",
             root.join(want.split(": ").next().unwrap()).display()
@@ -1247,7 +1287,7 @@ fn shipped_scan_finds_links_copies_and_names() {
             let root = tree(&format!("scan-locked-{}", target.len()));
             let p = root.join(target);
             mode(&p, 0o000);
-            let (_, hits) = shipped_hits(&root, &ids);
+            let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
             mode(&p, 0o755);
             assert_eq!(hits.len(), 1, "{target}: {hits:#?}");
             assert!(
@@ -1257,9 +1297,46 @@ fn shipped_scan_finds_links_copies_and_names() {
             std::fs::remove_dir_all(root).unwrap();
         }
     }
+    // A regular file in place of an app root, and a symlinked `apps`, are findings.
+    let root = tree("scan-root-file");
+    std::fs::remove_dir_all(root.join("apps/macos")).unwrap();
+    std::fs::write(root.join("apps/macos"), "placeholder\n").unwrap();
+    let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
+    assert_eq!(
+        hits,
+        [format!(
+            "{}: not a directory (symlinks are refused)",
+            root.join("apps/macos").display()
+        )]
+    );
+    std::fs::remove_dir_all(root).unwrap();
+    let root = tree("scan-apps-link");
+    std::fs::rename(root.join("apps"), root.join("ui")).unwrap();
+    std::os::unix::fs::symlink(root.join("ui"), root.join("apps")).unwrap();
+    let (_, hits) = shipped_hits(&root, &ids, SCAN_MAX_FILE_BYTES);
+    assert_eq!(
+        hits,
+        [format!(
+            "{}: not a directory (symlinks are refused)",
+            root.join("apps").display()
+        )]
+    );
+    std::fs::remove_dir_all(root).unwrap();
+    // The per-file cap at its exact boundary: the largest scanned fixture file
+    // (`apps/web/index.html`, 14 bytes) passes at a cap of 14 and is a finding at 13.
+    let (_, hits) = shipped_hits(&clean, &ids, 14);
+    assert!(hits.is_empty(), "{hits:#?}");
+    let (_, hits) = shipped_hits(&clean, &ids, 13);
+    assert_eq!(
+        hits,
+        [format!(
+            "{}: over 13 bytes",
+            clean.join("apps/web/index.html").display()
+        )]
+    );
     // A missing app root is a finding; a missing bindings/ isn't.
     std::fs::remove_dir_all(clean.join("apps/macos")).unwrap();
-    let (_, hits) = shipped_hits(&clean, &ids);
+    let (_, hits) = shipped_hits(&clean, &ids, SCAN_MAX_FILE_BYTES);
     assert_eq!(hits.len(), 1, "{hits:#?}");
     assert!(hits[0].starts_with(&format!("{}: ", clean.join("apps/macos").display())));
     std::fs::remove_dir_all(clean).unwrap();

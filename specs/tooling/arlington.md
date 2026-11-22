@@ -172,10 +172,14 @@ Status: implemented (tables; vendored data since #60); the valid/boundary object
       and `target` directories (so `build.rs`, `benches/`, data directories and a `src/tests/`
       module count), and every file under `bindings/`, `apps/web` and `apps/macos` outside
       `tests`, `Tests`, `JPDFUITests`, `e2e`, `scripts`, `node_modules`, `dist`, `target`,
-      `test-results` and `playwright-report` directories. Each root except `bindings/` must exist (#115 item 1);
+      `test-results` and `playwright-report` directories. Each root except `bindings/` must
+      exist, and every root (and `apps` above two of them) must be a real directory, not a
+      file or a symlink (#115 item 1);
     - no scanned file contains "arlington" in any case or has the git blob id of a vendored
       TSV (a renamed copy); the scan follows no symlink and reports every symlink or other
-      non-regular entry it meets, and every directory or file it can't read.
+      non-regular entry it meets, and every directory or file it can't read. Files are opened
+      non-blocking (specs/tooling/fsio.md), the opened handle must be a regular file, and a
+      file over 64 MiB is a finding, read no further than one byte past the cap.
     So dev-dependencies are usable only from `tests/` integration tests, not from
     `#[cfg(test)]` modules in `src/`, and engine sources can't mention Arlington even in
     comments. Not seen: an edited or embedded copy of a TSV (only whole files are compared),
@@ -346,7 +350,9 @@ first fetch about 10 s (shallow fetch of one commit), later runs read the cache 
   the item 10 scan on a fixture tree: clean, then each of a symlinked file in a crate's
   `src/`, a symlinked crate directory, a renamed TSV copy in a crate's `data/` and in
   `apps/web`, the word in `benches/` and in a `src/tests/` module, an unreadable (mode 000)
-  directory and file (skipped as root) gives exactly its one finding, while the same word,
+  directory and file (skipped as root), a regular file in place of `apps/macos`, a symlinked
+  `apps`, and the per-file cap one byte below the largest file gives exactly its one finding
+  (at that file's size: none), while the same word,
   copy and link inside skipped directories give none; files below the app roots
   (`apps/web/src`, `apps/macos/JPDF`) are scanned; a missing `apps/macos` is a finding. On the
   real tree, `apps/web/src/main.tsx` and `apps/macos/JPDF/StartView.swift` must be scanned.

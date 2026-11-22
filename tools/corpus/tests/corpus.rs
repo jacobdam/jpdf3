@@ -234,15 +234,20 @@ fn a_fifo_in_the_cache_is_replaced_not_read() {
 #[test]
 fn manifest_load_refuses_non_regular_files() {
     let d = scratch("manifest-fifo");
-    let fifo = d.join("fifo.tsv");
-    let st = std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap();
-    assert!(st.success());
     let dir = d.join("dir.tsv");
     std::fs::create_dir_all(&dir).unwrap();
-    for p in [fifo, dir] {
+    let mut refused = vec![dir];
+    // Only where the open is non-blocking; a plain open of a FIFO blocks by design elsewhere.
+    if jpdf_fsio::OPEN_FLAGS.is_some() {
+        let fifo = d.join("fifo.tsv");
+        let st = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        refused.push(fifo);
+    }
+    for p in refused {
         let (tx, rx) = std::sync::mpsc::channel();
         let p2 = p.clone();
         std::thread::spawn(move || {

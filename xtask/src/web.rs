@@ -512,10 +512,16 @@ mod tests {
         // writer doesn't block the open (the test would hang).
         let dir = base.join("dir.tsv");
         assert!(fs::create_dir_all(&dir).is_ok());
-        let fifo = base.join("fifo.tsv");
-        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-        assert!(made.is_ok_and(|s| s.success()), "mkfifo failed");
-        for p in [&dir, &fifo] {
+        let mut refused = vec![dir];
+        // Only where the open is non-blocking (jpdf_fsio::OPEN_FLAGS); a plain open of a FIFO
+        // blocks by design on the other targets.
+        if jpdf_fsio::OPEN_FLAGS.is_some() {
+            let fifo = base.join("fifo.tsv");
+            let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+            assert!(made.is_ok_and(|s| s.success()), "mkfifo failed");
+            refused.push(fifo);
+        }
+        for p in &refused {
             assert_eq!(
                 read_results(p),
                 Err(format!("{}: not a regular file", p.display()))

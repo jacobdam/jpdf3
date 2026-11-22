@@ -205,6 +205,20 @@ mod tests {
                 out: "x.rs".into()
             })
         );
+        assert_eq!(
+            p(&["generate", "--cache", "c", "--out", "x.rs"]),
+            Ok(Args::Generate {
+                source: CliSource::Cache("c".into()),
+                out: "x.rs".into()
+            })
+        );
+        assert_eq!(
+            p(&["generate", "--vendored", "v", "--out", "x.rs"]),
+            Ok(Args::Generate {
+                source: CliSource::Vendored("v".into()),
+                out: "x.rs".into()
+            })
+        );
         assert_eq!(p(&["vendor"]), Err("vendor needs --out".into()));
         assert_eq!(p(&["generate"]), Err("generate needs --out".into()));
         for bad in [
