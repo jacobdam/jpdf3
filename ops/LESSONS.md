@@ -135,6 +135,11 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27).
+- Writing a check that parses another tool's text output (`cargo tree`, git) → before round 1, print every line shape
+  from the real tool (markers before, after and instead of the source, delimiters inside paths, an empty field) and give
+  each a case, resolve only absolute paths, and pin the flags on the command actually run (`Command::get_args`), not on
+  a constant: PR #234's second reviewer found a new shape or flag gap in each of 4 rounds
+  ([journal](journal/2026-11-22.md), PR #234).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`

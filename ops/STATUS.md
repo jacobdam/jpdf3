@@ -15,8 +15,9 @@ Phase: bootstrap (pilot)
 - PR #184 (owner's own, the owner-comment tracking feed) **merged** (66f4d3c): `owner-issues.sh` now lists comments
   from 2026-11-23 on until a "done:" reply links them. #179 keeps `owner-todo` for the owner's test step 3. #216 and
   #217 still apply to the applied script.
-- #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
-  (#154). Follow-up #156 (sev:medium, M10).
+- #146 stays open: the decode/raster gate waits for a #25 measurement or a structural fix. PR #234 (#154, merged
+  a095a5a) now enforces the gate on jpdf-cli's resolved Cargo graph (specs/tooling/cli-dependency-gate.md);
+  follow-up #235 (target source paths from `cargo metadata`, M0). Follow-up #156 (sev:medium, M10).
 - #21 stays open until the owner's drills (#208) and AC.4 (comment on #21) are added to docs/retros/0000-pilot.md.
   The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
@@ -28,8 +29,8 @@ Phase: bootstrap (pilot)
 0. **a: #238** is the owner's focus: once PR #239 merges, file its §9 tasks and work them in order (1a first).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR (accept 0831d70, or one more final check).
    #231 isn't workable until the M2 image-decode caller exists.
-2. Rule i, M0, lowest number first: #154, #210 (write ops/proposals/ for the owner-commands fix), #216
-   (the harness the owner's test step 3 relies on; PR #184 already merged), #219.
+2. Rule i, M0, lowest number first: #210 (write ops/proposals/ for the owner-commands fix), #216
+   (the harness the owner's test step 3 relies on; PR #184 already merged), #219, #235.
 3. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
@@ -40,7 +41,8 @@ Phase: bootstrap (pilot)
     final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
     PR #220: 3, PR #227: 4 + final check (every Codex round found
     a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; all majors
-    after round 1 but one were spec text about a future caller).
+    after round 1 but one were spec text about a future caller), PR #234: 4 + final check (each Codex round found a
+    new "what still passes" gap in a parser of cargo's text output or in how the flags were pinned).
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
