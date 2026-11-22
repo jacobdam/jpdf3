@@ -14,25 +14,24 @@ Phase: bootstrap (pilot)
 - #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
   (#154). Follow-up #156 (sev:medium, M10).
 
-- **PR #198** (#192, owner-comment tracking harness: 64 → 71 cases, audit 0004 AC.1/AC.7): `ai-review` = success
-  (2 rounds), auto-merge on. Told the owner on #179 that step 1 expects `passed 71` once it merges.
+- **PR #201** (#76 part 1/2, E2E harness honesty: a failed run, reporter error or Release check reports no pass):
+  `ai-review` = success (2 rounds), auto-merge on. Part 2/2 is #200 (ready, M0).
 
 ## Last session
-- i: #192 → PR #198 (proposal harness only; the proposed owner-issues.sh is unchanged and PR #184's copy passes
-  71/71; 7 hand mutants each caught). PR #194 merged; #196 has `owner-todo` + "ready for owner". Journal 2026-11-22
-  09:19.
+- i: #76 → PR #201 (items 1-3; items 4-6 split to #200). PR #198 and #199 merged. Removed merged worktrees
+  (audit-0004, record-191, record-192). Journal 2026-11-22 09:40.
 
 ## Next step (suggested order, TICK letters)
 1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
 2. #187 waits on PR #186.
-3. **#76**: harness honesty. The judge relies on it.
+3. **#200** (#76 part 2/2): unknown/malformed test IDs, spec drift, shared CSP fixture.
 4. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115, #154.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182; low #83, #122,
   #132, #134, #136, #137, #166.
 - **Next retro (rule h): by 2026-11-28.** Inputs:
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2.
+    final check (parked on one sentence), PR #198: 2, PR #201: 2.
   - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
   - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
