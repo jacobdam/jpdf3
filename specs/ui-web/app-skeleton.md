@@ -135,7 +135,9 @@ tests:
   allows only what it provokes: the CSP / Trusted Types console errors and the violations
   `script-src-elem inline`, `style-src-elem inline` and
   `require-trusted-types-for trusted-types-sink`. Not checked: that a new spec file using
-  `page` imports `test` from the fixture rather than from `@playwright/test` (#205);
+  `page` imports `test` from the fixture rather than from `@playwright/test` (#205); other
+  pages (popups, a second `context.newPage()`) and `request` traffic; that only the CSP test
+  calls `watch.allow`; that a console error (not only a warning) fails: no probe pins it (#218);
 - dark appearance uses the dark palette, and an unfocused hover changes neither background
   nor shadow;
 - reduced motion leaves no transition on the button;
@@ -168,8 +170,9 @@ lines), a failed run downgrades every pass (and damaged results are an error and
 tree copy; known IDs (journey and harness IDs stand; one unknown ID, a near miss of a harness
 ID or unreadable journeys is an error that downgrades every pass); stale-output removal (files
 and trees, the first failure reported, later paths still removed) and `ci` with an
-undeletable `DIR/site/` (skipped as root): it runs nothing, ignores the stale reporter file and
-still writes empty results over a stale `e2e.json` that claimed a pass. `xtask/src/specs.rs`:
+undeletable `DIR/site/` (skipped as root): it ignores the stale reporter file and still writes
+empty results over a stale `e2e.json` that claimed a pass (the test's repository has no
+`apps/web`, so it doesn't show that the steps are skipped: #218). `xtask/src/specs.rs`:
 journey test IDs come from `specs/journeys/*.md` only (not subdirectories or other
 extensions), an unreadable file, a directory named `*.md` or a missing directory is an error,
 and the repository's journeys list no harness ID. `xtask/tests/check_specs.rs`: `ci linux` with stub `node`/`npm` whose Playwright step

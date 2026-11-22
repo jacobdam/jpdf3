@@ -156,9 +156,10 @@ XCUITest (`apps/macos/JPDFUITests/StartWindowTests.swift`), all reporting
 Rust unit tests: `xtask/src/macos.rs` (test-name → ID mapping, ID validation, worst result
 per ID, unmapped and unknown results are errors, passes downgraded on a failed `xcodebuild
 test`, an unmapped result or a failed Release check (each alone), `ci` with an undeletable
-`DIR/macos.xcresult` (skipped as root) and then with a repository root that can't be resolved
-runs nothing and still writes empty results over a stale `e2e.json` that claimed a pass (the
-known-ID check itself is `web.rs`'s, tested there), `graded` (the path `ci` writes from: a journey
+`DIR/macos.xcresult` (skipped as root), which writes empty results over a stale `e2e.json` that
+claimed a pass, and then with a repository root that can't be resolved, which writes them again
+(the repository path doesn't exist in either phase, so the test doesn't show that the steps are
+skipped: #218; the known-ID check itself is `web.rs`'s, tested there), `graded` (the path `ci` writes from: a journey
 plus the harness ID keep their passes, an unknown ID is named and downgrades every pass,
 unreadable journeys too, after the run's own error), entitlement check incl. extra
 `get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
