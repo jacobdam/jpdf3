@@ -1,7 +1,8 @@
-//! The process memory budget: what the default `Limits` let one document hold at its peak
-//! (specs/core/memory-budget.md, #109). The judge runs `jpdf-cli` under a 2 GiB address-space
-//! limit (ops/judge/CONTRACT.md); running out is a crash, so the defaults must fit it with a
-//! reserve for everything no limit charges.
+//! The process memory budget: an estimate of what the default `Limits` let one document hold
+//! at its peak (specs/core/memory-budget.md, #109). The judge runs `jpdf-cli` under a 2 GiB
+//! address-space limit (ops/judge/CONTRACT.md); running out is a crash, so the defaults must
+//! fit it by this estimate with a reserve for everything no limit charges. Not a proven bound:
+//! heap holes several phases leave are a known gap (#146).
 
 use crate::Limits;
 use crate::xref::Entry;
@@ -136,7 +137,7 @@ impl MemoryBudget {
     /// brk heap, which shrinks only from the top: one live allocation made during a phase (a
     /// span, a cache node) keeps everything below it mapped. Freed heap memory is reused by
     /// later small requests, but a request above the threshold gets a new mapping. So the
-    /// worst case is one phase's whole memory left in the heap (every phase can allocate below
+    /// worst case for one phase transition is one phase's whole memory left in the heap (every phase can allocate below
     /// the threshold) plus the next phase's whole memory in new mappings. The same holds in a
     /// non-main arena (a thread other than the main one, #114): its 64 MiB sub-heaps are also
     /// trimmed only from the top. This covers one
@@ -230,8 +231,8 @@ mod tests {
         assert_eq!(b.peak(), 1864 * MIB + 64 * 1024 + 48_000_000);
     }
 
-    /// The defaults fit the judge's 2 GiB with the 256 MiB reserve, and with at least 64 MiB
-    /// to spare, so a small change to one term can't silently use up the reserve.
+    /// The defaults fit the judge's 2 GiB by the one-earlier-phase estimate (#146), with the
+    /// 256 MiB reserve and at least 64 MiB to spare, so a small change to one term can't silently use up the reserve.
     #[test]
     fn defaults_fit_the_process_budget_with_the_reserve() {
         assert_eq!(PROCESS_BUDGET_BYTES, 2048 * MIB);

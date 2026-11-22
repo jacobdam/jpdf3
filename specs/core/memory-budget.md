@@ -11,9 +11,10 @@ running out is a crash. Before this, the four charged budgets (file 512 MiB + re
 + decode 256 MiB + raster 1 GiB) summed to exactly 2 GiB. Nothing was left for the binary,
 the stacks, the xref table or one parse's objects. The decoder's input was not counted either.
 
-This adds `jpdf_syntax::MemoryBudget` (crates/jpdf-syntax/src/budget.rs). It is the peak
-memory one document may reach under a set of `Limits`. The default limits must fit in
-`PROCESS_BUDGET_BYTES` (2 GiB) and leave room for the reserve. It lives in jpdf-syntax because
+This adds `jpdf_syntax::MemoryBudget` (crates/jpdf-syntax/src/budget.rs). It **estimates** the
+peak memory one document may reach under a set of `Limits`. The default limits must fit in
+`PROCESS_BUDGET_BYTES` (2 GiB) by this estimate and leave room for the reserve. It is not a
+proven bound: heap holes left by several phases are not counted (known gap below, #146). It lives in jpdf-syntax because
 that crate owns the types whose sizes the formula multiplies (the xref `Entry` and
 `Object`). Today only its tests use it. The resource-limit harness (#25) is the intended
 consumer.
@@ -51,10 +52,11 @@ the 2 GiB unused.
   buffers above the mmap threshold (128 KiB at first, at most 32 MiB once raised: arrays over
   4 096 slots, dictionaries over about 2 340 entries, long strings) get new mappings and never
   reuse holes. So holes and the mmapped part of a parse can add up. Since #146 that case is a
-  term of its own: the holes are at most an earlier phase's heap (`heap_high_water`) and the
-  mmapped part is within the current phase. What the fragmentation item still covers is holes
-  that sub-threshold requests of later phases can't reuse because of their size. It is
-  **unverified** until #25 measures it with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
+  term of its own: holes one earlier phase leaves are within `heap_high_water`, and the
+  mmapped part is within the current phase. The fragmentation item covers up to 96 MiB of
+  holes that later requests can't reuse because of their size. Build-up across several phases
+  is not bounded (known gap in Behavior, #146). The item is **unverified** until #25 measures
+  it with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
   thread arena before trimming it, and a busy thread arena grows in 64 MiB sub-heaps that can
   strand unused tails. So #114 must either keep large allocations off the engine thread's
   arena (glibc serves requests above the mmap threshold, at most 32 MiB, with their own
@@ -117,12 +119,17 @@ the 2 GiB unused.
     after parse), and it can't be bounded by a formula over the limits. Closing it needs
     either a measurement showing it doesn't happen at a meaningful scale (#25: many cached
     growing containers, then phases making ever larger sub-threshold requests) or a structural
-    fix that keeps long-lived allocations out of the phases' heap region (e.g. reserving the
-    span map, xref table and cache storage before the first parse). Until then the peak is an
+    fix that keeps every long-lived allocation out of the phases' heap region: the index
+    storage (span map, xref table, cache map) **and** the payloads (the cached objects' `Arc`s
+    and their buffers, which a parse allocates in the middle of its own scratch memory). Until then the peak is an
     estimate that accounts for one earlier phase, not a proven bound, and a peak under 2 GiB
     does not certify that a run fits.
-  - **Gate:** no decode or raster phase runs on the jpdf-cli path until #25 measures the
-    cross-phase case or the structural fix above lands (#146). Today parse is the only phase
+  - **Gate:** no decode or raster phase runs on the jpdf-cli path until one of these holds
+    (#146): (a) #25 runs the cross-phase pattern above (at the default limits, under
+    `RLIMIT_AS` = 2 GiB, as the judge runs `jpdf-cli`) and the process neither crashes nor
+    fails an allocation, and its measured peak address space stays at or below `peak()`; or
+    (b) the structural fix above lands, covering both index storage and payloads. A
+    measurement that finds the process over the limit doesn't open the gate. Today parse is the only phase
     on that path; parse after parse can build up holes the same way (already true before #146),
     which the same measurement covers.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
@@ -248,8 +255,10 @@ out.
 
 ## Security
 - Threat: a hostile file that drives every limit to its maximum at once must not exhaust the
-  address space (a crash). The model is a sum of upper bounds; it is conservative, not a
-  measurement.
+  address space (a crash). The model is an **estimate**: a sum of upper bounds for each term
+  it lists and for one earlier phase's heap, but it does not count heap holes several phases
+  leave (known gap in Behavior, #146), so `MemoryBudget::peak()` under 2 GiB is not a safety
+  check. It is not a measurement either.
 - Self-check:
   - Arithmetic: every product and sum in `MemoryBudget::of` and `alloc_bytes` is `saturating_*`
     on `u64`. The inputs are limits and capacities, not file data, but loose caller limits could
