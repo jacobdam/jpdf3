@@ -27,6 +27,8 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Hand-checking that a specific test kills a mutant → run `cargo nextest run --no-fail-fast`; fail-fast stops at
   the first failing test, so the targeted test may never run and a "caught" claim can be false
   ([journal](journal/2026-11-21.md), PR #140).
+- Undoing a hand mutant with `git checkout <file>` → it also drops your uncommitted edits in that file (a review fix
+  was lost that way); commit first, or mutate and restore a copy ([journal](journal/2026-11-22.md), PR #201).
 - Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
   `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests).
   Use `--in-diff <range diff>`, set `TMPDIR` (it is unset) to the session scratchpad **outside the repo**: under
@@ -109,6 +111,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   regrade, dispute, a merge from main), each with its next step. A rule triggered by "when the PR merges" needs a step that notices the
   merge: auto-merge lands after the session exits (PR #177). PR #157's reviewers found at least one unhandled
   state in every round, 5 in a row ([journal](journal/2026-11-22.md), PR #157).
+
+- Testing "any of N failure triggers turns passes into fails" → give each trigger its own case with every other
+  trigger off; a case that combined two hid a mutant (PR #201 R1.1) ([journal](journal/2026-11-22.md), PR #201).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
