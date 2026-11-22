@@ -22,5 +22,5 @@ cap covers CI fixes, and sessions have not applied it to review rounds.
 - Record the round count and any deferrals in the journal's `Cost:` line.
 
 ## Success check
-Over the next 10 merged PRs: no PR goes past 4 review rounds, and each deferred finding has an issue. The retro after
+Over the next 10 merged PRs: no PR goes past 5 review rounds (4, plus at most one for a remaining correctness, security or CONSTITUTION finding), and each deferred finding has an issue. The retro after
 that checks whether any deferred finding turned out to be a real bug that should have blocked its merge (target: 0).

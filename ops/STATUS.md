@@ -15,12 +15,12 @@ Phase: bootstrap (pilot)
   - The owner also commented `/halt` on PR #151. It isn't a defined command (no `halt` label, no `ops/HALT`).
 
 ## Last session
-- #146 / PR #151 (rule d): 15 review rounds, then the owner's scope cut. Journal 2026-11-22 02:28.
+- #146 / PR #151 (rule d): 14 review rounds, the owner's scope cut, then round 15 (approve). Journal 2026-11-22 02:28.
 
 ## Next step (suggested order, TICK letters)
 0. PR #151: wait for the owner's `/release`. Don't touch the PR before then.
 1. **g: AUDIT is overdue**: 18+ merges since audit 0002. d is now empty apart from #146.
-   - Security issues: high is #146 (in flight). Medium/low wait in M10: #114, #116, #117, #141 (medium); #83, #122,
+   - Security issues: high is #146 (in flight). Medium/low wait in M10: #114, #116, #117, #141, #156 (medium); #83, #122,
      #132, #134, #136, #137 (low).
 2. **#76**: harness honesty. The judge relies on it.
 3. Then the `ready` backlog (rule i) in M0, lowest number first: #21, #86, #91, #115.
