@@ -36,8 +36,8 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-29.
 
 ## Blockers / owner-todo
-- #174: apply the #161 proposal and run its owner test plan (Codex permission profile T1–T4: only the owner can run
-  Codex outside the launcher). #162: proposal coming. The security-gates proposal (AC.2, AS.56) needs an owner decision.
+- #174: apply the #161 proposal and run its owner test plan (T1–T4 and T10–T12; only the owner can run Codex outside
+  the launcher). #162: proposal coming. The security-gates proposal (AC.2, AS.56) needs an owner decision.
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console.
 - #21: the owner steps (stranger issue, /hold, HALT) go into a sub-issue when the drill is picked up.
 - macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
