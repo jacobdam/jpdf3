@@ -90,6 +90,7 @@ pub struct MemoryBudget {
 }
 
 impl MemoryBudget {
+    /// Every term under `limits`, with saturating arithmetic (loose limits give `u64::MAX`).
     pub fn of(limits: &Limits) -> Self {
         let entry = size_u64(size_of::<Entry>());
         let spans = size_u64(limits.max_xref_entries)

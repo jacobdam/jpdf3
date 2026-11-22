@@ -22,7 +22,7 @@ consumer.
 
 | Term | Kind | Formula | Default |
 |---|---|---|---|
-| file | persistent | `max_file_size` (the CLI reserves exactly the file size; see #141) | 512 MiB |
+| file | persistent | `max_file_size` (the CLI reserves the file size + 1 byte; see #141) | 512 MiB |
 | retained | persistent | `max_retained_bytes_per_document`, charged as allocator chunks | 256 MiB |
 | xref table | persistent | `max_xref_entries × size_of::<Entry>() (12) × 3` | 144 MiB |
 | spans | persistent | `(max_xref_entries + max_xref_sections) × SPAN_ENTRY_BYTES (64)` | 256.06 MiB |
@@ -43,13 +43,16 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
   case, and the other terms are large buffers. All three non-binary items (stacks, arena,
   fragmentation) are placeholders until the resource-limit harness (#25) measures them. One
   fragmentation case on today's path: cached objects sit in the brk heap between buffers the
-  same parse freed as its containers, strings and names grew. Those holes add up to at most
-  the cached buffer bytes (at most `retained`, 256 MiB), which alone exceeds the 96 MiB
-  item. They don't add to the peak, though: they are sub-threshold chunks, glibc splits a free
-  chunk to serve any smaller request, and every later parse makes only sub-threshold
-  allocations (up to 2^20 × 272 = 272 MiB, more than the holes). So the heap high-water mark
-  stays near the larger of the holes and one parse, inside the parse term. #25 must confirm
-  this with a cache filled by growing containers. glibc maps 2 × 64 MiB to align a new
+  same parse freed as its containers, strings and names grew, below later cached chunks
+  (memory freed by uncached parses can end up there too). Later sub-threshold allocations
+  reuse a hole only if they fit (32-byte key holes can't serve a 240-byte buffer), and
+  buffers above the mmap threshold (128 KiB at first, at most 32 MiB once raised: arrays over
+  4 096 slots, dictionaries over about 2 340 entries, long strings) get new mappings and never
+  reuse holes. So holes and the mmapped part of a parse can add up. Example: 256 MiB of holes
+  plus a parse of large dictionaries and strings comes to about 496 MiB against the 464 MiB
+  parse term. This possible overshoot is charged to the 96 MiB fragmentation item, with the
+  66 MiB margin behind it. It is **unverified** until #25 measures it with a cache filled by
+  growing containers. glibc maps 2 × 64 MiB to align a new
   thread arena before trimming it, and a busy thread arena grows in 64 MiB sub-heaps that can
   strand unused tails. So #114 must either keep large allocations off the engine thread's
   arena (glibc serves requests above the mmap threshold, at most 32 MiB, with their own
@@ -74,8 +77,9 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
 - **Page walk.** `jpdf_cos::flat_page_count` keeps the kid references (8 bytes each, collected
   by doubling: up to 24) and a duplicate-check `HashSet` with capacity for every kid (at most
   16/7 buckets per kid at 9 bytes each, about 21) while it resolves each kid. That overlaps
-  the parse phase, so it is persistent. The `/Pages` node itself is dropped once the kid
-  references are extracted.
+  the parse phase, so it is persistent. The walk drops its handle to the `/Pages` node once
+  the kid references are extracted; a `/Pages` node that fits the resolve cache stays alive
+  there and is charged to `retained`.
 - **Parse.** The parser builds every array and dictionary with `Vec::new()` + `push`, so a
   container with one entry already holds 4 slots. The worst shape is nested one-entry
   dictionaries: a 224-byte buffer (240-byte chunk) plus a 32-byte key chunk = 272 bytes for
@@ -104,8 +108,8 @@ Peak at the defaults: 1213.84 + 512 + 256 = 1981.84 MiB, which leaves about 66 M
 - `max_objects_per_parse` 2 000 000 → 1 048 576 (2^20). At 272 bytes per object, 2 M objects
   alone were 519 MiB. 2^20 still holds a flat `/Kids` array of `max_pages` (1 000 000)
   references.
-- `max_xref_entries` 10 000 000 → 4 194 304 (2^22). The old value alone cost 360 MiB for the
-  table and 640 MiB for the spans. 4M objects is far above real documents: a 512 MiB file with
+- `max_xref_entries` 10 000 000 → 4 194 304 (2^22). The old value alone cost 343 MiB for the
+  table and 610 MiB for the spans. 4M objects is far above real documents: a 512 MiB file with
   that many objects averages 128 bytes per object.
 - `max_raster_working_bytes` 1 GiB → 512 MiB.
 - `max_canvas_pixels` 2^24 → 2^23 (e.g. a 4096 × 2048 tile). A full tile with 4 soft-masked
@@ -174,7 +178,7 @@ cached; past the budget they are re-parsed, with no error until the lexing budge
   0xFFFF_FFFF_FFFF_FFF0; unreachable, since a capacity never exceeds `isize::MAX`), never an
   overflow
   (`loose_limits_saturate_every_term` calls `of` with every contributing field at its type
-  maximum, all at once and one at a time; `peak_is_persistent_plus_largest_phase_plus_reserve`
+  maximum all at once, and six of them one at a time; `peak_is_persistent_plus_largest_phase_plus_reserve`
   saturates `peak`; `alloc_bytes_follow_glibc_chunks` saturates `alloc_bytes`).
 
 ## Security
