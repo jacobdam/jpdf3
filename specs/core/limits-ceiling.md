@@ -41,7 +41,8 @@ and operations budget) and #107 (object resolve cache).
      mapped and lowered `max_xref_entries` to 2^21, this field to 128 MiB,
      `max_string_bytes_per_parse` to 32 MiB, `max_decoded_bytes_per_stream` to 128 MiB,
      `max_raster_working_bytes` to 256 MiB and `max_canvas_pixels` to 2^22, so the defaults fit
-     with about 138 MiB to spare.
+     with about 138 MiB to spare by the one-earlier-phase estimate (not a proven bound; heap
+     holes several phases leave are a known gap, #146).
    - Charged by the object resolve cache only (specs/core/resolve-cache.md). Docs say the
      future face cache "must" charge it, through one counter shared with the object cache
      (#138).

@@ -345,8 +345,9 @@ mod tests {
         assert_eq!(d.max_ops, 1 << 32);
     }
 
-    /// The defaults #146 lowered, as literals (specs/core/memory-budget.md). Raising one makes
-    /// the memory budget be re-checked.
+    /// The defaults #146 lowered, plus `max_decode_working_bytes` (kept at 256 MiB; the decode
+    /// term depends on it), as literals (specs/core/memory-budget.md). Raising one makes the
+    /// memory budget be re-checked.
     #[test]
     fn lowered_defaults_are_pinned() {
         let l = Limits::default();

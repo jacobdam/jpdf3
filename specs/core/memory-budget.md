@@ -125,11 +125,15 @@ the 2 GiB unused.
     estimate that accounts for one earlier phase, not a proven bound, and a peak under 2 GiB
     does not certify that a run fits.
   - **Gate:** no decode or raster phase runs on the jpdf-cli path until one of these holds
-    (#146): (a) #25 runs the cross-phase pattern above (at the default limits, under
-    `RLIMIT_AS` = 2 GiB, as the judge runs `jpdf-cli`) and the process neither crashes nor
-    fails an allocation, and its measured peak address space stays at or below `peak()`; or
-    (b) the structural fix above lands, covering both index storage and payloads. A
-    measurement that finds the process over the limit doesn't open the gate. Today parse is the only phase
+    (#146): (a) #25 runs the cross-phase pattern above through the jpdf-cli path being
+    enabled, exercising **every** phase that path runs, each one after the heap the preceding
+    phases left (e.g. parse, then decode, then raster, if raster is enabled), at the default
+    limits under `RLIMIT_AS` = 2 GiB as the judge runs `jpdf-cli`, and the process neither
+    crashes nor fails an allocation, and its measured peak address space stays at or below
+    `peak()`; or (b) the structural fix above lands, covering both index storage and payloads.
+    A measurement that finds the process over the limit doesn't open the gate. A passing run
+    validates only the workloads and phases it ran: enabling another phase on the jpdf-cli
+    path needs a new run that includes it. Today parse is the only phase
     on that path; parse after parse can build up holes the same way (already true before #146),
     which the same measurement covers.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
@@ -162,7 +166,8 @@ the 2 GiB unused.
   resolve cache are parsed again on every resolve. That costs time, and the re-parses are
   charged to the document's lexing budget, so a file that resolves large uncached objects
   many times hits `LimitExceeded` from the lexing budget sooner than before (e.g. five objects
-  with 30 MiB strings each: all five fit the old cache, the fifth no longer does).
+  with 30 MiB strings each: a pushed string ends with a 32 MiB capacity, which the cache
+  charges, so all five fit the old cache but only three fit the new one).
 - `max_string_bytes_per_parse` 64 MiB → 32 MiB (#146). Large data lives in streams, which this
   limit doesn't cover; 32 MiB of strings in one object (signature contents are tens of KiB) is
   far above real files.
