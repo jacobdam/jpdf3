@@ -137,7 +137,8 @@ without seeds (≈ 1150 with seeds).
   limits); `run_all` with `sh` commands: a batch of 2 runs at the same time (each waits for
   the other's marker file), with 1 job they run one at a time in order, every failure is
   reported (exit code and signal), each log holds that command's stdout and stderr and is
-  copied after its `---- <name> (ok|FAILED) ----` header in order, and a command that cannot
+  copied after its `---- <name> (ok|FAILED) ----` header in order, a log the command deleted
+  is reported as `cannot read <log>: …` after its header, and a command that cannot
   start is an error returned only after the started ones ended, keeping the failures found
   before it, with no later command started; the tool checks (`nightly_listed` matches the
   pinned date only as a whole toolchain name, `cargo_fuzz_pinned` only the exact

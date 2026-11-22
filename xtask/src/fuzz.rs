@@ -446,10 +446,17 @@ mod tests {
         let listed = format!("{NIGHTLY}-x86_64-unknown-linux-gnu\n");
         assert!(!needs_nightly(Some(&listed)));
         assert!(needs_nightly(Some("1.100.0-x86_64-unknown-linux-gnu\n")));
+        assert!(needs_nightly(Some(
+            "nightly-2026-01-01-x86_64-unknown-linux-gnu\n"
+        )));
         assert!(needs_nightly(None));
         let pinned = format!("cargo-fuzz {CARGO_FUZZ_VERSION}\n");
         assert!(!needs_cargo_fuzz(Some(&pinned)));
         assert!(needs_cargo_fuzz(Some("cargo-fuzz 0.12.0\n")));
+        assert!(needs_cargo_fuzz(Some("cargo-fuzz 0.13.1\n")));
+        assert!(needs_cargo_fuzz(Some(&format!(
+            "cargo-fuzz {CARGO_FUZZ_VERSION}.1\n"
+        ))));
         assert!(needs_cargo_fuzz(None));
         assert_eq!(
             NIGHTLY_INSTALL,
@@ -563,6 +570,28 @@ mod tests {
              xtask: fuzz: ---- exit (FAILED) ----\nout-exit\n\
              xtask: fuzz: ---- signal (FAILED) ----\n\
              xtask: fuzz: ---- later (FAILED) ----\n"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unreadable_log_is_reported_in_its_place() {
+        let dir = scratch("unreadable");
+        let logs = dir.join("logs");
+        let log = logs.join("gone.log");
+        let runs = vec![(
+            "gone".to_owned(),
+            sh(&format!("echo lost; rm '{}'", log.display())),
+        )];
+        let mut out = Vec::new();
+        assert_eq!(run_all(runs, 1, &logs, &mut out), Ok(vec![]));
+        let text = String::from_utf8_lossy(&out);
+        assert!(
+            text.starts_with(&format!(
+                "xtask: fuzz: ---- gone (ok) ----\nxtask: fuzz: cannot read {}: ",
+                log.display()
+            )),
+            "{text}"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
