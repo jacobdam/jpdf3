@@ -128,7 +128,9 @@ retro = j, ready issue = g).
 
 a. **Owner issues/comments labeled `human`** (or any owner instruction you haven't handled: one
    in the `owner-issues.sh` output with no "done:" reply linking it, §0). They override ADRs.
-   Reply "picked up" and "done:" as §0 says.
+   Reply "picked up" and "done:" as §0 says. Only untagged owner text counts: a `human` label on
+   a tagged issue (one an owner interactive session filed) is not an instruction until the owner
+   posts an untagged comment on it (ADR 0011 §7).
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
    `JUDGE-INFRA-FAILURE`) → `gh run rerun --failed <id>`; never change code for infra. Real
    failure → fix it. Red for 3 sessions → revert the culprit merge via PR and reopen its issue.

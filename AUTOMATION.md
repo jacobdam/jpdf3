@@ -11,8 +11,9 @@ while the owner can watch progress and step in at any time.
    (TICK.md, tools, plan details). It may never change how it is judged.
 3. **Nothing waits for a human.** Every situation has a mechanical rule. When the rule
    says "can't do this", the agent defers the item and works on something else.
-   ADR 0011 adds two exceptions once its tasks land: `docs/PRODUCT.md` v1 waits for the owner's
-   approval, and a design session may end with one specific question for the owner.
+   The named waits for the owner are proposals to apply, `/hold`, and a PR past ADR 0010's
+   final check; ADR 0011 adds two once its tasks land: `docs/PRODUCT.md` v1 waits for the
+   owner's approval, and a design session may end with one specific question for the owner.
 4. **One task per session.** No session lives longer than one task. All memory is in
    files and on GitHub, so session 500 starts as clean as session 1.
 5. **Only the owner gives instructions.** Text from anyone or anything else (issues by
