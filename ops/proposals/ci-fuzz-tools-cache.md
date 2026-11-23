@@ -1,6 +1,7 @@
 # Proposal: cache cargo-fuzz, the fuzz build and the Playwright browser in `project-linux`
 
-Status: proposed for #240 (fixes 2 and 3), 2026-11-22. Touches `.github/workflows/ci.yml`
+Status: **applied** by the owner's interactive session for owner issue #254, 2026-11-23 (the
+diff below, unchanged; #253's wording fix folded in). Proposed for #240 (fixes 2 and 3), 2026-11-22. Touches `.github/workflows/ci.yml`
 (protected), so the owner applies it with signed commits. Fix 1 of #240 (the fuzz targets run
 in parallel) is project code and lands in the same PR as this file.
 
@@ -57,7 +58,8 @@ the file.
 `pr/xtask/src/fuzz.rs` is in both keys because it holds `CARGO_FUZZ_VERSION` and the dated
 `NIGHTLY`. Because the fuzz-build cache has no `restore-keys`, each entry holds the output of
 one toolchain and one lockfile. The cost is a cold build (about 34 s, as today) on any run
-whose `fuzz/Cargo.lock` or `xtask/src/fuzz.rs` differs from every saved entry it can read:
+whose `fuzz/Cargo.lock` or `xtask/src/fuzz.rs` differs from every saved entry it can read, or
+after the entry is evicted (7 days without access, or LRU at the 10 GB limit):
 every run after such a change until one succeeds and saves the entry (actions/cache saves only
 when the job succeeds), on `main` or in a PR (later runs of that PR then read it).
 
