@@ -386,7 +386,7 @@ Each round K runs in this order:
    |---|---|
    | post-cap diff empty, nothing open, disputed or regraded without a ruling | `ai-review` success, merge |
    | final check clean | its triage, `ai-review` success, merge |
-   | final check reports anything, or the post-cap diff is over 100 lines or adds a file; no `escalated to design:` comment naming another PR and no `Designed in:` line on the issue | `needs-design`, draft, `ai-review` failure → §8 |
+   | final check reports anything, or the post-cap diff is over 100 lines or adds a file; the design step is not spent (see the Exception above) | `needs-design`, draft, `ai-review` failure → §8 |
    | the same, but the design step was spent (the Exception above: an escalation comment naming another PR, or naming this PR after a Design ruling or Design question, or `Designed in:`) | `blocked`, `owner-todo`, both ledgers → the owner |
    | §8 output 1 (split) or 3 (ruling): its final check clean and every ruling accepted | `ai-review` success, merge |
    | §8 output 1 or 3: its final check reports anything or rejects a ruling | §8 output 4 |
@@ -602,8 +602,8 @@ specs/tooling/design-technical.md.
    `gh pr ready N` and enable auto-merge.
 7. **Bound:** one design per escalated issue. A PR over the cap whose design step was spent
    (§4 step 6's Exception: an `escalated to design:` comment naming another PR, or naming this PR
-   after a Design ruling or Design question, or a `Designed in:` line) goes to the owner. So a chain gets at most two design PRs: a picked `design` issue's ADR PR over
-   the cap is escalated once (the issue has neither mark yet), and the new design issue that
+   after a Design ruling or Design question, or a `Designed in:` line) goes to the owner. So a
+   chain gets at most two design PRs: a picked `design` issue's ADR PR over the cap is escalated once (the issue has neither mark yet), and the new design issue that
    escalation files carries `Designed in:`, so its ADR PR over the cap goes to the owner. An
    escalated Worker PR gets one design PR: the design issue filed for it already carries
    `Designed in:`.
