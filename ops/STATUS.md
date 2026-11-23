@@ -4,9 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #269** (#242, ADR 0011 task 1a): `cargo xtask next-session` decides TICK rules a–f (steps 1–5) and prints
-  `legacy` otherwise; ops/TICK.md §2 runs it from the merge on. Review rounds 3 (R1: 2 majors fixed), auto-merge once
-  `ai-review` is posted. `deferred` added to #236, #146 and #231 so the scheduler skips them as sessions already did.
+- PR #269 (#242, ADR 0011 task 1a) merged (959c4c6): `cargo xtask next-session` decides TICK rules a–f and prints
+  `legacy` otherwise; ops/TICK.md §2 runs it. `deferred` on #236, #146 and #231 so the scheduler skips them.
+- main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra); rerun --failed requested.
 - PRs #267 (#219) and #268 (#235) merged. Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths` can be removed
   (the scheduler's `Notes:` list them).
 - **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
@@ -27,11 +27,12 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
-- Before it, i: #235 → PR #268 (merged). Journal 2026-11-23 18:50.
+- b (first scheduler pick): main red on run 45249100863, macOS runner not acquired → rerun. Journal 2026-11-23 20:03.
+- Before it, i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
 
 ## Next step (suggested order, TICK letters)
-0. Once PR #269 merges, start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
+0. Start with `cargo xtask next-session` (TICK §2). If it picks main-red for run 45249100863 again while that rerun
+   is still pending or green, that is the scheduler reading a stale run; check the latest main run first. On `legacy`: rule i, lowest number first:
    #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
    comments on it untagged.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
