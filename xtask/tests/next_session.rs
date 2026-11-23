@@ -1316,6 +1316,165 @@ fn step7_audit_product_merges() {
     );
 }
 
+/// #282: a due audit or retro is not picked while an open agent PR links an open issue with
+/// that label (the slot is already being done), whatever the PR's checks say.
+#[test]
+fn step7_slot_in_flight() {
+    let audit_due = log_with(&merges(9, "crates/c.rs"));
+    let slot = |issue_labels: &[&str], pr_json: String| {
+        vec![
+            audit_due.clone(),
+            plus("issues.json", &[issue(400, "Audit 0007", issue_labels)]),
+            plus("prs.json", &[pr_json]),
+        ]
+    };
+    let open_pr = |body: &str| pr(401, "OPEN", body, "t/400-audit", &[], GREEN);
+    assert_eq!(pick(std::slice::from_ref(&audit_due)), "audit due");
+    let doing = slot(&["audit", "in-progress"], open_pr("Closes #400"));
+    assert_eq!(pick(&doing), "legacy");
+    let out = String::from_utf8(run_with(&doing).unwrap().stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "- audit due (10 product merges since {:07x}) but PR #401 is open for it: not picked\n",
+            104
+        )),
+        "{out}"
+    );
+    // The label alone is enough, and a draft or failing PR counts too: a failing one is step 3's.
+    assert_eq!(pick(&slot(&["audit"], open_pr("Closes #400"))), "legacy");
+    let failing = pr(401, "OPEN", "Closes #400", "t/400-audit", &[], "null");
+    assert_eq!(
+        pick(&slot(&["audit"], failing.clone())),
+        "worker own-pr #401"
+    );
+    // Parked for the owner: step 3 skips it, and the audit is still not redone.
+    assert_eq!(pick(&slot(&["audit", "owner-todo"], failing)), "legacy");
+    // Near misses: the audit is still due.
+    for (l, p) in [
+        (vec!["retro"], open_pr("Closes #400")),
+        (vec!["audit-x"], open_pr("Closes #400")),
+        (vec!["in-progress"], open_pr("Closes #400")),
+        (vec!["audit"], open_pr("Closes #402")),
+        (vec!["audit"], open_pr("See #400")),
+        (
+            vec!["audit"],
+            pr(401, "MERGED", "Closes #400", "t/400-audit", &[], "[]"),
+        ),
+        (
+            vec!["audit"],
+            pr(401, "CLOSED", "Closes #400", "t/400-audit", &[], "[]"),
+        ),
+        (
+            vec!["audit"],
+            raw_pr(401, "OPEN", "Closes #400", "t/400-audit", &[], GREEN),
+        ),
+        // The PR's own label is not the linked issue's.
+        (
+            vec![],
+            pr(401, "OPEN", "Closes #400", "t/400-audit", &["audit"], GREEN),
+        ),
+    ] {
+        assert_eq!(pick(&slot(&l, p.clone())), "audit due", "{l:?} {p}");
+    }
+    // A linked issue that is closed (not in issues.json) doesn't hold the slot.
+    assert_eq!(
+        pick(&[
+            audit_due.clone(),
+            plus("prs.json", &[open_pr("Closes #400")])
+        ]),
+        "audit due"
+    );
+
+    // The retro: due 7 days after its record (the audit record stays newer).
+    let now = set("now.txt", format!("{}\n", RETRO_T + WEEK));
+    let log = set(
+        "main-log.txt",
+        [
+            commit(
+                104,
+                RETRO_T + WEEK - 10,
+                "Audit",
+                &[("A", "docs/audits/0006.md")],
+            ),
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat(),
+    );
+    let retro = |issue_labels: &[&str]| {
+        pick(&[
+            now.clone(),
+            log.clone(),
+            plus("issues.json", &[issue(410, "Retro 0003", issue_labels)]),
+            plus(
+                "prs.json",
+                &[pr(411, "OPEN", "Closes #410", "t/410-retro", &[], GREEN)],
+            ),
+        ])
+    };
+    assert_eq!(retro(&[]), "retro due");
+    assert_eq!(retro(&["audit"]), "retro due");
+    assert_eq!(retro(&["retro", "in-progress"]), "legacy");
+    // An audit in flight while a retro is due falls through to the retro.
+    let mut both = slot(&["audit"], open_pr("Closes #400"));
+    both.push(set("now.txt", format!("{}\n", NOW + 6 * DAY)));
+    assert_eq!(pick(&both), "retro due");
+    // Both in flight: neither is picked, and the brief notes both.
+    both.extend([
+        plus(
+            "issues.json",
+            &[
+                issue(400, "Audit 0007", &["audit"]),
+                issue(410, "Retro 0003", &["retro"]),
+            ],
+        ),
+        plus(
+            "prs.json",
+            &[
+                open_pr("Closes #400"),
+                pr(411, "OPEN", "Closes #410", "t/410-retro", &[], GREEN),
+            ],
+        ),
+    ]);
+    assert_eq!(pick(&both), "legacy");
+    let out = String::from_utf8(run_with(&both).unwrap().stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "- audit due (10 product merges since {:07x}) but PR #401 is open for it: not picked\n",
+            104
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "- retro due (8 days since {:07x}) but PR #411 is open for it: not picked\n",
+            103
+        )),
+        "{out}"
+    );
+    // Two open PRs hold the audit: the note names the lowest number, whatever the list order.
+    let two = vec![
+        audit_due.clone(),
+        plus(
+            "issues.json",
+            &[
+                issue(400, "Audit 0007", &["audit"]),
+                issue(402, "Audit 0007", &["audit"]),
+            ],
+        ),
+        plus(
+            "prs.json",
+            &[
+                pr(403, "OPEN", "Closes #402", "t/402-audit", &[], GREEN),
+                open_pr("Closes #400"),
+            ],
+        ),
+    ];
+    let lowest = String::from_utf8(run_with(&two).unwrap().stdout).unwrap();
+    assert!(lowest.contains("but PR #401 is open for it"), "{lowest}");
+    assert!(!lowest.contains("PR #403"), "{lowest}");
+}
+
 #[test]
 fn step7_audit_records_and_age() {
     let at = |t: i64| set("now.txt", format!("{}\n", t));
