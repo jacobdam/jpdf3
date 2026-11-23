@@ -580,13 +580,13 @@ pub struct Inputs {
     jobs: BTreeMap<u64, Vec<String>>,
 }
 
-/// The default `--since`: the day the last retro record was added, else `until` − 7 days; a
-/// default after `until` also falls back to `until` − 7 days.
+/// The default `--since`: the day the last retro record dated on or before `until` was added,
+/// else `until` − 7 days. Records after `until` are skipped, as in the lag section (#261 R1.1).
 fn default_since(commits: &[Commit], until: i64) -> i64 {
     records(commits, "retros")
-        .last()
-        .map(|(_, day, _)| *day)
-        .filter(|d| *d <= until)
+        .into_iter()
+        .map(|(_, day, _)| day)
+        .rfind(|d| *d <= until)
         .unwrap_or(until.saturating_sub(DEFAULT_DAYS))
 }
 
@@ -798,7 +798,7 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
         u64::try_from(commits.len().saturating_sub(p).saturating_sub(1)).unwrap_or(u64::MAX)
     });
     // Retro records dated after --until are left out, so the lag is never negative (audit
-    // 0006 AC.3); default_since skips them the same way.
+    // 0006 AC.3); default_since uses the same records.
     let mut prev_day: Option<i64> = None;
     for (_, day, path) in records(commits, "retros")
         .into_iter()
@@ -1470,6 +1470,10 @@ mod tests {
             "2026-11-22T11:48:38Z ",
             "2026-11-22T11:48:38",
             "2026-11-22T11:48:38.000Z",
+            "2026-11-22T11:48:38x",
+            "2026-11-22x11:48:38Z",
+            "2026-11-22T11x48:38Z",
+            "2026-11-22T11:48x38Z",
             "2026-11-22 11:48:38Z",
             "2026-11-22T11-48:38Z",
             "2026-11-22T11:48-38Z",
@@ -1592,7 +1596,12 @@ mod tests {
         );
         assert_eq!(records(&c, "retros").len(), 2); // 0000-pilot.md is not a record
         assert_eq!(default_since(&c, d("2026-11-22")), d("2026-11-22"));
-        assert_eq!(default_since(&c, d("2026-11-21")), d("2026-11-14")); // newest retro after until: skipped
+        // The newest retro (2026-11-22) is after until: the one before it is used (#261 R1.1).
+        // 2026-11-21 − 7 is also 2026-11-14, so 2026-11-20 tells the two rules apart.
+        assert_eq!(default_since(&c, d("2026-11-21")), d("2026-11-14"));
+        assert_eq!(default_since(&c, d("2026-11-20")), d("2026-11-14"));
+        // No retro record on or before until.
+        assert_eq!(default_since(&c, d("2026-11-13")), d("2026-11-06"));
         assert_eq!(default_since(&[], d("2026-11-22")), d("2026-11-15"));
         for bad in [
             "x\t1\tsrc/a.rs\n",

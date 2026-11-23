@@ -14,13 +14,15 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
 - **Period.** `--since` and `--until` are UTC calendar dates, both inclusive. `--until`
   defaults to today (UTC, from the system clock). `--since` defaults to the UTC committer date of
   the commit that added the last `docs/retros/NNNN.md` (exact four-digit name, so
-  `0000-pilot.md` doesn't count) on the first-parent history; with no retro record, or one
-  dated after `--until`, to `--until` minus 7 days. An explicit `--since` after `--until`
+  `0000-pilot.md` doesn't count) on the first-parent history among those dated on or before
+  `--until` (records added later are skipped); with no such record, to `--until` minus 7 days. An explicit `--since` after `--until`
   (given or defaulted) is a usage error. Back-to-back default periods share one day when a
   retro record merges on the day its numbers were taken: that day was the previous period's
-  `--until` and is this one's `--since`. Starting a day later would instead drop the days
-  between taking the numbers and merging the record when the merge comes later, so the
-  overlap is kept (audit 0006 AC.5).
+  `--until` and is this one's `--since`. When the record merges later, the days after the
+  previous `--until` up to the day before the merge fall in neither period (numbers taken
+  with `--until 2026-11-20`, record merged 2026-11-22: 2026-11-21 is in no period). Starting a
+  day later would remove the overlap but widen that gap by the merge day, so the rule stays
+  (audit 0006 AC.5).
 - **Inputs.** It runs only read commands, from the current directory (the repo root):
   1. `git log --first-parent --no-renames --format=@@%H%x09%ct%x09%s --numstat --summary origin/main`
      → `raw/git-log.txt` (it reads the local `origin/main`, so `git fetch` first). `%ct` is
@@ -50,8 +52,10 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
   none). A run without an index deletes any `raw/index.tsv` an earlier run left in the same
   `--out`, so `--from` on that `raw/` sees no session data instead of the old sessions
   (audit 0006 CX.11). Other files from an earlier run can stay: every required file is
-  rewritten, and `jobs-<id>.json` is read only for the runs this run's `runs.json` selects,
-  each of which a live run fetches again.
+  rewritten, and `jobs-<id>.json` is read only for the runs that `runs.json` selects for the
+  period. With the live run's own period, a live run fetched each of them again; `--from`
+  with a different period can select runs whose `jobs-<id>.json` an earlier live run into the
+  same `--out` left, and those describe that run as it was then.
 - **Outputs.** `DIR/raw/` (the inputs; not written with `--from`), `DIR/metrics.md` (the
   report, also printed on stdout) and `DIR/metrics.json` (the same numbers as JSON, below). `--out` defaults to `target/metrics`. Exit **0** on success,
   **1** when a command fails or an input doesn't parse, **2** on a usage error.
@@ -224,7 +228,7 @@ With it, 2026-11-21 to 2026-11-23 (82 merges, 410 CI runs, 5 failed runs read) t
 - Unit tests in xtask/src/metrics.rs: date parsing and day arithmetic (leap years, invalid
   dates, year bounds), option parsing (including `--since` after the default `--until`), git
   log parsing (UTC days from `%ct`, time bounds, excluded paths, binary files, record additions,
-  the default `--since`), index rows (malformed rows, impossible times included, skipped and
+  the default `--since`, including a newer record after `--until` skipped), index rows (malformed rows, impossible times included, skipped and
   counted; period edges; a signed exit code or duration), timestamps (nothing after the `Z`,
   time bounds), review parsing (tag check, header on the first line only, round K from review headers
   only, final check in round 5 only, finding IDs counted once, restatements and audit IDs ignored, regrades,
