@@ -6,9 +6,11 @@ Phase: bootstrap (pilot)
 ## In flight
 - **Retro 0002** (#279, PR #281) merged: one journal file per session (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`),
   STATUS conflicts take main's copy (ADR 0011 §3), a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md.
-- **#282** (PR #284): next-session step 7 no longer picks `audit due` / `retro due` while an open agent PR links an
-  open `audit` / `retro` issue (TICK §6, §7: file and label that issue, draft the PR early). `ai-review` after 2
-  rounds; auto-merge on.
+- **#282** (PR #284) merged: next-session step 7 skips `audit due` / `retro due` while an open agent PR links an open
+  `audit` / `retro` issue.
+- **#261** (PR #286): audit 0006 tooling follow-ups (metrics edge cases, fuzz exit mapping test, capture 16 MiB
+  boundary test). `ai-review` success after 2 rounds; auto-merge on.
+- **PR #285** (#243, step 11 Planner/idle, Session: records): open, another session's.
 - **PR #276** (#245, ADR 0011 task 3 part 1): parked at the review cap (4 rounds + final check), `owner-todo`,
   `blocked`. Part 2: #275. Follow-ups: #277.
 - `cargo xtask next-session` now decides steps 1–5, 7 (audit, retro) and 10 (ready issue) (PRs #269, #272, #274);
@@ -25,7 +27,7 @@ Phase: bootstrap (pilot)
 ## Next step
 0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
    M0 `ready` issue whose `Depends on:` issues are closed (#275 waits for PR #276).
-1. **Next audit:** 1 product merge since audit 0006 (9 merges in all); due at 10 product merges or 2026-11-30.
+1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
    audit lag under the scheduler, the product-merge share (baseline 23%) and the records-only share

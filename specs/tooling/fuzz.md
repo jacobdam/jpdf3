@@ -145,7 +145,11 @@ without seeds (≈ 1150 with seeds).
   copied after its `---- <name> (ok|FAILED) ----` header in order, a log the command deleted
   is reported as `cannot read <log>: …` after its header, and a command that cannot
   start is an error returned only after the started ones ended, keeping the failures found
-  before it, with no later command started; the tool checks (`nightly_listed` matches the
+  before it, with no later command started; `run_result` (how `run` maps `run_all`'s outcome:
+  no failure is success, failed targets give the crash message naming each of them, a start
+  error alone is that error, a start error with failures is both, audit 0006 AC.7) and
+  `ci_result` (how `ci linux` combines the fuzz pass and the `fuzz/` format check: all four
+  cases); the tool checks (`nightly_listed` matches the
   pinned date only as a whole toolchain name, `cargo_fuzz_pinned` only the exact
   `cargo-fuzz <version>` line, `needs_nightly`/`needs_cargo_fuzz` and the two install
   commands). Running the install commands happens only on CI and has no unit test.

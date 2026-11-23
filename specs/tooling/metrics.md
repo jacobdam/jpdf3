@@ -14,9 +14,15 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
 - **Period.** `--since` and `--until` are UTC calendar dates, both inclusive. `--until`
   defaults to today (UTC, from the system clock). `--since` defaults to the UTC committer date of
   the commit that added the last `docs/retros/NNNN.md` (exact four-digit name, so
-  `0000-pilot.md` doesn't count) on the first-parent history; with no retro record, or one
-  dated after `--until`, to `--until` minus 7 days. An explicit `--since` after `--until`
-  (given or defaulted) is a usage error.
+  `0000-pilot.md` doesn't count) on the first-parent history among those dated on or before
+  `--until` (records added later are skipped); with no such record, to `--until` minus 7 days. An explicit `--since` after `--until`
+  (given or defaulted) is a usage error. Back-to-back default periods share one day when a
+  retro record merges on the day its numbers were taken: that day was the previous period's
+  `--until` and is this one's `--since`. When the record merges later, the days after the
+  previous `--until` up to the day before the merge fall in neither period (numbers taken
+  with `--until 2026-11-20`, record merged 2026-11-22: 2026-11-21 is in no period). Starting a
+  day later would remove the overlap but widen that gap by the merge day, so the rule stays
+  (audit 0006 AC.5).
 - **Inputs.** It runs only read commands, from the current directory (the repo root):
   1. `git log --first-parent --no-renames --format=@@%H%x09%ct%x09%s --numstat --summary origin/main`
      → `raw/git-log.txt` (it reads the local `origin/main`, so `git fetch` first). `%ct` is
@@ -43,7 +49,13 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
   offline. With `--from`, the index defaults to `DIR/index.tsv` (`--index` still overrides it)
   and may be missing, and so may each `jobs-<id>.json` (that run's jobs count as unknown);
   every other file must exist, `runs.json` included (a `raw/` directory saved before #219 has
-  none).
+  none). A run without an index deletes any `raw/index.tsv` an earlier run left in the same
+  `--out`, so `--from` on that `raw/` sees no session data instead of the old sessions
+  (audit 0006 CX.11). Other files from an earlier run can stay: every required file is
+  rewritten, and `jobs-<id>.json` is read only for the runs that `runs.json` selects for the
+  period. With the live run's own period, a live run fetched each of them again; `--from`
+  with a different period can select runs whose `jobs-<id>.json` an earlier live run into the
+  same `--out` left, and those describe that run as it was then.
 - **Outputs.** `DIR/raw/` (the inputs; not written with `--from`), `DIR/metrics.md` (the
   report, also printed on stdout) and `DIR/metrics.json` (the same numbers as JSON, below). `--out` defaults to `target/metrics`. Exit **0** on success,
   **1** when a command fails or an input doesn't parse, **2** on a usage error.
@@ -69,7 +81,8 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
        (subagent) or `S<K>.<n> [<severity>]` (second reviewer), severity one of blocker, major,
        minor, nit. Each ID counts once per PR, at its first severity.
      - Regrades: findings with a line in a triage comment (`**AI review triage, round K`) that
-       starts with `<ID>: regraded`, each ID once.
+       starts with `<ID>: regraded`, each ID once, and only IDs a review comment reported as a
+       finding (audit 0006 AC.4).
      - Summary: PRs reviewed, median rounds, the share at 4 or more rounds and the share with a
        final check, total findings by severity for each reviewer, total regrades.
   3. *CI* (workflow `ci.yml`, runs whose `createdAt` UTC day is in the period; each
@@ -93,12 +106,18 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
   5. *Audit and retro lag* (all history, not only the period): each audit record
      (`docs/audits/NNNN.md`) with the date its commit added it and the merges since the
      previous audit record; merges since the last audit record up to the tip of `origin/main`
-     (TICK §1's count); each retro record with its date and the days since the previous one;
-     days from the last retro record to `--until`.
+     (TICK §1's count); each retro record dated on or before `--until` with its date and the
+     days since the previous one; days from the last of them to `--until` (never negative:
+     records dated after `--until` are left out, as for the default `--since`; audit 0006
+     AC.3).
 - **Truncation.** A `gh` list that returns `--limit` (1000) entries may be cut off; the report
-  warns for each such list (merged PRs, closed issues, open issues, CI runs).
+  warns for each such list (merged PRs, closed issues, open issues, CI runs). `gh pr list`
+  fetches at most 100 conversation comments per PR (`comments(first: 100)`, not paginated), so
+  a merged PR in the period with exactly 100 comments may have lost review headers: the report
+  lists those PRs in one warning, since their review figures may be incomplete (audit 0006
+  CX.10).
 - **metrics.json.** One object: `since` and `until` (`YYYY-MM-DD`), `truncated` (the list
-  names), `throughput` (`merges`, `lines_added`, `lines_deleted`, `merged_prs`,
+  names), `comments_truncated` (the PR numbers above, ascending), `throughput` (`merges`, `lines_added`, `lines_deleted`, `merged_prs`,
   `closed_issues`, `sessions`: `null` without an index, else `count`, `nonzero`,
   `total_seconds`, `median_seconds`, `malformed`), `review` (`prs`, `median_rounds`, `at_cap`,
   `final_checks`, `regrades`, `subagent` and `second` as `{blocker, major, minor, nit}`,
@@ -131,20 +150,23 @@ Not applicable (read-only report; delete `--out` to undo).
 - Exit 1, with the failing command or file named on stderr: `git` or `gh` missing or failing,
   a tool printing more than 16 MiB or non-UTF-8 text, a missing required input file, a JSON
   document that doesn't parse or lacks a required field (`number`, `mergedAt`, `closedAt`,
-  `createdAt`; in `runs.json` `databaseId`, `createdAt`, `conclusion`, `event`, `headBranch`
+  `createdAt`, each timestamp exactly `YYYY-MM-DDTHH:MM:SSZ` with a real date, a time up to
+  23:59:59 and nothing after the `Z`; in `runs.json` `databaseId`, `createdAt`, `conclusion`, `event`, `headBranch`
   and `attempt`; in a `jobs-<id>.json` the `jobs` array, and `name` for a failed job; a comment
   without a string `body` is skipped), a `git log` line that doesn't
   follow the fixed format (including a commit time before 1970 or after 9999-12-31), an output
   file that can't be written.
 - Index rows that don't have exactly four tab-separated fields (a valid stamp, with a real date
-  and a time up to 23:59:59, an integer exit
-  code, a session id, a `<seconds>s` duration) are skipped and counted in the report
+  and a time up to 23:59:59, an exit code of ASCII digits only, a session id, a `<seconds>s`
+  duration with digits only; a `+` or `-` sign is malformed, audit 0006 AC.8) are skipped and counted in the report
   ("malformed rows"), since the driver appends to the file and a crash can leave a partial line.
 
 ## Limits
 - Each command's stdout and stderr are capped at 16 MiB (the `capture` helper shared with
-  `ci macos`); past the cap the command is killed and the run fails. No exact-boundary test yet:
-  the helper's tests in xtask/src/macos.rs move 300 000 bytes only (audit 0006 AC.2, #261).
+  `ci macos`); past the cap the command is killed and the run fails. Boundary test
+  (xtask/src/macos.rs, audit 0006 AC.2): exactly 16 MiB on stdout, and on stderr, passes;
+  16 MiB + 1 on either fails with `output larger than 16777216 bytes`.
+- Per-PR comments: 100 (gh's own page size); exactly 100 is flagged, 99 is not.
 - JSON nesting is capped at 128 (tools/jpdf-testgen/src/json.rs, moved from xtask in #235).
 - `gh` lists are capped at 1000 entries and report truncation. Boundary test, for each of the
   four lists: 999 entries aren't flagged, exactly 1000 are.
@@ -206,13 +228,17 @@ With it, 2026-11-21 to 2026-11-23 (82 merges, 410 CI runs, 5 failed runs read) t
 - Unit tests in xtask/src/metrics.rs: date parsing and day arithmetic (leap years, invalid
   dates, year bounds), option parsing (including `--since` after the default `--until`), git
   log parsing (UTC days from `%ct`, time bounds, excluded paths, binary files, record additions,
-  the default `--since`), index rows (malformed rows, impossible times included, skipped and
-  counted; period edges), review parsing (tag check, header on the first line only, round K from review headers
-  only, final check in round 5 only, finding IDs counted once, restatements and audit IDs ignored, regrades),
+  the default `--since`, including a newer record after `--until` skipped), index rows (malformed rows, impossible times included, skipped and
+  counted; period edges; a signed exit code or duration), timestamps (nothing after the `Z`,
+  time bounds), review parsing (tag check, header on the first line only, round K from review headers
+  only, final check in round 5 only, finding IDs counted once, restatements and audit IDs ignored, regrades,
+  a regrade of an ID no review reported not counted),
   the period filter for merges, PRs, closed issues and CI runs, the CI counts (conclusions,
   main vs other branches including a pull request from a branch named `main`, re-runs,
   duplicate run ids, failing jobs once per run, missing job data), the 100-run job cap,
-  stuck ages, lag counts, truncation at exactly 1000 for each list, escaping of titles, and
+  stuck ages, lag counts (a retro record after `--until` left out of the list and the days),
+  truncation at exactly 1000 for each list and at exactly 100 comments for a PR, removing a
+  stale `raw/index.tsv`, escaping of titles, and
   `metrics.json` (it parses, its numbers match the report, and escaped strings round-trip).
 - xtask/tests/metrics.rs runs `cargo xtask metrics --from <fixture>` end to end: the report's
   numbers for xtask/tests/fixtures/metrics/ (the CI section and `metrics.json` included), the
