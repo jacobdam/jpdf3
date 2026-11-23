@@ -4,10 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #264** (#210): ops/proposals/hold-automerge.md (`/hold` turns auto-merge off; the owner-commands comment
-  reports the state read back from GitHub). `ai-review` success after round 3, auto-merge on. When it merges (#210
-  closes): file the owner's part (apply the proposal, run T0 and T1–T4) as a new issue with `owner-todo`, and add
-  T1–T4 to #208.
+- **PR #267** (#219): `cargo xtask metrics` CI section and metrics.json. `ai-review` success after round 3,
+  auto-merge on. Retro 0002 reads CI failure counts from it (the issue's success check).
+- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
+- PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
   comment exists: rule a, start with #242.
@@ -24,19 +24,20 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #210 → PR #264 (proposal for owner-commands.yml). Journal 2026-11-23 17:10.
-- Before it, g: audit 0006 (PR #259, merged bb09d0e). Journal 2026-11-23 16:19.
+- i: #219 → PR #267 (metrics CI section + metrics.json). Journal 2026-11-23 17:49.
+- Before it, i: #210 → PR #264 (merged). Journal 2026-11-23 17:10.
 
 ## Next step (suggested order, TICK letters)
 0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
-   #216, #219, #235, #242, #261.
+   #235, #242, #261 (#216 and #219 have PRs on auto-merge).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 - **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv`
-  (specs/tooling/metrics.md; #261 fixes a negative retro-lag line for past periods). Inputs (carried from the
+  (specs/tooling/metrics.md; now with CI failures by job and target/metrics/metrics.json; #261 fixes a negative
+  retro-lag line for past periods). Inputs (carried from the
   last STATUS, plus audit 0006):
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
     final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
