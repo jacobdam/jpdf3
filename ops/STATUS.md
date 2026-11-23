@@ -56,7 +56,7 @@ Phase: bootstrap (pilot)
     near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
   - audits 0004–0006: gates that pass when nothing ran ("what still passes"), now in #262 and #261.
   - Codex on audit 0006: ok but brief-only again; 6 Codex-only findings, none above sev:low or minor.
-  - ops/proposals/: 4 applied or closed proposals still say "proposed" in their status line (docs/audits/0006.md).
+  - ops/proposals/: 5 applied proposals (including owner-comment-tracking.md) still say "proposed" in their status line (docs/audits/0006.md).
 - **Next audit:** after 10 more merges or by 2026-11-30.
 
 ## Blockers / owner-todo
