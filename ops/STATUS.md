@@ -4,9 +4,11 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #268** (#235): the jpdf-cli dependency gate also checks each allowed crate's target `src_path`s from
-  `cargo metadata`; the JSON reader moved from xtask to `jpdf_testgen::json`. Auto-merge once `ai-review` is posted.
-- PR #267 (#219) merged: `cargo xtask metrics` CI section and metrics.json (retro 0002 reads CI failures from it).
+- **PR #269** (#242, ADR 0011 task 1a): `cargo xtask next-session` decides TICK rules a–f (steps 1–5) and prints
+  `legacy` otherwise; ops/TICK.md §2 runs it from the merge on. Review rounds 3 (R1: 2 majors fixed), auto-merge once
+  `ai-review` is posted. `deferred` added to #236, #146 and #231 so the scheduler skips them as sessions already did.
+- PRs #267 (#219) and #268 (#235) merged. Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths` can be removed
+  (the scheduler's `Notes:` list them).
 - **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
@@ -19,18 +21,19 @@ Phase: bootstrap (pilot)
   check). No review round until an owner comment. Part 2: #231 (sev:high, M2; audit 0006 AS.6 added there).
 - #254 done: the owner applied ops/proposals/ci-fuzz-tools-cache.md in #256. #257 (`owner-todo`): drop the Playwright
   cache. #252 (sev:medium, M10), #253 (nit) remain.
-- ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR) waits for #245 (owner direction on #236).
-- #146 stays open (decode/raster gate; waits for #25 or #236). #235 (PR #268) is the dependency gate's follow-up.
+- ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR, `deferred`) waits for #245 (owner direction on #236).
+- #146 stays open, `deferred` (decode/raster gate; waits for #25 or #236). #235 (PR #268) is the dependency gate's follow-up.
 - #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. The /hold drill fails:
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #235 → PR #268 (gate: target source paths from cargo metadata). Journal 2026-11-23 18:50.
-- Before it, i: #219 → PR #267 (merged). Journal 2026-11-23 17:49.
+- i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
+- Before it, i: #235 → PR #268 (merged). Journal 2026-11-23 18:50.
 
 ## Next step (suggested order, TICK letters)
-0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
-   #242, #261 (#216 and #235 have PRs on auto-merge).
+0. Once PR #269 merges, start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
+   #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
+   comments on it untagged.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
