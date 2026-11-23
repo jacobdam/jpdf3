@@ -69,8 +69,23 @@ fn report_from_saved_inputs() {
         "Merges since the last audit record: 2.\n",
         "- docs/retros/0002.md: 2026-11-22 (7 days after the previous one)\n",
         "Days from the last retro record to 2026-11-22: 0.\n",
+        "Runs: 4 (failure 3, success 1).\n",
+        "Failed runs (conclusion `failure`): main 1, other branches 2.\n",
+        "Re-runs (attempt > 1): 2, of which ended in success: 1.",
+        "Failing jobs over 2 failed runs read (1 more without job data):\n\n",
+        "| policy | 2 |\n| judge-verdict | 1 |\n",
     ] {
         assert!(md.contains(want), "missing {want:?} in\n{md}");
+    }
+    assert!(!md.contains("outside-the-period"), "{md}");
+    let json = fs::read_to_string(out.join("metrics.json")).unwrap();
+    for want in [
+        "\"since\":\"2026-11-15\",\"until\":\"2026-11-22\"",
+        "\"merges\":2,\"lines_added\":13,\"lines_deleted\":3,\"merged_prs\":2,\"closed_issues\":2",
+        "\"ci\":{\"runs\":4,\"by_conclusion\":{\"failure\":3,\"success\":1},\"failed_main\":1,\"failed_other\":2,\"reruns\":2,\"reruns_success\":1,\"jobs_read\":2,\"jobs_unknown\":1,\"jobs_capped\":false,\"failing_jobs\":{\"judge-verdict\":1,\"policy\":2}}",
+        "\"blocked\":[{\"number\":3,\"title\":\"stuck | here\",\"age_days\":12}]",
+    ] {
+        assert!(json.contains(want), "missing {want:?} in\n{json}");
     }
 }
 
@@ -112,7 +127,12 @@ fn default_since_is_the_last_retro_and_index_can_be_given() {
 #[test]
 fn bad_input_exits_1_and_bad_usage_exits_2() {
     let bad = scratch("bad-in").unwrap();
-    for f in ["git-log.txt", "issues-closed.json", "issues-open.json"] {
+    for f in [
+        "git-log.txt",
+        "issues-closed.json",
+        "issues-open.json",
+        "runs.json",
+    ] {
         fs::copy(fixture().join(f), bad.join(f)).unwrap();
     }
     fs::write(bad.join("prs.json"), "[{\"number\":1,").unwrap();
@@ -141,6 +161,35 @@ fn bad_input_exits_1_and_bad_usage_exits_2() {
     ])
     .unwrap();
     assert_eq!(o.status.code(), Some(1), "a missing prs.json is an error");
+    fs::copy(fixture().join("prs.json"), bad.join("prs.json")).unwrap();
+    fs::remove_file(bad.join("runs.json")).unwrap();
+    let o = run(&[
+        "metrics",
+        "--from",
+        &s(&bad),
+        "--until",
+        "2026-11-22",
+        "--out",
+        &out,
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1), "a missing runs.json is an error");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("runs.json"));
+    // A malformed jobs file for a failed run that is read: exit 1, naming it.
+    fs::copy(fixture().join("runs.json"), bad.join("runs.json")).unwrap();
+    fs::write(bad.join("jobs-104.json"), "{\"nojobs\":[]}").unwrap();
+    let o = run(&[
+        "metrics",
+        "--from",
+        &s(&bad),
+        "--until",
+        "2026-11-22",
+        "--out",
+        &out,
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("jobs-104.json: missing array `jobs`"));
 
     for args in [
         &["metrics", "--since", "2026-11-31"][..],
