@@ -11,6 +11,8 @@ Phase: bootstrap (pilot)
   `blocked`. Part 2: #275. Follow-ups: #277.
 - `cargo xtask next-session` decides steps 1–5, 7 and 10 (PRs #269, #272, #274, #284) and step 11 (PR #285). Task 2
   (#244, the Planner session, `ops/QUEUE.md`, work-mix budget) is next in ADR 0011's order.
+- The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
+  tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - **PR #232** (#187 part 1): parked for the owner (draft, `ai-review` failure on 0831d70 after 4 rounds + final
   check). No review round until an owner comment. Part 2: #231 (sev:high, M2, `deferred`).
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
@@ -24,7 +26,7 @@ Phase: bootstrap (pilot)
 0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
    M0 `ready` issue whose `Depends on:` issues are closed (#275 waits for PR #276), else `planner` (rule j, once a
    day) or `idle`.
-1. **Next audit:** 1 product merge since audit 0006 (9 merges in all); due at 10 product merges or 2026-11-30.
+1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
    audit lag under the scheduler, the product-merge share (baseline 23%) and the records-only share
