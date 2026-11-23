@@ -433,6 +433,34 @@ fn review_round_1_near_misses() {
         format!(r#"[{{"number":173,"body":"b","comments":[{longer}]}}]"#),
     );
     assert_eq!(pick(&[closed]), "legacy");
+    // R2.1: the first numeric `Closes #N` is the link, not a later one.
+    let two = plus(
+        "prs.json",
+        &[pr(
+            311,
+            "OPEN",
+            "Closes #250\nCloses #251",
+            "t/250-z",
+            &[],
+            GREEN,
+        )],
+    );
+    assert_eq!(
+        pick(&[feed_plus(&[feed_issue(251), feed_issue(250)]), two]),
+        "worker owner-issue #251"
+    );
+    // R2.2: a non-boolean is_pr is exit 1.
+    for v in ["\"false\"", "null", "0"] {
+        let line = format!(r#"{{"kind":"issue","number":270,"is_pr":{v}}}"#);
+        let o = run_with(&[feed_plus(&[line])]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "is_pr {v}");
+    }
+    // R2.3: malformed owner replies in either owner list are exit 1.
+    for name in ["owner-open.json", "owner-closed.json"] {
+        let bad = r#"[{"number":1,"body":"b","labels":[],"comments":"x"}]"#;
+        let o = run_with(&[set(name, bad.to_owned())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{name}");
+    }
     // R1.8: a crash issue labeled sev:critical comes first.
     let mix = plus(
         "issues.json",
