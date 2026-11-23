@@ -7,7 +7,7 @@ except files and GitHub.
 
 Repo: `jacobdam/jpdf3` (cwd). Owner: GitHub user `jacobdam`.
 Read **CONSTITUTION.md** first and obey it exactly. Then `ops/STATUS.md`, **`ops/LESSONS.md`**
-(what earlier sessions learned the hard way), then today's `ops/journal/` entry. Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
+(what earlier sessions learned the hard way), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
 milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 0. Ground rules for this session
@@ -90,7 +90,7 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3
+cat ops/STATUS.md ops/LESSONS.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -204,7 +204,9 @@ still come first). Do these in order, one per session:
 2. **Spec first** (`specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`, with every checklist
    section), then **failing tests**, then **code**. Answer the template's Security
    self-check and Limits boundary list in the spec **before** the review; they are the
-   reviewers' most frequent findings (retro 0001).
+   reviewers' most frequent findings (retro 0001). A PR with no spec (an ADR, a proposal, a
+   TICK or tooling change) answers the self-check items that apply in its description before
+   round 1 (retro 0002: the filter, gate and loop-rule findings were mostly in such PRs).
 3. **Local checks:**
    - `cargo fmt --all`
    - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -363,7 +365,7 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
     `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
 
-  Proposal: `ops/proposals/guard-inert-post-text.md`.
+  Design record: `ops/proposals/guard-inert-post-text.md` (applied in PR #145).
 
 Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
@@ -384,7 +386,12 @@ leave the PR blocked.
   after `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
+- **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
+  start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
+  `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
+  two PRs carrying records merge in either order (retro 0002: 4 sessions on 2026-11-23 did
+  nothing but merge journal/STATUS conflicts). Entries written before retro 0002 stay in
+  the single `ops/journal/YYYY-MM-DD.md` files, so 2026-11-23 has both. Use this template:
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
   - Picked: <priority rule a–j> because <why>
@@ -398,8 +405,11 @@ leave the PR blocked.
 - **Lessons:** if the lesson would help a future session, add it to `ops/LESSONS.md` under the
   right heading, as one line in the form *situation → what to do* plus a link to the journal entry.
   Check for an existing entry first and refine it rather than duplicating it.
-- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, last session
-  summary, next intended step, blockers.
+- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
+  step, blockers. It has no "last session" section (the journal files are that record). A merge
+  of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
+  0011 §3), dropping lines about PRs that have merged since. Records going into the work PR
+  (ADR 0011 §3) is task 1b part 2, #243.
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
