@@ -6,7 +6,8 @@ Phase: bootstrap (pilot)
 ## In flight
 - **PR #267** (#219): `cargo xtask metrics` CI section and metrics.json. `ai-review` success after round 3,
   auto-merge on. Retro 0002 reads CI failure counts from it (the issue's success check).
-- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
+- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on; main merged in (conflicts fixed 19:27 UTC).
+- **PR #268** (#235): dependency gate 2, `ai-review` success, auto-merge on, judge-verdict running.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -24,8 +25,8 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #219 → PR #267 (metrics CI section + metrics.json). Journal 2026-11-23 17:49.
-- Before it, i: #210 → PR #264 (merged). Journal 2026-11-23 17:10.
+- c: PR #265 merge conflict with main fixed (9f040a6). Journal 2026-11-23 19:27.
+- Before it, i: #219 → PR #267 (metrics CI section + metrics.json). Journal 2026-11-23 17:49.
 
 ## Next step (suggested order, TICK letters)
 0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
