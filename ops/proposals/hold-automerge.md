@@ -134,17 +134,22 @@ What changes:
 
 **T0 (local, done in the proposal PR; rerun before applying):**
 `ops/proposals/hold-automerge/test.sh` runs the `run: |` block of a workflow file against a
-fake `gh` that keeps the PR's draft and auto-merge state and can fail each call. 13 cases: hold
-on a ready PR with auto-merge, disable failing (the #210 case), draft conversion failing, already
-held, draft with auto-merge on, state unreadable once, always, or garbled, `/hold` with trailing
-text, and four `/release` cases. It also checks that a held PR gets no mutation calls and that an
-unreadable state is reported as `unknown`.
+fake `gh` that keeps the PR's draft and auto-merge state and can fail each call. Its `pr view`
+builds the PR's JSON from the fields the script names in `--json` (`autoMergeRequest` is an
+object while auto-merge is on, else `null`) and runs the script's `--jq` expression over it with
+`jq`, so the field list and the expression are tested too. 13 cases: hold on a ready PR with
+auto-merge, disable failing (the #210 case), draft conversion failing, already held, draft with
+auto-merge on, state unreadable once, always, or garbled, `/hold` with trailing text, and four
+`/release` cases. It also checks that a PR already held (`/hold`) or already ready (`/release`)
+gets no mutation calls, and that an unreadable state is reported as `unknown`.
 - On the proposed file: `0 failure(s)`, exit 0.
 - On today's `.github/workflows/owner-commands.yml`
-  (`ops/proposals/hold-automerge/test.sh .github/workflows/owner-commands.yml`): 8 failures,
+  (`ops/proposals/hold-automerge/test.sh .github/workflows/owner-commands.yml`): 9 failures,
   exit 1, including `hold-disable-fails` (rc 0 and "applied" while auto-merge stays on).
-- 11 hand mutants of the proposed script (each check term flipped or dropped, `exit 1` removed,
-  each `readstate` re-read removed, the `unknown` default changed) all fail the harness.
+- 17 hand mutants of the proposed script all fail the harness: each `if` guard and final check
+  flipped, and each `if` guard replaced by `true`; `exit 1` removed; each `readstate` re-read
+  removed; the `unknown` default changed; `|| return 0` changed to `|| true`; and the state
+  query broken three ways (`!= null` to `== null`, `--json isDraft` only, `.isDraft | not`).
 
 **On GitHub, after applying (the owner; add to #208):**
 - **T1** (the #210 case): on a ready PR with auto-merge on (a docs-only scratch PR), comment

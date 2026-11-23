@@ -10,7 +10,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 wf=${1:-$here/owner-commands.yml}
 root=$(git -C "$here" rev-parse --show-toplevel)
-scratch=$(mktemp -d "${2:-$root/target/scratch}/hold-automerge.XXXXXX")
+base=${2:-$root/target/scratch}
+mkdir -p "$base"
+scratch=$(mktemp -d "$base/hold-automerge.XXXXXX")
 
 # The step's script: every line after `run: |`, with the block's 10-space indent removed.
 awk 'f { sub(/^          /, ""); print } /^        run: \|$/ { f = 1 }' "$wf" >"$scratch/step.sh"
@@ -20,6 +22,9 @@ mkdir -p "$scratch/bin"
 cat >"$scratch/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 # Fake gh: state in $S/draft and $S/auto; a file $S/fail_<name> makes that call exit 1.
+# `pr view` builds the PR's JSON with only the fields named by --json (autoMergeRequest is an
+# object while auto-merge is on, else null, as in GitHub's API) and runs the caller's --jq
+# expression over it with jq, so the script's real field list and expression are tested.
 echo "$*" >>"$S/calls"
 fail() { [[ -e "$S/fail_$1" ]]; }
 case "$1 $2" in
@@ -27,7 +32,21 @@ case "$1 $2" in
     fail view && exit 1
     if [[ -e "$S/fail_view_once" ]]; then rm "$S/fail_view_once"; exit 1; fi
     if [[ -e "$S/garbage_view" ]]; then echo "null"; exit 0; fi
-    echo "$(cat "$S/draft") $(cat "$S/auto")" ;;
+    [[ "$4" == --json && "$6" == --jq && $# == 7 ]] || exit 9
+    obj="{}"
+    for f in ${5//,/ }; do
+      case "$f" in
+        isDraft) obj=$(jq -c --argjson v "$(cat "$S/draft")" '. + {isDraft: $v}' <<<"$obj") ;;
+        autoMergeRequest)
+          if [[ "$(cat "$S/auto")" == true ]]; then
+            obj=$(jq -c '. + {autoMergeRequest: {mergeMethod: "SQUASH", enabledAt: "2026-11-23T00:00:00Z"}}' <<<"$obj")
+          else
+            obj=$(jq -c '. + {autoMergeRequest: null}' <<<"$obj")
+          fi ;;
+        *) exit 9 ;;
+      esac
+    done
+    jq -r "$7" <<<"$obj" ;;
   "pr merge")
     [[ "$4" == --disable-auto ]] || exit 9
     fail disable && { echo "GraphQL: Resource not accessible by integration (disablePullRequestAutoMerge)" >&2; exit 1; }
@@ -80,7 +99,7 @@ case_ hold-disable-fails    /hold      false true  fail_disable     1   "/hold F
 case_ hold-undo-fails       /hold      false true  fail_undo        1   "/hold FAILED"      false false
 case_ hold-already-held     /hold      true  false ""               0   "/hold applied"     true  false
 case_ hold-draft-auto-on    /hold      true  true  ""               0   "/hold applied"     true  false
-case_ hold-first-view-fails /hold  false true  fail_view_once   0   "/hold applied"     true  false
+case_ hold-first-view-fails /hold   false true  fail_view_once   0   "/hold applied"     true  false
 case_ hold-view-fails       /hold      false false fail_view        1   "/hold FAILED"      true  false
 case_ hold-view-garbage     /hold      true  false garbage_view     1   "/hold FAILED"      true  false
 case_ hold-with-text        "/hold pls" false true ""               0   "/hold applied"     true  false
@@ -95,11 +114,14 @@ if ! grep -qF 'draft=unknown, auto-merge on=unknown' "$scratch/hold-view-fails/c
   failures=$((failures + 1))
 fi
 
-# A hold on a PR already held must not call the mutations (they fail or warn on a no-op).
-if grep -qE '^pr (merge|ready)' "$scratch/hold-already-held/calls"; then
-  echo "FAIL hold-already-held: called $(grep -E '^pr (merge|ready)' "$scratch/hold-already-held/calls" | tr '\n' ';')"
-  failures=$((failures + 1))
-fi
+# A command on a PR already in the wanted state must not call the mutations (they fail or warn
+# on a no-op).
+for name in hold-already-held release-already-ready; do
+  if grep -qE '^pr (merge|ready)' "$scratch/$name/calls"; then
+    echo "FAIL $name: called $(grep -E '^pr (merge|ready)' "$scratch/$name/calls" | tr '\n' ';')"
+    failures=$((failures + 1))
+  fi
+done
 
 echo "$failures failure(s); scratch: $scratch"
 ((failures == 0))
