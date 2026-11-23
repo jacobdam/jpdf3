@@ -4,7 +4,6 @@
 mod arlington;
 mod bench;
 mod fuzz;
-mod json;
 mod macos;
 mod metrics;
 mod specs;

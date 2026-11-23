@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::json::{self, Value};
 use crate::web::{Status, check_known_ids, downgrade_passes, remove_stale, render_e2e, step};
+use jpdf_testgen::json::{self, Value};
 
 /// Largest tool output we read (xcresulttool JSON, entitlements, codesign text).
 const MAX_TOOL_OUTPUT: usize = 16 << 20;

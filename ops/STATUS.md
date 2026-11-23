@@ -4,10 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #267** (#219): `cargo xtask metrics` CI section and metrics.json. `ai-review` success after round 3,
-  auto-merge on. Retro 0002 reads CI failure counts from it (the issue's success check).
-- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on; main merged in (conflicts fixed 19:27 UTC).
-- **PR #268** (#235): dependency gate 2, `ai-review` success, auto-merge on, judge-verdict running.
+- **PR #268** (#235): the jpdf-cli dependency gate also checks each allowed crate's target `src_path`s from
+  `cargo metadata`; the JSON reader moved from xtask to `jpdf_testgen::json`. Auto-merge once `ai-review` is posted.
+- PR #267 (#219) merged: `cargo xtask metrics` CI section and metrics.json (retro 0002 reads CI failures from it).
+- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -20,17 +20,17 @@ Phase: bootstrap (pilot)
 - #254 done: the owner applied ops/proposals/ci-fuzz-tools-cache.md in #256. #257 (`owner-todo`): drop the Playwright
   cache. #252 (sev:medium, M10), #253 (nit) remain.
 - ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR) waits for #245 (owner direction on #236).
-- #146 stays open (decode/raster gate; waits for #25 or #236). #235 is the dependency gate's follow-up.
+- #146 stays open (decode/raster gate; waits for #25 or #236). #235 (PR #268) is the dependency gate's follow-up.
 - #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. The /hold drill fails:
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c: PR #265 merge conflict with main fixed (9f040a6). Journal 2026-11-23 19:27.
-- Before it, i: #219 → PR #267 (metrics CI section + metrics.json). Journal 2026-11-23 17:49.
+- i: #235 → PR #268 (gate: target source paths from cargo metadata). Journal 2026-11-23 18:50.
+- Before it, i: #219 → PR #267 (merged). Journal 2026-11-23 17:49.
 
 ## Next step (suggested order, TICK letters)
 0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
-   #235, #242, #261 (#216 and #219 have PRs on auto-merge).
+   #242, #261 (#216 and #235 have PRs on auto-merge).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
@@ -63,6 +63,7 @@ Phase: bootstrap (pilot)
     near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
   - audits 0004–0006: gates that pass when nothing ran ("what still passes"), now in #262 and #261.
   - Codex on audit 0006: ok but brief-only again; 6 Codex-only findings, none above sev:low or minor.
+  - Codex on PR #268 rounds 1 and 2: unavailable, timeout after 2400 s with an empty log (56 KB and 31 KB briefs).
   - ops/proposals/: 5 applied proposals (including owner-comment-tracking.md) still say "proposed" in their status line (docs/audits/0006.md).
 - **Next audit:** after 10 more merges or by 2026-11-30.
 
