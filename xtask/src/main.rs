@@ -6,6 +6,7 @@ mod bench;
 mod fuzz;
 mod macos;
 mod metrics;
+mod next_session;
 mod specs;
 mod web;
 
@@ -15,7 +16,8 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
-     | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE]";
+     | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
+     | next-session [--from DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -129,6 +131,31 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("xtask: metrics: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/next-session.md: the scheduler (ADR 0011 §2). Exit 2 = unknown (a
+        // command failed: the session does no work); 1 = the scheduler is broken.
+        (Some("next-session"), _) => {
+            let opts = match next_session::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: next-session: {e}\n{USAGE}");
+                    return ExitCode::from(1);
+                }
+            };
+            match next_session::run(Path::new("."), &opts) {
+                Ok(brief) => {
+                    print!("{brief}");
+                    ExitCode::SUCCESS
+                }
+                Err(next_session::Error::Unknown(e)) => {
+                    eprintln!("xtask: next-session: unknown: {e}");
+                    ExitCode::from(2)
+                }
+                Err(next_session::Error::Broken(e)) => {
+                    eprintln!("xtask: next-session: {e}");
                     ExitCode::from(1)
                 }
             }

@@ -288,6 +288,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- Filtering GitHub lists by "the agent's own" (`--author @me`, comment authors) → the account is shared with the
+  owner, so the author proves nothing: filter by the tag at the start of the body, and treat owner PRs in the owner
+  feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269 R1.2, R1.3).
 - Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
   should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
   near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a

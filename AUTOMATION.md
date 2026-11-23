@@ -101,9 +101,13 @@ The protocol above is the current one. ADR 0011 replaces step 2's self-selection
 mechanical trigger, the context it loads, its allowed outputs, one exit artifact and a bound.
 Audit and other cadences count product merges only; `area:`/`origin:` labels make problem
 groups visible; an area over its threshold is frozen (`design-pending`) and designed; a PR over
-ADR 0010's review cap goes to a design session before it goes to the owner. Until the
-scheduler's task 1a merges, ops/TICK.md §2 rules a–j stay in force, and each task updates this file
-and TICK for the session type it adds.
+ADR 0010's review cap goes to a design session before it goes to the owner. Task 1a is in:
+ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md), which decides
+precedence steps 1–5 (rules a–f) from the owner feed, GitHub lists, main's CI runs and the local
+worktrees, and prints `legacy` when none applies, so the session picks from rules g–j. Exit 2
+means unknown (no work); any other failure sends the session to the legacy rules b and c and the
+scheduler's own `next-session: …` bug issue. Each later task updates this file and TICK for the
+session type it adds.
 
 ## 5. Completeness: building the right thing
 
