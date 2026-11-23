@@ -1,7 +1,9 @@
-//! A small strict JSON reader (RFC 8259) for tool output that xtask must understand:
-//! `xcresulttool` test results and `plutil -convert json` entitlements. xtask has no
-//! dependencies (docs/adr/0002 Context), so this replaces a JSON crate. Input is bounded by
-//! the caller; nesting depth is bounded here; nothing panics on malformed input.
+//! A small strict JSON reader (RFC 8259) for tool output that test tooling must understand:
+//! `xcresulttool` test results, `plutil -convert json` entitlements and `gh` lists (xtask), and
+//! `cargo metadata` (the jpdf-cli dependency gate, #235). Neither takes a third-party
+//! dependency (docs/adr/0002 Context; the lockfile has none), so this replaces a JSON crate.
+//! Input is bounded by the caller; nesting depth is bounded here; nothing panics on malformed
+//! input.
 
 /// Most nested arrays/objects accepted. xcresulttool trees are under 10 levels deep.
 const MAX_DEPTH: usize = 128;

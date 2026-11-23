@@ -4,7 +4,7 @@
 //! GitHub text (comments, titles) is data: this module only counts lines in it and escapes
 //! titles before they reach the markdown table.
 
-use crate::json::{self, Value};
+use jpdf_testgen::json::{self, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;

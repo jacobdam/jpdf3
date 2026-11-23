@@ -14,6 +14,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use jpdf_testgen::json::{self, Value};
+
 /// The parse-only crates (package name, workspace-relative directory). Today this is exactly
 /// jpdf-cli's resolved graph; `cli_graph_is_exactly_the_allowed_set` keeps it that way, so a
 /// crate that leaves the graph also leaves the list.
@@ -348,6 +350,264 @@ fn control_flags_reach_features_other_targets_and_build_edges() {
     }
 }
 
+/// The `cargo metadata` arguments after the manifest path; `metadata_args_are_exactly_these`
+/// pins them. `--no-deps` lists the workspace members only, which is where every allowed crate
+/// must be (the graph tests check that); no `--filter-platform`, so every target is listed.
+const METADATA_ARGS: &[&str] = &[
+    "--format-version",
+    "1",
+    "--no-deps",
+    "--locked",
+    "--offline",
+];
+
+/// The one `cargo metadata` command the target-path tests run (#235).
+fn metadata_command(manifest: &Path) -> Command {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut cmd = Command::new(cargo);
+    cmd.arg("metadata").arg("--manifest-path").arg(manifest);
+    cmd.args(METADATA_ARGS);
+    cmd
+}
+
+/// Runs `cargo metadata` on the workspace at `manifest` and parses its JSON. Fails on a
+/// non-zero exit.
+fn metadata_in(manifest: &Path) -> Result<Value, String> {
+    let out = metadata_command(manifest)
+        .output()
+        .map_err(|e| format!("running cargo metadata: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo metadata failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let text = String::from_utf8(out.stdout).map_err(|e| format!("cargo metadata output: {e}"))?;
+    json::parse(&text).map_err(|e| format!("cargo metadata output: {e}"))
+}
+
+/// An absolute path, canonicalized; `None` for a relative path (never resolved against the
+/// working directory) or one that doesn't resolve.
+fn canonical_absolute(p: &str) -> Option<PathBuf> {
+    let p = Path::new(p);
+    if p.is_absolute() {
+        p.canonicalize().ok()
+    } else {
+        None
+    }
+}
+
+/// Returns one violation line per allowed crate that `cargo metadata` doesn't list exactly once
+/// at its directory (by its manifest path), and per target (lib, bin, custom-build, test, …) of
+/// an allowed crate whose `src_path`, canonicalized, is not inside that crate's directory,
+/// canonicalized (compared by path components, so `crates/a-x` is not inside `crates/a`). A
+/// manifest `[lib] path`, `[[bin]] path` or `build = …` into another crate's sources, or a target
+/// root that is a symlink out of the directory, is a violation (#235). A metadata shape it
+/// doesn't know (no `packages` array, a target without a string `src_path` or a `kind` array of
+/// strings) is an error, so a format change fails the gate instead of passing it.
+fn target_violations(
+    meta: &Value,
+    root: &Path,
+    allowed: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
+    let shape = |what: &str| format!("unexpected cargo metadata shape: {what}");
+    let pkgs = meta
+        .get("packages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| shape("no packages array"))?;
+    let mut bad = BTreeSet::new();
+    for &(name, dir) in allowed {
+        let Some(want) = root.join(dir).canonicalize().ok() else {
+            bad.insert(format!("{name}: its workspace path {dir} doesn't resolve"));
+            continue;
+        };
+        let mut found = Vec::new();
+        for p in pkgs {
+            let pname = p
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| shape("package without a name"))?;
+            let manifest = p
+                .get("manifest_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| shape("package without a manifest_path"))?;
+            let at = canonical_absolute(manifest);
+            if pname == name && at.as_deref().and_then(Path::parent) == Some(want.as_path()) {
+                found.push(p);
+            }
+        }
+        let [pkg] = found.as_slice() else {
+            bad.insert(format!(
+                "{name}: listed {} times at its workspace path {dir}",
+                found.len()
+            ));
+            continue;
+        };
+        let targets = pkg
+            .get("targets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| shape("package without a targets array"))?;
+        if targets.is_empty() {
+            bad.insert(format!("{name}: no targets"));
+        }
+        for t in targets {
+            let tname = t
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| shape("target without a name"))?;
+            let kinds = t
+                .get("kind")
+                .and_then(Value::as_array)
+                .ok_or_else(|| shape("target without a kind array"))?
+                .iter()
+                .map(|k| k.as_str().ok_or_else(|| shape("non-string target kind")))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(",");
+            let src = t
+                .get("src_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| shape("target without a src_path"))?;
+            if !canonical_absolute(src).is_some_and(|s| s.starts_with(&want)) {
+                bad.insert(format!(
+                    "{name}: target {tname} ({kinds}) compiles {src}, outside {dir}"
+                ));
+            }
+        }
+    }
+    Ok(bad.into_iter().collect())
+}
+
+/// The gate's second half (#235): every target of every allowed crate compiles from inside that
+/// crate's directory, which `cargo tree` doesn't show.
+#[test]
+fn cli_crates_compile_only_their_own_sources() {
+    let meta = metadata_in(&workspace_root().join("Cargo.toml")).unwrap();
+    let bad = target_violations(&meta, &workspace_root(), ALLOWED).unwrap();
+    assert!(
+        bad.is_empty(),
+        "an allowed crate compiles sources from outside its directory (#146 gate, #235):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn metadata_args_are_exactly_these() {
+    let cmd = metadata_command(Path::new("/m/Cargo.toml"));
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args.join(" "),
+        "metadata --manifest-path /m/Cargo.toml --format-version 1 --no-deps --locked --offline"
+    );
+}
+
+#[test]
+fn control_cargo_metadata_failure_is_an_error() {
+    let err = metadata_in(Path::new("/nonexistent-jpdf/Cargo.toml")).unwrap_err();
+    assert!(err.starts_with("cargo metadata failed"), "{err}");
+}
+
+/// Writes a fixture workspace under `CARGO_TARGET_TMPDIR` whose members point targets at a
+/// `victim` crate's sources: `libout` (`[lib] path`), `binout` (`[[bin]] path`), `buildout`
+/// (`build = …`), `pre` (`[lib] path` into the sibling `pre-x`, a string-prefix near miss), and
+/// on unix `linkout`, whose own `src/lib.rs` is a symlink to the victim's. `detour` points its
+/// `[lib] path` back into itself through `..` (must pass). Returns the root manifest path.
+fn target_fixture() -> std::io::Result<PathBuf> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("dependency-gate-targets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let pkg = |name: &str, extra: &str| -> std::io::Result<()> {
+        let d = dir.join(name);
+        std::fs::create_dir_all(d.join("src"))?;
+        std::fs::write(d.join("src/lib.rs"), "")?;
+        std::fs::write(
+            d.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+                 publish = false\n{extra}"
+            ),
+        )
+    };
+    pkg("victim", "")?;
+    std::fs::write(dir.join("victim/src/main.rs"), "fn main() {}\n")?;
+    std::fs::write(dir.join("victim/build.rs"), "fn main() {}\n")?;
+    pkg("libout", "\n[lib]\npath = \"../victim/src/lib.rs\"\n")?;
+    pkg(
+        "binout",
+        "\n[[bin]]\nname = \"binout\"\npath = \"../victim/src/main.rs\"\n",
+    )?;
+    pkg("buildout", "build = \"../victim/build.rs\"\n")?;
+    pkg("pre-x", "")?;
+    pkg("pre", "\n[lib]\npath = \"../pre-x/src/lib.rs\"\n")?;
+    pkg("detour", "\n[lib]\npath = \"../detour/src/lib.rs\"\n")?;
+    let mut members = vec![
+        "victim", "libout", "binout", "buildout", "pre-x", "pre", "detour",
+    ];
+    #[cfg(unix)]
+    {
+        pkg("linkout", "")?;
+        std::fs::remove_file(dir.join("linkout/src/lib.rs"))?;
+        std::os::unix::fs::symlink(
+            dir.join("victim/src/lib.rs"),
+            dir.join("linkout/src/lib.rs"),
+        )?;
+        members.push("linkout");
+    }
+    let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[workspace]\nresolver = \"3\"\nmembers = [{}]\n",
+            list.join(", ")
+        ),
+    )?;
+    let manifest = dir.join("Cargo.toml");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let st = Command::new(cargo)
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .status()?;
+    if !st.success() {
+        return Err(std::io::Error::other(format!("generate-lockfile: {st}")));
+    }
+    Ok(manifest)
+}
+
+/// Control on real `cargo metadata` output: each kind of target that compiles from outside its
+/// crate is exactly one violation naming that crate and kind; the crate it reaches into, the
+/// `..` detour back into itself and the prefix sibling's own target pass.
+#[test]
+fn control_target_paths_outside_the_crate_are_reported() {
+    let manifest = target_fixture().unwrap();
+    let root = manifest.parent().unwrap().to_path_buf();
+    let meta = metadata_in(&manifest).unwrap();
+    let mut cases = vec![
+        ("libout", "(lib)"),
+        ("binout", "(bin)"),
+        ("buildout", "(custom-build)"),
+        ("pre", "(lib)"),
+    ];
+    if cfg!(unix) {
+        cases.push(("linkout", "(lib)"));
+    }
+    for (name, kind) in cases {
+        let bad = target_violations(&meta, &root, &[(name, name)]).unwrap();
+        assert_eq!(bad.len(), 1, "{name}: {bad:?}");
+        assert!(
+            bad[0].starts_with(&format!("{name}: target ")) && bad[0].contains(kind),
+            "{name}: {bad:?}"
+        );
+    }
+    for name in ["victim", "detour", "pre-x"] {
+        let bad = target_violations(&meta, &root, &[(name, name)]).unwrap();
+        assert!(bad.is_empty(), "{name}: {bad:?}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 // Parser and checker cases on synthetic output: each one should-fail case has a near miss that
 // must pass. `#[cfg(test)]` is what lets clippy's allow-unwrap-in-tests (clippy.toml) cover the
 // helpers here, which are not `#[test]` functions.
@@ -523,6 +783,136 @@ mod synthetic {
             r.join("crates/jpdf-cos/../jpdf-syntax").display()
         );
         assert!(violations(&parse_tree(&detour).unwrap(), &r).is_empty());
+    }
+
+    /// A `cargo metadata` document with one package `name` whose manifest sits in `dir` and
+    /// whose targets are the given `(kind, src_path)` pairs.
+    fn meta(name: &str, dir: &Path, targets: &[(&str, &str)]) -> Value {
+        let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+        let ts: Vec<String> = targets
+            .iter()
+            .map(|(k, s)| {
+                format!(
+                    "{{\"name\":\"t\",\"kind\":[{}],\"src_path\":{}}}",
+                    q(k),
+                    q(s)
+                )
+            })
+            .collect();
+        let manifest = dir.join("Cargo.toml").display().to_string();
+        json::parse(&format!(
+            "{{\"packages\":[{{\"name\":{},\"manifest_path\":{},\"targets\":[{}]}}]}}",
+            q(name),
+            q(&manifest),
+            ts.join(",")
+        ))
+        .unwrap()
+    }
+
+    const SYNTAX: &[(&str, &str)] = &[("jpdf-syntax", "crates/jpdf-syntax")];
+
+    #[test]
+    fn target_checker_accepts_own_sources_and_rejects_each_outside_one() {
+        let r = root();
+        let d = r.join("crates/jpdf-syntax");
+        let own = d.join("src/lib.rs").display().to_string();
+        let ok = meta("jpdf-syntax", &d, &[("lib", &own)]);
+        assert_eq!(
+            target_violations(&ok, &r, SYNTAX).unwrap(),
+            Vec::<String>::new()
+        );
+        let other = r
+            .join("crates/jpdf-filters/src/lib.rs")
+            .display()
+            .to_string();
+        let missing = d.join("src/no-such-file.rs").display().to_string();
+        for src in [
+            other.as_str(),
+            missing.as_str(),
+            "src/lib.rs",
+            "../jpdf-syntax/src/lib.rs",
+        ] {
+            let m = meta("jpdf-syntax", &d, &[("lib", &own), ("custom-build", src)]);
+            let bad = target_violations(&m, &r, SYNTAX).unwrap();
+            assert_eq!(bad.len(), 1, "{src}: {bad:?}");
+            assert!(bad[0].contains("(custom-build)"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn target_checker_requires_the_crate_once_at_its_path() {
+        let r = root();
+        let d = r.join("crates/jpdf-syntax");
+        let own = d.join("src/lib.rs").display().to_string();
+        // Missing, at another crate's directory, under another name, and with no targets.
+        for m in [
+            json::parse("{\"packages\":[]}").unwrap(),
+            meta("jpdf-syntax", &r.join("crates/jpdf-cos"), &[("lib", &own)]),
+            meta("jpdf-syntax-x", &d, &[("lib", &own)]),
+            meta("jpdf-syntax", &d, &[]),
+        ] {
+            assert_eq!(target_violations(&m, &r, SYNTAX).unwrap().len(), 1, "{m:?}");
+        }
+        // Listed twice.
+        let one = meta("jpdf-syntax", &d, &[("lib", &own)]);
+        let p = one.get("packages").and_then(Value::as_array).unwrap()[0].clone();
+        let twice = Value::Object(vec![("packages".into(), Value::Array(vec![p.clone(), p]))]);
+        let bad = target_violations(&twice, &r, SYNTAX).unwrap();
+        assert_eq!(
+            bad,
+            vec!["jpdf-syntax: listed 2 times at its workspace path crates/jpdf-syntax"]
+        );
+    }
+
+    #[test]
+    fn target_checker_rejects_unknown_metadata_shapes() {
+        let r = root();
+        let m = r
+            .join("crates/jpdf-syntax/Cargo.toml")
+            .display()
+            .to_string();
+        let src = r
+            .join("crates/jpdf-syntax/src/lib.rs")
+            .display()
+            .to_string();
+        let pkg = |targets: &str| {
+            format!(
+                "{{\"packages\":[{{\"name\":\"jpdf-syntax\",\"manifest_path\":{m:?},{targets}}}]}}"
+            )
+        };
+        for doc in [
+            "{}".to_owned(),
+            "{\"packages\":{}}".to_owned(),
+            "{\"packages\":[{\"manifest_path\":\"/x\"}]}".to_owned(),
+            "{\"packages\":[{\"name\":\"x\"}]}".to_owned(),
+            pkg("\"targets\":{}"),
+            pkg(&format!(
+                "\"targets\":[{{\"kind\":[\"lib\"],\"src_path\":{src:?}}}]"
+            )),
+            pkg(&format!(
+                "\"targets\":[{{\"name\":\"t\",\"kind\":\"lib\",\"src_path\":{src:?}}}]"
+            )),
+            pkg(&format!(
+                "\"targets\":[{{\"name\":\"t\",\"kind\":[1],\"src_path\":{src:?}}}]"
+            )),
+            pkg("\"targets\":[{\"name\":\"t\",\"kind\":[\"lib\"]}]"),
+        ] {
+            let v = json::parse(&doc).unwrap();
+            let e = target_violations(&v, &r, SYNTAX).unwrap_err();
+            assert!(
+                e.starts_with("unexpected cargo metadata shape"),
+                "{doc}: {e}"
+            );
+        }
+        // Near miss: the same shape with every field present passes.
+        let good = pkg(&format!(
+            "\"targets\":[{{\"name\":\"t\",\"kind\":[\"lib\"],\"src_path\":{src:?}}}]"
+        ));
+        let v = json::parse(&good).unwrap();
+        assert_eq!(
+            target_violations(&v, &r, SYNTAX).unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
