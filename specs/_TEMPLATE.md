@@ -43,7 +43,9 @@ Self-check before review (write the answers here):
     and its tests pin the flags on the command actually run, not on a constant;
   - a rule that bounds a loop (rounds, retries, counters) has a state table: every counter
     value (below, at, past the cap) and every exit, each with its next step, including the
-    states the table's own fixes add; a step triggered by "when the PR merges" says which
+    states the table's own fixes add, and for an ADR every counter, "once a day" bound and
+    fallback; prose about a cache or CI mechanism covers exact hit, miss, failed run, eviction
+    and PR scope; a step triggered by "when the PR merges" says which
     later session notices the merge (auto-merge lands after the session exits).
 - What this spec's tests cannot see (allocations, timing) and who covers it instead.
 

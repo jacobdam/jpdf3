@@ -5,11 +5,11 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - **Retro 0002** (#279, this PR): docs/retros/0002.md. Action items: one journal file per session
-  (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`) and no STATUS rewrite for rerun-only or conflict-merge-only sessions;
-  a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md. LESSONS 66 → 59. Digest 2026-W48 filed.
+  (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`), STATUS conflicts take main's copy (ADR 0011 §3);
+  a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md (also answered in the PR description when a PR
+  has no spec). LESSONS 66 → 59. Digest 2026-W48 filed.
 - **PR #276** (#245, ADR 0011 task 3 part 1): parked at the review cap (4 rounds + final check), `owner-todo`,
   `blocked`. Part 2: #275. Follow-ups: #277.
-- **PR #278**: records for the main-red rerun of run 45265510213 (macOS runner not acquired; rerun green).
 - `cargo xtask next-session` now decides steps 1–5, 7 (audit, retro) and 10 (ready issue) (PRs #269, #272, #274);
   part 2 is #243 (step 11 Planner/idle, Session: records).
 - **PR #232** (#187 part 1): parked for the owner (draft, `ai-review` failure on 0831d70 after 4 rounds + final
@@ -24,7 +24,7 @@ Phase: bootstrap (pilot)
 ## Next step
 0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
    M0 `ready` issue whose `Depends on:` issues are closed (#275 waits for PR #276).
-1. **Next audit:** 8 merges since audit 0006; due at 10 product merges or 2026-11-30.
+1. **Next audit:** 1 product merge since audit 0006 (8 merges in all); due at 10 product merges or 2026-11-30.
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (conflict-only sessions ≤ 1 in 20,
    records-only PRs ≤ 15%; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
    audit lag under the scheduler, and the product-merge share (baseline 23%). Carried inputs: 5 applied proposals

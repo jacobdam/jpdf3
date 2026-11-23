@@ -55,7 +55,7 @@ GitHub (public repo jacobdam/jpdf3)
 | `specs/TRACE.md` | requirement → journeys → specs → tests | agent; judge checks completeness |
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
 | `ops/STATUS.md` | current state, ≤ 1 page, rewritten every session | agent |
-| `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | session log, one file per session (entries before retro 0002: one `YYYY-MM-DD.md` per day) | agent |
+| `ops/journal/YYYY-MM-DD.md` | append-only session log | agent |
 | `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
 | `ops/proposals/*.md` | proposed changes to protected files (never blocking) | agent |

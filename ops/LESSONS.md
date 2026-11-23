@@ -57,7 +57,7 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, or names a gh comment/issue command
   (it tries to parse it as a CLI write), even in a heredoc or python script writing markdown →
   write such files with Write/Edit ([journal](journal/2026-11-22.md), PR #178). The post triggers are listed in TICK
-  §4's mechanics; a body with an apostrophe (`'\''`) is never treated as inert, and Claude Code's own check refuses a
+  §4's mechanics; the terminal-multiplexer name also blocks in a commit message or a python one-liner; a body with an apostrophe (`'\''`) is never treated as inert, and Claude Code's own check refuses a
   long post whose single-quoted body holds `$` + quote or `$$`+brace: split it or space the token and disclose it
   ([journal](journal/2026-11-21.md), PR #129; [journal](journal/2026-11-22.md), PR #183).
   Never `cat > file` without a heredoc (it waits on stdin until the 2 min timeout) ([journal](journal/2026-11-21.md), PR #104).
