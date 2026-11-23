@@ -137,7 +137,8 @@ What changes:
 fake `gh` that keeps the PR's draft and auto-merge state and can fail each call. Its `pr view`
 builds the PR's JSON from the fields the script names in `--json` (`autoMergeRequest` is an
 object while auto-merge is on, else `null`) and runs the script's `--jq` expression over it with
-`jq`, so the field list and the expression are tested too. 13 cases: hold on a ready PR with
+`jq`, so the field list and the expression are tested too (it needs `jq` on PATH and stops
+with exit 2 if it is missing). 13 cases: hold on a ready PR with
 auto-merge, disable failing (the #210 case), draft conversion failing, already held, draft with
 auto-merge on, state unreadable once, always, or garbled, `/hold` with trailing text, and four
 `/release` cases. It also checks that a PR already held (`/hold`) or already ready (`/release`)

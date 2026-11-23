@@ -4,9 +4,11 @@
 # in files and can be told to fail each call. Usage:
 #   ops/proposals/hold-automerge/test.sh [workflow.yml] [scratch dir]
 # Defaults: the proposed workflow next to this script, and <repo>/target/scratch.
+# Needs bash, git and jq on PATH (the fake gh runs the script's --jq expression with jq).
 # Exits 0 only if every case passes. Against today's .github/workflows/owner-commands.yml it must
 # fail (cases hold-disable-fails and others), which shows the harness sees the #210 bug.
 set -euo pipefail
+command -v jq >/dev/null || { echo "test.sh needs jq on PATH" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 wf=${1:-$here/owner-commands.yml}
 root=$(git -C "$here" rev-parse --show-toplevel)
