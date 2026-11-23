@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 pub const LIST_LIMIT: usize = 1000;
 /// Failed CI runs whose jobs are read (`gh run view`), newest first.
 pub const MAX_JOB_READS: usize = 100;
+/// The conversation comments `gh pr list --json comments` returns per PR (its GraphQL query
+/// asks for `comments(first: 100)` and doesn't paginate them).
+pub const COMMENT_LIMIT: usize = 100;
 /// The agent's tag (CONSTITUTION 1).
 const TAG: &str = "🤖 jpdf-agent";
 /// Default period when no retro record exists (TICK §2 h: a retro every 7 days).
@@ -143,9 +146,35 @@ pub(crate) fn utc_day(secs: &str) -> Option<i64> {
     (0..=max).contains(&secs).then(|| secs.div_euclid(86_400))
 }
 
-/// The date part of an ISO 8601 timestamp (`2026-11-22T11:48:38Z`).
+/// The day of a GitHub timestamp, which has exactly the form `2026-11-22T11:48:38Z` (a real
+/// date, a time up to 23:59:59, nothing after the `Z`; audit 0006 AC.8).
 fn iso_day(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    let shape = b.len() == 20
+        && b.get(10) == Some(&b'T')
+        && b.get(13) == Some(&b':')
+        && b.get(16) == Some(&b':')
+        && b.get(19) == Some(&b'Z');
+    if !shape {
+        return None;
+    }
+    let part = |r: std::ops::Range<usize>| {
+        s.get(r)
+            .filter(|p| p.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|p| p.parse::<u8>().ok())
+    };
+    if part(11..13)? > 23 || part(14..16)? > 59 || part(17..19)? > 59 {
+        return None;
+    }
     parse_date(s.get(..10)?)
+}
+
+/// A non-empty run of ASCII digits as a `u64` (`u64::from_str` would also take a leading `+`).
+fn digits_u64(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
 }
 
 pub(crate) fn today() -> Result<i64, String> {
@@ -265,8 +294,9 @@ fn parse_sessions(text: &str, since: i64, until: i64) -> Sessions {
         let f: Vec<&str> = line.split('\t').collect();
         let row = match f.as_slice() {
             [stamp, code, _id, dur] => stamp_day(stamp).and_then(|day| {
-                let code: i64 = code.parse().ok()?;
-                let secs: u64 = dur.strip_suffix('s')?.parse().ok()?;
+                // Digits only, as the driver writes them (audit 0006 AC.8: no `+`).
+                let code = digits_u64(code)?;
+                let secs = digits_u64(dur.strip_suffix('s')?)?;
                 Some((day, code, secs))
             }),
             _ => None,
@@ -480,7 +510,9 @@ fn review_of(pr: u64, comments: &[Value]) -> Option<Review> {
             *n = n.saturating_add(1);
         }
     }
-    rev.regrades = u64::try_from(regraded.len()).unwrap_or(u64::MAX);
+    // Only IDs a review comment reported: a triage line can't add a finding (audit 0006 AC.4).
+    let regrades = regraded.iter().filter(|id| ids.contains_key(*id)).count();
+    rev.regrades = u64::try_from(regrades).unwrap_or(u64::MAX);
     Some(rev)
 }
 
@@ -531,6 +563,8 @@ struct Report {
     retros: Vec<(String, i64, Option<i64>)>,
     days_since_retro: Option<i64>,
     truncated: Vec<&'static str>,
+    /// Merged PRs in the period whose comment list hit `COMMENT_LIMIT` (audit 0006 CX.10).
+    comments_truncated: Vec<u64>,
 }
 
 /// Every input, as fetched (or read with `--from`).
@@ -706,9 +740,13 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
             .get("comments")
             .and_then(Value::as_array)
             .unwrap_or_default();
+        if comments.len() >= COMMENT_LIMIT {
+            rep.comments_truncated.push(number);
+        }
         rep.reviews.extend(review_of(number, comments));
     }
     rep.reviews.sort_unstable_by_key(|r| r.pr);
+    rep.comments_truncated.sort_unstable();
 
     // Issues.
     let closed = parse_list(&inp.issues_closed, "issues-closed.json")?;
@@ -759,8 +797,13 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
     rep.merges_since_audit = prev.map(|p| {
         u64::try_from(commits.len().saturating_sub(p).saturating_sub(1)).unwrap_or(u64::MAX)
     });
+    // Retro records dated after --until are left out, so the lag is never negative (audit
+    // 0006 AC.3); default_since skips them the same way.
     let mut prev_day: Option<i64> = None;
-    for (_, day, path) in records(commits, "retros") {
+    for (_, day, path) in records(commits, "retros")
+        .into_iter()
+        .filter(|(_, day, _)| *day <= until)
+    {
         rep.retros
             .push((path, day, prev_day.map(|p| day.saturating_sub(p))));
         prev_day = Some(day);
@@ -984,14 +1027,17 @@ fn render_json(rep: &Report) -> String {
         })
         .collect();
     let truncated: Vec<String> = rep.truncated.iter().map(|t| json_str(t)).collect();
+    let comments_truncated: Vec<String> =
+        rep.comments_truncated.iter().map(u64::to_string).collect();
     let ci = &rep.ci;
     let mut o = String::new();
     let _ = write!(
         o,
-        "{{\"since\":\"{}\",\"until\":\"{}\",\"truncated\":[{}],",
+        "{{\"since\":\"{}\",\"until\":\"{}\",\"truncated\":[{}],\"comments_truncated\":[{}],",
         fmt_day(rep.since),
         fmt_day(rep.until),
-        truncated.join(",")
+        truncated.join(","),
+        comments_truncated.join(",")
     );
     let _ = write!(
         o,
@@ -1059,7 +1105,20 @@ fn render_md(rep: &Report) -> String {
             "- **Warning:** the {t} list returned {LIST_LIMIT} entries and may be cut off."
         );
     }
-    if !rep.truncated.is_empty() {
+    if !rep.comments_truncated.is_empty() {
+        let prs: Vec<String> = rep
+            .comments_truncated
+            .iter()
+            .map(|n| format!("#{n}"))
+            .collect();
+        let _ = writeln!(
+            o,
+            "- **Warning:** the comment lists of these merged PRs returned {COMMENT_LIMIT} entries \
+             and may be cut off, so their review figures may be incomplete: {}.",
+            prs.join(", ")
+        );
+    }
+    if !rep.truncated.is_empty() || !rep.comments_truncated.is_empty() {
         o.push('\n');
     }
 
@@ -1218,6 +1277,35 @@ fn read_optional(p: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// Writes the fetched inputs (not the job outputs) to `out/raw/`, which must exist.
+fn save_raw(out: &Path, inp: &Inputs) -> Result<(), String> {
+    let raw = out.join("raw");
+    let write = |name: &str, text: &str| {
+        let p = raw.join(name);
+        fs::write(&p, text).map_err(|e| format!("write {}: {e}", p.display()))
+    };
+    write("git-log.txt", &inp.git_log)?;
+    match &inp.index_tsv {
+        Some(t) => write("index.tsv", t)?,
+        // A copy left by an earlier run would be read back by `--from` as this run's
+        // sessions (audit 0006 CX.11).
+        None => remove_stale(&raw.join("index.tsv"))?,
+    }
+    write("prs.json", &inp.prs)?;
+    write("issues-closed.json", &inp.issues_closed)?;
+    write("issues-open.json", &inp.issues_open)?;
+    write("runs.json", &inp.runs)
+}
+
+/// Removes `p` if it exists; a missing file is fine.
+fn remove_stale(p: &Path) -> Result<(), String> {
+    match fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {e}", p.display())),
+    }
+}
+
 fn gh(args: &str) -> Result<String, String> {
     let args: Vec<&str> = args.split_whitespace().collect();
     crate::macos::capture("gh", &args, None).map(|(out, _)| out)
@@ -1305,14 +1393,7 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
         jobs: BTreeMap::new(),
     };
     if from.is_none() {
-        write("raw/git-log.txt", &inp.git_log)?;
-        if let Some(t) = &inp.index_tsv {
-            write("raw/index.tsv", t)?;
-        }
-        write("raw/prs.json", &inp.prs)?;
-        write("raw/issues-closed.json", &inp.issues_closed)?;
-        write("raw/issues-open.json", &inp.issues_open)?;
-        write("raw/runs.json", &inp.runs)?;
+        save_raw(out, &inp)?;
     }
     // One job output at a time: saved, reduced to its failing job names, then dropped.
     let runs = parse_list(&inp.runs, "runs.json")?;
@@ -1379,7 +1460,34 @@ mod tests {
             assert_eq!(parse_date(bad), None, "{bad}");
         }
         assert_eq!(iso_day("2026-11-22T11:48:38Z"), Some(d("2026-11-22")));
-        assert_eq!(iso_day("2026-11"), None);
+        assert_eq!(iso_day("2026-11-22T00:00:00Z"), Some(d("2026-11-22")));
+        assert_eq!(iso_day("2026-11-22T23:59:59Z"), Some(d("2026-11-22")));
+        // Audit 0006 AC.8: nothing after the `Z`, and the time part is checked too.
+        for bad in [
+            "2026-11",
+            "2026-11-22",
+            "2026-11-22T11:48:38Zx",
+            "2026-11-22T11:48:38Z ",
+            "2026-11-22T11:48:38",
+            "2026-11-22T11:48:38.000Z",
+            "2026-11-22 11:48:38Z",
+            "2026-11-22T11-48:38Z",
+            "2026-11-22T11:48-38Z",
+            "2026-11-22T24:00:00Z",
+            "2026-11-22T23:60:00Z",
+            "2026-11-22T23:59:60Z",
+            "2026-11-22T+1:48:38Z",
+            "2026-11-22T11:+8:38Z",
+            "2026-11-22T11:48:+8Z",
+            "2026-02-30T11:48:38Z",
+        ] {
+            assert_eq!(iso_day(bad), None, "{bad}");
+        }
+        assert_eq!(digits_u64("0"), Some(0));
+        assert_eq!(digits_u64("143"), Some(143));
+        for bad in ["", "+1", "-1", " 1", "1 ", "1x", "18446744073709551616"] {
+            assert_eq!(digits_u64(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -1520,7 +1628,11 @@ mod tests {
             20261116T000000Z\t0\te\t60s\textra\n\
             20261116T240000Z\t0\te\t5s\n\
             20261116T006000Z\t0\te\t5s\n\
-            20261116T000060Z\t0\te\t5s\n";
+            20261116T000060Z\t0\te\t5s\n\
+            20261116T000000Z\t+0\te\t5s\n\
+            20261116T000000Z\t-1\te\t5s\n\
+            20261116T000000Z\t0\te\t+5s\n\
+            20261116T000000Z\t0\te\ts\n";
         let s = parse_sessions(tsv, d("2026-11-15"), d("2026-11-22"));
         assert_eq!(
             s,
@@ -1529,7 +1641,7 @@ mod tests {
                 nonzero: 1,
                 total_s: 720,
                 median_s: Some(600),
-                malformed: 9
+                malformed: 13
             }
         );
         assert_eq!(parse_sessions("", 0, 1).median_s, None);
@@ -1549,7 +1661,7 @@ mod tests {
                 "🤖 jpdf-agent **AI review (second reviewer), round 1** of abc\n\nS1.1 [blocker] a.rs:3: z\nS1.2 [minor] q",
             ),
             comment(
-                "🤖 jpdf-agent **AI review triage, round 7**\n\nR1.1: fixed in def\nS1.1: regraded minor: no input\nS1.1: regraded minor: again\nR1.2: deferred: #9",
+                "🤖 jpdf-agent **AI review triage, round 7**\n\nR1.1: fixed in def\nS1.1: regraded minor: no input\nS1.1: regraded minor: again\nR1.2: deferred: #9\nR3.9: regraded minor: never reported\nR1.3: regraded nit: its severity didn't parse",
             ),
             comment(
                 "  🤖 jpdf-agent **AI review, round 2** of def\n\nR1.1 fixed: yes\nR1.1 [major] restated\nR2.1 [minor] new\nS1.1: dispute accepted",
@@ -1755,6 +1867,93 @@ mod tests {
             assert!(md.contains(want), "missing {want:?} in\n{md}");
         }
         assert!(!md.contains("older ones left out"), "{md}");
+    }
+
+    #[test]
+    fn retro_lag_leaves_out_records_after_until() {
+        // Audit 0006 AC.3: retro 0002 is dated 2026-11-22, after this --until.
+        let commits = parse_git_log(LOG).unwrap();
+        let lag = |until: &str| {
+            let rep = compute(&inputs(), &commits, d("2026-11-15"), d(until)).unwrap();
+            let retros: Vec<String> = rep.retros.iter().map(|r| r.0.clone()).collect();
+            (retros, rep.days_since_retro, render_md(&rep))
+        };
+        let (retros, days, md) = lag("2026-11-21");
+        assert_eq!(
+            (retros, days),
+            (vec!["docs/retros/0001.md".to_owned()], Some(7))
+        );
+        assert!(
+            md.contains("Days from the last retro record to 2026-11-21: 7."),
+            "{md}"
+        );
+        assert!(!md.contains("docs/retros/0002.md"), "{md}");
+        let (retros, days, _) = lag("2026-11-22");
+        assert_eq!((retros.len(), days), (2, Some(0)));
+        let (retros, days, _) = lag("2026-11-13");
+        assert_eq!((retros.len(), days), (0, None));
+    }
+
+    #[test]
+    fn a_full_comment_list_is_flagged() {
+        // Audit 0006 CX.10: gh returns at most COMMENT_LIMIT comments per PR.
+        let commits = Vec::new();
+        let c = "{\"body\":\"x\"}";
+        let list = |n: usize| vec![c; n].join(",");
+        let mut i = inputs();
+        i.prs = format!(
+            "[{},{},{}]",
+            pr(8, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT)),
+            pr(7, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT - 1)),
+            // Out of the period: not flagged.
+            pr(9, "2026-11-14T00:00:00Z", &list(COMMENT_LIMIT))
+        );
+        let rep = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
+        assert_eq!(rep.comments_truncated, [8]);
+        assert!(rep.truncated.is_empty());
+        assert!(
+            render_md(&rep).contains(
+                "returned 100 entries and may be cut off, so their review figures may be \
+                 incomplete: #8.\n"
+            ),
+            "{}",
+            render_md(&rep)
+        );
+        assert!(render_json(&rep).contains("\"comments_truncated\":[8],"));
+        i.prs = format!(
+            "[{}]",
+            pr(8, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT - 1))
+        );
+        let rep = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
+        assert!(rep.comments_truncated.is_empty());
+        assert!(!render_md(&rep).contains("may be cut off"));
+        assert!(render_json(&rep).contains("\"comments_truncated\":[],"));
+    }
+
+    #[test]
+    fn save_raw_removes_a_stale_index() {
+        // Audit 0006 CX.11: a rerun without an index must not leave the old one behind.
+        let out = std::env::temp_dir().join(format!("xtask-metrics-raw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(out.join("raw")).unwrap();
+        let mut i = inputs();
+        i.index_tsv = Some("20261115T000000Z\t0\ta\t5s\n".to_owned());
+        save_raw(&out, &i).unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("raw/index.tsv")).unwrap(),
+            "20261115T000000Z\t0\ta\t5s\n"
+        );
+        assert_eq!(fs::read_to_string(out.join("raw/prs.json")).unwrap(), i.prs);
+        i.index_tsv = None;
+        save_raw(&out, &i).unwrap();
+        assert!(!out.join("raw/index.tsv").exists());
+        // Already gone: still fine.
+        save_raw(&out, &i).unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("raw/runs.json")).unwrap(),
+            i.runs
+        );
+        fs::remove_dir_all(&out).unwrap();
     }
 
     #[test]

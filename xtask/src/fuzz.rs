@@ -115,7 +115,13 @@ pub fn ci(root: &Path) -> Result<(), String> {
             target: None,
         },
     );
-    let fmt_problem = (!fmt.success())
+    ci_result(fuzzed, fmt.success())
+}
+
+/// How `ci` combines the fuzz pass and the `fuzz/` format check: either failing fails it, and
+/// both messages are kept, the fuzz one first.
+pub fn ci_result(fuzzed: Result<(), String>, formatted: bool) -> Result<(), String> {
+    let fmt_problem = (!formatted)
         .then_some("fuzz/ is not formatted (run `cargo fmt --manifest-path fuzz/Cargo.toml`)");
     match (fuzzed, fmt_problem) {
         (Ok(()), None) => Ok(()),
@@ -275,7 +281,12 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
         runs.push((t.clone(), cmd));
     }
     let log_dir = root.join("target").join("fuzz-logs");
-    let outcome = run_all(runs, jobs, &log_dir, &mut std::io::stderr());
+    run_result(run_all(runs, jobs, &log_dir, &mut std::io::stderr()))
+}
+
+/// Maps [`run_all`]'s outcome to `run`'s result: any failed target or start error fails it,
+/// and the crash message names every failed target.
+pub fn run_result(outcome: Result<Vec<String>, (String, Vec<String>)>) -> Result<(), String> {
     let crashed = |failed: &[String]| {
         format!(
             "crash, hang or out-of-memory in {failed:?}; artifacts are in fuzz/artifacts/ \
@@ -626,6 +637,43 @@ mod tests {
         assert!(marker.is_file());
         assert!(!dir.join("logs/never.log").exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn run_result_fails_on_any_failed_target_or_start_error() {
+        // Audit 0006 AC.7: the mutant `Ok(failed) => Ok(())` passed every test.
+        let crash = format!(
+            "crash, hang or out-of-memory in [\"a\", \"b\"]; artifacts are in fuzz/artifacts/ \
+             (minimize with `cargo +{NIGHTLY} fuzz tmin`, then add the repro to tests/regress/)"
+        );
+        assert_eq!(run_result(Ok(vec![])), Ok(()));
+        assert_eq!(
+            run_result(Ok(vec!["a".into(), "b".into()])),
+            Err(crash.clone())
+        );
+        assert_eq!(
+            run_result(Err(("cannot run c: x".into(), vec![]))),
+            Err("cannot run c: x".into())
+        );
+        assert_eq!(
+            run_result(Err((
+                "cannot run c: x".into(),
+                vec!["a".into(), "b".into()]
+            ))),
+            Err(format!("cannot run c: x; {crash}"))
+        );
+    }
+
+    #[test]
+    fn ci_result_keeps_both_problems() {
+        let fmt = "fuzz/ is not formatted (run `cargo fmt --manifest-path fuzz/Cargo.toml`)";
+        assert_eq!(ci_result(Ok(()), true), Ok(()));
+        assert_eq!(ci_result(Ok(()), false), Err(fmt.to_owned()));
+        assert_eq!(ci_result(Err("crash".into()), true), Err("crash".into()));
+        assert_eq!(
+            ci_result(Err("crash".into()), false),
+            Err(format!("crash; {fmt}"))
+        );
     }
 
     fn args(a: &[&str]) -> Vec<String> {
