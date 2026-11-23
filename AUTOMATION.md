@@ -54,8 +54,8 @@ GitHub (public repo jacobdam/jpdf3)
 | `specs/**` | feature specs, UI spec | agent |
 | `specs/TRACE.md` | requirement → journeys → specs → tests | agent; judge checks completeness |
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
-| `ops/STATUS.md` | current state, ≤ 1 page, rewritten every session | agent |
-| `ops/journal/YYYY-MM-DD.md` | append-only session log | agent |
+| `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit; its `Pending lessons` list holds lessons found after a PR's last review round (ADR 0011 §3) | agent |
+| `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | one file per session (since retro 0002; earlier entries in `ops/journal/YYYY-MM-DD.md`), each with a `Session:` line; committed to the session's work PR, or a records PR when there is none (ADR 0011 §3) | agent |
 | `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
 | `ops/proposals/*.md` | proposed changes to protected files (never blocking) | agent |
@@ -81,7 +81,8 @@ GitHub (public repo jacobdam/jpdf3)
    g. every 10th product merge or 7 days → AUDIT session instead (§10)
    h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
    i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number)
-   j. milestone backlog empty → run gate (§9) or generate next milestone's backlog
+   j. nothing else → Planner (at most once a day; interim: make the milestone backlog
+      workable, or run the gate (§9) and generate the next milestone's backlog), else idle
 3. SIZE CHECK: will this fit in one session? If not → split into issues, exit.
 4. CLAIM: assign the issue + comment "claimed by session <id>", then re-read to confirm the claim.
 5. WORK in a worktree: spec (with checklist §5.2) → failing tests → code →
@@ -91,7 +92,9 @@ GitHub (public repo jacobdam/jpdf3)
    on the PR → posts commit status `ai-review`.
 8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
-9. RECORD: journal, STATUS.md, new issues for discoveries, ADRs. Exit.
+9. RECORD: journal, STATUS.md, new issues for discoveries. Exit. The journal and STATUS go
+   into the work PR as a record commit pushed before step 7's `ai-review` post (ADR 0011 §3),
+   so in time this step runs between the review rounds and that post.
 ```
 
 ### 4.1 Session types (ADR 0011; being implemented, tasks listed in its §9)
@@ -101,13 +104,16 @@ The protocol above is the current one. ADR 0011 replaces step 2's self-selection
 mechanical trigger, the context it loads, its allowed outputs, one exit artifact and a bound.
 Audit and other cadences count product merges only; `area:`/`origin:` labels make problem
 groups visible; an area over its threshold is frozen (`design-pending`) and designed; a PR over
-ADR 0010's review cap goes to a design session before it goes to the owner. Task 1a and part 1
-of task 1b are in: ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md),
+ADR 0010's review cap goes to a design session before it goes to the owner. Tasks 1a and 1b
+are in: ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md),
 which decides precedence steps 1–5 (rules a–f) from the owner feed, GitHub lists, main's CI runs
 and the local worktrees, step 7 (rules g, h: audit, then retro, from main's first-parent history,
 tags, the judge alarm and `blocked` label events; the audit counts product merges, ADR 0011 §3)
 and step 10 (rule i: the lowest ready issue in the current milestone whose `Depends on:` issues
-are closed), and prints `legacy` when none applies, so the session uses rule j. Exit 2
+are closed), and step 11 when none applies: `planner` (rule j) unless a `Session: planner`
+record dated today is on main or an open agent PR, then `idle` (the session exits with no
+record). Every journal entry carries the pick as its `Session:` line, and the records go into
+the work PR as a record commit, which ADR 0010's final check ignores (ADR 0011 §3). Exit 2
 means unknown (no work); any other failure sends the session to the legacy rules b and c and the
 scheduler's own `next-session: …` bug issue. Each later task updates this file and TICK for the
 session type it adds.
