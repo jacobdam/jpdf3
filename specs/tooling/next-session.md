@@ -151,8 +151,10 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
   10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
       open milestone whose title is `M<digits>` with the smallest number), with no skip label
       and none of `in-progress` (claimed), `design`, `design-pending`, not in flight, and with its
-      dependencies closed: every `#N` after `Depends on:` on a line of its body (bold markers
-      around the words allowed; case matters) is not an open issue in `issues.json`. Lowest
+      dependencies closed: every `#N` of the list right after a `Depends on:` in its body is not an
+      open issue in `issues.json`. The list is `#N` items separated by commas, spaces or `and`,
+      each optionally followed by a `(…)` note; it ends at the first other text, so prose after
+      the phrase names nothing (bold markers around the words allowed; case matters). Lowest
       number first. The work-mix ordering of ADR 0011 §3 comes with task 2 (#244).
   11. Otherwise: `legacy` (TICK rule j; part 2, #243, replaces it with the Planner or idle).
 - **Exit codes** (ADR 0011 §2 Failure):
@@ -204,7 +206,9 @@ never 2 (no command ran).
   `comments` field holds at most the first 100 comments of an issue (gh's GraphQL page), so a
   done: reply after the 100th comment is missed and the issue is picked again; the session
   then sees the reply and exits under rule a. No owner issue has 100 comments today.
-- Blocked issues: at most 100 issues updated in the last 7 days, and one page of 100 events each
+- Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
+  (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
+  every issue updated in the week would cost one events call each. At most 100 issues updated in the last 7 days, and one page of 100 events each
   (`gh api` returns the oldest first, so an issue with more than 100 events hides its newest
   ones: a missed incident, and the retro still comes by age within 7 days).
 - `main-log.txt` holds the whole first-parent history, read live through the same 16 MiB cap;

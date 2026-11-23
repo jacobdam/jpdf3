@@ -422,15 +422,32 @@ fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
     Ok(out)
 }
 
-/// Every `#N` after `Depends on:` on the lines that hold it (bold markers allowed around it).
+/// The list right after each `Depends on:` (bold markers allowed): `#N` items separated by
+/// commas, spaces or `and`, each optionally followed by a `(…)` note. The list ends at the first
+/// other text, so prose after it (`Depends on: issues closed (#244)`) names nothing.
 fn dependencies(body: &str) -> Vec<u64> {
     let mut out = Vec::new();
     for line in body.lines() {
         for rest in line.split("Depends on:").skip(1) {
-            for part in rest.split('#').skip(1) {
-                let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
-                if let Ok(n) = digits.parse() {
-                    out.push(n);
+            let mut r = rest;
+            loop {
+                r = r.trim_start_matches([' ', '*', ',']);
+                if let Some(x) = r.strip_prefix("and ") {
+                    r = x;
+                    continue;
+                }
+                let Some(x) = r.strip_prefix('#') else { break };
+                let len = x.bytes().take_while(u8::is_ascii_digit).count();
+                let Some(n) = x.get(..len).and_then(|d| d.parse().ok()) else {
+                    break;
+                };
+                out.push(n);
+                r = x.get(len..).unwrap_or_default().trim_start();
+                if r.starts_with('(') {
+                    match r.find(')').and_then(|i| r.get(i + 1..)) {
+                        Some(after) => r = after,
+                        None => break,
+                    }
                 }
             }
         }
@@ -780,6 +797,18 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
         .last()
         .ok_or_else(|| "main-log.txt: no commits".to_owned())?;
 
+    // The retro's inputs are parsed before the audit can return, so a malformed `blocked.json`
+    // fails every run (R1.1).
+    let (since, newer, from) = match last_record(&log, &["docs/retros/"]) {
+        Some(i) => {
+            let c = log.get(i).ok_or("record index")?;
+            (c.time, log.get(..i).unwrap_or_default(), short(c))
+        }
+        None => (root.time, &log[..], "the first commit".to_owned()),
+    };
+    // "This week" is "since the retro record": an older record is due by age already.
+    let blocked = blocked_since(&inp.blocked, &iso(since.saturating_add(1)))?;
+
     let audit = match last_record(&log, &["docs/audits/", "docs/advocate/"]) {
         None => Some("no audit record on origin/main".to_owned()),
         Some(i) => {
@@ -814,15 +843,6 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
         )));
     }
 
-    let (since, newer, from) = match last_record(&log, &["docs/retros/"]) {
-        Some(i) => {
-            let c = log.get(i).ok_or("record index")?;
-            (c.time, log.get(..i).unwrap_or_default(), short(c))
-        }
-        None => (root.time, &log[..], "the first commit".to_owned()),
-    };
-    // "This week" is "since the retro record": an older record is due by age already.
-    let blocked = blocked_since(&inp.blocked, &iso(since.saturating_add(1)))?;
     let why = if age(since)? >= WEEK {
         Some(format!("{} days since {from}", age(since)? / 86_400))
     } else if let Some(c) = newer.iter().find(|c| c.subject.starts_with("Revert \"")) {
@@ -1010,7 +1030,8 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                 )
             });
     }
-    // Step 7 is parsed whatever is picked, so a broken input always fails.
+    // Step 7 runs whatever is picked and parses all its inputs before it returns, so a broken
+    // input always fails.
     let seven = step7(inp, now, alarm)?;
     if chosen.is_none() {
         chosen = seven;
@@ -1035,7 +1056,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     let p = chosen.unwrap_or_else(|| {
         pick(
             "legacy".to_owned(),
-            "none of steps 1–10 applies; use TICK §2 rule j",
+            "none of steps 1–5, 7 or 10 applies; use TICK §2 rule j",
             vec!["ops/TICK.md §2 rule j".to_owned()],
         )
     });
@@ -1105,8 +1126,16 @@ mod tests {
             dependencies("a #1\nDepends on: #242 (task 1a), #273"),
             [242, 273]
         );
-        assert_eq!(dependencies("Depends on: # 5, #x, PR#7"), [7]);
+        assert!(dependencies("Depends on: # 5, #6").is_empty());
+        assert!(dependencies("Depends on: PR #7").is_empty());
         assert!(dependencies("depends on: #5\nDepends on:\n#6").is_empty());
+        assert_eq!(
+            dependencies("Depends on: #1 and #2 (x, #9), #3. See #4"),
+            [1, 2, 3]
+        );
+        assert_eq!(dependencies("Depends on: #1 (open"), [1]);
+        // R1.2: prose after the phrase names nothing.
+        assert!(dependencies("with its Depends on: issues closed, task 2 (#244).").is_empty());
     }
 
     #[test]

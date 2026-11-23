@@ -348,7 +348,7 @@ fn base_is_legacy_with_notes() {
     let out = String::from_utf8(o.stdout).unwrap();
     assert_eq!(
         out,
-        "legacy\n\nRule: none of steps 1–10 applies; use TICK §2 rule j\nLoad:\n- ops/TICK.md §2 rule j\n\
+        "legacy\n\nRule: none of steps 1–5, 7 or 10 applies; use TICK §2 rule j\nLoad:\n- ops/TICK.md §2 rule j\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
 }
@@ -1559,6 +1559,12 @@ fn step10_dependencies() {
     assert_eq!(one("See #150.\nDepends on: #149"), "worker ready #701");
     assert_eq!(one("Depends on:\n#150"), "worker ready #701");
     assert_eq!(one("depends on: #150"), "worker ready #701");
+    // R1.2: a number in prose after the phrase isn't a dependency.
+    assert_eq!(
+        one("with its Depends on: issues closed (#150)."),
+        "worker ready #701"
+    );
+    assert_eq!(one("Depends on: #149 (task 1a), #150 (task 1b)."), "legacy");
     // A lower-numbered blocked one doesn't hide a later free one.
     assert_eq!(
         pick(&[plus(
@@ -1620,6 +1626,26 @@ fn new_inputs_malformed_exit_1() {
         let o = run_with(&[set(name, text.clone())]).unwrap();
         assert_eq!(o.status.code(), Some(1), "{name}: {text}");
         assert!(o.stdout.is_empty(), "{name}: {text}");
+    }
+    // R1.1: every step-7 input is parsed when the pick is `audit due` or an earlier step too.
+    let audit_now = set("now.txt", format!("{}\n", AUDIT_T + WEEK));
+    assert_eq!(pick(std::slice::from_ref(&audit_now)), "audit due");
+    let owner = feed_plus(&[feed_issue(250)]);
+    assert_eq!(
+        pick(std::slice::from_ref(&owner)),
+        "worker owner-issue #250"
+    );
+    for (name, text) in [
+        ("blocked.json", r#"{"not":"a list"}"#),
+        ("blocked.json", r#"[{"number":1}]"#),
+        ("tags.txt", "m1\n"),
+        ("main-log.txt", "x\n"),
+    ] {
+        for first in [&audit_now, &owner] {
+            let o = run_with(&[first.clone(), set(name, text.to_owned())]).unwrap();
+            assert_eq!(o.status.code(), Some(1), "{name}: {text}");
+            assert!(o.stdout.is_empty(), "{name}: {text}");
+        }
     }
     // A commit with an empty subject and no files parses.
     let o = run_with(&[log_with(&[format!("commit {:040x} {}\n", 9, NOW - 5)])]).unwrap();

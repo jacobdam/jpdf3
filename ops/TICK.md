@@ -173,7 +173,8 @@ g. **AUDIT session due** (≥ 10 product merges since the last audit record, or 
    merge changes a path under `crates/`, `bindings/`, `apps/`, `fuzz/`, `tools/jpdf-cli/` or
    `tools/fsio/`, ADR 0011 §3) → §6.
 h. **RETRO session due** (7 days since the last one, or an incident since it: a revert on main,
-   a judge alarm, a milestone tag `mN` (a gate passed), ≥ 3 issues labeled `blocked`; main red
+   a judge alarm, a milestone tag `mN` (a gate passed), ≥ 3 issues labeled `blocked` (that still
+   carry it); main red
    > 2 sessions ends in a revert) → §7.
 i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with every issue on its
    `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
