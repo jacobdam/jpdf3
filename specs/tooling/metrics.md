@@ -118,7 +118,8 @@ and mutation scores, and regrades overturned by the next reviewer (the retro add
 hand). Medians are the upper middle value for an even count.
 
 ## Persistence
-Writes only under `--out`; each run replaces `metrics.md` and the `raw/` files it fetches.
+Writes only under `--out`; each run replaces `metrics.md`, `metrics.json` and the `raw/` files
+it fetches.
 Nothing else is stored.
 
 ## Undo
@@ -149,8 +150,9 @@ Not applicable (read-only report; delete `--out` to undo).
   four lists: 999 entries aren't flagged, exactly 1000 are.
 - Job reads are capped at 100 failed runs (at most 100 `gh run view` calls). Boundary test:
   100 failed runs are all read and not flagged; with 101 the newest 100 are read, the oldest
-  is left out and the report says so. Peak memory for job data is one command's output
-  (16 MiB) plus the failing job names kept so far.
+  is left out and the report says so. Job data is held one command at a time: its stdout and
+  stderr (16 MiB each at most) and the parsed tree of its stdout, plus the failing job names
+  kept so far. That is an estimate from the code, not a measured peak.
 - Arithmetic: counts and line sums use `saturating_add`, durations are `u64` seconds summed
   with `saturating_add`; dates become day numbers in `i64` from years 1–9999 only. No input
   value can panic: every index is checked and every parse returns an error or skips the row.
@@ -181,7 +183,8 @@ characters and U+2028/U+2029 turned into spaces, so a value can't break a table 
     A job counter that read every failed run's jobs, or the oldest 100, passes a fixture with
     fewer than 101 failed runs, so the cap test checks which run is left out. A main/other
     split on the branch alone passes unless a pull request from a branch named `main` is in
-    the fixture; it is. A JSON writer that escaped only quotes passes printable titles, so the
+    the fixture, and one on the event alone unless a non-pull-request failure on another
+    branch is; both are. A JSON writer that escaped only quotes passes printable titles, so the
     test round-trips a title with a quote, a backslash, a newline, U+0001 and U+2028 through
     xtask's JSON parser.
   - What the tests can't see: `gh`'s own pagination and search semantics (the `merged:` and
@@ -213,5 +216,7 @@ With it, 2026-11-21 to 2026-11-23 (82 merges, 410 CI runs, 5 failed runs read) t
   `metrics.json` (it parses, its numbers match the report, and escaped strings round-trip).
 - xtask/tests/metrics.rs runs `cargo xtask metrics --from <fixture>` end to end: the report's
   numbers for xtask/tests/fixtures/metrics/ (the CI section and `metrics.json` included), the
-  default `--since`, `--index`, no `raw/` with `--from`, exit 1 (malformed and missing `prs.json`) and exit 2 (an impossible date, `--since`
-  after a given or the default `--until`, a flag without its value, an unknown flag).
+  default `--since`, `--index`, no `raw/` with `--from`, exit 1 (malformed and missing
+  `prs.json`, missing `runs.json`, a malformed `jobs-<id>.json`) and exit 2 (an impossible
+  date, `--since` after a given or the default `--until`, a flag without its value, an unknown
+  flag).

@@ -1666,6 +1666,8 @@ mod tests {
                 run_json(17, "failure", "pull_request", "main", 1, "2026-11-19T10:00:00Z"),
                 run_json(18, "failure", "schedule", "main", 1, "2026-11-19T03:17:00Z"),
                 run_json(19, "cancelled", "push", "main", 2, "2026-11-19T04:00:00Z"),
+                // Not a pull request, but not on main either: another branch's failure.
+                run_json(20, "failure", "workflow_dispatch", "t/z", 1, "2026-11-18T10:00:00Z"),
                 // A repeated id counts once, at its first entry.
                 run_json(12, "failure", "push", "main", 1, "2026-11-21T10:00:00Z"),
             ]
@@ -1701,22 +1703,22 @@ mod tests {
         );
         assert_eq!(rep.flaky.len(), 1);
         let ci = &rep.ci;
-        assert_eq!(ci.runs, 8); // 15 and 16 outside the period, the second 12 a repeat
+        assert_eq!(ci.runs, 9); // 15 and 16 outside the period, the second 12 a repeat
         assert_eq!(
             ci.by_conclusion,
             BTreeMap::from([
                 ("cancelled".to_owned(), 1),
-                ("failure".to_owned(), 5),
+                ("failure".to_owned(), 6),
                 ("in progress".to_owned(), 1),
                 ("success".to_owned(), 1)
             ])
         );
-        assert_eq!((ci.failed_main, ci.failed_other), (2, 3)); // 10, 18; 11, 13, 17
+        assert_eq!((ci.failed_main, ci.failed_other), (2, 4)); // 10, 18; 11, 13, 17, 20
         assert_eq!((ci.reruns, ci.reruns_success), (3, 1)); // 12, 13, 19; 12
-        // Failed runs read: 11, 18, 10, 13 (and 17 without job data); `policy` once per run.
+        // Failed runs read: 11, 18, 10, 13 (17 and 20 without job data); `policy` once per run.
         assert_eq!(
             (ci.jobs_read, ci.jobs_unknown, ci.jobs_capped),
-            (4, 1, false)
+            (4, 2, false)
         );
         assert_eq!(
             ci.failing_jobs,
@@ -1744,10 +1746,10 @@ mod tests {
         assert!(md.contains("- #5 (10 days): a/b c\n"), "{md}");
         assert!(md.contains("| Sessions | no ops/logs/index.tsv |"), "{md}");
         for want in [
-            "Runs: 8 (cancelled 1, failure 5, in progress 1, success 1).\n",
-            "Failed runs (conclusion `failure`): main 2, other branches 3.\n",
+            "Runs: 9 (cancelled 1, failure 6, in progress 1, success 1).\n",
+            "Failed runs (conclusion `failure`): main 2, other branches 4.\n",
             "Re-runs (attempt > 1): 3, of which ended in success: 1.",
-            "Failing jobs over 4 failed runs read (1 more without job data):\n\n",
+            "Failing jobs over 4 failed runs read (2 more without job data):\n\n",
             "| judge-verdict | 2 |\n| a/b | 1 |\n| policy | 1 |\n",
         ] {
             assert!(md.contains(want), "missing {want:?} in\n{md}");
@@ -1835,13 +1837,14 @@ mod tests {
 
     #[test]
     fn job_reads_stop_at_the_newest_hundred() {
-        // Run k fails at second k of 2026-11-15; a success and an older-dated run with a
-        // larger id are mixed in, so the order is by time, not by id or list position.
+        // Run k fails at second k of 2026-11-15 with id 1000 − k, so an older run has a larger
+        // id, and the list is shuffled (reversed) with a later success mixed in: only the
+        // order by `createdAt` keeps the newest 100 (PR #267 R1.1).
         let runs = |n: u64| {
             let mut items: Vec<String> = (0..n)
                 .map(|k| {
                     run_json(
-                        k,
+                        1000 - k,
                         "failure",
                         "push",
                         "main",
@@ -1867,11 +1870,12 @@ mod tests {
         };
         let (got, capped) = ids(100);
         assert_eq!((got.len(), capped), (100, false));
-        assert!(got.contains(&0));
+        assert!(got.contains(&1000));
         let (got, capped) = ids(101);
         assert_eq!((got.len(), capped), (100, true));
-        assert_eq!((got.first(), got.last()), (Some(&100), Some(&1))); // newest first
-        assert!(!got.contains(&0) && !got.contains(&5000)); // the oldest left out
+        assert_eq!((got.first(), got.last()), (Some(&900), Some(&999))); // newest first
+        // The oldest run (k = 0, the largest id) is the one left out.
+        assert!(!got.contains(&1000) && !got.contains(&5000));
 
         let mut i = inputs();
         i.runs = runs(101);
@@ -1934,12 +1938,12 @@ mod tests {
             at(&["review", "per_pr"]).as_array().map(<[Value]>::len),
             Some(1)
         );
-        assert_eq!(n(&["ci", "runs"]), "8");
+        assert_eq!(n(&["ci", "runs"]), "9");
         assert_eq!(n(&["ci", "by_conclusion", "in progress"]), "1");
         assert_eq!(n(&["ci", "failed_main"]), "2");
-        assert_eq!(n(&["ci", "failed_other"]), "3");
+        assert_eq!(n(&["ci", "failed_other"]), "4");
         assert_eq!(n(&["ci", "reruns_success"]), "1");
-        assert_eq!(n(&["ci", "jobs_unknown"]), "1");
+        assert_eq!(n(&["ci", "jobs_unknown"]), "2");
         assert_eq!(at(&["ci", "jobs_capped"]), Value::Bool(false));
         assert_eq!(n(&["ci", "failing_jobs", "a|b"]), "1");
         assert_eq!(n(&["ci", "failing_jobs", "judge-verdict"]), "2");
