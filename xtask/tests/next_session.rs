@@ -1470,7 +1470,7 @@ fn step7_slot_in_flight() {
     let open_pr = |body: &str| pr(401, "OPEN", body, "t/400-audit", &[], GREEN);
     assert_eq!(pick(std::slice::from_ref(&audit_due)), "audit due");
     let doing = slot(&["audit", "in-progress"], open_pr("Closes #400"));
-    assert_eq!(pick(&doing), "legacy");
+    assert_eq!(pick(&doing), "planner");
     let out = String::from_utf8(run_with(&doing).unwrap().stdout).unwrap();
     assert!(
         out.contains(&format!(
@@ -1480,14 +1480,14 @@ fn step7_slot_in_flight() {
         "{out}"
     );
     // The label alone is enough, and a draft or failing PR counts too: a failing one is step 3's.
-    assert_eq!(pick(&slot(&["audit"], open_pr("Closes #400"))), "legacy");
+    assert_eq!(pick(&slot(&["audit"], open_pr("Closes #400"))), "planner");
     let failing = pr(401, "OPEN", "Closes #400", "t/400-audit", &[], "null");
     assert_eq!(
         pick(&slot(&["audit"], failing.clone())),
         "worker own-pr #401"
     );
     // Parked for the owner: step 3 skips it, and the audit is still not redone.
-    assert_eq!(pick(&slot(&["audit", "owner-todo"], failing)), "legacy");
+    assert_eq!(pick(&slot(&["audit", "owner-todo"], failing)), "planner");
     // Near misses: the audit is still due.
     for (l, p) in [
         (vec!["retro"], open_pr("Closes #400")),
@@ -1553,7 +1553,7 @@ fn step7_slot_in_flight() {
     };
     assert_eq!(retro(&[]), "retro due");
     assert_eq!(retro(&["audit"]), "retro due");
-    assert_eq!(retro(&["retro", "in-progress"]), "legacy");
+    assert_eq!(retro(&["retro", "in-progress"]), "planner");
     // An audit in flight while a retro is due falls through to the retro.
     let mut both = slot(&["audit"], open_pr("Closes #400"));
     both.push(set("now.txt", format!("{}\n", NOW + 6 * DAY)));
@@ -1575,7 +1575,7 @@ fn step7_slot_in_flight() {
             ],
         ),
     ]);
-    assert_eq!(pick(&both), "legacy");
+    assert_eq!(pick(&both), "planner");
     let out = String::from_utf8(run_with(&both).unwrap().stdout).unwrap();
     assert!(
         out.contains(&format!(
