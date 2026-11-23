@@ -4,8 +4,13 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #269 (#242, ADR 0011 task 1a) merged: `cargo xtask next-session` runs in TICK §2. **PR #272** (#270): it
-  now picks a conflicting own PR. PR #265 (#216) merged.
+- PR #269 (#242, ADR 0011 task 1a) merged (959c4c6): `cargo xtask next-session` decides TICK rules a–f and prints
+  `legacy` otherwise; ops/TICK.md §2 runs it. `deferred` on #236, #146 and #231 so the scheduler skips them.
+  **PR #272** (#270) merged: it now picks a conflicting own PR. PR #265 (#216) merged (c863a0d).
+- main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra). The rerun was cancelled by the
+  main concurrency group (no job ran); 959c4c6's run 45254461191 has `project-macos` green instead.
+- Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths`, `t/242-next-session`, `t/270-conflicting-pr` can be
+  removed (merged PRs; the scheduler's `Notes:` list them).
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -23,14 +28,17 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c (scheduler pick `worker scheduler-bug #270`): PR #272, a conflicting agent PR is now a rule c pick. Journal
-  2026-11-23 20:12. PR #271 (ops records only, rule b record) is conflicting; the next run picks it once #272 merges.
-- Before it, c by hand: PR #265 conflicts fixed (merged). Journal 2026-11-23 20:05.
+- c by hand (scheduler said `legacy`; #272 had not merged when this session started): PR #271 (rule b records)
+  conflicts with main fixed after PR #272 merged. Journal 2026-11-23 20:26.
+- Before it, c: #270 → PR #272 (merged). Journal 2026-11-23 20:12. Before that, b: main red on run 45249100863,
+  macOS runner not acquired → rerun (PR #271). Journal 2026-11-23 20:03.
 
 ## Next step (suggested order, TICK letters)
-0. Start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
-   #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
-   comments on it untagged.
+0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
+   runs are still in progress it can pick an older red run that a newer run may fix; check
+   `gh run list --branch main` first.
+   On `legacy`: rule i, lowest number first: #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260
+   (tagged) asks for #245 next once the owner comments on it untagged.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
