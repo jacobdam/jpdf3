@@ -21,7 +21,8 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
 - **Invariant:** every value that reaches parsing through `jpdf_engine::Document::open` is at
   most the `Limits::default()` value of its field, whatever the front end (Swift, JS, CLI)
   passed. Bindings enter only through `jpdf-engine`; the layers below it take `&Limits`
-  unclamped and are called only by the engine and by tests.
+  unclamped and are called only by the engine, by tests and by the fuzz targets (`fuzz/`, which
+  build their own `Limits`).
 - **Decided in:** ADR 0008.
 - **Enforced by:** `Document::open` calls `Limits::clamped_to(&Limits::default())` before using
   any field (crates/jpdf-engine/src/lib.rs); `clamped_to` destructures `Limits` exhaustively, so
@@ -45,7 +46,9 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
 - **Reviewers check:** a new or changed trait method takes the per-call struct, not `Limits` or
   a raw remaining-budget integer the backend could misuse; it returns `BackendError`; the caller,
   not the backend, charges the document-wide budget.
-- **Paths:** `crates/jpdf-traits/`, `crates/jpdf-backends/`.
+- **Paths:** `crates/jpdf-traits/`, `crates/jpdf-backends/`, and the callers that derive the
+  per-call structs and charge the budget: `crates/jpdf-engine/`, `crates/jpdf-filters/`,
+  `crates/jpdf-crypt/`, `crates/jpdf-font/`, `crates/jpdf-render/`.
 
 ## P3. Third-party code enters only through `jpdf-backends`
 - **Invariant:** root workspace members other than `jpdf-backends` depend on no third-party

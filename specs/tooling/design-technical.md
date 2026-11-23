@@ -14,14 +14,18 @@ session applies step 6 by hand (ops/TICK.md §2).
   an agent PR over ADR 0010's review cap, escalated to design.
 - **Escalation** (ops/TICK.md §4 step 6, ADR 0011 §5). Where step 6 sent a PR to the owner (the
   final check reported anything, or the post-cap diff was over 100 lines or added a file), the
-  PR goes to draft with `ai-review` failure, its issue gets a `🤖 jpdf-agent escalated to design:
-  PR #N` comment with the ledger, and the PR gets `needs-design`. If the issue already has that
-  comment or a `Designed in: #<n>` line, the owner gets it as before (`blocked`, `owner-todo`,
-  both ledgers). TICK §4 step 6 carries the state table.
+  PR goes to draft with `ai-review` failure and gets `needs-design`, then its issue gets a
+  `🤖 jpdf-agent escalated to design: PR #N` comment with the ledger (that order, so a session
+  that dies midway leaves a PR the next design session resumes). If the issue already has such a
+  comment naming another PR, or a `Designed in: #<n>` line, the owner gets it as before
+  (`blocked`, `owner-todo`, both ledgers). TICK §4 step 6 carries the state table.
 - **Picking** (ops/TICK.md §2, until #275): on `legacy`, the lowest-numbered open agent PR
-  labeled `needs-design`, else the lowest-numbered open issue labeled `design` and `ready`
-  without `owner-todo`, `blocked` or `deferred`. A scheduler rule c pick of a `needs-design` PR
-  is a design session too (the scheduler reads its `ai-review` failure as failing until #275).
+  labeled `needs-design` where neither it nor its issue carries `owner-todo`, `blocked` or
+  `deferred`, else the lowest-numbered open issue labeled `design` and `ready` without those
+  labels and not linked by an open agent PR (the scheduler's own skips). A scheduler rule c pick
+  of a `needs-design` PR is a design session too (the scheduler reads its `ai-review` failure as
+  failing until #275), after a by-hand check of rules d and e, which ADR 0011 puts ahead of
+  design.
 - **The session** (ops/TICK.md §8): loads the issue group, ledgers, area code and ADRs,
   `docs/PRINCIPLES.md` and the template; picks exactly one output: 1 split (only lines already
   reviewed), 2 ADR or principle (a design PR closing a design issue, tasks with `Designed in:` and
@@ -30,9 +34,15 @@ session applies step 6 by hand (ops/TICK.md §2).
   (`owner-todo`). Outputs 1 and 3 are followed by one final check only when the diff since the
   last reviewed commit adds ≤ 100 lines and no file; otherwise, or when the check reports
   anything, output 4.
-- **Design PR merge** (ADR 0011 §7): `owner-todo` after `ai-review` success; a later session's
-  §1 enables auto-merge once 24 hours have passed since the latest of: marked ready, last
-  `ai-review` success, the owner's last `/release`; and no `/hold` after the last `/release`.
+- **Resuming:** a design session first finishes what a dead one started (the missing escalation
+  comment, an existing ruling and its final check, an existing design issue and ADR PR); it never
+  rules twice on one PR.
+- **Design PR merge** (ADR 0011 §7): after `ai-review` success the tasks are filed, then
+  `owner-todo`; a later session's §1 enables auto-merge once 24 hours have passed since the
+  latest of: marked ready, last `ai-review` success, the owner's last `/release`; and no `/hold`
+  after the last `/release`. A push to a `design` PR turns auto-merge off first and restarts the
+  window after the next `ai-review` success. A `design` PR finished by output 1 or 3 waits out
+  the same window.
 - **Template:** `docs/adr/_TEMPLATE-design.md` has the ADR 0011 §6 sections: the problem class,
   why point fixes don't converge, the invariant, enforcement (types, lint or gate, measurement,
   reviewer vigilance, in that order), verification, issues in the group, tasks, what reviewers
@@ -50,8 +60,9 @@ A wrong escalation is undone by removing `needs-design` and the escalation comme
 bound counts the comment, so deleting it gives the issue its design step back (owner action).
 
 ## Errors
-- A `needs-design` PR whose issue already carries a bound mark: it should not exist (step 6 sends
-  such a PR to the owner); a design session that finds one takes output 4.
+- A `needs-design` PR whose issue carried a bound mark before this PR's escalation (an
+  `escalated to design:` comment naming another PR, or `Designed in:`): it should not exist
+  (step 6 sends such a PR to the owner); a design session that finds one takes output 4.
 - A design PR with code, tests or spec text: the reviewer grades it a blocker (ADR 0011 §1).
 
 ## Limits
@@ -68,7 +79,9 @@ Bounds (ADR 0011 §1 "every loop has a counter and a final state"):
   access could set them; strangers can't label. A stranger's comment imitating
   `escalated to design:` only moves the issue to the owner sooner (the safe direction).
 - Rulings can't waive blockers, CONSTITUTION findings or `sev:high`+ security findings, and a
-  fresh reviewer must accept each ruling.
+  fresh reviewer must accept each ruling. A ruling counts only from the repository's account
+  (`jacobdam`, shared by owner and agent) with the tag, so a stranger's imitation of one is data
+  and unlocks no review round.
 - Self-check: no arithmetic on input; no checker or validator is added (part 2 adds the
   scheduler step and its fixtures). What a broken process still passes: a session that skips the
   by-hand step 6 check on `legacy` (until #275 nothing but the journal's `Picked:` line shows

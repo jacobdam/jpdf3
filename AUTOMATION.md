@@ -116,8 +116,8 @@ going to the owner, and a design session ends it with exactly one output: a spli
 reviewed part, an ADR or principle (`docs/adr/_TEMPLATE-design.md`, `docs/PRINCIPLES.md`) with
 tasks, a ruling followed by one final check, or one question for the owner. One escalation per
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
-design work. Design ADR PRs merge 24 hours after their `ai-review` success unless the owner
-`/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
+design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
+`ai-review` success, the owner's last `/release`, unless the owner `/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
 touches. Until #275 adds step 6 to the scheduler, sessions check it by hand on `legacy`.
 
 ## 5. Completeness: building the right thing

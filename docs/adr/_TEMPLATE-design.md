@@ -1,8 +1,9 @@
 # NNNN. <The problem class, in one line>
 
 Status: proposed (design issue #<n>; escalated from #<issue> / PR #<pr>, or queued by <audit,
-owner, session>). A design ADR merges 24 hours after its last `ai-review` success unless the
-owner comments `/hold` (ADR 0011 §7; ops/TICK.md §8 step 5).
+owner, session>). A design ADR merges 24 hours after the latest of: its PR marked ready, its
+last `ai-review` success, the owner's last `/release`, unless the owner comments `/hold`
+(ADR 0011 §7; ops/TICK.md §8 step 5).
 
 <!--
 Template for the Design: technical session (ADR 0011 §6, ops/TICK.md §8). Answer every
