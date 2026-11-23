@@ -9,7 +9,7 @@ Applied by the owner in PR #184 (the script is unchanged since); later sessions 
 Files:
 - `owner-comment-tracking/owner-issues.sh`: the whole proposed script (a drop-in replacement).
 - `owner-comment-tracking/owner-issues.diff`: the same change as a diff against main.
-- `owner-comment-tracking/test-owner-issues.sh`: 92 checks against a fake `gh` (§4).
+- `owner-comment-tracking/test-owner-issues.sh`: 102 checks against a fake `gh` (§4).
 
 ## 1. Problem (#173)
 
@@ -111,7 +111,7 @@ the first run fails):
 
 ```sh
 SCRATCH=<an empty directory> ops/proposals/owner-comment-tracking/test-owner-issues.sh
-# passed 92, failed 0
+# passed 102, failed 0
 ```
 
 It covers: owner issue quoting the tag mid-body shown, tagged and stranger issues hidden, a null
@@ -129,9 +129,10 @@ stranger, agent-tagged, owner text quoting the tag mid-body), reviews (handled, 
 second PR, a second page, stale, stranger, agent-tagged, owner text quoting the tag mid-body);
 agent text that starts with a space, a newline or a tab before the tag, for each of the four
 sources (issues, comments, review comments, reviews: hidden, as the guard strips that whitespace
-before its tag check); each shown review and review comment once, with its own body; the whole
-output exactly the expected set of records (an untagged owner `done:` reply counts as an owner
-comment and is listed); no agent or stranger body anywhere in it; the
+before its tag check), and a carriage return, a vertical tab or a form feed before the tag on a
+comment; each shown review and review comment once, with its own body, and the same for five
+comments and both shown issues (one with a null body); the output's URLs and issue numbers exactly
+the expected set (an untagged owner `done:` reply counts as an owner comment and is listed); no agent or stranger body anywhere in it; the
 `kind` of each; conversation and review comments both fetched from `FLOOR`, or from 14 days ago
 when `FLOOR` is later; and a non-zero exit when any one of the six calls fails. The `WARN_DAYS`
 boundary is tested at ±2 minutes, not to the second: the script reads the clock itself.
@@ -151,17 +152,20 @@ review comments (1), `contains($tag) | not` instead of the untagged check on rev
 review comments (1), a generic `[^/]+/[^/]+` instead of this repo in the "done:" pattern (2),
 `[^/]+/jpdf3` there (1).
 
-Added for #216 (audit 0005 AC.1, AS.2 and CX.7; failures out of 92, each mutant passed all 71 of
-the earlier cases unless noted): `startswith($tag) | not` as the untagged check (14), the untagged
-regex without its leading `\s*` (14), every shown review body replaced by an agent review's body
-(5), every shown review comment body replaced by another review comment's body (2), every review
-printed twice (9; 4 of the earlier 71 already failed). The whitespace class still differs from the
-guard's for U+001C to U+001F (#217, sev:medium): the harness pins only space, newline and tab.
+Added for #216 (audit 0005 AC.1, AS.2 and CX.7, and PR #265 review round 1; failures out of 102,
+each mutant passed all 71 of the earlier cases unless noted): `startswith($tag) | not` as the
+untagged check (17), the untagged regex without its leading `\s*` (17), `[ \n\t]*` instead of
+`\s*` (5), every shown review body replaced by an agent review's body (5), every shown review
+comment body replaced by another review comment's body (2), every shown comment body replaced by
+another owner comment's body (4), every issue body replaced by a constant (2), every review printed
+twice (9; 4 of the earlier 71 already failed). The whitespace class still differs from the guard's
+for U+001C to U+001F (#217, sev:medium): the harness pins only space, newline, tab, carriage return,
+vertical tab and form feed.
 
 Owner steps after applying:
 1. Run `ops/proposals/owner-comment-tracking/test-owner-issues.sh ops/driver/owner-issues.sh`
-   (the argument makes it test the applied file): `passed 92, failed 0` (64 before #192 added
-   seven cases, 71 before #216 added 21; PR #184's file passes all 92).
+   (the argument makes it test the applied file): `passed 102, failed 0` (64 before #192 added
+   seven cases, 71 before #216 added 31; PR #184's file passes all 102).
 2. Run `ops/driver/owner-issues.sh` on the live repo. Applied before 2026-11-23: the output lists
    the same comments as the old script (all pre-`FLOOR`), now with `url`, plus #173 while it is
    open. Applied later: also every owner comment since 2026-11-23 that has no "done:" reply; each

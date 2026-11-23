@@ -52,7 +52,7 @@ chmod +x "$work/bin/gh"
 T="🤖 jpdf-agent"
 # Leading whitespace the guard strips before its tag check (.claude/hooks/guard.py, lstrip): agent
 # text that starts with any of these is still agent text (#216, audit 0005 AC.1, AS.2).
-SP=" "; NL=$'\n'; TB=$'\t'
+SP=" "; NL=$'\n'; TB=$'\t'; CR=$'\r'; VT=$'\v'; FF=$'\f'
 U="https://github.com/jacobdam/jpdf3"
 O="https://github.com/jacobdam/jpdf4"   # another repo of the same owner
 M="https://github.com/mallory/jpdf3"    # a repo with the same name, another owner
@@ -111,7 +111,10 @@ c() { # c ID USER CREATED UPDATED BODY [PATH] [REPO URL]  -> one issue comment o
   c 123 jacobdam "$(d 2)"  "$(d 2)"  "post-floor, URL on another owner's jpdf3, done names that URL" issues/7 "$M" ; echo ','
   c 124 jacobdam "$(d 2)"  "$(d 2)"  "${SP}$T agent comment after a space" ; echo ','
   c 125 jacobdam "$(d 2)"  "$(d 2)"  "${NL}$T agent comment after a newline" ; echo ','
-  c 126 jacobdam "$(d 2)"  "$(d 2)"  "${TB}$T agent comment after a tab"
+  c 126 jacobdam "$(d 2)"  "$(d 2)"  "${TB}$T agent comment after a tab" ; echo ','
+  c 127 jacobdam "$(d 2)"  "$(d 2)"  "${CR}$T agent comment after a carriage return" ; echo ','
+  c 128 jacobdam "$(d 2)"  "$(d 2)"  "${VT}$T agent comment after a vertical tab" ; echo ','
+  c 129 jacobdam "$(d 2)"  "$(d 2)"  "${FF}$T agent comment after a form feed"
   echo ']['
   c 201 jacobdam "$(d 1)" "$(d 1)" "$T done: $U/issues/7#issuecomment-104
 waiting on owner: nothing" ; echo ','
@@ -206,6 +209,9 @@ issue 7 && bad "agent issue after a tab shown" || ok "agent issue after a tab hi
 hide issues/7#issuecomment-124 "agent comment after a space"
 hide issues/7#issuecomment-125 "agent comment after a newline"
 hide issues/7#issuecomment-126 "agent comment after a tab"
+hide issues/7#issuecomment-127 "agent comment after a carriage return"
+hide issues/7#issuecomment-128 "agent comment after a vertical tab"
+hide issues/7#issuecomment-129 "agent comment after a form feed"
 hide pull/5#discussion_r308 "agent review comment after a space"
 hide pull/5#discussion_r309 "agent review comment after a newline"
 hide pull/5#discussion_r310 "agent review comment after a tab"
@@ -240,13 +246,23 @@ show pull/5#pullrequestreview-405 "post-floor review, 20 days old"
 
 # Exact records (CX.7): membership alone passes a script that pairs a shown URL with another
 # fixture's body, or prints a record twice. Each shown review and review comment appears once,
-# with its own body; the full output is exactly the expected URL set; no filtered body leaks.
+# with its own body (and a sample of comments and issues); the full output is exactly the expected
+# set of URLs and issue numbers; no filtered body leaks.
 rec() { # rec PATH BODY
   local got
   got=$(jq -c --arg u "$U/$1" 'select(.url == $u) | .body' "$work/out")
   [[ "$got" == "$(jq -n -c --arg b "$2" '$b')" ]] && ok "record: $1 has its own body, once" \
     || bad "record: $1 bodies: $got"
 }
+rec issues/7#issuecomment-102 "old pre-floor, edited 3 days ago"
+rec issues/7#issuecomment-103 "post-floor, 20 days, unhandled"
+rec issues/7#issuecomment-105 "post-floor, stranger marks it done"
+rec issues/7#issuecomment-112 "Owner text quoting $T done: in the middle"
+rec issues/7#issuecomment-203 "done: $U/issues/7#issuecomment-106"
+ib() { jq -c --argjson n "$1" 'select(.kind == "issue" and .number == $n) | .body' "$work/out"; }
+[[ "$(ib 1)" == "$(jq -n -c --arg b "Please do X. Reply with \`$T done: <url>\`." '$b')" ]] \
+  && ok "record: issue 1 has its own body, once" || bad "record: issue 1 bodies: $(ib 1)"
+[[ "$(ib 4)" == null ]] && ok "record: issue 4 keeps its null body, once" || bad "record: issue 4 bodies: $(ib 4)"
 rec pull/5#discussion_r302 "unhandled inline note"
 rec pull/5#discussion_r304 "pre-floor inline, edited 3 days ago"
 rec pull/5#discussion_r307 "Owner inline note quoting $T done: mid-body"
