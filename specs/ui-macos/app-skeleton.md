@@ -165,4 +165,4 @@ unreadable journeys too, after the run's own error), entitlement check incl. ext
 `get-task-allow` and testing exceptions, hardened runtime flag parsing, tool capture: a
 `/bin/sh` tool that writes 300 000 bytes before reading 300 000 bytes of input finishes
 within 30 s, unread input is an error, a failed exit wins over it);
-`xtask/src/json.rs` (values, escapes and surrogates, 27 malformed inputs, depth bound).
+`tools/jpdf-testgen/src/json.rs` (moved from xtask in #235; values, escapes and surrogates, 27 malformed inputs, depth bound).

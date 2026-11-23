@@ -826,12 +826,14 @@ mod synthetic {
             .display()
             .to_string();
         let missing = d.join("src/no-such-file.rs").display().to_string();
-        for src in [
-            other.as_str(),
-            missing.as_str(),
-            "src/lib.rs",
-            "../jpdf-syntax/src/lib.rs",
-        ] {
+        // A relative src_path is never resolved against the working directory. Tests run in the
+        // package directory, so this one names the crate's own lib.rs from there (the control).
+        let rel = "../../crates/jpdf-syntax/src/lib.rs";
+        assert_eq!(
+            Path::new(rel).canonicalize().unwrap(),
+            d.join("src/lib.rs").canonicalize().unwrap()
+        );
+        for src in [other.as_str(), missing.as_str(), rel] {
             let m = meta("jpdf-syntax", &d, &[("lib", &own), ("custom-build", src)]);
             let bad = target_violations(&m, &r, SYNTAX).unwrap();
             assert_eq!(bad.len(), 1, "{src}: {bad:?}");
