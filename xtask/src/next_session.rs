@@ -839,8 +839,25 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     }))
 }
 
-/// Step 7 (TICK rules g, h): an audit slot due, then a retro due.
-fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, String> {
+/// Step 7 (TICK rules g, h): an audit slot due, then a retro due. `audit_pr` and `retro_pr` are
+/// the open agent PRs already doing that slot (#282): a due term with one is not picked, and the
+/// returned notes say so.
+fn step7(
+    inp: &Inputs,
+    now: i64,
+    alarm: Option<i64>,
+    audit_pr: Option<u64>,
+    retro_pr: Option<u64>,
+) -> Result<(Option<Pick>, Vec<String>), String> {
+    let mut notes = Vec::new();
+    let mut in_flight = |kind: &str, why: &str, pr: Option<u64>| {
+        pr.map(|n| {
+            notes.push(format!(
+                "{kind} due ({why}) but PR #{n} is open for it: not picked"
+            ))
+        })
+        .is_some()
+    };
     let log = parse_log(&inp.main_log)?;
     let tags = milestone_tags(&inp.tags)?;
     let short = |c: &Commit| c.sha.get(..7).unwrap_or(&c.sha).to_owned();
@@ -884,6 +901,7 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
             }
         }
     };
+    let audit = audit.filter(|why| !in_flight("audit", why, audit_pr));
     if let Some(why) = audit {
         let range = last_record(&log, &["docs/audits/", "docs/advocate/"])
             .and_then(|i| log.get(i))
@@ -891,11 +909,12 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
                 || "git log --first-parent --oneline origin/main".to_owned(),
                 |c| format!("git log --first-parent --oneline {}..origin/main", short(c)),
             );
-        return Ok(Some(pick(
+        let p = pick(
             "audit due".to_owned(),
             &format!("g (audit due: {why})"),
             vec!["ops/TICK.md §6".to_owned(), range],
-        )));
+        );
+        return Ok((Some(p), notes));
     }
 
     let why = if age(since)? >= WEEK {
@@ -916,7 +935,8 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
     } else {
         None
     };
-    Ok(why.map(|why| {
+    let why = why.filter(|why| !in_flight("retro", why, retro_pr));
+    let p = why.map(|why| {
         pick(
             "retro due".to_owned(),
             &format!("h (retro due: {why})"),
@@ -925,7 +945,8 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
                 "cargo xtask metrics --index <main checkout>/ops/logs/index.tsv".to_owned(),
             ],
         )
-    }))
+    });
+    Ok((p, notes))
 }
 
 /// Whether `records.txt` holds a `- Session: planner` line in a journal file dated `today`
@@ -1117,7 +1138,17 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     }
     // Step 7 runs whatever is picked and parses all its inputs before it returns, so a broken
     // input always fails.
-    let seven = step7(inp, now, alarm)?;
+    // An open agent PR whose linked issue is open and labeled `audit` or `retro` is doing that
+    // slot already (#282), whatever its checks say: a failing one is step 3's, or skipped as the
+    // owner's turn. Lowest number first.
+    let slot_pr = |label: &str| {
+        prs.iter()
+            .filter(|p| p.open)
+            .find(|p| linked_issue(&p.body).is_some_and(|n| has_label(labels_of(n), label)))
+            .map(|p| p.number)
+    };
+    let (seven, seven_notes) = step7(inp, now, alarm, slot_pr("audit"), slot_pr("retro"))?;
+    notes.extend(seven_notes);
     if chosen.is_none() {
         chosen = seven;
     }
