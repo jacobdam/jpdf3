@@ -29,10 +29,94 @@ fn labels(names: &[&str]) -> String {
 }
 
 fn issue(n: u64, title: &str, l: &[&str]) -> String {
+    full_issue(n, title, l, "", "null")
+}
+
+/// An issue with a body and a milestone (`milestone`: JSON, `null` or `{"title":"M0"}`).
+fn full_issue(n: u64, title: &str, l: &[&str], body: &str, milestone: &str) -> String {
     format!(
-        r#"{{"number":{n},"title":{title:?},"labels":{}}}"#,
+        r#"{{"number":{n},"title":{title:?},"labels":{},"body":{body:?},"milestone":{milestone}}}"#,
         labels(l)
     )
+}
+
+/// A `ready` issue in milestone `m` with this body.
+fn ready(n: u64, m: &str, l: &[&str], body: &str) -> String {
+    let mut all = vec!["ready"];
+    all.extend_from_slice(l);
+    full_issue(
+        n,
+        "r",
+        &all,
+        body,
+        &format!(r#"{{"title":{m:?},"number":1}}"#),
+    )
+}
+
+// Times (Unix seconds): now is 2026-11-24T06:00:00Z; the last audit record is a day old, the
+// last retro record two days old.
+const NOW: i64 = 1_795_500_000;
+const DAY: i64 = 86_400;
+const WEEK: i64 = 7 * DAY;
+const AUDIT_T: i64 = NOW - DAY;
+const RETRO_T: i64 = NOW - 2 * DAY;
+const ROOT_T: i64 = 1_795_000_000;
+
+/// One commit of `main-log.txt` (`--format=commit %H %ct %s --name-status`).
+fn commit(id: u64, time: i64, subject: &str, files: &[(&str, &str)]) -> String {
+    // The id leads the hash, so the 7-character short form is `{id:07x}`.
+    let mut out = format!("commit {:0<40} {time} {subject}\n\n", format!("{id:07x}"));
+    for (st, path) in files {
+        out.push_str(&format!("{st}\t{path}\n"));
+    }
+    out
+}
+
+/// The base log's commits, oldest last: a product merge after the audit record, the audit
+/// record (which also changes product code), the retro record, a revert before it, the root.
+fn base_log() -> Vec<String> {
+    vec![
+        commit(
+            105,
+            NOW - 3600,
+            "feature (#10)",
+            &[("M", "crates/a/src/lib.rs"), ("M", "ops/journal/x.md")],
+        ),
+        commit(
+            104,
+            AUDIT_T,
+            "Audit 0006 (#9)",
+            &[("A", "docs/audits/0006.md"), ("M", "crates/b.rs")],
+        ),
+        commit(
+            103,
+            RETRO_T,
+            "Retro 0001 (#8)",
+            &[("A", "docs/retros/0001.md")],
+        ),
+        commit(
+            102,
+            RETRO_T - 100,
+            "Revert \"x\" (#7)",
+            &[("M", "crates/z.rs")],
+        ),
+        commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+    ]
+}
+
+/// `main-log.txt` with `newer` commits on top of the base log.
+fn log_with(newer: &[String]) -> (&'static str, Option<String>) {
+    let mut all = newer.to_vec();
+    all.extend(base_log());
+    ("main-log.txt", Some(all.concat()))
+}
+
+fn labeled(label: &str, at: &str) -> String {
+    format!(r#"{{"event":"labeled","created_at":{at:?},"label":{{"name":{label:?}}}}}"#)
+}
+
+fn blocked_issue(n: u64, events: &[String]) -> String {
+    format!(r#"{{"number":{n},"events":[{}]}}"#, events.join(","))
 }
 
 const GREEN: &str = r#"[{"__typename":"CheckRun","name":"policy","conclusion":"SUCCESS"},
@@ -127,7 +211,7 @@ fn base() -> Vec<(&'static str, String)> {
             "issues.json",
             format!(
                 "[{},{},{}]",
-                issue(301, "feature", &["ready"]),
+                ready(301, "M0", &[], ""),
                 issue(146, "memory", &["security", "sev:high", "deferred"]),
                 issue(150, "low", &["security", "sev:low"])
             ),
@@ -138,6 +222,35 @@ fn base() -> Vec<(&'static str, String)> {
                 "[{},{}]",
                 run_entry(11, "completed", "failure", "pull_request"),
                 run_entry(10, "completed", "success", "push")
+            ),
+        ),
+        ("now.txt", format!("{NOW}\n")),
+        ("main-log.txt", base_log().concat()),
+        ("tags.txt", format!("m0 {}\nv1 {}\n", RETRO_T - 1, NOW - 10)),
+        (
+            "milestones.json",
+            r#"[{"title":"M10","number":11},{"title":"M1","number":2},{"title":"M0","number":1},{"title":"Mx","number":12}]"#
+                .to_owned(),
+        ),
+        (
+            "blocked.json",
+            format!(
+                "[{},{},{}]",
+                blocked_issue(
+                    187,
+                    &[
+                        labeled("ready", "2026-11-20T00:00:00Z"),
+                        labeled("blocked", "2026-11-23T10:00:00Z")
+                    ]
+                ),
+                blocked_issue(188, &[labeled("blocked", "2026-11-22T06:00:01Z")]),
+                blocked_issue(
+                    189,
+                    &[
+                        labeled("blocked", "2026-11-22T06:00:00Z"),
+                        r#"{"event":"commented","created_at":"2026-11-23T00:00:00Z"}"#.to_owned()
+                    ]
+                )
             ),
         ),
         (
@@ -235,7 +348,7 @@ fn base_is_legacy_with_notes() {
     let out = String::from_utf8(o.stdout).unwrap();
     assert_eq!(
         out,
-        "legacy\n\nRule: none of steps 1–5 applies; use TICK §2 rules g–j\nLoad:\n- ops/TICK.md §2 rules g–j\n\
+        "legacy\n\nRule: none of steps 1–10 applies; use TICK §2 rule j\nLoad:\n- ops/TICK.md §2 rule j\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
 }
@@ -702,10 +815,11 @@ fn step3_conflicting_pr() {
     for v in ["UNKNOWN", "MERGEABLE"] {
         assert_eq!(with(m(green("OPEN", &[]), v)), "legacy", "{v}");
     }
+    // A merged or closed PR doesn't keep #301 (ready, M0) in flight: step 10 picks it.
     for state in ["MERGED", "CLOSED"] {
         assert_eq!(
             with(m(green(state, &[]), "CONFLICTING")),
-            "legacy",
+            "worker ready #301",
             "{state}"
         );
     }
@@ -986,6 +1100,31 @@ fn precedence_removes_each_step_in_turn() {
                 "worktree /w/e\nHEAD f\nbranch refs/heads/t/9-z\n".to_owned(),
             )],
         ),
+        (
+            "audit due",
+            vec![],
+            vec![],
+            vec![(
+                "main-log.txt",
+                [
+                    commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+                    commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+                ]
+                .concat(),
+            )],
+        ),
+        (
+            "retro due",
+            vec![],
+            vec![],
+            vec![("tags.txt", format!("m1 {}\n", RETRO_T + 1))],
+        ),
+        (
+            "worker ready #700",
+            vec![],
+            vec![ready(700, "M0", &[], "")],
+            vec![],
+        ),
     ];
     for start in 0..steps.len() {
         let mut feed = Vec::new();
@@ -1080,6 +1219,11 @@ fn malformed_inputs_exit_1() {
         "issues.json",
         "runs.json",
         "worktrees.txt",
+        "now.txt",
+        "main-log.txt",
+        "tags.txt",
+        "milestones.json",
+        "blocked.json",
     ] {
         let o = run_with(&[(name, None)]).unwrap();
         assert_eq!(o.status.code(), Some(1), "missing {name}");
@@ -1113,4 +1257,371 @@ fn usage_and_live_failure() {
         String::from_utf8_lossy(&o.stderr)
     );
     assert!(o.stdout.is_empty());
+}
+
+/// `n` commits after the audit record, each changing `path`.
+fn merges(n: u64, path: &str) -> Vec<String> {
+    (0..n)
+        .map(|i| commit(200 + i, NOW - 60, "m", &[("M", path)]))
+        .collect()
+}
+
+#[test]
+fn step7_audit_product_merges() {
+    // The base has 1 product merge after the record (the record's own commit isn't counted).
+    assert_eq!(pick(&[log_with(&merges(8, "crates/c.rs"))]), "legacy");
+    assert_eq!(pick(&[log_with(&merges(9, "crates/c.rs"))]), "audit due");
+    // Each product path counts; files outside them don't.
+    for path in [
+        "crates/x/src/lib.rs",
+        "bindings/web/src/lib.rs",
+        "apps/web/src/App.tsx",
+        "fuzz/fuzz_targets/a.rs",
+        "tools/jpdf-cli/src/main.rs",
+        "tools/fsio/src/lib.rs",
+        "\"crates/\\303\\251.rs\"",
+    ] {
+        assert_eq!(pick(&[log_with(&merges(9, path))]), "audit due", "{path}");
+    }
+    for path in [
+        "xtask/src/main.rs",
+        "tools/jpdf-cli-extra/a.rs",
+        "tools/fsiox/a.rs",
+        "ops/TICK.md",
+        "specs/crates/a.md",
+        "cratesx/a.rs",
+    ] {
+        assert_eq!(pick(&[log_with(&merges(9, path))]), "legacy", "{path}");
+    }
+    // A deletion counts as a change.
+    let del = (0..9)
+        .map(|i| commit(300 + i, NOW - 60, "d", &[("D", "crates/old.rs")]))
+        .collect::<Vec<_>>();
+    assert_eq!(pick(&[log_with(&del)]), "audit due");
+    let o = run_with(&[log_with(&merges(9, "crates/c.rs"))]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "Rule: g (audit due: 10 product merges since {:07x})\n",
+            104
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "- git log --first-parent --oneline {:07x}..origin/main\n",
+            104
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn step7_audit_records_and_age() {
+    let at = |t: i64| set("now.txt", format!("{}\n", t));
+    // Seven days after the audit record, with a retro record 2 days newer (so no retro).
+    let log = set(
+        "main-log.txt",
+        [
+            commit(
+                103,
+                AUDIT_T + 2 * DAY,
+                "Retro",
+                &[("A", "docs/retros/0001.md")],
+            ),
+            commit(104, AUDIT_T, "Audit", &[("A", "docs/audits/0006.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat(),
+    );
+    assert_eq!(pick(&[at(AUDIT_T + WEEK - 1), log.clone()]), "legacy");
+    assert_eq!(pick(&[at(AUDIT_T + WEEK), log]), "audit due");
+    // No audit record at all.
+    let no_audit = |files: &[(&str, &str)]| {
+        let log = [
+            commit(110, NOW - 60, "x", files),
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat();
+        pick(&[set("main-log.txt", log)])
+    };
+    assert_eq!(no_audit(&[]), "audit due");
+    // Only an added NNNN.md record counts: a changed one, other names, other folders don't.
+    for f in [
+        ("M", "docs/audits/0006.md"),
+        ("A", "docs/audits/0007-x.md"),
+        ("A", "docs/audits/007.md"),
+        ("A", "docs/audits/00071.md"),
+        ("A", "docs/audits/sub/0007.md"),
+        ("A", "docs/retros/0007.md"),
+    ] {
+        assert_eq!(no_audit(&[f]), "audit due", "{f:?}");
+    }
+    // A user-advocate record is an audit slot too.
+    assert_eq!(no_audit(&[("A", "docs/advocate/0007.md")]), "legacy");
+    assert_eq!(no_audit(&[("A", "docs/audits/0007.md")]), "legacy");
+}
+
+#[test]
+fn step7_retro() {
+    // No incident and 2 days: nothing. Seven days after the retro record (the audit record
+    // stays newer, so the audit isn't due).
+    let at = |t: i64| set("now.txt", format!("{}\n", t));
+    let log_at = |audit: i64| {
+        let log = [
+            commit(104, audit, "Audit", &[("A", "docs/audits/0006.md")]),
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat();
+        set("main-log.txt", log)
+    };
+    assert_eq!(
+        pick(&[at(RETRO_T + WEEK - 1), log_at(RETRO_T + WEEK - 10)]),
+        "legacy"
+    );
+    assert_eq!(
+        pick(&[at(RETRO_T + WEEK), log_at(RETRO_T + WEEK - 10)]),
+        "retro due"
+    );
+    // No retro record: seven days after the first commit.
+    let no_retro = |now: i64| {
+        let log = [
+            commit(104, now - 10, "Audit", &[("A", "docs/audits/0006.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat();
+        // The base's tag and blocked events would be incidents since the first commit.
+        pick(&[
+            at(now),
+            set("main-log.txt", log),
+            set("tags.txt", String::new()),
+            set("blocked.json", "[]".to_owned()),
+        ])
+    };
+    assert_eq!(no_retro(ROOT_T + WEEK - 1), "legacy");
+    assert_eq!(no_retro(ROOT_T + WEEK), "retro due");
+    // An audit due comes first.
+    assert_eq!(pick(&[at(AUDIT_T + WEEK)]), "audit due");
+}
+
+#[test]
+fn step7_retro_incidents() {
+    // A revert after the retro record (the base has one before it).
+    let rev = |subject: &str| pick(&[log_with(&[commit(120, NOW - 60, subject, &[])])]);
+    assert_eq!(rev("Revert \"feature\" (#10) (#11)"), "retro due");
+    assert_eq!(rev("Reverts feature"), "legacy");
+    assert_eq!(rev("Revert feature"), "legacy");
+    assert_eq!(rev("x Revert \"feature\""), "legacy");
+    // A judge alarm raised after the retro record.
+    let alarm = |t: i64| pick(&[set("judge-alarm-since", format!("{t}\n"))]);
+    assert_eq!(alarm(RETRO_T + 1), "retro due");
+    assert_eq!(alarm(RETRO_T), "legacy");
+    // A milestone tag created after the retro record.
+    let tag = |line: &str| pick(&[set("tags.txt", format!("{line}\n"))]);
+    assert_eq!(tag(&format!("m1 {}", RETRO_T + 1)), "retro due");
+    assert_eq!(tag(&format!("m12 {}", NOW)), "retro due");
+    for near in [
+        format!("m1 {RETRO_T}"),
+        format!("v1 {NOW}"),
+        format!("m1a {NOW}"),
+        format!("m {NOW}"),
+        format!("M1 {NOW}"),
+    ] {
+        assert_eq!(tag(&near), "legacy", "{near}");
+    }
+    let o = run_with(&[set("tags.txt", format!("m1 {}\n", RETRO_T + 1))]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "Rule: h (retro due: incident: milestone tag m1 since {:07x})\n",
+            103
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn step7_retro_blocked_incident() {
+    let third = |events: &[String]| pick(&[plus("blocked.json", &[blocked_issue(190, events)])]);
+    // The base has 2 (#187, #188; #189's event is at the retro record's second, not after).
+    assert_eq!(
+        third(&[labeled("blocked", "2026-11-24T05:00:00Z")]),
+        "retro due"
+    );
+    assert_eq!(
+        third(&[labeled("blocked", "2026-11-22T06:00:00Z")]),
+        "legacy"
+    );
+    assert_eq!(
+        third(&[labeled("blocked-x", "2026-11-24T05:00:00Z")]),
+        "legacy"
+    );
+    assert_eq!(
+        third(&[
+            r#"{"event":"unlabeled","created_at":"2026-11-24T05:00:00Z","label":{"name":"blocked"}}"#
+                .to_owned()
+        ]),
+        "legacy"
+    );
+    // The same issue twice counts once.
+    assert_eq!(
+        pick(&[plus(
+            "blocked.json",
+            &[blocked_issue(
+                187,
+                &[labeled("blocked", "2026-11-24T05:00:00Z")]
+            )]
+        )]),
+        "legacy"
+    );
+    let o = run_with(&[plus(
+        "blocked.json",
+        &[blocked_issue(
+            190,
+            &[labeled("blocked", "2026-11-24T05:00:00Z")],
+        )],
+    )])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "Rule: h (retro due: incident: 3 issues labeled blocked since {:07x} (#187, #188, #190))\n",
+            103
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn step10_ready_issue() {
+    let with = |extra: &[String]| pick(&[plus("issues.json", extra)]);
+    assert_eq!(with(&[ready(701, "M0", &[], "")]), "worker ready #701");
+    assert_eq!(
+        with(&[ready(702, "M0", &[], ""), ready(701, "M0", &[], "")]),
+        "worker ready #701"
+    );
+    // Lowest open M<n> by number: M1 is not current while M0 is open.
+    assert_eq!(with(&[ready(701, "M1", &[], "")]), "legacy");
+    let ms = |list: &str| set("milestones.json", list.to_owned());
+    assert_eq!(
+        pick(&[
+            plus(
+                "issues.json",
+                &[ready(701, "M2", &[], ""), ready(702, "M10", &[], "")]
+            ),
+            ms(r#"[{"title":"M10"},{"title":"M2"},{"title":"Mx"},{"title":"M-1"}]"#)
+        ]),
+        "worker ready #701"
+    );
+    assert_eq!(
+        pick(&[plus("issues.json", &[ready(701, "M0", &[], "")]), ms("[]")]),
+        "legacy"
+    );
+    // Near misses: no milestone, not ready, each skip label, in flight.
+    assert_eq!(
+        with(&[full_issue(701, "r", &["ready"], "", "null")]),
+        "legacy"
+    );
+    assert_eq!(
+        with(&[full_issue(701, "r", &[], "", r#"{"title":"M0"}"#)]),
+        "legacy"
+    );
+    for l in [
+        "owner-todo",
+        "blocked",
+        "deferred",
+        "in-progress",
+        "design",
+        "design-pending",
+    ] {
+        assert_eq!(with(&[ready(701, "M0", &[l], "")]), "legacy", "{l}");
+    }
+    // #301 (ready, M0) is linked by the open PR #300 in the base; without the PR it's picked.
+    let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
+    let closed = pr(300, "CLOSED", "Closes #301", "t/301-y", &[], "[]");
+    assert_eq!(
+        pick(&[set("prs.json", format!("[{closed},{merged}]"))]),
+        "worker ready #301"
+    );
+}
+
+#[test]
+fn step10_dependencies() {
+    let one = |body: &str| pick(&[plus("issues.json", &[ready(701, "M0", &[], body)])]);
+    // #150 is open in the base, #149 is not.
+    assert_eq!(one("x\nDepends on: #150 (task 1a)."), "legacy");
+    assert_eq!(one("**Depends on:** #149, #150."), "legacy");
+    assert_eq!(one("Depends on: #149."), "worker ready #701");
+    assert_eq!(one("Depends on: none."), "worker ready #701");
+    // Only the text after `Depends on:` on its own line counts.
+    assert_eq!(one("See #150.\nDepends on: #149"), "worker ready #701");
+    assert_eq!(one("Depends on:\n#150"), "worker ready #701");
+    assert_eq!(one("depends on: #150"), "worker ready #701");
+    // A lower-numbered blocked one doesn't hide a later free one.
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[
+                ready(701, "M0", &[], "Depends on: #150"),
+                ready(702, "M0", &[], "")
+            ]
+        )]),
+        "worker ready #702"
+    );
+}
+
+#[test]
+fn new_inputs_malformed_exit_1() {
+    let bad: Vec<(&str, String)> =
+        vec![
+        ("now.txt", "x\n".to_owned()),
+        ("now.txt", "+1795500000\n".to_owned()),
+        ("now.txt", "".to_owned()),
+        ("main-log.txt", "".to_owned()),
+        ("main-log.txt", "M\tcrates/a.rs\n".to_owned()),
+        ("main-log.txt", format!("commit abc {NOW} x\n")),
+        ("main-log.txt", format!("commit {:040x} x y\n", 1)),
+        ("main-log.txt", format!("{}R100\ta\tb\n", base_log().concat())),
+        ("main-log.txt", format!("{}A crates/a.rs\n", base_log().concat())),
+        ("tags.txt", "m1\n".to_owned()),
+        ("tags.txt", "m1 x\n".to_owned()),
+        ("milestones.json", "{}".to_owned()),
+        ("milestones.json", r#"[{"title":1}]"#.to_owned()),
+        ("blocked.json", "{}".to_owned()),
+        ("blocked.json", r#"[{"number":1}]"#.to_owned()),
+        (
+            "blocked.json",
+            format!("[{}]", blocked_issue(1, &[labeled("blocked", "2026-11-24")])),
+        ),
+        (
+            "blocked.json",
+            r#"[{"number":1,"events":[{"event":"labeled","created_at":"2026-11-24T00:00:00Z"}]}]"#
+                .to_owned(),
+        ),
+        ("judge-alarm-since", "\n".to_owned()),
+        ("judge-alarm-since", "soon\n".to_owned()),
+        (
+            "issues.json",
+            r#"[{"number":1,"title":"t","labels":[],"milestone":null}]"#.to_owned(),
+        ),
+        (
+            "issues.json",
+            r#"[{"number":1,"title":"t","labels":[],"body":""}]"#.to_owned(),
+        ),
+        (
+            "issues.json",
+            r#"[{"number":1,"title":"t","labels":[],"body":"","milestone":{"title":2}}]"#
+                .to_owned(),
+        ),
+    ];
+    for (name, text) in bad {
+        let o = run_with(&[set(name, text.clone())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{name}: {text}");
+        assert!(o.stdout.is_empty(), "{name}: {text}");
+    }
+    // A commit with an empty subject and no files parses.
+    let o = run_with(&[log_with(&[format!("commit {:040x} {}\n", 9, NOW - 5)])]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
 }

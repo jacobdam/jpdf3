@@ -821,11 +821,8 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
         }
         None => (root.time, &log[..], "the first commit".to_owned()),
     };
-    let week_start = now
-        .checked_sub(WEEK)
-        .ok_or_else(|| "time out of range".to_owned())?;
-    let blocked_from = iso(since.saturating_add(1).max(week_start));
-    let blocked = blocked_since(&inp.blocked, &blocked_from)?;
+    // "This week" is "since the retro record": an older record is due by age already.
+    let blocked = blocked_since(&inp.blocked, &iso(since.saturating_add(1)))?;
     let why = if age(since)? >= WEEK {
         Some(format!("{} days since {from}", age(since)? / 86_400))
     } else if let Some(c) = newer.iter().find(|c| c.subject.starts_with("Revert \"")) {
@@ -837,7 +834,7 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
     } else if blocked.len() >= BLOCKED_INCIDENT {
         let list: Vec<String> = blocked.iter().map(|n| format!("#{n}")).collect();
         Some(format!(
-            "incident: {} issues labeled blocked in the last 7 days ({})",
+            "incident: {} issues labeled blocked since {from} ({})",
             blocked.len(),
             list.join(", ")
         ))
@@ -1088,6 +1085,28 @@ mod tests {
         assert!(names_url(&format!("Owner instruction: {u}"), u));
         assert!(names_url(&format!("{u}4 and {u}."), u));
         assert!(!names_url(&format!("{u}4"), u));
+    }
+
+    #[test]
+    fn iso_time() {
+        assert_eq!(iso(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso(86_399), "1970-01-01T23:59:59Z");
+        assert_eq!(iso(1_795_500_000), "2026-11-24T06:00:00Z");
+        assert_eq!(iso(1_795_327_201), "2026-11-22T06:00:01Z");
+    }
+
+    #[test]
+    fn depends_on_lines() {
+        assert_eq!(
+            dependencies("**Depends on:** #4, #12, #13, #19."),
+            [4, 12, 13, 19]
+        );
+        assert_eq!(
+            dependencies("a #1\nDepends on: #242 (task 1a), #273"),
+            [242, 273]
+        );
+        assert_eq!(dependencies("Depends on: # 5, #x, PR#7"), [7]);
+        assert!(dependencies("depends on: #5\nDepends on:\n#6").is_empty());
     }
 
     #[test]

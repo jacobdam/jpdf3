@@ -1,4 +1,4 @@
-# cargo xtask next-session (1/2)
+# cargo xtask next-session
 
 Area: tooling
 ISO 32000-2 clauses: none (project tooling)
@@ -7,13 +7,15 @@ Status: implemented
 
 ## Behavior
 `cargo xtask next-session [--from DIR]` decides what the session does, so sessions stop picking
-their own work from prose (ADR 0011 §2, task 1a, #242). This part decides precedence steps 1–5
-(today's TICK rules a–f). When none of them applies it prints `legacy`, and the session uses
-TICK rules g–j (task 1b, #243, moves those into the scheduler).
+their own work from prose (ADR 0011 §2). Task 1a (#242) added precedence steps 1–5 (TICK rules
+a–f); task 1b part 1 (#273) adds steps 7 (rules g, h) and 10 (rule i) and the interim
+product-merge counter (ADR 0011 §3). When none of them applies it prints `legacy`, and the
+session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or idle); task 3
+(#245) adds step 6.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
-  - first line: `<type> <step> <reference>`, or `legacy`. Types in this part: `worker` only.
-    Steps and references:
+  - first line: `<type> <step> <reference>`, `audit due`, `retro due`, or `legacy`. Types:
+    `worker`, `audit`, `retro`. Steps and references:
 
     | Step | TICK rule | First line |
     |---|---|---|
@@ -22,6 +24,8 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
     | 3 | c | `worker own-pr #N`, `worker scheduler-bug #N` |
     | 4 | d | `worker crash-security #N` |
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
+    | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
+    | 10 | i | `worker ready #N` |
 
   - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
     picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
@@ -40,8 +44,21 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   6. `issues.json`: `gh issue list --state open --limit 1000 --json number,title,labels`;
   7. `runs.json`: `gh run list --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,event`;
   8. `worktrees.txt`: `git worktree list --porcelain`;
-  9. `judge-alarm-since`: live, `ops/state/judge-alarm-since` (TICK rule b's local state file).
-     It is the only optional input: a missing file means no alarm.
+  9. `judge-alarm-since`: live, `ops/state/judge-alarm-since` (TICK rule b's local state file,
+     the Unix time the alarm was raised). It is the only optional input: a missing file means
+     no alarm;
+  10. `now.txt`: Unix seconds; live, the system clock;
+  11. `main-log.txt`: `git log --first-parent --no-renames --name-status --format=commit %H %ct %s origin/main`
+      (the whole first-parent history; about 70 KB on 2026-11-23);
+  12. `tags.txt`: `git for-each-ref --format=%(refname:short) %(creatordate:unix) refs/tags`;
+  13. `milestones.json`: `gh api repos/jacobdam/jpdf3/milestones?state=open&per_page=100`;
+  14. `blocked.json`: live, built from read commands: for each number in
+      `gh issue list --label blocked --state all --search updated:>=<UTC day 7 days before now> --limit 100 --json number`,
+      the array that `gh api repos/jacobdam/jpdf3/issues/<n>/events?per_page=100` prints, written
+      as `[{"number":N,"events":[…]}, …]`.
+
+  `issues.json` (input 6) also reads `body` and `milestone`:
+  `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
 
   Nothing is written anywhere: not to GitHub, git or the file system.
 - **Common terms.**
@@ -104,7 +121,40 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
 
      Ratchet regressions show up as a red judge on main (step 2). The nightly that files
      findings as issues (#19) doesn't exist yet, so step 5 has no nightly term.
-  6. Otherwise: `legacy`.
+  6. Design: technical: not in this part (task 3, #245).
+  7. **Audit, then retro** (rules g, h). From `main-log.txt` (newest first): a *record commit*
+     adds (status `A`) a file `docs/audits/NNNN.md` or `docs/advocate/NNNN.md` (an *audit slot*,
+     ADR 0011 §1), or `docs/retros/NNNN.md` (a retro), with exactly four digits and nothing else
+     in the name. A *product merge* is a first-parent commit that changes (any status) at least one
+     path starting with `crates/`, `bindings/`, `apps/`, `fuzz/`, `tools/jpdf-cli/` or
+     `tools/fsio/` (ADR 0011 §3, until task 4 adds `area:` labels; git C-quotes unusual paths,
+     and the opening `"` is ignored).
+     - **Audit due** when there is no audit-slot record, or 10 or more product merges are newer
+       than the newest one (its own commit not counted), or `now` is at least 7 days (604 800 s)
+       after that commit's time → `audit due`.
+     - **Retro due**, with *since* the time of the newest retro record (or of the first commit,
+       the last line of the log, when there is none), when `now` is at least 7 days after
+       *since*, or there is an incident after *since*:
+       - a revert: a first-parent commit newer than the retro record (any commit when there is
+         none) whose subject starts with `Revert "` (GitHub's revert PR title);
+       - a judge alarm raised after *since* (the alarm file's time);
+       - a milestone tag `m<digits>` created after *since*;
+       - 3 or more issues in `blocked.json` with a `labeled` event for the label `blocked`
+         created after *since* (rule h's "3 issues blocked this week": a retro record older than
+         7 days makes the retro due by age anyway, so "since the retro" is within the week).
+       → `retro due`.
+     Rule h's other incidents need no term of their own: main red for 3 sessions ends in a
+     revert (rule b), and a gate that passes gets its milestone tag (rule j).
+     The user-advocate slot (every 2nd audit slot) comes with task 8 (#251); until then every
+     due slot is an audit.
+  8. QC, Planner, Design: product or UI, and 9. Gardener: not in this part (tasks 2, 4–8).
+  10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
+      open milestone whose title is `M<digits>` with the smallest number), with no skip label
+      and none of `in-progress` (claimed), `design`, `design-pending`, not in flight, and with its
+      dependencies closed: every `#N` after `Depends on:` on a line of its body (bold markers
+      around the words allowed; case matters) is not an open issue in `issues.json`. Lowest
+      number first. The work-mix ordering of ADR 0011 §3 comes with task 2 (#244).
+  11. Otherwise: `legacy` (TICK rule j; part 2, #243, replaces it with the Planner or idle).
 - **Exit codes** (ADR 0011 §2 Failure):
   - **0**: a pick was printed.
   - **2**: unknown. A command could not start, failed or printed too much (gh or network
@@ -112,7 +162,7 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   - **1**: the scheduler is broken: a usage error, an unreadable or missing `--from` file
     (other than `judge-alarm-since`), or an input that doesn't parse (not JSON, not the
     expected shape, no `FLOOR` line, a floor not in the form `YYYY-MM-DDTHH:MM:SSZ`). Every
-    list is parsed in full before any step runs, so a renamed field fails whatever is picked. A panic exits 101; any exit other than 0 and 2 sends the
+    input is parsed in full whatever is picked, so a renamed field fails every run. A panic exits 101; any exit other than 0 and 2 sends the
     session to TICK's legacy fallback and the `next-session: <first line>` bug issue.
 - **Parsing.** `feed.jsonl`: one JSON object per non-empty line, each with a string `kind`;
   `issue` lines need a boolean `is_pr` and, when it is false, a number `number`; comment kinds a string `url` and `created_at`; other
@@ -122,6 +172,15 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
   `conclusion`) or `StatusContext` (`context`, `state`), other entries are ignored). Timestamps
   are compared as ISO 8601 UTC text (GitHub writes one fixed form).
+  `main-log.txt`: non-empty lines are either `commit <40 hex digits> <Unix seconds>[ <subject>]`
+  or `<status>\t<path>` with status `A`, `M`, `D` or `T` after a commit line; anything else (a
+  rename line, a file line before the first commit) is an error, and so is a log with no commit.
+  `tags.txt`: `<name> <Unix seconds>` per non-empty line. `milestones.json`: objects with a
+  string `title`. `blocked.json`: objects with a number `number` and an array `events` of
+  objects with strings `event` and `created_at` (`YYYY-MM-DDTHH:MM:SSZ`); a `labeled` event also
+  needs `label: {name}`. `issues.json`: `body` a string, `milestone` null or an object with a
+  string `title`. Unix seconds (`now.txt`, the alarm file after trimming whitespace, the log,
+  the tags) are digits only, within the years 1970–9999 (`cargo xtask metrics`' rule).
 
 ## Persistence
 None. It writes nothing; the pick goes to the session's journal entry once task 1b adds
@@ -145,6 +204,13 @@ never 2 (no command ran).
   `comments` field holds at most the first 100 comments of an issue (gh's GraphQL page), so a
   done: reply after the 100th comment is missed and the issue is picked again; the session
   then sees the reply and exits under rule a. No owner issue has 100 comments today.
+- Blocked issues: at most 100 issues updated in the last 7 days, and one page of 100 events each
+  (`gh api` returns the oldest first, so an issue with more than 100 events hides its newest
+  ones: a missed incident, and the retro still comes by age within 7 days).
+- `main-log.txt` holds the whole first-parent history, read live through the same 16 MiB cap;
+  it grows by about 250 bytes per merge.
+- A `Depends on:` number that `issues.json` doesn't list counts as closed, so a list cut off at
+  1000 issues could release an issue early.
 - No loop runs on a count from the input except over the parsed lists themselves.
 
 ## Security
@@ -163,7 +229,9 @@ never 2 (no command ran).
 - **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `git worktree list` and
   the protected feed script, which only reads. It writes no file.
 - Self-check:
-  - Arithmetic: only the 14-day subtraction from today (`i64` days since 1970, checked).
+  - Arithmetic: the 14-day and 7-day subtractions from today (`i64` days since 1970,
+    checked), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
+    and `since + 1` (saturating).
   - What broken implementation still passes? Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
     `pull_request` run, a PR with the skip label only on its issue, a `t/` branch with a
@@ -171,7 +239,11 @@ never 2 (no command ran).
     turn. A scheduler that ignored a filter, or swapped two steps, fails one of them.
   - What the tests can't see: the live `gh` field shapes (the fixtures are written from
     `gh --json` output seen on 2026-11-23; `mergeable` on PRs #265 and #271); a field rename is a parse error, exit 1, which the
-    failure rule turns into a bug issue.
+    failure rule turns into a bug issue. The live assembly of `blocked.json` and the git
+    command lines (which paths `--name-status` prints) are not run by the tests; they were
+    checked once by hand on 2026-11-23 (the pick was `retro due`, from #162, #168 and #187).
+  - Labels and `Depends on:` lines are written by the agent account, so a session can move work
+    up or down the queue by editing them (ADR 0011 Consequences); the journal shows the pick.
 
 ## Accessibility
 Not applicable (CLI).
@@ -180,7 +252,8 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Seven `gh` calls plus the feed script (which makes its own); a few seconds.
+Nine `gh` calls, one more per blocked issue updated in the last 7 days, two `git` reads and the
+feed script (which makes its own); a few seconds.
 
 ## Tests
 `xtask/tests/next_session.rs` runs the binary with `--from` on fixtures built from a base set
@@ -190,4 +263,10 @@ of inputs where no step applies (→ `legacy`):
 - precedence: all steps apply, then each is removed in turn and the next one is picked;
 - exit 1 for each malformed input and a missing `--from` file; exit 0 with a missing
   `judge-alarm-since`; exit 1 for a usage error;
-- unit tests in `xtask/src/next_session.rs` for the `FLOOR` line and the done: URL match.
+- steps 7 and 10: each record kind, product path and incident with its near misses (a changed
+  record, a 3-digit name, a path that only starts like a product path, a revert before the
+  retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,
+  each skip label, an open dependency, a non-current milestone) and each 7-day boundary at
+  the second it is reached and one second before;
+- unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
+  ISO time form and the `Depends on:` parser.
