@@ -31,7 +31,8 @@ Phase: bootstrap (pilot)
 - i (scheduler `legacy`, before PR #274 merged): split #245; part 1 is **PR #276** (Design: technical session:
   ops/TICK.md §4 step 6 escalates a PR over the cap to `needs-design`, new §8, §2 by-hand step 6 before a step 7/10
   pick or `legacy` until #275, docs/adr/_TEMPLATE-design.md, docs/PRINCIPLES.md P1–P3); 4 review rounds + final
-  check; deferred #277. Part 2 is #275 (next-session step 6). Journal 2026-11-23 21:21.
+  check; deferred #277. **Parked**: the final check found a major (fixed in 824f0a4), so #245 is `blocked` +
+  `owner-todo`, waiting for an owner comment. Part 2 is #275 (next-session step 6). Journal 2026-11-23 21:21.
 - Before it, c (scheduler `worker own-pr #274`): PR #274 conflicted with main after PR #271 merged; merged origin/main
   (journal and STATUS only). Journal 2026-11-23 20:55.
 - Before it, i (scheduler `legacy`): split #243, PR #274 for #273. Journal 2026-11-23 20:30. Before that, c: PR #271
@@ -79,6 +80,7 @@ Phase: bootstrap (pilot)
 - **Next audit:** after 10 more merges or by 2026-11-30.
 
 ## Blockers / owner-todo
+- #245 / PR #276: accept 824f0a4 (final-check fix) or ask for one more final check.
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
