@@ -131,7 +131,7 @@ fn parse_date(s: &str) -> Option<i64> {
 }
 
 /// The UTC day of a Unix time in seconds (`%ct`), years 1970..=9999 only.
-fn utc_day(secs: &str) -> Option<i64> {
+pub(crate) fn utc_day(secs: &str) -> Option<i64> {
     // Digits only: `i64::from_str` would also take a leading `+` (PR #220 R2.2).
     if secs.is_empty() || !secs.bytes().all(|c| c.is_ascii_digit()) {
         return None;

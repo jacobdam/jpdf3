@@ -78,9 +78,9 @@ GitHub (public repo jacobdam/jpdf3)
       medium/low wait in M10 for the release gate)
    e. ratchet or nightly regressions, `flaky` tests
    f. leftover branch from a dead session → resume or discard
-   g. every 10th merge or 7 days → AUDIT session instead (§10)
+   g. every 10th product merge or 7 days → AUDIT session instead (§10)
    h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
-   i. `ready` task in the current milestone (dependencies met, lowest number)
+   i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number)
    j. milestone backlog empty → run gate (§9) or generate next milestone's backlog
 3. SIZE CHECK: will this fit in one session? If not → split into issues, exit.
 4. CLAIM: assign the issue + comment "claimed by session <id>", then re-read to confirm the claim.
@@ -101,10 +101,13 @@ The protocol above is the current one. ADR 0011 replaces step 2's self-selection
 mechanical trigger, the context it loads, its allowed outputs, one exit artifact and a bound.
 Audit and other cadences count product merges only; `area:`/`origin:` labels make problem
 groups visible; an area over its threshold is frozen (`design-pending`) and designed; a PR over
-ADR 0010's review cap goes to a design session before it goes to the owner. Task 1a is in:
-ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md), which decides
-precedence steps 1–5 (rules a–f) from the owner feed, GitHub lists, main's CI runs and the local
-worktrees, and prints `legacy` when none applies, so the session picks from rules g–j. Exit 2
+ADR 0010's review cap goes to a design session before it goes to the owner. Task 1a and part 1
+of task 1b are in: ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md),
+which decides precedence steps 1–5 (rules a–f) from the owner feed, GitHub lists, main's CI runs
+and the local worktrees, step 7 (rules g, h: audit, then retro, from main's first-parent history,
+tags, the judge alarm and `blocked` label events; the audit counts product merges, ADR 0011 §3)
+and step 10 (rule i: the lowest ready issue in the current milestone whose `Depends on:` issues
+are closed), and prints `legacy` when none applies, so the session uses rule j. Exit 2
 means unknown (no work); any other failure sends the session to the legacy rules b and c and the
 scheduler's own `next-session: …` bug issue. Each later task updates this file and TICK for the
 session type it adds.
@@ -344,7 +347,7 @@ rule j reads it; there is no `cargo xtask gate` command yet). On pass:
 
 ## 10. Audit sessions (self-correction)
 
-These run every 10 merges or 7 days and do no feature work. They cover:
+These run every 10 product merges (ADR 0011 §3) or 7 days and do no feature work. They cover:
 - security review + code review of everything merged since the last audit (fresh agents), plus a
   Codex security review of the same range; each report is posted on the audit PR
 - mutation testing (`cargo-mutants`) on changed crates, to measure test strength;
