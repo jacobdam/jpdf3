@@ -28,17 +28,17 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c by hand (scheduler said `legacy`; #272 had not merged when this session started): PR #271 (rule b records)
-  conflicts with main fixed after PR #272 merged. Journal 2026-11-23 20:26.
-- Before it, c: #270 → PR #272 (merged). Journal 2026-11-23 20:12. Before that, b: main red on run 45249100863,
-  macOS runner not acquired → rerun (PR #271). Journal 2026-11-23 20:03.
+- i: #245 split; part 1 is PR #276 (Design: technical session: ops/TICK.md §4 step 6 escalation to `needs-design`,
+  new §8, docs/adr/_TEMPLATE-design.md, docs/PRINCIPLES.md P1–P3); 4 review rounds + final check; deferred #277.
+  Part 2 is #275 (next-session step 6; PR #274 for #273 has merged). Journal 2026-11-23 21:21.
+- Before it, c by hand: PR #271 (rule b records) conflicts fixed. Journal 2026-11-23 20:26.
 
 ## Next step (suggested order, TICK letters)
 0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
    runs are still in progress it can pick an older red run that a newer run may fix; check
    `gh run list --branch main` first.
-   On `legacy`: rule i, lowest number first: #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260
-   (tagged) asks for #245 next once the owner comments on it untagged.
+   On `legacy`: first the by-hand step 6 check (ops/TICK.md §2, until #275), then rule i, lowest number first:
+   #243 (task 1b 2/2, now that #273 merged), #275 (task 3 2/2, after PR #276), then #261, #277.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).

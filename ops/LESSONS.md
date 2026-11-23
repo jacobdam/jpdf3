@@ -120,6 +120,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   counter, "once a day" bound and fallback, and for the loops each fix adds: PR #239's majors in rounds 2 to 4 were
   states its own earlier fixes created ([journal](journal/2026-11-22.md), PR #239). The same goes for prose about
   a cache or CI mechanism (exact hit, miss, failed run, eviction, PR scope): PR #241 drew a major on it in each of rounds 1–3.
+  For a session procedure with several GitHub side effects (labels, comments, closing PRs), also walk "the session dies
+  after each one": order them so the state left behind is picked and resumed, check what the scheduler skips and
+  picks for each label, and give every resume branch an exit once the owner answers. PR #276 drew 10 of its 11 majors on these
+  in rounds 1 to 3 ([journal](journal/2026-11-23.md), PR #276).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
