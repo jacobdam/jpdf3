@@ -1,8 +1,8 @@
 # 11. Session types, a scheduler, and bounded escalation to design
 
-Status: proposed (owner issue #238, 2026-11-22). Needs the owner's approval before merge: the PR
-carries `owner-todo` and no auto-merge. Absorbs #224 (the architect role becomes the
-**design: technical** session type). Implementation tasks: §9, filed only after this ADR merges.
+Status: accepted (owner issue #238, 2026-11-22; the owner approved PR #239, merged in 662bde6).
+Absorbs #224 (the architect role becomes the **design: technical** session type; #224 is closed
+into #245). Implementation tasks: §9, filed as #242–#251 (task 4 split in two: #246, #247).
 
 ## Context
 The loop discovers and fixes, one issue per session, and each session picks its own work from
@@ -114,7 +114,8 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   Process areas are the autonomy system itself: `area:process` (TICK, AUTOMATION, the
   scheduler, metrics, proposals) and `area:records`. **Until task 4 adds area labels**, a product
   merge is a merge that changes at least one file under `crates/`, `bindings/`, `apps/`,
-  `fuzz/` or `tools/jpdf-cli/` (the code that ships or is graded), whatever else it changes.
+  `fuzz/`, `tools/jpdf-cli/` or `tools/fsio/` (the code that ships or is graded; `jpdf-fsio`
+  is compiled into `jpdf-cli`, audit 0006 AC.1), whatever else it changes.
   Audit, QC and planner cadences count product merges only. The 7-day fallback still runs an
   audit in a week with none.
 - **Records go into the work PR.** The journal and STATUS update is committed to the work PR
