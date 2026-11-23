@@ -297,7 +297,9 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   run", give each trigger its own case with every other trigger off; a combined case hid a mutant
   ([journal](journal/2026-11-22.md), PR #201 R1.1). A fake CLI in such a harness must run the script's real arguments (build the JSON
   from the requested `--json` fields and apply its `--jq` with jq), and every guard needs a case per command
-  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2).
+  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2). Show/hide membership passes a filter that pairs a URL
+  with another record's body or prints one twice: assert each shown record's body and the exact output set
+  ([journal](journal/2026-11-23.md), PR #265, CX.7).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
