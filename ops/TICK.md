@@ -387,7 +387,7 @@ Each round K runs in this order:
    | post-cap diff empty, nothing open, disputed or regraded without a ruling | `ai-review` success, merge |
    | final check clean | its triage, `ai-review` success, merge |
    | final check reports anything, or the post-cap diff is over 100 lines or adds a file; no `escalated to design:` comment naming another PR and no `Designed in:` line on the issue | `needs-design`, draft, `ai-review` failure → §8 |
-   | the same, but the issue was already escalated or carries `Designed in:` | `blocked`, `owner-todo`, both ledgers → the owner |
+   | the same, but the design step was spent (the Exception above: an escalation comment naming another PR, or naming this PR after a Design ruling or Design question, or `Designed in:`) | `blocked`, `owner-todo`, both ledgers → the owner |
    | §8 output 1 (split) or 3 (ruling): its final check clean and every ruling accepted | `ai-review` success, merge |
    | §8 output 1 or 3: its final check reports anything or rejects a ruling | §8 output 4 |
    | §8 output 3: the diff since the last reviewed commit is over 100 lines or adds a file (output 1 has no size rule) | §8 output 4, no check runs |
@@ -516,11 +516,13 @@ Picked by §2: a PR labeled `needs-design` (escalated by §4 step 6), else a `re
 specs/tooling/design-technical.md.
 1. **Claim** the issue (for a PR: the issue it closes) as §3 step 1 says, comment
    `design session <time>`. **Resume first:** an earlier design session may have died midway.
-   Post the issue's `escalated to design: PR #N` comment if it is missing. If the PR already has
-   a Design ruling (step 3 output 3), output 3 was chosen: if a design final check was posted
-   after it, act on its result, else run the check; never rule again. If the issue already has
-   a `Design question` from this design step, output 4 was chosen: finish it (`owner-todo`,
-   remove `needs-design`) and stop. If an open issue has
+   Post the issue's `escalated to design: PR #N` comment if it is missing. Then check, in this
+   order: (1) the issue has a `Design question` from this design step and no owner comment
+   after it → output 4 was chosen: finish it (`owner-todo`, remove `needs-design`) and stop,
+   without a second question; if the owner has answered, the answer is the instruction: take
+   the output it allows and reply to it as §0 says. (2) The PR already has a Design ruling (step
+   3 output 3) → output 3 was chosen: if a design final check was posted after it, act on its
+   result, else run the check; never rule again. (3) An open issue has
    `Designed in: #<escalated issue>` and the label `design`, output 2 was chosen: reuse it and
    its ADR PR (`Closes #<it>`), if any, and continue from the first step not done.
 2. **Load:** the issue; for a PR, every review and triage comment on it and on earlier PRs for the
@@ -536,7 +538,9 @@ specs/tooling/design-technical.md.
       origin/main with those lines only (`Closes #<split issue>`; label it `design` if the
       original PR had that label, so step 6 gives it the 24-hour window), close the original PR
       unmerged with a comment linking both, and close the escalated issue as split into the new
-      ones. If the split needs any new line, it is not a split: take output 2 or 4.
+      ones. If the split needs any new line, it is not a split: take output 2 or 4. When the
+      original PR was a `design` PR, the split issue is the design issue from then on (step 5's
+      tasks depend on it and its `owner-todo` goes on it).
    2. **ADR or principle:** write `docs/adr/NNNN-<title>.md` from `docs/adr/_TEMPLATE-design.md`
       (every section answered) and the `docs/PRINCIPLES.md` entries it adds, in one PR labeled
       `design` that says `Closes #<design issue>`. The design issue is the picked `design` issue;
@@ -596,9 +600,9 @@ specs/tooling/design-technical.md.
    escalated, or a split of one), run `gh pr ready N`, then step 5 from "file the tasks" on:
    the tasks the ADR lists, `owner-todo` and the window comment, no auto-merge. Otherwise
    `gh pr ready N` and enable auto-merge.
-7. **Bound:** one design per escalated issue. A PR over the cap whose issue already has an
-   `escalated to design:` comment naming another PR, or a `Designed in:` line, goes to the owner
-   (§4 step 6). So a chain gets at most two design PRs: a picked `design` issue's ADR PR over
+7. **Bound:** one design per escalated issue. A PR over the cap whose design step was spent
+   (§4 step 6's Exception: an `escalated to design:` comment naming another PR, or naming this PR
+   after a Design ruling or Design question, or a `Designed in:` line) goes to the owner. So a chain gets at most two design PRs: a picked `design` issue's ADR PR over
    the cap is escalated once (the issue has neither mark yet), and the new design issue that
    escalation files carries `Designed in:`, so its ADR PR over the cap goes to the owner. An
    escalated Worker PR gets one design PR: the design issue filed for it already carries
