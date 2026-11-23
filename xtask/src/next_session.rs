@@ -211,7 +211,12 @@ fn names_url(body: &str, url: &str) -> bool {
 
 /// An owner reply `<TAG> done: <url>` with the URL followed by whitespace or the end.
 fn done_reply(replies: &[String], url: &str) -> bool {
-    let prefix = format!("{TAG} done: {url}");
+    reply(replies, "done:", url)
+}
+
+/// An owner reply `<TAG> <word> <url>` with the URL followed by whitespace or the end.
+fn reply(replies: &[String], word: &str, url: &str) -> bool {
+    let prefix = format!("{TAG} {word} {url}");
     replies.iter().any(|b| {
         b.strip_prefix(&prefix)
             .is_some_and(|r| r.chars().next().is_none_or(char::is_whitespace))
@@ -223,10 +228,12 @@ fn tagged(body: &str) -> bool {
 }
 
 /// The number in the first `Closes #N` of a PR body.
+/// `Closes #` without digits after it (a quoted `Closes #<issue>`) is skipped.
 fn linked_issue(body: &str) -> Option<u64> {
-    let rest = body.split_once("Closes #")?.1;
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
+    body.split("Closes #").skip(1).find_map(|rest| {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    })
 }
 
 struct Pr {
@@ -271,14 +278,19 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
     let mut out = Vec::new();
     for p in list(&v, what)? {
         let open = text(p, "state", what)? == "OPEN";
-        out.push(Pr {
+        let body = text(p, "body", what)?;
+        let pr = Pr {
             number: number(p, "number", what)?,
             open,
-            body: text(p, "body", what)?.to_owned(),
+            body: body.to_owned(),
             branch: text(p, "headRefName", what)?.to_owned(),
             labels: labels(p, what)?,
             failing: open && failing(field(p, "statusCheckRollup", what)?, what)?,
-        });
+        };
+        // The account is shared with the owner: only tagged PRs are the agent's own.
+        if tagged(body) {
+            out.push(pr);
+        }
     }
     out.sort_by_key(|p| p.number);
     Ok(out)
@@ -316,7 +328,13 @@ fn parse_feed(text_: &str) -> Result<Vec<Feed>, String> {
     for line in text_.lines().filter(|l| !l.trim().is_empty()) {
         let v = json::parse(line).map_err(|e| format!("{what}: {e}"))?;
         out.push(match text(&v, "kind", what)? {
-            "issue" => Feed::Issue(number(&v, "number", what)?),
+            "issue" => match field(&v, "is_pr", what)? {
+                // An owner PR is the owner's own work, not an instruction; owner comments on
+                // it still come as comment lines.
+                Value::Bool(true) => continue,
+                Value::Bool(false) => Feed::Issue(number(&v, "number", what)?),
+                _ => return Err(format!("{what}: field \"is_pr\" is not a boolean")),
+            },
             "comment" | "review_comment" | "review" => Feed::Comment {
                 url: text(&v, "url", what)?.to_owned(),
                 created_at: text(&v, "created_at", what)?.to_owned(),
@@ -369,10 +387,43 @@ fn view_issue(n: u64) -> String {
     format!("gh issue view {n} --comments")
 }
 
+/// (number, labels or none for owner-closed.json, tagged body, owner replies) of each entry.
+type OwnerIssue = (u64, Vec<String>, bool, Vec<String>);
+
+fn parse_owner(text_: &str, what: &str, closed: bool) -> Result<Vec<OwnerIssue>, String> {
+    let v = parse_list(text_, what)?;
+    let mut out = Vec::new();
+    for i in list(&v, what)? {
+        out.push((
+            number(i, "number", what)?,
+            if closed { Vec::new() } else { labels(i, what)? },
+            closed && tagged(text(i, "body", what)?),
+            owner_replies(i, what)?,
+        ));
+    }
+    Ok(out)
+}
+
+/// The `FLOOR` value must be GitHub's `YYYY-MM-DDTHH:MM:SSZ` form, so text comparison works.
+fn valid_floor(f: &str) -> bool {
+    let b = f.as_bytes();
+    b.len() == 20
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            19 => *c == b'Z',
+            _ => c.is_ascii_digit(),
+        })
+}
+
 fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     let feed = parse_feed(&inp.feed)?;
-    let what = "owner-open.json";
-    let open = parse_list(&inp.owner_open, what)?;
+    if !valid_floor(&inp.floor) {
+        return Err(format!("floor {:?} is not YYYY-MM-DDTHH:MM:SSZ", inp.floor));
+    }
+    let open = parse_owner(&inp.owner_open, "owner-open.json", false)?;
+    let closed = parse_owner(&inp.owner_closed, "owner-closed.json", true)?;
     let in_flight_issue = |n: u64| {
         prs.iter()
             .any(|p| p.open && !p.failing && linked_issue(&p.body) == Some(n))
@@ -381,13 +432,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     for item in &feed {
         if let Feed::Issue(n) = item {
             let url = format!("{ISSUE_URL}{n}");
-            let mut entry = None;
-            for i in list(&open, what)? {
-                if number(i, "number", what)? == *n {
-                    entry = Some((labels(i, what)?, owner_replies(i, what)?));
-                }
-            }
-            let (labels, replies) = entry.unwrap_or_default();
+            let (labels, replies) = open
+                .iter()
+                .find(|(m, ..)| m == n)
+                .map(|(_, l, _, r)| (l.clone(), r.clone()))
+                .unwrap_or_default();
             if !done_reply(&replies, &url) && !skipped(&labels) && !in_flight_issue(*n) {
                 issues.push(*n);
             }
@@ -428,20 +477,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
             ],
         )));
     }
-    let what = "owner-closed.json";
-    let closed = parse_list(&inp.owner_closed, what)?;
     let mut missing = Vec::new();
-    for i in list(&closed, what)? {
-        let n = number(i, "number", what)?;
-        let replies = owner_replies(i, what)?;
-        let picked = replies
-            .iter()
-            .any(|b| b.starts_with(&format!("{TAG} picked up")));
-        if !tagged(text(i, "body", what)?)
-            && picked
-            && !done_reply(&replies, &format!("{ISSUE_URL}{n}"))
-        {
-            missing.push(n);
+    for (n, _, is_tagged, replies) in &closed {
+        let url = format!("{ISSUE_URL}{n}");
+        if !is_tagged && reply(replies, "picked up", &url) && !done_reply(replies, &url) {
+            missing.push(*n);
         }
     }
     Ok(missing.into_iter().min().map(|n| {
@@ -525,7 +565,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         let rank = |i: &Issue| {
             let security = has_label(&i.labels, "security");
             let sev = |s: &str| has_label(&i.labels, s);
-            if security && sev("sev:critical") {
+            if (security || has_label(&i.labels, "crash")) && sev("sev:critical") {
                 Some(0)
             } else if security && !i.labels.iter().any(|l| l.starts_with("sev:")) {
                 Some(1)

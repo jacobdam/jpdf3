@@ -39,7 +39,13 @@ const GREEN: &str = r#"[{"__typename":"CheckRun","name":"policy","conclusion":"S
  {"__typename":"CheckRun","name":"project-linux","conclusion":""},
  {"__typename":"StatusContext","context":"ai-review","state":"SUCCESS"}]"#;
 
+/// An agent PR: its body starts with the tag.
 fn pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &str) -> String {
+    raw_pr(n, state, &format!("{TAG} {body}"), branch, l, rollup)
+}
+
+/// A PR with exactly this body (untagged: the owner's).
+fn raw_pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &str) -> String {
     format!(
         r#"{{"number":{n},"state":{state:?},"isDraft":false,"body":{body:?},"headRefName":{branch:?},"labels":{},"statusCheckRollup":{rollup}}}"#,
         labels(l)
@@ -331,6 +337,111 @@ fn step1_owner_comment() {
         pick(&[feed_plus(&[c(FLOOR), feed_issue(260)])]),
         "worker owner-issue #260"
     );
+}
+
+#[test]
+fn review_round_1_near_misses() {
+    // R1.1: a quoted `Closes #<issue>` before the real link.
+    let quoted = plus(
+        "prs.json",
+        &[pr(
+            310,
+            "OPEN",
+            "says `Closes #<issue>` here\nCloses #250",
+            "t/250-z",
+            &[],
+            GREEN,
+        )],
+    );
+    assert_eq!(
+        pick(&[feed_plus(&[feed_issue(250)]), quoted.clone()]),
+        "legacy"
+    );
+    assert_eq!(
+        pick(&[plus("issues.json", &[issue(250, "c", &["crash"])]), quoted]),
+        "legacy"
+    );
+    // R1.2: an owner PR in the feed is not an owner issue; is_pr must be a boolean.
+    let owner_pr =
+        r#"{"kind":"issue","number":270,"title":"t","labels":[],"is_pr":true,"body":"b"}"#;
+    assert_eq!(pick(&[feed_plus(&[owner_pr.to_owned()])]), "legacy");
+    let no_flag = r#"{"kind":"issue","number":270,"title":"t","labels":[],"body":"b"}"#;
+    let o = run_with(&[feed_plus(&[no_flag.to_owned()])]).unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    // R1.3: an untagged (owner) PR is never the agent's own, failing or in flight.
+    let owner = |body: &str| plus("prs.json", &[raw_pr(350, "OPEN", body, "o/x", &[], "[]")]);
+    assert_eq!(pick(&[owner("Closes #301")]), "legacy");
+    let flight = plus(
+        "prs.json",
+        &[raw_pr(351, "OPEN", "Closes #500", "o/y", &[], GREEN)],
+    );
+    assert_eq!(
+        pick(&[plus("issues.json", &[issue(500, "x", &["crash"])]), flight]),
+        "worker crash-security #500"
+    );
+    assert_eq!(
+        pick(&[owner(&format!(" {TAG} x"))]),
+        "worker own-pr #350",
+        "leading space"
+    );
+    // R1.4: merged and closed PRs don't put an issue in flight.
+    for state in ["MERGED", "CLOSED"] {
+        let done = plus(
+            "prs.json",
+            &[pr(352, state, "Closes #500", "t/500-a", &[], GREEN)],
+        );
+        let wt = set("worktrees.txt", String::new());
+        for (l, want) in [
+            ("crash", "worker crash-security #500"),
+            ("flaky", "worker flaky #500"),
+        ] {
+            let i = plus("issues.json", &[issue(500, "x", &[l])]);
+            assert_eq!(pick(&[i, done.clone(), wt.clone()]), want, "{state}");
+        }
+        let i = plus("issues.json", &[issue(500, "next-session: x", &["bug"])]);
+        assert_eq!(pick(&[i, done, wt]), "worker scheduler-bug #500", "{state}");
+    }
+    // R1.5: owner lists are parsed even when an earlier owner item is picked.
+    for (name, text) in [
+        ("owner-closed.json", r#"[{"number":1,"comments":[]}]"#),
+        ("owner-open.json", r#"[{"number":1,"comments":[]}]"#),
+    ] {
+        let o = run_with(&[feed_plus(&[feed_issue(250)]), set(name, text.to_owned())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{name}");
+    }
+    // R1.6: the floor must be YYYY-MM-DDTHH:MM:SSZ.
+    for f in [
+        "",
+        "2026-11-23",
+        "2026-11-23T00:00:00",
+        "2026-11-23 00:00:00Z",
+        "2026-11-23T00:00:0xZ",
+    ] {
+        let o = run_with(&[set("floor.txt", f.to_owned())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{f:?}");
+    }
+    // R1.7: a picked up reply for a comment on the closed issue doesn't count.
+    let comment_only = owner_reply(&format!("{TAG} picked up {ISSUES}173#issuecomment-5"));
+    let closed = set(
+        "owner-closed.json",
+        format!(r#"[{{"number":173,"body":"b","comments":[{comment_only}]}}]"#),
+    );
+    assert_eq!(pick(&[closed]), "legacy");
+    let longer = owner_reply(&format!("{TAG} picked up {ISSUES}1730"));
+    let closed = set(
+        "owner-closed.json",
+        format!(r#"[{{"number":173,"body":"b","comments":[{longer}]}}]"#),
+    );
+    assert_eq!(pick(&[closed]), "legacy");
+    // R1.8: a crash issue labeled sev:critical comes first.
+    let mix = plus(
+        "issues.json",
+        &[
+            issue(530, "u", &["security"]),
+            issue(560, "c", &["crash", "sev:critical"]),
+        ],
+    );
+    assert_eq!(pick(&[mix]), "worker crash-security #560");
 }
 
 #[test]
@@ -680,7 +791,7 @@ fn precedence_removes_each_step_in_turn() {
                 "owner-closed.json",
                 format!(
                     r#"[{{"number":173,"body":"b","comments":[{}]}}]"#,
-                    owner_reply(&format!("{TAG} picked up"))
+                    owner_reply(&format!("{TAG} picked up {ISSUES}173"))
                 ),
             )],
         ),

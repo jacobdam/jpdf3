@@ -48,15 +48,19 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   - *Tagged:* text whose body starts, after leading whitespace, with `🤖 jpdf-agent` (agent
     text; CONSTITUTION 1). An owner reply is a comment by `jacobdam` (the shared account).
   - *Skip labels:* `owner-todo` (the owner's turn), `blocked`, `deferred`.
-  - *Linked issue* of a PR: the first `Closes #N` in its body (TICK §3 step 4).
-  - *In flight:* an issue is in flight when an open PR in `prs.json` links it.
+  - *Agent PRs:* the entries of `prs.json` whose body is tagged. `--author @me` is the shared
+    account, so untagged PRs there are the owner's and are ignored everywhere below.
+  - *Linked issue* of a PR: the first `Closes #N` in its body with digits after the `#` (a
+    quoted `Closes #<issue>` is skipped; TICK §3 step 4).
+  - *In flight:* an issue is in flight when an open agent PR links it.
   - *Failing* open PR: a head check run whose conclusion is `FAILURE`, `TIMED_OUT`,
     `STARTUP_FAILURE`, `ACTION_REQUIRED` or `CANCELLED`, or a status context in state `FAILURE`
     or `ERROR`, or no `ai-review` status context in state `SUCCESS` on the head (unreviewed, as a
     session that died before review leaves it, or reviewed and failed).
 - **Precedence** (first match wins; within a step, the order given):
   1. **Owner instructions** (rule a, §0 of TICK):
-     - an owner issue (a feed line of kind `issue`) that has no owner reply starting with
+     - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
+       owner's own work, and owner comments on it come as comment lines) that has no owner reply starting with
        `🤖 jpdf-agent done: <the issue's URL>` (exact URL, followed by whitespace or the end),
        carries no skip label, and isn't linked by an open PR that isn't failing (that PR is
        already doing it; a failing one is picked here, so rule a outranks rule c for it).
@@ -66,7 +70,8 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
        that isn't failing. Oldest `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
-       with `🤖 jpdf-agent picked up` and none starting with `🤖 jpdf-agent done: <its URL>`
+       `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
+       (both exact, as above; a reply for a comment on the issue doesn't count)
        → `owner-done` (post the missing reply). Lowest number first.
   2. **Main red** (rule b): of the runs in `runs.json` with `status` `completed` and an event
      other than `pull_request`, the one with the largest `databaseId` (the newest; list order
@@ -80,8 +85,12 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
        label and not in flight.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
      `sev:critical`, `sev:high` or no `sev:*` label (TICK: label it first), with no skip label
-     and not in flight. Order: `sev:critical`, then `security` with no `sev:*`, then the rest;
-     lowest number first within each.
+     and not in flight. Order: `sev:critical` (on a `crash` or `security` issue), then
+     `security` with no `sev:*`, then the rest; lowest number first within each.
+
+     Not in this part: ADR 0011 §2 step 3's own design or `PRODUCT.md` PR past its 24-hour
+     window (task 3, #245, and task 6, #249) and step 4's `design-pending` containment rule
+     (task 4, #246/#247).
   5. **Flaky and leftovers** (rules e, f): an open issue labeled `flaky` (same filters, lowest
      number first); then a worktree in `worktrees.txt` on a branch `t/…` (by name; the line
      `branch refs/heads/t/…`) for which `prs.json` has no PR of any state with that
@@ -98,10 +107,11 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
     error); the message goes to stderr and the session does no work.
   - **1**: the scheduler is broken: a usage error, an unreadable or missing `--from` file
     (other than `judge-alarm-since`), or an input that doesn't parse (not JSON, not the
-    expected shape, no `FLOOR` line). A panic exits 101; any exit other than 0 and 2 sends the
+    expected shape, no `FLOOR` line, a floor not in the form `YYYY-MM-DDTHH:MM:SSZ`). Every
+    list is parsed in full before any step runs, so a renamed field fails whatever is picked. A panic exits 101; any exit other than 0 and 2 sends the
     session to TICK's legacy fallback and the `next-session: <first line>` bug issue.
 - **Parsing.** `feed.jsonl`: one JSON object per non-empty line, each with a string `kind`;
-  `issue` lines need a number `number`, comment kinds a string `url` and `created_at`; other
+  `issue` lines need a boolean `is_pr` and, when it is false, a number `number`; comment kinds a string `url` and `created_at`; other
   kinds are an error. The lists are JSON arrays of objects; the fields named above must have the
   right type (labels: `[{name}]`; comments: `[{author: {login}, body}]`, a null author counts as
   not the owner; `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
@@ -137,8 +147,9 @@ never 2 (no command ran).
   narrows it (floor, done: replies, in-flight PRs). A done: reply counts only from the owner
   account and only with the exact URL followed by whitespace or the end, so a reply for
   `…/issues/1234` never handles `…/issues/123`. A stranger can't hide an instruction: their
-  comments are not owner replies, and a PR counts as in flight only when it is one of
-  `--author @me` PRs (the agent's own account). The skip labels can be set by the agent account
+  comments are not owner replies, and a PR counts as in flight only when it is a tagged PR
+  of the shared account (`--author @me`; the guard forces the tag on agent PRs, and the owner's
+  own untagged PRs are ignored). The skip labels can be set by the agent account
   (ADR 0011 Consequences: the guard can't check labels).
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
