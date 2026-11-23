@@ -6,9 +6,8 @@ Phase: bootstrap (pilot)
 ## In flight
 - **Retro 0002** (#279, PR #281) merged: one journal file per session (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`),
   STATUS conflicts take main's copy (ADR 0011 §3), a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md.
-- **#282** (PR #284): next-session step 7 no longer picks `audit due` / `retro due` while an open agent PR links an
-  open `audit` / `retro` issue (TICK §6, §7: file and label that issue, draft the PR early). `ai-review` after 2
-  rounds; auto-merge on.
+- **#282** (PR #284) merged: next-session step 7 skips `audit due` / `retro due` while an open agent PR links an open
+  `audit` / `retro` issue.
 - **#261** (PR #286): audit 0006 tooling follow-ups (metrics edge cases, fuzz exit mapping test, capture 16 MiB
   boundary test). `ai-review` success after 2 rounds; auto-merge on.
 - **PR #285** (#243, step 11 Planner/idle, Session: records): open, another session's.
