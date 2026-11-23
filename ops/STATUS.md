@@ -6,11 +6,11 @@ Phase: bootstrap (pilot)
 ## In flight
 - PR #269 (#242, ADR 0011 task 1a) merged (959c4c6): `cargo xtask next-session` decides TICK rules a–f and prints
   `legacy` otherwise; ops/TICK.md §2 runs it. `deferred` on #236, #146 and #231 so the scheduler skips them.
+  **PR #272** (#270) merged: it now picks a conflicting own PR. PR #265 (#216) merged (c863a0d).
 - main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra). The rerun was cancelled by the
   main concurrency group (no job ran); 959c4c6's run 45254461191 has `project-macos` green instead.
-- PRs #267 (#219) and #268 (#235) merged. Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths` can be removed
-  (the scheduler's `Notes:` list them).
-- PR #265 (#216, owner-comment harness 2) merged (c863a0d).
+- Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths`, `t/242-next-session`, `t/270-conflicting-pr` can be
+  removed (merged PRs; the scheduler's `Notes:` list them).
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -28,8 +28,10 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- b (first scheduler pick): main red on run 45249100863, macOS runner not acquired → rerun. Journal 2026-11-23 20:03.
-- Before it, i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
+- c by hand (scheduler said `legacy`; #272 had not merged when this session started): PR #271 (rule b records)
+  conflicts with main fixed after PR #272 merged. Journal 2026-11-23 20:26.
+- Before it, c: #270 → PR #272 (merged). Journal 2026-11-23 20:12. Before that, b: main red on run 45249100863,
+  macOS runner not acquired → rerun (PR #271). Journal 2026-11-23 20:03.
 
 ## Next step (suggested order, TICK letters)
 0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
