@@ -116,7 +116,7 @@ pub fn fmt_day(day: i64) -> String {
 }
 
 /// `YYYY-MM-DD` exactly (ten ASCII characters).
-fn parse_date(s: &str) -> Option<i64> {
+pub(crate) fn parse_date(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() != 10 || b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
         return None;

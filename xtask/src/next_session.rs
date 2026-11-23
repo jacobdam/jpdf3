@@ -1,5 +1,6 @@
-//! `cargo xtask next-session`: the session scheduler, precedence steps 1–5 (ADR 0011 §2, task 1a;
-//! specs/tooling/next-session.md). Read-only: it runs read commands and writes nothing.
+//! `cargo xtask next-session`: the session scheduler, precedence steps 1–5, 7, 10 and 11 (ADR 0011
+//! §2, tasks 1a and 1b; specs/tooling/next-session.md). Read-only: it runs read commands and writes
+//! nothing.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -51,6 +52,8 @@ struct Inputs {
     tags: String,
     milestones: String,
     blocked: String,
+    /// `<path>\t<line>` for each `- Session: ` line of the recent journal files (step 11).
+    records: String,
 }
 
 /// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
@@ -67,6 +70,8 @@ const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
 const BLOCKED_INCIDENT: usize = 3;
+const JOURNAL: &str = "ops/journal/";
+const SESSION_LINE: &str = "- Session: ";
 
 /// The value of the script's `FLOOR="…"` line.
 fn floor_of(script: &str) -> Option<&str> {
@@ -109,6 +114,50 @@ fn blocked_live(since: &str) -> Result<String, Error> {
     Ok(format!("[{}]", parts.join(",")))
 }
 
+/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day` or the day before
+/// it, on origin/main and on the head branch of each open agent PR, as `<path>\t<line>`. The
+/// refs come from the last `git fetch` (TICK §1); a branch that isn't fetched is exit 2.
+fn records_live(prs: &str, day: i64) -> Result<String, Error> {
+    let mut refs = vec!["refs/remotes/origin/main".to_owned()];
+    for p in parse_prs(prs).map_err(Error::Broken)? {
+        if p.open {
+            // `refs/…` never reads as an option, and a ref name holds no `:` (git check-ref-format).
+            refs.push(format!("refs/remotes/origin/{}", p.branch));
+        }
+    }
+    let dirs: Vec<String> = [day.saturating_sub(1), day]
+        .iter()
+        .map(|d| format!("{JOURNAL}{}/", crate::metrics::fmt_day(*d)))
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = String::new();
+    for r in &refs {
+        let mut args = vec!["ls-tree", "-r", r.as_str(), "--"];
+        args.extend(dirs.iter().map(String::as_str));
+        let tree = cmd("git", &args).map_err(|e| match e {
+            Error::Unknown(m) => Error::Unknown(format!("{m} (is {r} fetched? run git fetch)")),
+            b @ Error::Broken(_) => b,
+        })?;
+        for line in tree.lines() {
+            // `<mode> blob <oid>\t<path>`
+            let Some((meta, path)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some(oid) = meta.strip_prefix("100644 blob ") else {
+                continue;
+            };
+            if !path.ends_with(".md") || !seen.insert((oid.to_owned(), path.to_owned())) {
+                continue;
+            }
+            let text = cmd("git", &["cat-file", "blob", oid])?;
+            for l in text.lines().filter(|l| l.starts_with(SESSION_LINE)) {
+                let _ = writeln!(out, "{path}\t{l}");
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn list_of(v: &Value) -> &[Value] {
     v.as_array().unwrap_or_default()
 }
@@ -141,6 +190,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             tags: read(dir, "tags.txt")?,
             milestones: read(dir, "milestones.json")?,
             blocked: read(dir, "blocked.json")?,
+            records: read(dir, "records.txt")?,
         });
     }
     let now = std::time::SystemTime::now()
@@ -165,6 +215,10 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             .checked_sub(14)
             .ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?,
     );
+    let prs = gh(
+        "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
+    )?;
+    let records = records_live(&prs, today)?;
     Ok(Inputs {
         feed,
         floor,
@@ -174,9 +228,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         owner_closed: gh(&format!(
             "issue list --state closed --author {OWNER} --search closed:>={since} --limit 1000 --json number,body,comments"
         ))?,
-        prs: gh(
-            "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
-        )?,
+        prs,
         issues: gh(
             "issue list --state open --limit 1000 --json number,title,labels,body,milestone",
         )?,
@@ -207,6 +259,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         )?,
         milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
         blocked: blocked_live(&week_ago)?,
+        records,
     })
 }
 
@@ -873,6 +926,32 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
     }))
 }
 
+/// Whether `records.txt` holds a `- Session: planner` line in a journal file dated `today`
+/// (ADR 0011 §1, the Planner's bound). Every line is checked, so a malformed one always fails.
+fn planner_ran(text_: &str, today: &str) -> Result<bool, String> {
+    let what = "records.txt";
+    let mut ran = false;
+    for line in text_.lines().filter(|l| !l.is_empty()) {
+        let (path, record) = line
+            .split_once('\t')
+            .ok_or_else(|| format!("{what}: no tab in {line:?}"))?;
+        let (day, _) = path
+            .strip_prefix(JOURNAL)
+            .and_then(|r| r.split_once('/'))
+            .filter(|(d, n)| {
+                crate::metrics::parse_date(d).is_some() && n.ends_with(".md") && !n.contains('/')
+            })
+            .ok_or_else(|| format!("{what}: {path:?} is not {JOURNAL}YYYY-MM-DD/<name>.md"))?;
+        let kind = record
+            .strip_prefix(SESSION_LINE)
+            .ok_or_else(|| format!("{what}: {record:?} is not a {SESSION_LINE:?} line"))?
+            .split_whitespace()
+            .next();
+        ran |= day == today && kind == Some("planner");
+    }
+    Ok(ran)
+}
+
 fn decide(inp: &Inputs) -> Result<String, String> {
     let prs = parse_prs(&inp.prs)?;
     let issues = parse_issues(&inp.issues)?;
@@ -884,6 +963,10 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .map(|t| unix(t.trim(), "judge-alarm-since"))
         .transpose()?;
     let milestone = current_milestone(&inp.milestones)?;
+    let planned = planner_ran(
+        &inp.records,
+        &crate::metrics::fmt_day(now.div_euclid(86_400)),
+    )?;
     let in_flight = |n: u64| {
         prs.iter()
             .any(|p| p.open && linked_issue(&p.body) == Some(n))
@@ -1054,11 +1137,19 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             });
     }
     let p = chosen.unwrap_or_else(|| {
-        pick(
-            "legacy".to_owned(),
-            "none of steps 1–5, 7 or 10 applies; use TICK §2 rule j",
-            vec!["ops/TICK.md §2 rule j".to_owned()],
-        )
+        if planned {
+            pick(
+                "idle".to_owned(),
+                "j (nothing applies and the Planner ran today): exit now, write no record",
+                Vec::new(),
+            )
+        } else {
+            pick(
+                "planner".to_owned(),
+                "j (nothing applies and no Session: planner record is dated today): the Planner",
+                vec!["ops/TICK.md §2 rule j".to_owned()],
+            )
+        }
     });
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
     for l in &p.load {

@@ -1,5 +1,5 @@
 //! `cargo xtask next-session --from` on built fixtures (specs/tooling/next-session.md). The base
-//! fixture selects nothing (`legacy`); each test changes one input so one step applies, and
+//! fixture selects nothing but step 11 (`planner`); each test changes one input so one step applies, and
 //! its near misses change one filter so it doesn't.
 #![forbid(unsafe_code)]
 
@@ -253,6 +253,7 @@ fn base() -> Vec<(&'static str, String)> {
                 )
             ),
         ),
+        ("records.txt", base_records()),
         (
             "worktrees.txt",
             "worktree /w/main\nHEAD a\nbranch refs/heads/main\n\nworktree /w/a\nHEAD b\nbranch refs/heads/t/298-x\n\n\
@@ -261,6 +262,30 @@ fn base() -> Vec<(&'static str, String)> {
                 .to_owned(),
         ),
     ]
+}
+
+/// `records.txt` lines (`<path>\t<line>`).
+fn records(lines: &[(&str, &str)]) -> String {
+    lines.iter().map(|(p, l)| format!("{p}\t{l}\n")).collect()
+}
+
+/// Step 11's near misses: a Planner record dated yesterday (NOW is 2026-11-24T06:00:00Z), and
+/// today a worker record, a record whose first word only starts with `planner`, and `planner`
+/// as a later word.
+fn base_records() -> String {
+    records(&[
+        ("ops/journal/2026-11-23/2350-a.md", "- Session: planner"),
+        (
+            "ops/journal/2026-11-24/0100-b.md",
+            "- Session: worker ready #301",
+        ),
+        ("ops/journal/2026-11-24/0200-c.md", "- Session: planners"),
+        (
+            "ops/journal/2026-11-24/0300-d.md",
+            "- Session: worker planner",
+        ),
+        ("ops/journal/2026-11-24/0400-e.md", "- Session: Planner"),
+    ])
 }
 
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -342,15 +367,116 @@ fn feed_plus(lines: &[String]) -> (&'static str, Option<String>) {
 }
 
 #[test]
-fn base_is_legacy_with_notes() {
+fn base_is_planner_with_notes() {
     let o = run_with(&[]).unwrap();
     assert_eq!(o.status.code(), Some(0));
     let out = String::from_utf8(o.stdout).unwrap();
     assert_eq!(
         out,
-        "legacy\n\nRule: none of steps 1–5, 7 or 10 applies; use TICK §2 rule j\nLoad:\n- ops/TICK.md §2 rule j\n\
+        "planner\n\nRule: j (nothing applies and no Session: planner record is dated today): the Planner\n\
+         Load:\n- ops/TICK.md §2 rule j\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
+}
+
+/// Step 11: a `Session: planner` record dated today (UTC) makes it `idle`.
+fn with_records(extra: &[(&str, &str)], now: i64) -> String {
+    pick(&[
+        set(
+            "records.txt",
+            format!("{}{}", base_records(), records(extra)),
+        ),
+        set("now.txt", format!("{now}\n")),
+    ])
+}
+
+#[test]
+fn step11_idle_when_the_planner_ran_today() {
+    let today = ("ops/journal/2026-11-24/0500-p.md", "- Session: planner");
+    let o = run_with(&[set(
+        "records.txt",
+        format!("{}{}", base_records(), records(&[today])),
+    )])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        "idle\n\nRule: j (nothing applies and the Planner ran today): exit now, write no record\nLoad:\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // Words after the type don't matter; nor does the order of the lines.
+    let later = (
+        "ops/journal/2026-11-24/0000-p.md",
+        "- Session: planner  queue #5",
+    );
+    assert_eq!(with_records(&[later], NOW), "idle");
+    let first = set(
+        "records.txt",
+        format!("{}{}", records(&[today]), base_records()),
+    );
+    assert_eq!(pick(&[first]), "idle");
+    // Day boundary: 2026-11-24T00:00:00Z is 1_795_478_400. Only today's record, without the
+    // base's yesterday record: a record dated tomorrow doesn't count.
+    let midnight = 1_795_478_400;
+    let only = |now: i64| {
+        pick(&[
+            set("records.txt", records(&[today])),
+            set("now.txt", format!("{now}\n")),
+        ])
+    };
+    assert_eq!(only(midnight), "idle");
+    assert_eq!(only(midnight - 1), "planner", "a record dated tomorrow");
+    // One second before midnight, yesterday's base record is today's.
+    assert_eq!(with_records(&[], midnight - 1), "idle");
+    assert_eq!(with_records(&[], midnight), "planner");
+    // Near misses: another day's directory, a record in a file not under a day directory is
+    // malformed (below), and an empty records file.
+    let other = ("ops/journal/2026-11-25/0000-p.md", "- Session: planner");
+    assert_eq!(with_records(&[other], NOW), "planner");
+    assert_eq!(pick(&[set("records.txt", String::new())]), "planner");
+    // Step 11 comes last: an earlier step still wins over idle.
+    let ran = set(
+        "records.txt",
+        format!("{}{}", base_records(), records(&[today])),
+    );
+    assert_eq!(
+        pick(&[
+            ran.clone(),
+            plus("issues.json", &[ready(700, "M0", &[], "")])
+        ]),
+        "worker ready #700"
+    );
+    assert_eq!(
+        pick(&[ran, feed_plus(&[feed_issue(250)])]),
+        "worker owner-issue #250"
+    );
+}
+
+#[test]
+fn step11_records_malformed_exit_1() {
+    for text in [
+        "ops/journal/2026-11-24/a.md - Session: planner\n",
+        "ops/journal/2026-11-24/a.md\t-  Session: planner\n",
+        "ops/journal/2026-11-24/a.md\tSession: planner\n",
+        "ops/journal/2026-11-24.md\t- Session: planner\n",
+        "ops/journal/2026-11-24/x/a.md\t- Session: planner\n",
+        "ops/journal/2026-11-24/a.txt\t- Session: planner\n",
+        "ops/journal/2026-13-24/a.md\t- Session: planner\n",
+        "ops/journal/26-11-24/a.md\t- Session: planner\n",
+        "docs/2026-11-24/a.md\t- Session: planner\n",
+        "ops/journal/2026-11-24/a.md\t- Session: worker\nbad line\n",
+    ] {
+        let o = run_with(&[set("records.txt", text.to_owned())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{text:?}");
+        assert!(o.stdout.is_empty(), "{text:?}");
+    }
+    // Parsed whatever is picked.
+    let o = run_with(&[
+        set("records.txt", "bad\n".to_owned()),
+        feed_plus(&[feed_issue(250)]),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1));
 }
 
 #[test]
@@ -370,7 +496,7 @@ fn step1_owner_issue() {
         )
     };
     let with = |extra: &str| pick(&[feed_plus(&[feed_issue(250)]), open(extra)]);
-    assert_eq!(with(&done(250)), "legacy");
+    assert_eq!(with(&done(250)), "planner");
     assert_eq!(with(&done(2500)), "worker owner-issue #250", "a longer URL");
     assert_eq!(
         with(&format!(
@@ -393,7 +519,7 @@ fn step1_owner_issue() {
         );
         assert_eq!(
             pick(&[feed_plus(&[feed_issue(250)]), l]),
-            "legacy",
+            "planner",
             "{skip}"
         );
     }
@@ -418,7 +544,7 @@ fn step1_owner_issue() {
             ),
         ])
     };
-    assert_eq!(linked("OPEN", GREEN), "legacy");
+    assert_eq!(linked("OPEN", GREEN), "planner");
     assert_eq!(linked("OPEN", "[]"), "worker owner-issue #250");
     assert_eq!(linked("MERGED", GREEN), "worker owner-issue #250");
     // A green PR in conflict with its base can't land: not in flight (#270).
@@ -435,8 +561,8 @@ fn step1_owner_issue() {
         ])
     };
     assert_eq!(conflicted("CONFLICTING"), "worker owner-issue #250");
-    assert_eq!(conflicted("UNKNOWN"), "legacy");
-    assert_eq!(conflicted("MERGEABLE"), "legacy");
+    assert_eq!(conflicted("UNKNOWN"), "planner");
+    assert_eq!(conflicted("MERGEABLE"), "planner");
 }
 
 #[test]
@@ -450,7 +576,7 @@ fn step1_owner_comment() {
     );
     assert_eq!(
         pick(&[feed_plus(&[c("2026-11-22T23:59:59Z")])]),
-        "legacy",
+        "planner",
         "pre-floor"
     );
     // Oldest first, whatever the kind and feed order.
@@ -469,7 +595,7 @@ fn step1_owner_comment() {
     };
     assert_eq!(
         in_pr("OPEN", format!("Owner instruction: {url}"), GREEN),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         in_pr("OPEN", format!("Owner instruction: {url}4"), GREEN),
@@ -522,22 +648,22 @@ fn review_round_1_near_misses() {
     );
     assert_eq!(
         pick(&[feed_plus(&[feed_issue(250)]), quoted.clone()]),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         pick(&[plus("issues.json", &[issue(250, "c", &["crash"])]), quoted]),
-        "legacy"
+        "planner"
     );
     // R1.2: an owner PR in the feed is not an owner issue; is_pr must be a boolean.
     let owner_pr =
         r#"{"kind":"issue","number":270,"title":"t","labels":[],"is_pr":true,"body":"b"}"#;
-    assert_eq!(pick(&[feed_plus(&[owner_pr.to_owned()])]), "legacy");
+    assert_eq!(pick(&[feed_plus(&[owner_pr.to_owned()])]), "planner");
     let no_flag = r#"{"kind":"issue","number":270,"title":"t","labels":[],"body":"b"}"#;
     let o = run_with(&[feed_plus(&[no_flag.to_owned()])]).unwrap();
     assert_eq!(o.status.code(), Some(1));
     // R1.3: an untagged (owner) PR is never the agent's own, failing or in flight.
     let owner = |body: &str| plus("prs.json", &[raw_pr(350, "OPEN", body, "o/x", &[], "[]")]);
-    assert_eq!(pick(&[owner("Closes #301")]), "legacy");
+    assert_eq!(pick(&[owner("Closes #301")]), "planner");
     let flight = plus(
         "prs.json",
         &[raw_pr(351, "OPEN", "Closes #500", "o/y", &[], GREEN)],
@@ -593,13 +719,13 @@ fn review_round_1_near_misses() {
         "owner-closed.json",
         format!(r#"[{{"number":173,"body":"b","comments":[{comment_only}]}}]"#),
     );
-    assert_eq!(pick(&[closed]), "legacy");
+    assert_eq!(pick(&[closed]), "planner");
     let longer = owner_reply(&format!("{TAG} picked up {ISSUES}1730"));
     let closed = set(
         "owner-closed.json",
         format!(r#"[{{"number":173,"body":"b","comments":[{longer}]}}]"#),
     );
-    assert_eq!(pick(&[closed]), "legacy");
+    assert_eq!(pick(&[closed]), "planner");
     // R2.1: the first numeric `Closes #N` is the link, not a later one.
     let two = plus(
         "prs.json",
@@ -655,19 +781,22 @@ fn step1_owner_done() {
         closed("Owner text", std::slice::from_ref(&picked)),
         "worker owner-done #173"
     );
-    assert_eq!(closed("Owner text", &[picked.clone(), done(173)]), "legacy");
+    assert_eq!(
+        closed("Owner text", &[picked.clone(), done(173)]),
+        "planner"
+    );
     assert_eq!(
         closed("Owner text", &[picked.clone(), done(1730)]),
         "worker owner-done #173"
     );
     assert_eq!(
         closed(&format!(" {TAG} filed for the owner"), &[picked]),
-        "legacy",
+        "planner",
         "tagged"
     );
-    assert_eq!(closed("Owner text", &[]), "legacy");
+    assert_eq!(closed("Owner text", &[]), "planner");
     let stranger = format!(r#"{{"author":{{"login":"x"}},"body":"{TAG} picked up"}}"#);
-    assert_eq!(closed("Owner text", &[stranger]), "legacy");
+    assert_eq!(closed("Owner text", &[stranger]), "planner");
 }
 
 #[test]
@@ -685,14 +814,14 @@ fn step2_main_red() {
         red("startup_failure", "workflow_dispatch"),
         "worker main-red run 20"
     );
-    assert_eq!(red("failure", "pull_request"), "legacy");
-    assert_eq!(red("cancelled", "push"), "legacy");
+    assert_eq!(red("failure", "pull_request"), "planner");
+    assert_eq!(red("cancelled", "push"), "planner");
     // The newest completed run decides, by id, not list order.
     let newer_green = runs(&[
         run_entry(10, "completed", "failure", "push"),
         run_entry(20, "completed", "success", "push"),
     ]);
-    assert_eq!(pick(&[newer_green]), "legacy");
+    assert_eq!(pick(&[newer_green]), "planner");
     let running = runs(&[
         run_entry(30, "in_progress", "", "push"),
         run_entry(20, "completed", "failure", "push"),
@@ -704,7 +833,7 @@ fn step2_main_red() {
     // A judge alarm skips the step and says so.
     let o = run_with(&[running, set("judge-alarm-since", "1795324800\n".to_owned())]).unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
-    assert!(out.starts_with("legacy\n"), "{out}");
+    assert!(out.starts_with("planner\n"), "{out}");
     assert!(out.contains("- judge alarm active (ops/state/judge-alarm-since exists): step 2 skipped, main is red\n"), "{out}");
     // Rule b outranks rule c.
     let failing = plus(
@@ -735,7 +864,7 @@ fn step3_own_pr() {
         )])
     };
     let ok = r#"{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS"}"#;
-    assert_eq!(one(&format!("[{ok}]"), &[]), "legacy");
+    assert_eq!(one(&format!("[{ok}]"), &[]), "planner");
     assert_eq!(
         one("null", &[]),
         "worker own-pr #340",
@@ -753,7 +882,7 @@ fn step3_own_pr() {
     }
     for c in ["SUCCESS", "SKIPPED", "NEUTRAL", ""] {
         let r = format!(r#"[{ok},{{"__typename":"CheckRun","name":"j","conclusion":"{c}"}}]"#);
-        assert_eq!(one(&r, &[]), "legacy", "{c}");
+        assert_eq!(one(&r, &[]), "planner", "{c}");
     }
     for s in ["FAILURE", "ERROR"] {
         let r =
@@ -771,7 +900,7 @@ fn step3_own_pr() {
         "worker own-pr #340",
         "another context's success"
     );
-    assert_eq!(one("[]", &["owner-todo"]), "legacy");
+    assert_eq!(one("[]", &["owner-todo"]), "planner");
     // A skip label on the linked issue parks the PR too.
     let parked = set(
         "issues.json",
@@ -784,7 +913,7 @@ fn step3_own_pr() {
             pr(340, "OPEN", "Closes #301", "t/301-y", &[], "[]")
         ),
     );
-    assert_eq!(pick(&[failing.clone(), parked]), "legacy");
+    assert_eq!(pick(&[failing.clone(), parked]), "planner");
     // Lowest number first; merged PRs never count.
     let two = set(
         PRS,
@@ -813,7 +942,7 @@ fn step3_conflicting_pr() {
     );
     // Near misses: lazily computed or mergeable; not open; skip labels; the owner's PR.
     for v in ["UNKNOWN", "MERGEABLE"] {
-        assert_eq!(with(m(green("OPEN", &[]), v)), "legacy", "{v}");
+        assert_eq!(with(m(green("OPEN", &[]), v)), "planner", "{v}");
     }
     // A merged or closed PR doesn't keep #301 (ready, M0) in flight: step 10 picks it.
     for state in ["MERGED", "CLOSED"] {
@@ -826,7 +955,7 @@ fn step3_conflicting_pr() {
     for skip in ["owner-todo", "blocked", "deferred"] {
         assert_eq!(
             with(m(green("OPEN", &[skip]), "CONFLICTING")),
-            "legacy",
+            "planner",
             "{skip} on the PR"
         );
         let parked = set("issues.json", format!("[{}]", issue(301, "f", &[skip])));
@@ -834,7 +963,7 @@ fn step3_conflicting_pr() {
             "prs.json",
             format!("[{},{merged}]", m(green("OPEN", &[]), "CONFLICTING")),
         );
-        assert_eq!(pick(&[prs, parked]), "legacy", "{skip} on the issue");
+        assert_eq!(pick(&[prs, parked]), "planner", "{skip} on the issue");
     }
     let owners = raw_pr(340, "OPEN", "Closes #301", "t/301-y", &[], GREEN);
     // The owner's PR is no agent PR, so its branch's worktree (base()) is a leftover instead.
@@ -870,9 +999,9 @@ fn step3_scheduler_bug() {
         bug("next-session: parse error", &["bug"]),
         "worker scheduler-bug #400"
     );
-    assert_eq!(bug("next-session: parse error", &[]), "legacy");
-    assert_eq!(bug("next-session parse error", &["bug"]), "legacy");
-    assert_eq!(bug("next-session: x", &["bug", "owner-todo"]), "legacy");
+    assert_eq!(bug("next-session: parse error", &[]), "planner");
+    assert_eq!(bug("next-session parse error", &["bug"]), "planner");
+    assert_eq!(bug("next-session: x", &["bug", "owner-todo"]), "planner");
     let flight = plus(
         "prs.json",
         &[pr(401, "OPEN", "Closes #400", "t/400-a", &[], GREEN)],
@@ -882,7 +1011,7 @@ fn step3_scheduler_bug() {
             plus("issues.json", &[issue(400, "next-session: x", &["bug"])]),
             flight
         ]),
-        "legacy"
+        "planner"
     );
     // Rule c's own PR comes first, then the bug issue, then rule d.
     let both = plus(
@@ -914,17 +1043,17 @@ fn step4_crash_security() {
         "worker crash-security #500",
         "unlabeled: label it first"
     );
-    assert_eq!(one(&["security", "sev:medium"]), "legacy");
-    assert_eq!(one(&["sev:high"]), "legacy", "not a security issue");
-    assert_eq!(one(&["crash", "owner-todo"]), "legacy");
-    assert_eq!(one(&["crash", "blocked"]), "legacy");
+    assert_eq!(one(&["security", "sev:medium"]), "planner");
+    assert_eq!(one(&["sev:high"]), "planner", "not a security issue");
+    assert_eq!(one(&["crash", "owner-todo"]), "planner");
+    assert_eq!(one(&["crash", "blocked"]), "planner");
     let flight = plus(
         "prs.json",
         &[pr(501, "OPEN", "Closes #500", "t/500-a", &[], GREEN)],
     );
     assert_eq!(
         pick(&[plus("issues.json", &[issue(500, "x", &["crash"])]), flight]),
-        "legacy"
+        "planner"
     );
     // Order: sev:critical, then security without sev:*, then crash and sev:high, each lowest first.
     let mix = |extra: &[String]| {
@@ -960,7 +1089,7 @@ fn step5_flaky_and_leftover() {
             "issues.json",
             &[issue(600, "f", &["flaky", "deferred"])]
         )]),
-        "legacy"
+        "planner"
     );
     let flight = plus(
         "prs.json",
@@ -968,7 +1097,7 @@ fn step5_flaky_and_leftover() {
     );
     assert_eq!(
         pick(&[plus("issues.json", &[issue(600, "f", &["flaky"])]), flight]),
-        "legacy"
+        "planner"
     );
     // Rule d outranks rule e.
     assert_eq!(
@@ -989,8 +1118,8 @@ fn step5_flaky_and_leftover() {
         )
     };
     assert_eq!(pick(&[extra("t/9-z")]), "worker leftover-worktree t/9-z");
-    assert_eq!(pick(&[extra("u/9-z")]), "legacy");
-    assert_eq!(pick(&[extra("x-t/9-z")]), "legacy");
+    assert_eq!(pick(&[extra("u/9-z")]), "planner");
+    assert_eq!(pick(&[extra("x-t/9-z")]), "planner");
     // The first such branch by name; flaky comes before a leftover.
     let two = set(
         "worktrees.txt",
@@ -1013,7 +1142,7 @@ fn step5_flaky_and_leftover() {
     ])
     .unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
-    assert!(out.starts_with("legacy\n"), "{out}");
+    assert!(out.starts_with("planner\n"), "{out}");
     assert!(
         out.contains("- worktree on t/9-z: its PRs (#602) are merged or closed; remove it\n"),
         "{out}"
@@ -1125,6 +1254,15 @@ fn precedence_removes_each_step_in_turn() {
             vec![ready(700, "M0", &[], "")],
             vec![],
         ),
+        (
+            "idle",
+            vec![],
+            vec![],
+            vec![(
+                "records.txt",
+                records(&[("ops/journal/2026-11-24/0500-p.md", "- Session: planner")]),
+            )],
+        ),
     ];
     for start in 0..steps.len() {
         let mut feed = Vec::new();
@@ -1184,12 +1322,12 @@ fn malformed_inputs_exit_1() {
         assert!(o.stdout.is_empty(), "{name}: {text}");
     }
     // `mergeable` (#270): missing, not a string or an unknown value is exit 1, also on a
-    // merged PR (every PR is parsed in full). The unchanged list picks `legacy`.
+    // merged PR (every PR is parsed in full). The unchanged list picks `planner`.
     let open = pr(300, "OPEN", "Closes #301", "t/301-y", &[], GREEN);
     let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
     assert_eq!(
         pick(&[set("prs.json", format!("[{open},{merged}]"))]),
-        "legacy"
+        "planner"
     );
     // A conflicting open PR's statusCheckRollup is still parsed (R1.1).
     let bad_rollup = set_mergeable(
@@ -1224,6 +1362,7 @@ fn malformed_inputs_exit_1() {
         "tags.txt",
         "milestones.json",
         "blocked.json",
+        "records.txt",
     ] {
         let o = run_with(&[(name, None)]).unwrap();
         assert_eq!(o.status.code(), Some(1), "missing {name}");
@@ -1269,7 +1408,7 @@ fn merges(n: u64, path: &str) -> Vec<String> {
 #[test]
 fn step7_audit_product_merges() {
     // The base has 1 product merge after the record (the record's own commit isn't counted).
-    assert_eq!(pick(&[log_with(&merges(8, "crates/c.rs"))]), "legacy");
+    assert_eq!(pick(&[log_with(&merges(8, "crates/c.rs"))]), "planner");
     assert_eq!(pick(&[log_with(&merges(9, "crates/c.rs"))]), "audit due");
     // Each product path counts; files outside them don't.
     for path in [
@@ -1291,7 +1430,7 @@ fn step7_audit_product_merges() {
         "specs/crates/a.md",
         "cratesx/a.rs",
     ] {
-        assert_eq!(pick(&[log_with(&merges(9, path))]), "legacy", "{path}");
+        assert_eq!(pick(&[log_with(&merges(9, path))]), "planner", "{path}");
     }
     // A deletion counts as a change.
     let del = (0..9)
@@ -1334,7 +1473,7 @@ fn step7_audit_records_and_age() {
         ]
         .concat(),
     );
-    assert_eq!(pick(&[at(AUDIT_T + WEEK - 1), log.clone()]), "legacy");
+    assert_eq!(pick(&[at(AUDIT_T + WEEK - 1), log.clone()]), "planner");
     assert_eq!(pick(&[at(AUDIT_T + WEEK), log]), "audit due");
     // No audit record at all.
     let no_audit = |files: &[(&str, &str)]| {
@@ -1359,8 +1498,8 @@ fn step7_audit_records_and_age() {
         assert_eq!(no_audit(&[f]), "audit due", "{f:?}");
     }
     // A user-advocate record is an audit slot too.
-    assert_eq!(no_audit(&[("A", "docs/advocate/0007.md")]), "legacy");
-    assert_eq!(no_audit(&[("A", "docs/audits/0007.md")]), "legacy");
+    assert_eq!(no_audit(&[("A", "docs/advocate/0007.md")]), "planner");
+    assert_eq!(no_audit(&[("A", "docs/audits/0007.md")]), "planner");
 }
 
 #[test]
@@ -1379,7 +1518,7 @@ fn step7_retro() {
     };
     assert_eq!(
         pick(&[at(RETRO_T + WEEK - 1), log_at(RETRO_T + WEEK - 10)]),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         pick(&[at(RETRO_T + WEEK), log_at(RETRO_T + WEEK - 10)]),
@@ -1400,7 +1539,7 @@ fn step7_retro() {
             set("blocked.json", "[]".to_owned()),
         ])
     };
-    assert_eq!(no_retro(ROOT_T + WEEK - 1), "legacy");
+    assert_eq!(no_retro(ROOT_T + WEEK - 1), "planner");
     assert_eq!(no_retro(ROOT_T + WEEK), "retro due");
     // An audit due comes first.
     assert_eq!(pick(&[at(AUDIT_T + WEEK)]), "audit due");
@@ -1411,13 +1550,13 @@ fn step7_retro_incidents() {
     // A revert after the retro record (the base has one before it).
     let rev = |subject: &str| pick(&[log_with(&[commit(120, NOW - 60, subject, &[])])]);
     assert_eq!(rev("Revert \"feature\" (#10) (#11)"), "retro due");
-    assert_eq!(rev("Reverts feature"), "legacy");
-    assert_eq!(rev("Revert feature"), "legacy");
-    assert_eq!(rev("x Revert \"feature\""), "legacy");
+    assert_eq!(rev("Reverts feature"), "planner");
+    assert_eq!(rev("Revert feature"), "planner");
+    assert_eq!(rev("x Revert \"feature\""), "planner");
     // A judge alarm raised after the retro record.
     let alarm = |t: i64| pick(&[set("judge-alarm-since", format!("{t}\n"))]);
     assert_eq!(alarm(RETRO_T + 1), "retro due");
-    assert_eq!(alarm(RETRO_T), "legacy");
+    assert_eq!(alarm(RETRO_T), "planner");
     // A milestone tag created after the retro record.
     let tag = |line: &str| pick(&[set("tags.txt", format!("{line}\n"))]);
     assert_eq!(tag(&format!("m1 {}", RETRO_T + 1)), "retro due");
@@ -1429,7 +1568,7 @@ fn step7_retro_incidents() {
         format!("m {NOW}"),
         format!("M1 {NOW}"),
     ] {
-        assert_eq!(tag(&near), "legacy", "{near}");
+        assert_eq!(tag(&near), "planner", "{near}");
     }
     let o = run_with(&[set("tags.txt", format!("m1 {}\n", RETRO_T + 1))]).unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
@@ -1452,18 +1591,18 @@ fn step7_retro_blocked_incident() {
     );
     assert_eq!(
         third(&[labeled("blocked", "2026-11-22T06:00:00Z")]),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         third(&[labeled("blocked-x", "2026-11-24T05:00:00Z")]),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         third(&[
             r#"{"event":"unlabeled","created_at":"2026-11-24T05:00:00Z","label":{"name":"blocked"}}"#
                 .to_owned()
         ]),
-        "legacy"
+        "planner"
     );
     // The same issue twice counts once.
     assert_eq!(
@@ -1474,7 +1613,7 @@ fn step7_retro_blocked_incident() {
                 &[labeled("blocked", "2026-11-24T05:00:00Z")]
             )]
         )]),
-        "legacy"
+        "planner"
     );
     let o = run_with(&[plus(
         "blocked.json",
@@ -1503,7 +1642,7 @@ fn step10_ready_issue() {
         "worker ready #701"
     );
     // Lowest open M<n> by number: M1 is not current while M0 is open.
-    assert_eq!(with(&[ready(701, "M1", &[], "")]), "legacy");
+    assert_eq!(with(&[ready(701, "M1", &[], "")]), "planner");
     let ms = |list: &str| set("milestones.json", list.to_owned());
     assert_eq!(
         pick(&[
@@ -1517,16 +1656,16 @@ fn step10_ready_issue() {
     );
     assert_eq!(
         pick(&[plus("issues.json", &[ready(701, "M0", &[], "")]), ms("[]")]),
-        "legacy"
+        "planner"
     );
     // Near misses: no milestone, not ready, each skip label, in flight.
     assert_eq!(
         with(&[full_issue(701, "r", &["ready"], "", "null")]),
-        "legacy"
+        "planner"
     );
     assert_eq!(
         with(&[full_issue(701, "r", &[], "", r#"{"title":"M0"}"#)]),
-        "legacy"
+        "planner"
     );
     for l in [
         "owner-todo",
@@ -1536,7 +1675,7 @@ fn step10_ready_issue() {
         "design",
         "design-pending",
     ] {
-        assert_eq!(with(&[ready(701, "M0", &[l], "")]), "legacy", "{l}");
+        assert_eq!(with(&[ready(701, "M0", &[l], "")]), "planner", "{l}");
     }
     // #301 (ready, M0) is linked by the open PR #300 in the base; without the PR it's picked.
     let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
@@ -1551,8 +1690,8 @@ fn step10_ready_issue() {
 fn step10_dependencies() {
     let one = |body: &str| pick(&[plus("issues.json", &[ready(701, "M0", &[], body)])]);
     // #150 is open in the base, #149 is not.
-    assert_eq!(one("x\nDepends on: #150 (task 1a)."), "legacy");
-    assert_eq!(one("**Depends on:** #149, #150."), "legacy");
+    assert_eq!(one("x\nDepends on: #150 (task 1a)."), "planner");
+    assert_eq!(one("**Depends on:** #149, #150."), "planner");
     assert_eq!(one("Depends on: #149."), "worker ready #701");
     assert_eq!(one("Depends on: none."), "worker ready #701");
     // Only the text after `Depends on:` on its own line counts.
@@ -1564,7 +1703,10 @@ fn step10_dependencies() {
         one("with its Depends on: issues closed (#150)."),
         "worker ready #701"
     );
-    assert_eq!(one("Depends on: #149 (task 1a), #150 (task 1b)."), "legacy");
+    assert_eq!(
+        one("Depends on: #149 (task 1a), #150 (task 1b)."),
+        "planner"
+    );
     // A lower-numbered blocked one doesn't hide a later free one.
     assert_eq!(
         pick(&[plus(
