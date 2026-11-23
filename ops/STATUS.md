@@ -28,10 +28,10 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c (scheduler `worker own-pr #274`): PR #274 conflicted with main after PR #271 merged; merged origin/main
-  (journal and STATUS only). Journal 2026-11-23 20:55.
-- Before it, i (scheduler `legacy`): split #243, PR #274 for #273. Journal 2026-11-23 20:30. Before that, c: PR #271
-  conflicts (20:26).
+- b (scheduler `worker main-red run 45265510213`): main ci run on f67b516 (PR #274) red only because `project-macos`
+  never got a runner (cancelled after 15 min, no steps); judge-verdict green. `gh run rerun --failed`, attempt 2
+  queued. Journal 2026-11-23 21:27. PR #276 (#245, design: technical 1/2) is open from the session before.
+- Before it, c (scheduler `worker own-pr #274`): PR #274 conflicts with main (20:55); i: PR #274 for #273 (20:30).
 
 ## Next step (suggested order, TICK letters)
 0. Start with `cargo xtask next-session` (TICK §2); it now also decides audits, retros and ready issues. It reads the
