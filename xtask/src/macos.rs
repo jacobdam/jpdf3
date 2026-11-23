@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::json::{self, Value};
 use crate::web::{Status, check_known_ids, downgrade_passes, remove_stale, render_e2e, step};
+use jpdf_testgen::json::{self, Value};
 
 /// Largest tool output we read (xcresulttool JSON, entitlements, codesign text).
 const MAX_TOOL_OUTPUT: usize = 16 << 20;
@@ -458,6 +458,31 @@ mod tests {
             "{:?}",
             out.get(out.len() - 20..)
         );
+    }
+
+    #[test]
+    fn capture_output_cap_is_exact_on_both_pipes() {
+        // Audit 0006 AC.2: exactly MAX_TOOL_OUTPUT bytes pass, one more fails, on stdout
+        // and on stderr. The scripts compute their sizes from the constant, so assert it.
+        assert_eq!(MAX_TOOL_OUTPUT, 16 * 1024 * 1024);
+        let emit = |n: usize, fd: &str| format!("head -c {n} /dev/zero | tr '\\0' a{fd}");
+        let run = |script: String| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(capture("/bin/sh", &["-c", &script], None));
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(60))
+                .expect("capture hung")
+        };
+        let (out, err) = run(emit(MAX_TOOL_OUTPUT, "")).unwrap();
+        assert_eq!((out.len(), err.len()), (MAX_TOOL_OUTPUT, 0));
+        let (out, err) = run(emit(MAX_TOOL_OUTPUT, " >&2")).unwrap();
+        assert_eq!((out.len(), err.len()), (0, MAX_TOOL_OUTPUT));
+        let too_big = format!("/bin/sh: output larger than {MAX_TOOL_OUTPUT} bytes");
+        for fd in ["", " >&2"] {
+            let e = run(emit(MAX_TOOL_OUTPUT + 1, fd)).unwrap_err();
+            assert_eq!(e, too_big, "fd {fd:?}");
+        }
     }
 
     #[test]

@@ -1,69 +1,56 @@
-# STATUS (rewritten by every session; ≤ 1 page)
+# STATUS (≤ 1 page; rewritten only when in-flight work, the next step or blockers change, ops/TICK.md §5)
 
 Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #220** (#91, `cargo xtask metrics` 1/2): `ai-review` = success on 681571f after 3 rounds, auto-merge on. Part 2
-  (CI failures by job, metrics.json) is #219.
-- **PR #186** (#168, sev:high, JBIG2 page data + globals share one input allowance): parked as draft for the owner,
-  `ai-review` = failure (4 rounds + final check; the final check found one false sentence, corrected in 1533e26,
-  unreviewed). #168 has `blocked` + `owner-todo` and the ledger with two options. No review round until an owner comment.
-- **PR #183** (#162, sev:high guard proposal): parked as draft for the owner (same rule).
-- PR #184 (owner's own: applies the owner-comment tracking proposal, #179): open. Audit 0005 found the proposal's
-  filter and the guard disagree on leading U+001C–U+001F (#217) and the harness lacks leading-whitespace agent cases
-  (#216); heads-up posted on #179. Until it merges, TICK §0's interim rules for owner comments apply.
-- Picked-up owner comments without a done reply (TICK §0, until #179 is applied): none.
-- #146 stays open after PR #151 merged: the decode/raster gate waits for a #25 measurement or a structural fix
-  (#154). Follow-up #156 (sev:medium, M10).
-- #21 stays open until the owner's drills (#208) and AC.4 (comment on #21) are added to docs/retros/0000-pilot.md.
-  The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
+- **PR #276** (#245, ADR 0011 task 3 part 1): the owner said "Merge" (PR #276 comment 7116903325); origin/main
+  (PR #285) merged in, `ai-review` success on the owner's ruling, auto-merge on. Part 2: #275 (next-session step 6).
+  Follow-ups: #277.
+- `cargo xtask next-session` decides steps 1–5, 7, 10 and 11 (PRs #269, #272, #274, #284, #285); step 6 is checked by
+  hand until #275. Task 2 (#244, the Planner session, `ops/QUEUE.md`, work-mix budget) and #275 are next.
+- The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
+  tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
+- **PR #232** (#187 part 1): parked for the owner (draft, `ai-review` failure on 0831d70 after 4 rounds + final
+  check). No review round until an owner comment. Part 2: #231 (sev:high, M2, `deferred`).
+- **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
+  on it (ADR 0011 §7).
+- #236 (memory ADR, `deferred`) waits for PR #276 to merge (it is the first design queue item). #146 stays open,
+  `deferred` (waits for #25 or #236).
+- #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. Scratch branch
+  `t/21-drill-crash` stays (the guard blocks deletes).
+- #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 
-## Last session
-- i: #91 → PR #220 (`cargo xtask metrics`: throughput, review rounds/findings from posted reviews, stuck issues,
-  audit/retro lag; split, part 2 = #219). 3 review rounds (R1: 3 majors, all fixed). Audit 0005 (PR #215) merged
-  during the session. Journal 2026-11-22 12:15.
-
-## Next step (suggested order, TICK letters)
-1. **a/c: PR #186 and PR #183** only once the owner has commented on #168/#162 or the PR.
-2. #187 waits on PR #186.
-3. Rule i, M0, lowest number first: #115, #154, #210 (write ops/proposals/ for the owner-commands fix), #216
-   (do it before the owner merges PR #184 if possible: it is the harness the owner's test plan relies on), #219.
-4. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
-   - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
-- Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
-  #132, #134, #136, #137, #166, #193, #203, #218.
-- **Next retro (rule h): by 2026-11-28.** Once PR #220 is on main, start from `git fetch` + `cargo xtask metrics --index
-  <main checkout>/ops/logs/index.tsv` (specs/tooling/metrics.md; CI counts need #219). Inputs:
-  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
-    PR #220: 3.
-  - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
-  - STATUS "in flight" goes stale as soon as its PR merges.
-  - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
-  - the template's `Area:` list lacks `tooling`.
-  - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
-  - audit 0004 AC.3 (no rule for a CI fix after a clean final check) and AC.4 (a proposal PR's `Closes #N` drops a
-    sev:high issue from rule d before the fix is on main, and the owner's new issue isn't told to keep
-    `security`/`sev:*`) (ops/TICK.md:29,
-    AUTOMATION.md:295).
-  - Codex on audits: audit 0005's brief (no ops/driver diff) ran ok (7 findings, 0 Codex-only bugs above sev:low),
-    but like PR #212's 3 runs it said its workspace commands timed out (brief-only review).
-  - ops/LESSONS.md has 63 entries (cap 60); PR #221 merged the new date lesson into an existing one.
-  - audit 0005: harness tests named for a limit that fail for another reason (AS.3), and proposal harnesses without
-    near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
-- **Next audit:** after 10 more merges or by 2026-11-29.
+## Next step
+0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
+   M0 `ready` issue whose `Depends on:` issues are closed (#244; #275 once PR #276 merges), else `planner` (rule j, once a
+   day) or `idle`.
+1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
+2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
+   conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
+   audit lag under the scheduler, the product-merge share (baseline 23%) and the records-only share
+   (baseline 24%, #243's measure). Carried inputs: 5 applied proposals
+   still say "proposed" (audit 0006); audit 0004 AC.3/AC.4; Codex timeouts and brief-only reviews (PR #268, audits
+   0005–0006).
+- Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
+  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
+- #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
+- #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
+- #266: apply ops/proposals/hold-automerge.md and run T0–T4.
+- #257: drop the Playwright cache step in ci.yml (protected).
+- #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
-- #168 / PR #186: accept the final-check wording fix or ask for one more round (options on #168).
-- #162 / PR #183: decide the next step for the guard proposal (options on #162).
-- #179: merge PR #184 (see #216, #217 first), then run test step 3 of ops/proposals/owner-comment-tracking.md.
+- #179: run test step 3 of ops/proposals/owner-comment-tracking.md.
+- #176, #126: driver usage-limit pause; the Codex second-reviewer trial (live).
 - The security-gates proposal (AC.2, AS.56) needs an owner decision.
-- Local XCUITest on the Mac mini needs an unlocked, logged-in console.
-- #208: owner fire-drill steps (stranger issue, live unsafe-keyword push, forced judge infra failure, /hold re-run
-  after #210).
-- macOS CI runs no Rust tests (`project-macos` runs xcodebuild/Playwright only), so macOS-only Rust code paths are
-  checked locally only.
-- #126 (open): the Codex second-reviewer trial is live.
+- #208: owner fire-drill steps (stranger issue, live unsafe-keyword push, forced judge infra failure, /hold re-run).
+- Local XCUITest on the Mac mini needs an unlocked, logged-in console. macOS CI runs no Rust tests.
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
+
+## Pending lessons
+- Engine & security or Tooling: a scheduler/tool input built live from command output (git reads) and parsed later →
+  put the filtering in a pure function over the command text with a fake reader, and decide per failure (bad bytes,
+  oversize) whether it skips, exits 1 or exits 2, before round 1 (PR #285 R1.1:
+  [journal](journal/2026-11-23/2225-243-step11.md)).

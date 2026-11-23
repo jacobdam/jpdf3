@@ -127,8 +127,10 @@ the 2 GiB unused.
     does not certify that a run fits.
   - **Gate:** no decode or raster phase runs on the jpdf-cli path until #146 is closed, by a
     #25 measurement or by the structural fix above. Today parse is the only phase on that path.
-    The rule is not enforced by a test yet; #154 tracks enforcing it structurally (a check that
-    Cargo resolves, such as jpdf-cli's dependency graph).
+    Since #154, `tools/jpdf-cli/tests/dependency_gate.rs` enforces it on the package graph Cargo
+    resolves for jpdf-cli: only the parse-only workspace crates, at their workspace paths
+    (specs/tooling/cli-dependency-gate.md). It sees packages, not code: decode or raster code
+    written inside one of those crates still passes it.
   - The same reasoning applies to whichever glibc arena the phases run in. A thread other than
     the main one (the engine thread, #114) allocates from a non-main arena made of 64 MiB
     sub-heaps, which are also trimmed only from the top.
@@ -459,6 +461,7 @@ per allocation counted by `retained_cost`, which already walks the object once.
 - crates/jpdf-traits/src/raster.rs: `default_canvas_limit_is_exact` (2^22 pixels pass with
   the default limits, 2^22 + 1 fail), `default_working_bytes_limit_is_exact`.
 - crates/jpdf-engine/tests/open.rs: `page_limit_boundary_opens_at_the_limit`.
+- tools/jpdf-cli/tests/dependency_gate.rs: the Gate (#154; specs/tooling/cli-dependency-gate.md).
 - crates/jpdf-traits/src/limits.rs: `image_inputs_share_one_allowance`,
   `default_image_input_allowance_is_exact`, `image_input_cap_lowers_only_the_output_cap`,
   `image_input_budget_saturates`, `image_input_budget_charges_capacity`,

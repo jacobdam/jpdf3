@@ -4,7 +4,7 @@
 //! GitHub text (comments, titles) is data: this module only counts lines in it and escapes
 //! titles before they reach the markdown table.
 
-use crate::json::{self, Value};
+use jpdf_testgen::json::{self, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -12,6 +12,11 @@ use std::path::{Path, PathBuf};
 
 /// `--limit` for every `gh` list; a list that returns exactly this many may be cut off.
 pub const LIST_LIMIT: usize = 1000;
+/// Failed CI runs whose jobs are read (`gh run view`), newest first.
+pub const MAX_JOB_READS: usize = 100;
+/// The conversation comments `gh pr list --json comments` returns per PR (its GraphQL query
+/// asks for `comments(first: 100)` and doesn't paginate them).
+pub const COMMENT_LIMIT: usize = 100;
 /// The agent's tag (CONSTITUTION 1).
 const TAG: &str = "🤖 jpdf-agent";
 /// Default period when no retro record exists (TICK §2 h: a retro every 7 days).
@@ -114,7 +119,7 @@ pub fn fmt_day(day: i64) -> String {
 }
 
 /// `YYYY-MM-DD` exactly (ten ASCII characters).
-fn parse_date(s: &str) -> Option<i64> {
+pub(crate) fn parse_date(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() != 10 || b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
         return None;
@@ -129,7 +134,7 @@ fn parse_date(s: &str) -> Option<i64> {
 }
 
 /// The UTC day of a Unix time in seconds (`%ct`), years 1970..=9999 only.
-fn utc_day(secs: &str) -> Option<i64> {
+pub(crate) fn utc_day(secs: &str) -> Option<i64> {
     // Digits only: `i64::from_str` would also take a leading `+` (PR #220 R2.2).
     if secs.is_empty() || !secs.bytes().all(|c| c.is_ascii_digit()) {
         return None;
@@ -141,12 +146,38 @@ fn utc_day(secs: &str) -> Option<i64> {
     (0..=max).contains(&secs).then(|| secs.div_euclid(86_400))
 }
 
-/// The date part of an ISO 8601 timestamp (`2026-11-22T11:48:38Z`).
+/// The day of a GitHub timestamp, which has exactly the form `2026-11-22T11:48:38Z` (a real
+/// date, a time up to 23:59:59, nothing after the `Z`; audit 0006 AC.8).
 fn iso_day(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    let shape = b.len() == 20
+        && b.get(10) == Some(&b'T')
+        && b.get(13) == Some(&b':')
+        && b.get(16) == Some(&b':')
+        && b.get(19) == Some(&b'Z');
+    if !shape {
+        return None;
+    }
+    let part = |r: std::ops::Range<usize>| {
+        s.get(r)
+            .filter(|p| p.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|p| p.parse::<u8>().ok())
+    };
+    if part(11..13)? > 23 || part(14..16)? > 59 || part(17..19)? > 59 {
+        return None;
+    }
     parse_date(s.get(..10)?)
 }
 
-fn today() -> Result<i64, String> {
+/// A non-empty run of ASCII digits as a `u64` (`u64::from_str` would also take a leading `+`).
+fn digits_u64(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+pub(crate) fn today() -> Result<i64, String> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("system clock: {e}"))?
@@ -263,8 +294,9 @@ fn parse_sessions(text: &str, since: i64, until: i64) -> Sessions {
         let f: Vec<&str> = line.split('\t').collect();
         let row = match f.as_slice() {
             [stamp, code, _id, dur] => stamp_day(stamp).and_then(|day| {
-                let code: i64 = code.parse().ok()?;
-                let secs: u64 = dur.strip_suffix('s')?.parse().ok()?;
+                // Digits only, as the driver writes them (audit 0006 AC.8: no `+`).
+                let code = digits_u64(code)?;
+                let secs = digits_u64(dur.strip_suffix('s')?)?;
                 Some((day, code, secs))
             }),
             _ => None,
@@ -478,7 +510,9 @@ fn review_of(pr: u64, comments: &[Value]) -> Option<Review> {
             *n = n.saturating_add(1);
         }
     }
-    rev.regrades = u64::try_from(regraded.len()).unwrap_or(u64::MAX);
+    // Only IDs a review comment reported: a triage line can't add a finding (audit 0006 AC.4).
+    let regrades = regraded.iter().filter(|id| ids.contains_key(*id)).count();
+    rev.regrades = u64::try_from(regrades).unwrap_or(u64::MAX);
     Some(rev)
 }
 
@@ -493,6 +527,22 @@ struct Issue {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Ci {
+    runs: u64,
+    by_conclusion: BTreeMap<String, u64>,
+    failed_main: u64,
+    failed_other: u64,
+    /// Failed runs (of those read) per failing job name.
+    failing_jobs: BTreeMap<String, u64>,
+    jobs_read: u64,
+    jobs_unknown: u64,
+    /// More than `MAX_JOB_READS` failed runs: the older ones were left out.
+    jobs_capped: bool,
+    reruns: u64,
+    reruns_success: u64,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Report {
     since: i64,
     until: i64,
@@ -503,6 +553,7 @@ struct Report {
     closed_issues: u64,
     sessions: Option<Sessions>,
     reviews: Vec<Review>,
+    ci: Ci,
     blocked: Vec<Issue>,
     flaky: Vec<Issue>,
     /// (record, day, merges since the previous record; None for the first)
@@ -512,6 +563,8 @@ struct Report {
     retros: Vec<(String, i64, Option<i64>)>,
     days_since_retro: Option<i64>,
     truncated: Vec<&'static str>,
+    /// Merged PRs in the period whose comment list hit `COMMENT_LIMIT` (audit 0006 CX.10).
+    comments_truncated: Vec<u64>,
 }
 
 /// Every input, as fetched (or read with `--from`).
@@ -522,16 +575,135 @@ pub struct Inputs {
     prs: String,
     issues_closed: String,
     issues_open: String,
+    runs: String,
+    /// Failing job names per run id read (`failing_jobs`); a run missing here has no job data.
+    jobs: BTreeMap<u64, Vec<String>>,
 }
 
-/// The default `--since`: the day the last retro record was added, else `until` − 7 days; a
-/// default after `until` also falls back to `until` − 7 days.
+/// The default `--since`: the day the last retro record dated on or before `until` was added,
+/// else `until` − 7 days. Records after `until` are skipped, as in the lag section (#261 R1.1).
 fn default_since(commits: &[Commit], until: i64) -> i64 {
     records(commits, "retros")
-        .last()
-        .map(|(_, day, _)| *day)
-        .filter(|d| *d <= until)
+        .into_iter()
+        .map(|(_, day, _)| day)
+        .rfind(|d| *d <= until)
         .unwrap_or(until.saturating_sub(DEFAULT_DAYS))
+}
+
+/// A run that `runs.json` lists.
+struct Run<'a> {
+    id: u64,
+    created: &'a str,
+    day: i64,
+    conclusion: &'a str,
+    event: &'a str,
+    branch: &'a str,
+    attempt: u64,
+}
+
+/// The runs in `runs.json` created in the period, each `databaseId` once (its first entry),
+/// and whether the list hit `LIST_LIMIT`.
+fn period_runs(runs: &Value, since: i64, until: i64) -> Result<(Vec<Run<'_>>, bool), String> {
+    let what = "runs.json";
+    let runs = array(runs, what)?;
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for r in runs {
+        let run = Run {
+            id: num(r, "databaseId", what)?,
+            created: string(r, "createdAt", what)?,
+            day: day_of(r, "createdAt", what)?,
+            conclusion: string(r, "conclusion", what)?,
+            event: string(r, "event", what)?,
+            branch: string(r, "headBranch", what)?,
+            attempt: num(r, "attempt", what)?,
+        };
+        if run.day >= since && run.day <= until && seen.insert(run.id) {
+            out.push(run);
+        }
+    }
+    Ok((out, runs.len() >= LIST_LIMIT))
+}
+
+/// Ids of the failed runs whose jobs are read: the newest `MAX_JOB_READS` (by `createdAt`
+/// text, then the larger id), newest first; and whether older failed runs were left out.
+fn job_run_ids(runs: &[Run<'_>]) -> (Vec<u64>, bool) {
+    let mut failed: Vec<(&str, u64)> = runs
+        .iter()
+        .filter(|r| r.conclusion == "failure")
+        .map(|r| (r.created, r.id))
+        .collect();
+    failed.sort_unstable_by(|a, b| b.cmp(a));
+    let capped = failed.len() > MAX_JOB_READS;
+    let ids = failed
+        .into_iter()
+        .take(MAX_JOB_READS)
+        .map(|(_, id)| id)
+        .collect();
+    (ids, capped)
+}
+
+/// The names of the failed jobs in one `gh run view <id> --json jobs` output, each once.
+fn failing_jobs(text: &str, id: u64) -> Result<Vec<String>, String> {
+    let what = format!("jobs-{id}.json");
+    let v = parse_list(text, &what)?;
+    let jobs = v
+        .get("jobs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{what}: missing array `jobs`"))?;
+    let mut names = BTreeSet::new();
+    for j in jobs {
+        if j.get("conclusion").and_then(Value::as_str) == Some("failure") {
+            names.insert(string(j, "name", &what)?.to_owned());
+        }
+    }
+    Ok(names.into_iter().collect())
+}
+
+fn compute_ci(inp: &Inputs, since: i64, until: i64, rep: &mut Report) -> Result<(), String> {
+    let runs = parse_list(&inp.runs, "runs.json")?;
+    let (runs, truncated) = period_runs(&runs, since, until)?;
+    if truncated {
+        rep.truncated.push("CI runs");
+    }
+    let ci = &mut rep.ci;
+    for r in &runs {
+        ci.runs = ci.runs.saturating_add(1);
+        let key = if r.conclusion.is_empty() {
+            "in progress"
+        } else {
+            r.conclusion
+        };
+        let n = ci.by_conclusion.entry(key.to_owned()).or_insert(0);
+        *n = n.saturating_add(1);
+        if r.conclusion == "failure" {
+            if r.branch == "main" && r.event != "pull_request" {
+                ci.failed_main = ci.failed_main.saturating_add(1);
+            } else {
+                ci.failed_other = ci.failed_other.saturating_add(1);
+            }
+        }
+        if r.attempt > 1 {
+            ci.reruns = ci.reruns.saturating_add(1);
+            if r.conclusion == "success" {
+                ci.reruns_success = ci.reruns_success.saturating_add(1);
+            }
+        }
+    }
+    let (ids, capped) = job_run_ids(&runs);
+    ci.jobs_capped = capped;
+    for id in ids {
+        let Some(names) = inp.jobs.get(&id) else {
+            ci.jobs_unknown = ci.jobs_unknown.saturating_add(1);
+            continue;
+        };
+        ci.jobs_read = ci.jobs_read.saturating_add(1);
+        for name in names {
+            let n = ci.failing_jobs.entry(name.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    Ok(())
 }
 
 fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<Report, String> {
@@ -568,9 +740,13 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
             .get("comments")
             .and_then(Value::as_array)
             .unwrap_or_default();
+        if comments.len() >= COMMENT_LIMIT {
+            rep.comments_truncated.push(number);
+        }
         rep.reviews.extend(review_of(number, comments));
     }
     rep.reviews.sort_unstable_by_key(|r| r.pr);
+    rep.comments_truncated.sort_unstable();
 
     // Issues.
     let closed = parse_list(&inp.issues_closed, "issues-closed.json")?;
@@ -608,6 +784,8 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
         }
     }
 
+    compute_ci(inp, since, until, &mut rep)?;
+
     // Audit and retro lag (all history).
     let audits = records(commits, "audits");
     let mut prev: Option<usize> = None;
@@ -619,8 +797,13 @@ fn compute(inp: &Inputs, commits: &[Commit], since: i64, until: i64) -> Result<R
     rep.merges_since_audit = prev.map(|p| {
         u64::try_from(commits.len().saturating_sub(p).saturating_sub(1)).unwrap_or(u64::MAX)
     });
+    // Retro records dated after --until are left out, so the lag is never negative (audit
+    // 0006 AC.3); default_since uses the same records.
     let mut prev_day: Option<i64> = None;
-    for (_, day, path) in records(commits, "retros") {
+    for (_, day, path) in records(commits, "retros")
+        .into_iter()
+        .filter(|(_, day, _)| *day <= until)
+    {
         rep.retros
             .push((path, day, prev_day.map(|p| day.saturating_sub(p))));
         prev_day = Some(day);
@@ -654,6 +837,256 @@ fn sev_counts(v: &[u64; 4]) -> String {
     v.iter().map(u64::to_string).collect::<Vec<_>>().join("/")
 }
 
+/// The review totals shown in the report and in `metrics.json`.
+struct ReviewSummary {
+    prs: u64,
+    median_rounds: Option<u64>,
+    at_cap: u64,
+    final_checks: u64,
+    r: [u64; 4],
+    s: [u64; 4],
+    regrades: u64,
+}
+
+fn review_summary(reviews: &[Review]) -> ReviewSummary {
+    let count = |c: usize| u64::try_from(c).unwrap_or(u64::MAX);
+    let mut rounds: Vec<u64> = reviews.iter().map(|r| r.rounds).collect();
+    let mut sum = ReviewSummary {
+        prs: count(reviews.len()),
+        median_rounds: median(&mut rounds),
+        at_cap: count(reviews.iter().filter(|r| r.rounds >= 4).count()),
+        final_checks: count(reviews.iter().filter(|r| r.final_check).count()),
+        r: [0; 4],
+        s: [0; 4],
+        regrades: 0,
+    };
+    for rev in reviews {
+        for (t, v) in sum.r.iter_mut().zip(rev.r) {
+            *t = t.saturating_add(v);
+        }
+        for (t, v) in sum.s.iter_mut().zip(rev.s) {
+            *t = t.saturating_add(v);
+        }
+        sum.regrades = sum.regrades.saturating_add(rev.regrades);
+    }
+    sum
+}
+
+fn render_ci_md(o: &mut String, ci: &Ci) {
+    o.push_str("\n## CI (workflow ci.yml)\n\n");
+    let by: Vec<String> = ci
+        .by_conclusion
+        .iter()
+        .map(|(k, v)| format!("{} {v}", cell(k)))
+        .collect();
+    let by = if by.is_empty() {
+        "none".to_owned()
+    } else {
+        by.join(", ")
+    };
+    let _ = writeln!(o, "Runs: {} ({by}).\n", ci.runs);
+    let _ = writeln!(
+        o,
+        "Failed runs (conclusion `failure`): main {}, other branches {}.\n",
+        ci.failed_main, ci.failed_other
+    );
+    let _ = writeln!(
+        o,
+        "Re-runs (attempt > 1): {}, of which ended in success: {}. Infra and real failures are not \
+         told apart (`gh run list` shows a run's latest attempt only).\n",
+        ci.reruns, ci.reruns_success
+    );
+    let _ = write!(
+        o,
+        "Failing jobs over {} failed run{} read",
+        ci.jobs_read,
+        if ci.jobs_read == 1 { "" } else { "s" }
+    );
+    if ci.jobs_unknown > 0 {
+        let _ = write!(o, " ({} more without job data)", ci.jobs_unknown);
+    }
+    if ci.jobs_capped {
+        let _ = write!(
+            o,
+            " (only the {MAX_JOB_READS} newest failed runs; older ones left out)"
+        );
+    }
+    o.push_str(":\n\n");
+    let mut jobs: Vec<(&String, &u64)> = ci.failing_jobs.iter().collect();
+    jobs.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    if jobs.is_empty() {
+        o.push_str("none\n");
+    } else {
+        o.push_str("| Job | Failed runs |\n|---|---|\n");
+        for (name, n) in jobs {
+            let _ = writeln!(o, "| {} | {n} |", cell(name));
+        }
+    }
+}
+
+/// A JSON string literal: `"` and `\` escaped with a backslash, control characters and
+/// U+2028/U+2029 as `\uXXXX`.
+fn json_str(s: &str) -> String {
+    let mut o = String::with_capacity(s.len().saturating_add(2));
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
+                // Control characters above U+FFFF don't exist, so one escape suffices.
+                let _ = write!(o, "\\u{:04x}", u32::from(c));
+            }
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+fn json_opt<T: std::fmt::Display>(v: Option<T>) -> String {
+    v.map_or_else(|| "null".to_owned(), |v| v.to_string())
+}
+
+fn json_sev(v: &[u64; 4]) -> String {
+    let parts: Vec<String> = SEVERITIES
+        .iter()
+        .zip(v)
+        .map(|(name, n)| format!("\"{name}\":{n}"))
+        .collect();
+    format!("{{{}}}", parts.join(","))
+}
+
+fn json_counts(m: &BTreeMap<String, u64>) -> String {
+    let parts: Vec<String> = m
+        .iter()
+        .map(|(k, v)| format!("{}:{v}", json_str(k)))
+        .collect();
+    format!("{{{}}}", parts.join(","))
+}
+
+fn json_issues(list: &[Issue]) -> String {
+    let parts: Vec<String> = list
+        .iter()
+        .map(|i| {
+            format!(
+                "{{\"number\":{},\"title\":{},\"age_days\":{}}}",
+                i.number,
+                json_str(&i.title),
+                i.age_days
+            )
+        })
+        .collect();
+    format!("[{}]", parts.join(","))
+}
+
+fn json_records<T: std::fmt::Display + Copy>(list: &[(String, i64, Option<T>)]) -> String {
+    let parts: Vec<String> = list
+        .iter()
+        .map(|(path, day, prev)| {
+            format!(
+                "{{\"record\":{},\"date\":\"{}\",\"since_previous\":{}}}",
+                json_str(path),
+                fmt_day(*day),
+                json_opt(*prev)
+            )
+        })
+        .collect();
+    format!("[{}]", parts.join(","))
+}
+
+/// `metrics.json`: the report's numbers (specs/tooling/metrics.md, Behavior).
+fn render_json(rep: &Report) -> String {
+    let sessions = rep.sessions.as_ref().map_or_else(
+        || "null".to_owned(),
+        |s| {
+            format!(
+                "{{\"count\":{},\"nonzero\":{},\"total_seconds\":{},\"median_seconds\":{},\"malformed\":{}}}",
+                s.count,
+                s.nonzero,
+                s.total_s,
+                json_opt(s.median_s),
+                s.malformed
+            )
+        },
+    );
+    let sum = review_summary(&rep.reviews);
+    let per_pr: Vec<String> = rep
+        .reviews
+        .iter()
+        .map(|r| {
+            format!(
+                "{{\"pr\":{},\"rounds\":{},\"final_check\":{},\"subagent\":{},\"second\":{},\"regrades\":{}}}",
+                r.pr,
+                r.rounds,
+                r.final_check,
+                json_sev(&r.r),
+                json_sev(&r.s),
+                r.regrades
+            )
+        })
+        .collect();
+    let truncated: Vec<String> = rep.truncated.iter().map(|t| json_str(t)).collect();
+    let comments_truncated: Vec<String> =
+        rep.comments_truncated.iter().map(u64::to_string).collect();
+    let ci = &rep.ci;
+    let mut o = String::new();
+    let _ = write!(
+        o,
+        "{{\"since\":\"{}\",\"until\":\"{}\",\"truncated\":[{}],\"comments_truncated\":[{}],",
+        fmt_day(rep.since),
+        fmt_day(rep.until),
+        truncated.join(","),
+        comments_truncated.join(",")
+    );
+    let _ = write!(
+        o,
+        "\"throughput\":{{\"merges\":{},\"lines_added\":{},\"lines_deleted\":{},\"merged_prs\":{},\"closed_issues\":{},\"sessions\":{sessions}}},",
+        rep.merges, rep.added, rep.deleted, rep.merged_prs, rep.closed_issues
+    );
+    let _ = write!(
+        o,
+        "\"review\":{{\"prs\":{},\"median_rounds\":{},\"at_cap\":{},\"final_checks\":{},\"regrades\":{},\"subagent\":{},\"second\":{},\"per_pr\":[{}]}},",
+        sum.prs,
+        json_opt(sum.median_rounds),
+        sum.at_cap,
+        sum.final_checks,
+        sum.regrades,
+        json_sev(&sum.r),
+        json_sev(&sum.s),
+        per_pr.join(",")
+    );
+    let _ = write!(
+        o,
+        "\"ci\":{{\"runs\":{},\"by_conclusion\":{},\"failed_main\":{},\"failed_other\":{},\"reruns\":{},\"reruns_success\":{},\"jobs_read\":{},\"jobs_unknown\":{},\"jobs_capped\":{},\"failing_jobs\":{}}},",
+        ci.runs,
+        json_counts(&ci.by_conclusion),
+        ci.failed_main,
+        ci.failed_other,
+        ci.reruns,
+        ci.reruns_success,
+        ci.jobs_read,
+        ci.jobs_unknown,
+        ci.jobs_capped,
+        json_counts(&ci.failing_jobs)
+    );
+    let _ = write!(
+        o,
+        "\"stuck\":{{\"blocked\":{},\"flaky\":{}}},",
+        json_issues(&rep.blocked),
+        json_issues(&rep.flaky)
+    );
+    let _ = writeln!(
+        o,
+        "\"lag\":{{\"audits\":{},\"merges_since_audit\":{},\"retros\":{},\"days_since_retro\":{}}}}}",
+        json_records(&rep.audits),
+        json_opt(rep.merges_since_audit),
+        json_records(&rep.retros),
+        json_opt(rep.days_since_retro)
+    );
+    o
+}
+
 fn render_md(rep: &Report) -> String {
     let mut o = String::new();
     let _ = writeln!(
@@ -672,7 +1105,20 @@ fn render_md(rep: &Report) -> String {
             "- **Warning:** the {t} list returned {LIST_LIMIT} entries and may be cut off."
         );
     }
-    if !rep.truncated.is_empty() {
+    if !rep.comments_truncated.is_empty() {
+        let prs: Vec<String> = rep
+            .comments_truncated
+            .iter()
+            .map(|n| format!("#{n}"))
+            .collect();
+        let _ = writeln!(
+            o,
+            "- **Warning:** the comment lists of these merged PRs returned {COMMENT_LIMIT} entries \
+             and may be cut off, so their review figures may be incomplete: {}.",
+            prs.join(", ")
+        );
+    }
+    if !rep.truncated.is_empty() || !rep.comments_truncated.is_empty() {
         o.push('\n');
     }
 
@@ -714,35 +1160,23 @@ fn render_md(rep: &Report) -> String {
     }
 
     o.push_str("\n## Review (ADR 0010)\n\n");
-    let n = u64::try_from(rep.reviews.len()).unwrap_or(u64::MAX);
-    let mut rounds: Vec<u64> = rep.reviews.iter().map(|r| r.rounds).collect();
-    let median = median(&mut rounds).map_or_else(|| "n/a".to_owned(), |m| m.to_string());
-    let capped = rep.reviews.iter().filter(|r| r.rounds >= 4).count();
-    let finals = rep.reviews.iter().filter(|r| r.final_check).count();
-    let count = |c: usize| u64::try_from(c).unwrap_or(u64::MAX);
-    let (mut r, mut s, mut regrades) = ([0u64; 4], [0u64; 4], 0u64);
-    for rev in &rep.reviews {
-        for i in 0..4 {
-            if let (Some(t), Some(v)) = (r.get_mut(i), rev.r.get(i)) {
-                *t = t.saturating_add(*v);
-            }
-            if let (Some(t), Some(v)) = (s.get_mut(i), rev.s.get(i)) {
-                *t = t.saturating_add(*v);
-            }
-        }
-        regrades = regrades.saturating_add(rev.regrades);
-    }
+    let sum = review_summary(&rep.reviews);
+    let median = sum
+        .median_rounds
+        .map_or_else(|| "n/a".to_owned(), |m| m.to_string());
     let _ = writeln!(
         o,
-        "PRs reviewed: {n}; median rounds: {median}; at 4+ rounds: {}; with a final check: {}.",
-        share(count(capped), n),
-        share(count(finals), n)
+        "PRs reviewed: {}; median rounds: {median}; at 4+ rounds: {}; with a final check: {}.",
+        sum.prs,
+        share(sum.at_cap, sum.prs),
+        share(sum.final_checks, sum.prs)
     );
     let _ = writeln!(
         o,
-        "Findings blocker/major/minor/nit: subagent {}, second reviewer {}; regrades: {regrades}.\n",
-        sev_counts(&r),
-        sev_counts(&s)
+        "Findings blocker/major/minor/nit: subagent {}, second reviewer {}; regrades: {}.\n",
+        sev_counts(&sum.r),
+        sev_counts(&sum.s),
+        sum.regrades
     );
     if !rep.reviews.is_empty() {
         o.push_str("| PR | Rounds | Final check | Subagent B/M/m/n | Second B/M/m/n | Regrades |\n|---|---|---|---|---|---|\n");
@@ -759,6 +1193,8 @@ fn render_md(rep: &Report) -> String {
             );
         }
     }
+
+    render_ci_md(&mut o, &rep.ci);
 
     o.push_str("\n## Stuck (open issues; age from creation to the period's end)\n\n");
     for (label, list) in [("blocked", &rep.blocked), ("flaky", &rep.flaky)] {
@@ -841,6 +1277,35 @@ fn read_optional(p: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// Writes the fetched inputs (not the job outputs) to `out/raw/`, which must exist.
+fn save_raw(out: &Path, inp: &Inputs) -> Result<(), String> {
+    let raw = out.join("raw");
+    let write = |name: &str, text: &str| {
+        let p = raw.join(name);
+        fs::write(&p, text).map_err(|e| format!("write {}: {e}", p.display()))
+    };
+    write("git-log.txt", &inp.git_log)?;
+    match &inp.index_tsv {
+        Some(t) => write("index.tsv", t)?,
+        // A copy left by an earlier run would be read back by `--from` as this run's
+        // sessions (audit 0006 CX.11).
+        None => remove_stale(&raw.join("index.tsv"))?,
+    }
+    write("prs.json", &inp.prs)?;
+    write("issues-closed.json", &inp.issues_closed)?;
+    write("issues-open.json", &inp.issues_open)?;
+    write("runs.json", &inp.runs)
+}
+
+/// Removes `p` if it exists; a missing file is fine.
+fn remove_stale(p: &Path) -> Result<(), String> {
+    match fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {e}", p.display())),
+    }
+}
+
 fn gh(args: &str) -> Result<String, String> {
     let args: Vec<&str> = args.split_whitespace().collect();
     crate::macos::capture("gh", &args, None).map(|(out, _)| out)
@@ -887,7 +1352,24 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
                 "issue list --state open --limit {LIST_LIMIT} --json number,title,createdAt,labels"
             ),
         ),
+        (
+            "runs.json",
+            format!(
+                "run list --workflow ci.yml --created {range} --limit {LIST_LIMIT} --json databaseId,conclusion,event,headBranch,attempt,createdAt"
+            ),
+        ),
     ];
+    let out = &opts.out;
+    let write = |name: &str, text: &str| {
+        let p = out.join(name);
+        fs::write(&p, text).map_err(|e| format!("write {}: {e}", p.display()))
+    };
+    let out_dir = if from.is_none() {
+        out.join("raw")
+    } else {
+        out.clone()
+    };
+    fs::create_dir_all(&out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
     let mut texts = Vec::new();
     for (file, args) in &lists {
         texts.push(match from {
@@ -901,34 +1383,39 @@ pub fn run(repo: &Path, opts: &Options) -> Result<String, String> {
         (Some(dir), None) => read_optional(&dir.join("index.tsv"))?,
         (None, None) => read_optional(&repo.join("ops/logs/index.tsv"))?,
     };
-    let inp = Inputs {
+    let mut inp = Inputs {
         git_log,
         index_tsv,
         prs: it.next().unwrap_or_default(),
         issues_closed: it.next().unwrap_or_default(),
         issues_open: it.next().unwrap_or_default(),
-    };
-    let rep = compute(&inp, &commits, since, until)?;
-    let md = render_md(&rep);
-    let out = &opts.out;
-    let write = |name: &str, text: &str| {
-        let p = out.join(name);
-        fs::write(&p, text).map_err(|e| format!("write {}: {e}", p.display()))
+        runs: it.next().unwrap_or_default(),
+        jobs: BTreeMap::new(),
     };
     if from.is_none() {
-        let raw = out.join("raw");
-        fs::create_dir_all(&raw).map_err(|e| format!("create {}: {e}", raw.display()))?;
-        write("raw/git-log.txt", &inp.git_log)?;
-        if let Some(t) = &inp.index_tsv {
-            write("raw/index.tsv", t)?;
-        }
-        write("raw/prs.json", &inp.prs)?;
-        write("raw/issues-closed.json", &inp.issues_closed)?;
-        write("raw/issues-open.json", &inp.issues_open)?;
-    } else {
-        fs::create_dir_all(out).map_err(|e| format!("create {}: {e}", out.display()))?;
+        save_raw(out, &inp)?;
     }
+    // One job output at a time: saved, reduced to its failing job names, then dropped.
+    let runs = parse_list(&inp.runs, "runs.json")?;
+    let (ids, _) = job_run_ids(&period_runs(&runs, since, until)?.0);
+    for id in ids {
+        let name = format!("jobs-{id}.json");
+        let text = match from {
+            Some(dir) => read_optional(&dir.join(&name))?,
+            None => {
+                let t = gh(&format!("run view {id} --json jobs"))?;
+                write(&format!("raw/{name}"), &t)?;
+                Some(t)
+            }
+        };
+        if let Some(t) = text {
+            inp.jobs.insert(id, failing_jobs(&t, id)?);
+        }
+    }
+    let rep = compute(&inp, &commits, since, until)?;
+    let md = render_md(&rep);
     write("metrics.md", &md)?;
+    write("metrics.json", &render_json(&rep))?;
     Ok(md)
 }
 
@@ -973,7 +1460,38 @@ mod tests {
             assert_eq!(parse_date(bad), None, "{bad}");
         }
         assert_eq!(iso_day("2026-11-22T11:48:38Z"), Some(d("2026-11-22")));
-        assert_eq!(iso_day("2026-11"), None);
+        assert_eq!(iso_day("2026-11-22T00:00:00Z"), Some(d("2026-11-22")));
+        assert_eq!(iso_day("2026-11-22T23:59:59Z"), Some(d("2026-11-22")));
+        // Audit 0006 AC.8: nothing after the `Z`, and the time part is checked too.
+        for bad in [
+            "2026-11",
+            "2026-11-22",
+            "2026-11-22T11:48:38Zx",
+            "2026-11-22T11:48:38Z ",
+            "2026-11-22T11:48:38",
+            "2026-11-22T11:48:38.000Z",
+            "2026-11-22T11:48:38x",
+            "2026-11-22x11:48:38Z",
+            "2026-11-22T11x48:38Z",
+            "2026-11-22T11:48x38Z",
+            "2026-11-22 11:48:38Z",
+            "2026-11-22T11-48:38Z",
+            "2026-11-22T11:48-38Z",
+            "2026-11-22T24:00:00Z",
+            "2026-11-22T23:60:00Z",
+            "2026-11-22T23:59:60Z",
+            "2026-11-22T+1:48:38Z",
+            "2026-11-22T11:+8:38Z",
+            "2026-11-22T11:48:+8Z",
+            "2026-02-30T11:48:38Z",
+        ] {
+            assert_eq!(iso_day(bad), None, "{bad}");
+        }
+        assert_eq!(digits_u64("0"), Some(0));
+        assert_eq!(digits_u64("143"), Some(143));
+        for bad in ["", "+1", "-1", " 1", "1 ", "1x", "18446744073709551616"] {
+            assert_eq!(digits_u64(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -1078,7 +1596,12 @@ mod tests {
         );
         assert_eq!(records(&c, "retros").len(), 2); // 0000-pilot.md is not a record
         assert_eq!(default_since(&c, d("2026-11-22")), d("2026-11-22"));
-        assert_eq!(default_since(&c, d("2026-11-21")), d("2026-11-14")); // newest retro after until: skipped
+        // The newest retro (2026-11-22) is after until: the one before it is used (#261 R1.1).
+        // 2026-11-21 − 7 is also 2026-11-14, so 2026-11-20 tells the two rules apart.
+        assert_eq!(default_since(&c, d("2026-11-21")), d("2026-11-14"));
+        assert_eq!(default_since(&c, d("2026-11-20")), d("2026-11-14"));
+        // No retro record on or before until.
+        assert_eq!(default_since(&c, d("2026-11-13")), d("2026-11-06"));
         assert_eq!(default_since(&[], d("2026-11-22")), d("2026-11-15"));
         for bad in [
             "x\t1\tsrc/a.rs\n",
@@ -1114,7 +1637,11 @@ mod tests {
             20261116T000000Z\t0\te\t60s\textra\n\
             20261116T240000Z\t0\te\t5s\n\
             20261116T006000Z\t0\te\t5s\n\
-            20261116T000060Z\t0\te\t5s\n";
+            20261116T000060Z\t0\te\t5s\n\
+            20261116T000000Z\t+0\te\t5s\n\
+            20261116T000000Z\t-1\te\t5s\n\
+            20261116T000000Z\t0\te\t+5s\n\
+            20261116T000000Z\t0\te\ts\n";
         let s = parse_sessions(tsv, d("2026-11-15"), d("2026-11-22"));
         assert_eq!(
             s,
@@ -1123,7 +1650,7 @@ mod tests {
                 nonzero: 1,
                 total_s: 720,
                 median_s: Some(600),
-                malformed: 9
+                malformed: 13
             }
         );
         assert_eq!(parse_sessions("", 0, 1).median_s, None);
@@ -1143,7 +1670,7 @@ mod tests {
                 "🤖 jpdf-agent **AI review (second reviewer), round 1** of abc\n\nS1.1 [blocker] a.rs:3: z\nS1.2 [minor] q",
             ),
             comment(
-                "🤖 jpdf-agent **AI review triage, round 7**\n\nR1.1: fixed in def\nS1.1: regraded minor: no input\nS1.1: regraded minor: again\nR1.2: deferred: #9",
+                "🤖 jpdf-agent **AI review triage, round 7**\n\nR1.1: fixed in def\nS1.1: regraded minor: no input\nS1.1: regraded minor: again\nR1.2: deferred: #9\nR3.9: regraded minor: never reported\nR1.3: regraded nit: its severity didn't parse",
             ),
             comment(
                 "  🤖 jpdf-agent **AI review, round 2** of def\n\nR1.1 fixed: yes\nR1.1 [major] restated\nR2.1 [minor] new\nS1.1: dispute accepted",
@@ -1217,6 +1744,23 @@ mod tests {
         )
     }
 
+    fn run_json(
+        id: u64,
+        concl: &str,
+        event: &str,
+        branch: &str,
+        attempt: u64,
+        created: &str,
+    ) -> String {
+        format!(
+            "{{\"databaseId\":{id},\"conclusion\":\"{concl}\",\"event\":\"{event}\",\"headBranch\":\"{branch}\",\"attempt\":{attempt},\"createdAt\":\"{created}\"}}"
+        )
+    }
+
+    fn jobs(id: u64, text: &str) -> (u64, Vec<String>) {
+        (id, failing_jobs(text, id).unwrap())
+    }
+
     fn inputs() -> Inputs {
         let review = "{\"body\":\"🤖 jpdf-agent **AI review, round 3** of x\\nR3.1 [major] y\"}";
         Inputs {
@@ -1231,6 +1775,31 @@ mod tests {
             ),
             issues_closed: "[{\"number\":1,\"closedAt\":\"2026-11-15T00:00:00Z\"},{\"number\":2,\"closedAt\":\"2026-11-14T23:59:59Z\"},{\"number\":3,\"closedAt\":\"2026-11-22T23:59:59Z\"},{\"number\":4,\"closedAt\":\"2026-11-23T00:00:00Z\"}]".to_owned(),
             issues_open: "[{\"number\":5,\"title\":\"a|b\\nc\",\"createdAt\":\"2026-11-12T00:00:00Z\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"flaky\"}]},{\"number\":6,\"title\":\"x\",\"createdAt\":\"2026-11-20T00:00:00Z\",\"labels\":[{\"name\":\"ready\"}]}]".to_owned(),
+            runs: format!("[{}]", [
+                run_json(10, "failure", "push", "main", 1, "2026-11-15T00:00:00Z"),
+                run_json(11, "failure", "pull_request", "t/x", 1, "2026-11-22T23:59:59Z"),
+                run_json(12, "success", "pull_request", "t/x", 2, "2026-11-21T10:00:00Z"),
+                run_json(13, "failure", "pull_request", "t/y", 3, "2026-11-20T10:00:00Z"),
+                run_json(14, "", "pull_request", "t/y", 1, "2026-11-20T10:00:00Z"),
+                run_json(15, "failure", "push", "main", 1, "2026-11-14T23:59:59Z"),
+                run_json(16, "failure", "push", "main", 1, "2026-11-23T00:00:00Z"),
+                // A pull request from a (fork) branch named main is not a main failure.
+                run_json(17, "failure", "pull_request", "main", 1, "2026-11-19T10:00:00Z"),
+                run_json(18, "failure", "schedule", "main", 1, "2026-11-19T03:17:00Z"),
+                run_json(19, "cancelled", "push", "main", 2, "2026-11-19T04:00:00Z"),
+                // Not a pull request, but not on main either: another branch's failure.
+                run_json(20, "failure", "workflow_dispatch", "t/z", 1, "2026-11-18T10:00:00Z"),
+                // A repeated id counts once, at its first entry.
+                run_json(12, "failure", "push", "main", 1, "2026-11-21T10:00:00Z"),
+            ]
+            .join(",")),
+            jobs: BTreeMap::from([
+                jobs(10, "{\"jobs\":[{\"name\":\"policy\",\"conclusion\":\"failure\"},{\"name\":\"judge-verdict\",\"conclusion\":\"failure\"},{\"name\":\"pages\",\"conclusion\":\"skipped\"},{\"name\":\"policy\",\"conclusion\":\"failure\"}]}"),
+                jobs(11, "{\"jobs\":[{\"name\":\"judge-verdict\",\"conclusion\":\"failure\"},{\"conclusion\":\"success\"}]}"),
+                jobs(13, "{\"jobs\":[{\"name\":\"a|b\",\"conclusion\":\"failure\"}]}"),
+                jobs(15, "{\"jobs\":[{\"name\":\"outside\",\"conclusion\":\"failure\"}]}"),
+                jobs(18, "{\"jobs\":[]}"),
+            ]),
         }
     }
 
@@ -1254,6 +1823,32 @@ mod tests {
             }]
         );
         assert_eq!(rep.flaky.len(), 1);
+        let ci = &rep.ci;
+        assert_eq!(ci.runs, 9); // 15 and 16 outside the period, the second 12 a repeat
+        assert_eq!(
+            ci.by_conclusion,
+            BTreeMap::from([
+                ("cancelled".to_owned(), 1),
+                ("failure".to_owned(), 6),
+                ("in progress".to_owned(), 1),
+                ("success".to_owned(), 1)
+            ])
+        );
+        assert_eq!((ci.failed_main, ci.failed_other), (2, 4)); // 10, 18; 11, 13, 17, 20
+        assert_eq!((ci.reruns, ci.reruns_success), (3, 1)); // 12, 13, 19; 12
+        // Failed runs read: 11, 18, 10, 13 (17 and 20 without job data); `policy` once per run.
+        assert_eq!(
+            (ci.jobs_read, ci.jobs_unknown, ci.jobs_capped),
+            (4, 2, false)
+        );
+        assert_eq!(
+            ci.failing_jobs,
+            BTreeMap::from([
+                ("a|b".to_owned(), 1),
+                ("judge-verdict".to_owned(), 2),
+                ("policy".to_owned(), 1)
+            ])
+        );
         assert_eq!(
             rep.audits,
             [
@@ -1271,6 +1866,103 @@ mod tests {
         let md = render_md(&rep);
         assert!(md.contains("- #5 (10 days): a/b c\n"), "{md}");
         assert!(md.contains("| Sessions | no ops/logs/index.tsv |"), "{md}");
+        for want in [
+            "Runs: 9 (cancelled 1, failure 6, in progress 1, success 1).\n",
+            "Failed runs (conclusion `failure`): main 2, other branches 4.\n",
+            "Re-runs (attempt > 1): 3, of which ended in success: 1.",
+            "Failing jobs over 4 failed runs read (2 more without job data):\n\n",
+            "| judge-verdict | 2 |\n| a/b | 1 |\n| policy | 1 |\n",
+        ] {
+            assert!(md.contains(want), "missing {want:?} in\n{md}");
+        }
+        assert!(!md.contains("older ones left out"), "{md}");
+    }
+
+    #[test]
+    fn retro_lag_leaves_out_records_after_until() {
+        // Audit 0006 AC.3: retro 0002 is dated 2026-11-22, after this --until.
+        let commits = parse_git_log(LOG).unwrap();
+        let lag = |until: &str| {
+            let rep = compute(&inputs(), &commits, d("2026-11-15"), d(until)).unwrap();
+            let retros: Vec<String> = rep.retros.iter().map(|r| r.0.clone()).collect();
+            (retros, rep.days_since_retro, render_md(&rep))
+        };
+        let (retros, days, md) = lag("2026-11-21");
+        assert_eq!(
+            (retros, days),
+            (vec!["docs/retros/0001.md".to_owned()], Some(7))
+        );
+        assert!(
+            md.contains("Days from the last retro record to 2026-11-21: 7."),
+            "{md}"
+        );
+        assert!(!md.contains("docs/retros/0002.md"), "{md}");
+        let (retros, days, _) = lag("2026-11-22");
+        assert_eq!((retros.len(), days), (2, Some(0)));
+        let (retros, days, _) = lag("2026-11-13");
+        assert_eq!((retros.len(), days), (0, None));
+    }
+
+    #[test]
+    fn a_full_comment_list_is_flagged() {
+        // Audit 0006 CX.10: gh returns at most COMMENT_LIMIT comments per PR.
+        let commits = Vec::new();
+        let c = "{\"body\":\"x\"}";
+        let list = |n: usize| vec![c; n].join(",");
+        let mut i = inputs();
+        i.prs = format!(
+            "[{},{},{}]",
+            pr(8, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT)),
+            pr(7, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT - 1)),
+            // Out of the period: not flagged.
+            pr(9, "2026-11-14T00:00:00Z", &list(COMMENT_LIMIT))
+        );
+        let rep = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
+        assert_eq!(rep.comments_truncated, [8]);
+        assert!(rep.truncated.is_empty());
+        assert!(
+            render_md(&rep).contains(
+                "returned 100 entries and may be cut off, so their review figures may be \
+                 incomplete: #8.\n"
+            ),
+            "{}",
+            render_md(&rep)
+        );
+        assert!(render_json(&rep).contains("\"comments_truncated\":[8],"));
+        i.prs = format!(
+            "[{}]",
+            pr(8, "2026-11-15T00:00:00Z", &list(COMMENT_LIMIT - 1))
+        );
+        let rep = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
+        assert!(rep.comments_truncated.is_empty());
+        assert!(!render_md(&rep).contains("may be cut off"));
+        assert!(render_json(&rep).contains("\"comments_truncated\":[],"));
+    }
+
+    #[test]
+    fn save_raw_removes_a_stale_index() {
+        // Audit 0006 CX.11: a rerun without an index must not leave the old one behind.
+        let out = std::env::temp_dir().join(format!("xtask-metrics-raw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(out.join("raw")).unwrap();
+        let mut i = inputs();
+        i.index_tsv = Some("20261115T000000Z\t0\ta\t5s\n".to_owned());
+        save_raw(&out, &i).unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("raw/index.tsv")).unwrap(),
+            "20261115T000000Z\t0\ta\t5s\n"
+        );
+        assert_eq!(fs::read_to_string(out.join("raw/prs.json")).unwrap(), i.prs);
+        i.index_tsv = None;
+        save_raw(&out, &i).unwrap();
+        assert!(!out.join("raw/index.tsv").exists());
+        // Already gone: still fine.
+        save_raw(&out, &i).unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("raw/runs.json")).unwrap(),
+            i.runs
+        );
+        fs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
@@ -1283,6 +1975,33 @@ mod tests {
                 .unwrap_err()
                 .contains("prs.json: missing string `mergedAt`")
         );
+        for (runs, err) in [
+            ("{}", "runs.json: not a JSON array"),
+            (
+                "[{\"databaseId\":1,\"conclusion\":\"\",\"headBranch\":\"m\",\"attempt\":1,\"createdAt\":\"2026-11-15T00:00:00Z\"}]",
+                "runs.json: missing string `event`",
+            ),
+            (
+                "[{\"databaseId\":-1,\"conclusion\":\"\",\"event\":\"push\",\"headBranch\":\"m\",\"attempt\":1,\"createdAt\":\"2026-11-15T00:00:00Z\"}]",
+                "runs.json: `databaseId` is not a count",
+            ),
+        ] {
+            let mut i = inputs();
+            i.runs = runs.to_owned();
+            let got = compute(&i, &commits, 0, 1).unwrap_err();
+            assert!(got.contains(err), "{got}");
+        }
+        assert!(
+            failing_jobs("{\"nojobs\":1}", 10)
+                .unwrap_err()
+                .contains("jobs-10.json: missing array `jobs`")
+        );
+        assert!(
+            failing_jobs("{\"jobs\":[{\"conclusion\":\"failure\"}]}", 7)
+                .unwrap_err()
+                .contains("jobs-7.json: missing string `name`")
+        );
+        assert!(failing_jobs("[", 7).unwrap_err().contains("jobs-7.json"));
         let mut i = inputs();
         i.issues_open = "[{\"number\":-1,\"createdAt\":\"2026-11-12T00:00:00Z\"}]".to_owned();
         assert!(
@@ -1302,11 +2021,13 @@ mod tests {
         let pr = "{\"number\":1,\"mergedAt\":\"2026-11-15T01:00:00Z\"}";
         let closed = "{\"number\":1,\"closedAt\":\"2026-11-15T01:00:00Z\"}";
         let open = "{\"number\":1,\"createdAt\":\"2026-11-15T01:00:00Z\"}";
+        let run = run_json(1, "success", "push", "main", 1, "2026-11-15T01:00:00Z");
         type Field = fn(&mut Inputs) -> &mut String;
-        let lists: [(Field, &str, &str); 3] = [
+        let lists: [(Field, &str, &str); 4] = [
             (|i| &mut i.prs, pr, "merged PRs"),
             (|i| &mut i.issues_closed, closed, "closed issues"),
             (|i| &mut i.issues_open, open, "open issues"),
+            (|i| &mut i.runs, &run, "CI runs"),
         ];
         for (field, item, name) in lists {
             let mut i = inputs();
@@ -1320,6 +2041,160 @@ mod tests {
             assert_eq!(rep.truncated, [name]);
             assert!(render_md(&rep).contains(&format!("the {name} list returned 1000 entries")));
         }
+    }
+
+    #[test]
+    fn job_reads_stop_at_the_newest_hundred() {
+        // Run k fails at second k of 2026-11-15 with id 1000 − k, so an older run has a larger
+        // id; the list is rotated to start at k = 50, so the oldest run sits in the middle and
+        // neither list order nor its reverse is time order; a later success is mixed in. Only
+        // the order by `createdAt` keeps the newest 100 (PR #267 R1.1, R2.1).
+        let runs = |n: u64| {
+            let mut items: Vec<String> = (0..n)
+                .map(|k| {
+                    run_json(
+                        1000 - k,
+                        "failure",
+                        "push",
+                        "main",
+                        1,
+                        &format!("2026-11-15T00:{:02}:{:02}Z", k / 60, k % 60),
+                    )
+                })
+                .collect();
+            items.push(run_json(
+                5000,
+                "success",
+                "push",
+                "main",
+                1,
+                "2026-11-15T23:00:00Z",
+            ));
+            items.rotate_left(50);
+            format!("[{}]", items.join(","))
+        };
+        let ids = |n: u64| {
+            let v = json::parse(&runs(n)).unwrap();
+            job_run_ids(&period_runs(&v, 0, d("2026-12-01")).unwrap().0)
+        };
+        let (got, capped) = ids(100);
+        assert_eq!((got.len(), capped), (100, false));
+        assert!(got.contains(&1000));
+        let (got, capped) = ids(101);
+        assert_eq!((got.len(), capped), (100, true));
+        assert_eq!((got.first(), got.last()), (Some(&900), Some(&999))); // newest first
+        // The oldest run (k = 0, the largest id) is the one left out.
+        assert!(!got.contains(&1000) && !got.contains(&5000));
+
+        let mut i = inputs();
+        i.runs = runs(101);
+        i.jobs = BTreeMap::new();
+        let rep = compute(&i, &[], 0, d("2026-12-01")).unwrap();
+        assert_eq!(
+            (rep.ci.jobs_read, rep.ci.jobs_unknown, rep.ci.jobs_capped),
+            (0, 100, true)
+        );
+        assert!(render_md(&rep).contains("(only the 100 newest failed runs; older ones left out)"));
+        // Same second: the larger id is newer.
+        let tie = format!(
+            "[{},{}]",
+            run_json(3, "failure", "push", "main", 1, "2026-11-15T00:00:00Z"),
+            run_json(4, "failure", "push", "main", 1, "2026-11-15T00:00:00Z")
+        );
+        let v = json::parse(&tie).unwrap();
+        assert_eq!(
+            job_run_ids(&period_runs(&v, 0, d("2026-12-01")).unwrap().0).0,
+            [4, 3]
+        );
+    }
+
+    #[test]
+    fn json_matches_the_report_and_escapes_strings() {
+        let commits = parse_git_log(LOG).unwrap();
+        let mut i = inputs();
+        i.index_tsv = Some("20261115T000000Z\t1\ta\t120s\n".to_owned());
+        let nasty = "q\"b\\n\nc\u{1}d\u{2028}e\u{7f}";
+        i.issues_open = format!(
+            "[{{\"number\":5,\"title\":{},\"createdAt\":\"2026-11-12T00:00:00Z\",\"labels\":[{{\"name\":\"blocked\"}}]}}]",
+            json_str(nasty)
+        );
+        let rep = compute(&i, &commits, d("2026-11-15"), d("2026-11-22")).unwrap();
+        let text = render_json(&rep);
+        let v = json::parse(&text).unwrap();
+        let at = |path: &[&str]| -> Value {
+            let mut cur = &v;
+            for k in path {
+                cur = cur.get(k).unwrap_or_else(|| panic!("{path:?} in {text}"));
+            }
+            cur.clone()
+        };
+        let n = |path: &[&str]| match at(path) {
+            Value::Number(s) => s,
+            other => panic!("{path:?}: {other:?}"),
+        };
+        assert_eq!(at(&["since"]).as_str(), Some("2026-11-15"));
+        assert_eq!(at(&["until"]).as_str(), Some("2026-11-22"));
+        assert_eq!(n(&["throughput", "merges"]), "3");
+        assert_eq!(n(&["throughput", "lines_added"]), "8");
+        assert_eq!(n(&["throughput", "merged_prs"]), "2");
+        assert_eq!(n(&["throughput", "sessions", "nonzero"]), "1");
+        assert_eq!(n(&["throughput", "sessions", "median_seconds"]), "120");
+        assert_eq!(n(&["review", "prs"]), "1");
+        assert_eq!(n(&["review", "median_rounds"]), "3");
+        assert_eq!(n(&["review", "subagent", "major"]), "1");
+        assert_eq!(n(&["review", "second", "blocker"]), "0");
+        assert_eq!(
+            at(&["review", "per_pr"]).as_array().map(<[Value]>::len),
+            Some(1)
+        );
+        assert_eq!(n(&["ci", "runs"]), "9");
+        assert_eq!(n(&["ci", "by_conclusion", "in progress"]), "1");
+        assert_eq!(n(&["ci", "failed_main"]), "2");
+        assert_eq!(n(&["ci", "failed_other"]), "4");
+        assert_eq!(n(&["ci", "reruns_success"]), "1");
+        assert_eq!(n(&["ci", "jobs_unknown"]), "2");
+        assert_eq!(at(&["ci", "jobs_capped"]), Value::Bool(false));
+        assert_eq!(n(&["ci", "failing_jobs", "a|b"]), "1");
+        assert_eq!(n(&["ci", "failing_jobs", "judge-verdict"]), "2");
+        let blocked = at(&["stuck", "blocked"]);
+        let first = blocked.as_array().and_then(<[Value]>::first).unwrap();
+        assert_eq!(first.get("title").and_then(Value::as_str), Some(nasty));
+        assert_eq!(n(&["lag", "merges_since_audit"]), "2");
+        let audits = at(&["lag", "audits"]);
+        let first = audits.as_array().and_then(<[Value]>::first).unwrap();
+        assert_eq!(first.get("since_previous"), Some(&Value::Null));
+        assert_eq!(
+            first.get("date").and_then(Value::as_str),
+            Some("2026-11-14")
+        );
+        assert_eq!(at(&["truncated"]).as_array().map(<[Value]>::len), Some(0));
+        assert!(
+            !text.contains('\u{2028}') && !text.contains('\u{1}'),
+            "{text}"
+        );
+        assert_eq!(json_str("a\"\\\n\u{2029}"), "\"a\\\"\\\\\\u000a\\u2029\"");
+        // No index, no reviews: nulls.
+        let empty = render_json(
+            &compute(
+                &Inputs {
+                    runs: "[]".to_owned(),
+                    ..inputs()
+                },
+                &[],
+                0,
+                1,
+            )
+            .unwrap(),
+        );
+        let v = json::parse(&empty).unwrap();
+        assert_eq!(
+            v.get("throughput").and_then(|t| t.get("sessions")),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            v.get("review").and_then(|t| t.get("median_rounds")),
+            Some(&Value::Null)
+        );
     }
 
     #[test]

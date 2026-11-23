@@ -1,6 +1,6 @@
 # <Feature name>
 
-Area: <syntax|render|text|annot|forms|edit|write|sign|engine|ui-web|ui-macos>
+Area: <syntax|render|text|annot|forms|edit|write|sign|engine|ui-web|ui-macos|tooling>
 ISO 32000-2 clauses: §…
 Journeys: J-…
 Status: draft | ready | implemented
@@ -33,6 +33,20 @@ Self-check before review (write the answers here):
 - For each checker, conformance suite or validator: **what broken implementation still
   passes?** Known answers reach multi-block/padding boundaries; hostile fixtures have a
   control case proving the attack path was reached; only the specific error kinds pass.
+- For each filter, gate, parser or rule (who counts as the owner, which files ship, a tool's
+  text output, a process loop), before the first review (retro 0002: review findings in PRs #183,
+  #198, #201, #227, #234, #239, #241, #264, #265, #267 and audits 0004–0006, per ops/LESSONS.md):
+  - every term or check has a should-reject case **and** a near-miss should-accept case, each
+    with every other trigger off; replace each term with `true` once and see a test fail;
+  - a run where nothing was checked (empty input, no files, a skipped step) fails, not passes;
+  - a parser of another tool's output has one case per line shape printed by the real tool,
+    and its tests pin the flags on the command actually run, not on a constant;
+  - a rule that bounds a loop (rounds, retries, counters) has a state table: every counter
+    value (below, at, past the cap) and every exit, each with its next step, including the
+    states the table's own fixes add, and for an ADR every counter, "once a day" bound and
+    fallback; prose about a cache or CI mechanism covers exact hit, miss, failed run, eviction
+    and PR scope; a step triggered by "when the PR merges" says which
+    later session notices the merge (auto-merge lands after the session exits).
 - What this spec's tests cannot see (allocations, timing) and who covers it instead.
 
 ## Accessibility
