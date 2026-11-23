@@ -4,12 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #269** (#242, ADR 0011 task 1a): `cargo xtask next-session` decides TICK rules a–f (steps 1–5) and prints
-  `legacy` otherwise; ops/TICK.md §2 runs it from the merge on. Review rounds 3 (R1: 2 majors fixed), auto-merge once
-  `ai-review` is posted. `deferred` added to #236, #146 and #231 so the scheduler skips them as sessions already did.
-- PRs #267 (#219) and #268 (#235) merged. Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths` can be removed
-  (the scheduler's `Notes:` list them).
-- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
+- PR #269 (#242, ADR 0011 task 1a) merged: `cargo xtask next-session` runs in TICK §2. It misses a conflicting
+  own PR (#270). Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths`, `t/242-next-session` can be removed.
+- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on; main merged in again 20:05 UTC.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -27,13 +24,13 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
-- Before it, i: #235 → PR #268 (merged). Journal 2026-11-23 18:50.
+- c (by hand; scheduler said `legacy`, #270): PR #265 conflicts with main fixed. Journal 2026-11-23 20:05.
+- Before it, i: #242 → PR #269 (merged). Journal 2026-11-23 19:55.
 
 ## Next step (suggested order, TICK letters)
-0. Once PR #269 merges, start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
+0. Start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
    #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
-   comments on it untagged.
+   comments on it untagged. #270 (scheduler misses a conflicting PR) is small; fold it into #243 or do it first.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
