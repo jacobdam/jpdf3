@@ -4,10 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **Retro 0002** (#279, this PR): docs/retros/0002.md. Action items: one journal file per session
-  (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`), STATUS conflicts take main's copy (ADR 0011 §3);
-  a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md (also answered in the PR description when a PR
-  has no spec). LESSONS 66 → 59. Digest 2026-W48 filed.
+- **Retro 0002** (#279, PR #281) merged: one journal file per session (`ops/journal/YYYY-MM-DD/HHMM-<slug>.md`),
+  STATUS conflicts take main's copy (ADR 0011 §3), a filter/gate/parser/loop-rule self-check in specs/_TEMPLATE.md.
+- **#282** (bug, `ready`, M0): next-session step 7 still says `retro due` / `audit due` while that retro or audit PR
+  is open (seen while PR #281 was in CI).
 - **PR #276** (#245, ADR 0011 task 3 part 1): parked at the review cap (4 rounds + final check), `owner-todo`,
   `blocked`. Part 2: #275. Follow-ups: #277.
 - `cargo xtask next-session` now decides steps 1–5, 7 (audit, retro) and 10 (ready issue) (PRs #269, #272, #274);
