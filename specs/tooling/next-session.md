@@ -30,7 +30,8 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
   - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
     picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
     `Notes:` list when there is something to note (an active judge alarm; worktrees whose
-    branch's PR is merged or closed, which can be removed).
+    branch's PR is merged or closed, which can be removed; a due audit or retro that step 7
+    didn't pick because its PR is open).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -143,6 +144,15 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
          created after *since* (rule h's "3 issues blocked this week": a retro record older than
          7 days makes the retro due by age anyway, so "since the retro" is within the week).
        → `retro due`.
+     - **Slot in flight** (#282): a due audit (or retro) is not picked while an open agent PR
+       links an open issue (one in `issues.json`) labeled `audit` (or `retro`); the session
+       doing it is already in CI or review, and picking it again writes a second record. The
+       PR's checks don't matter: a failing one is step 3's pick, and one whose issue carries a
+       skip label is the owner's turn, not a reason for a new audit. The brief notes it
+       (`audit due (<why>) but PR #N is open for it: not picked`, lowest PR number), and the
+       scheduler goes on: a retro due after an audit in flight is picked. The label is the
+       signal, so the audit or retro issue must carry it (TICK §6, §7); one without it is not
+       seen, and the term is picked as before.
      Rule h's other incidents need no term of their own: main red for 3 sessions ends in a
      revert (rule b), and a gate that passes gets its milestone tag (rule j).
      The user-advocate slot (every 2nd audit slot) comes with task 8 (#251); until then every
@@ -274,5 +284,9 @@ of inputs where no step applies (→ `legacy`):
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,
   each skip label, an open dependency, a non-current milestone) and each 7-day boundary at
   the second it is reached and one second before;
+- step 7's slot in flight: an open PR linking an `audit` or `retro` issue holds that term only
+  (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the
+  other label, a longer label, a merged, closed or untagged PR, no `Closes` link, a closed
+  issue, the label on the PR instead of the issue), and the notes' text;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form and the `Depends on:` parser.

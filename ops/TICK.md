@@ -417,6 +417,9 @@ leave the PR blocked.
   with nothing left running (§0).
 
 ## 6. AUDIT session (no feature work)
+- **Issue first:** file the audit's issue (title `Audit NNNN: …`, label `audit`), claim it (§3
+  step 1) and draft its PR with `Closes #<issue>` early: while that PR is open, `cargo xtask
+  next-session` doesn't pick `audit due` again (#282).
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
   the last audit, plus a Codex security review of the same range (`ops/driver/codex-review.sh`,
   brief = the security reviewer's brief in `target/scratch/`). Findings → issues (protected-file
@@ -441,6 +444,9 @@ leave the PR blocked.
 - **Record:** write `docs/audits/NNNN.md`.
 
 ## 7. RETRO session (process, not product)
+0. File the retro's issue (title `Retro NNNN: …`, label `retro`), claim it (§3 step 1) and draft
+   its PR with `Closes #<issue>` early: while that PR is open, `cargo xtask next-session` doesn't
+   pick `retro due` again (#282).
 1. Gather numbers from the last period: merged PRs, sessions (`ops/logs/index.tsv`), PRs needing
    more than 1 fix round, reverts, reopened issues, review rejections by reason, top failing CI
    checks, flaky tests, infra failures, blocked issues and their age, sessions per task vs
