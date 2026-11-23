@@ -4,67 +4,52 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #239** (#238, ADR 0011) merged 662bde6 (owner override of R5.1). Its §9 tasks are filed, #242–#251 (#224
-  closed into #245), "done:" posted on #238. #236 waits for #245. Leftover: `owner-todo` on PR #239 itself.
-- #240 (owner, CI time) **done**: PR #241 merged (144ab2f), fuzz targets in parallel; `project-linux` 237 s → 157 s.
-  Fixes 2 and 3 wait on the owner: #254 (`owner-todo`, apply ops/proposals/ci-fuzz-tools-cache.md). Follow-ups #252
-  (sev:medium, M10: the judge restores caches from the PR's scope) and #253 (proposal wording nit).
-- **PR #232** (#187 part 1, `ImageInputBudget::charge_output`): **parked for the owner**: draft, `ai-review` =
-  failure on 0831d70 after 4 rounds + final check. The final check's Codex half found one false spec sentence (TIFF
-  predictor tag bytes), corrected in 0831d70 unreviewed. #187 has `blocked` + `owner-todo` and the ledger with two
-  options. No review round until an owner comment. Part 2: #231 (sev:high, M2, needs the image-decode caller).
-- Follow-ups of PR #227 (#115): #225 (M1), #228 (M10), #229 (M1). #223 came out of the closed PR #183.
-- PR #184 (owner's own, the owner-comment tracking feed) **merged** (66f4d3c): `owner-issues.sh` now lists comments
-  from 2026-11-23 on until a "done:" reply links them. #179 keeps `owner-todo` for the owner's test step 3. #216 and
-  #217 still apply to the applied script.
-- #146 stays open: the decode/raster gate waits for a #25 measurement or a structural fix. PR #234 (#154, merged
-  a095a5a) now enforces the gate on jpdf-cli's resolved Cargo graph (specs/tooling/cli-dependency-gate.md);
-  follow-up #235 (target source paths from `cargo metadata`, M0). Follow-up #156 (sev:medium, M10).
-- #21 stays open until the owner's drills (#208) and AC.4 (comment on #21) are added to docs/retros/0000-pilot.md.
-  The /hold drill **fails**: #210 (protected). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
+- **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
+  `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
+  comment exists: rule a, start with #242.
+- **Audit 0006** (#258, PR #259): docs/audits/0006.md. New: #261 (M0 bug: metrics edge cases, fuzz exit-status test,
+  capture 16 MiB boundary), #262 (sev:low, M10), #263 (sev:medium, M10: owner feed misses edited review bodies; the
+  ADR 0011 §7 endorsement isn't tied to the body version; both need an owner decision). #223 now sev:medium, M10.
+- **PR #232** (#187 part 1): parked for the owner (draft, `ai-review` failure on 0831d70 after 4 rounds + final
+  check). No review round until an owner comment. Part 2: #231 (sev:high, M2; audit 0006 AS.6 added there).
+- #254 done: the owner applied ops/proposals/ci-fuzz-tools-cache.md in #256. #257 (`owner-todo`): drop the Playwright
+  cache. #252 (sev:medium, M10), #253 (nit) remain.
+- ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR) waits for #245 (owner direction on #236).
+- #146 stays open (decode/raster gate; waits for #25 or #236). #235 is the dependency gate's follow-up.
+- #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. The /hold drill fails:
+  #210. Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- a: #240 → PR #241 (parallel fuzz targets in `cargo xtask fuzz`/`ci linux`, CI installs only missing fuzz tools,
-  ops/proposals/ci-fuzz-tools-cache.md). Owner-run interactive session; also merged PR #239 on the owner's
-  instruction. Journal 2026-11-22 18:26.
+- g: audit 0006 (PR #259). Journal 2026-11-23 16:19.
 
 ## Next step (suggested order, TICK letters)
-0. **i: #242** (ADR 0011 task 1a) first, then the chain listed on #238.
-1. **a/c: PR #232** only once the owner has commented on #187 or the PR (accept 0831d70, or one more final check).
-   #231 isn't workable until the M2 image-decode caller exists.
-2. Rule i, M0, lowest number first: #210 (write ops/proposals/ for the owner-commands fix), #216
-   (the harness the owner's test step 3 relies on; PR #184 already merged), #219, #235.
-3. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
+0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
+   #210, #216, #219, #235, #242, #261.
+1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
+2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
-- Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217; low #83, #122,
-  #132, #134, #136, #137, #166, #193, #203, #218.
-- **Next retro (rule h): by 2026-11-28.** Once PR #220 is on main, start from `git fetch` + `cargo xtask metrics --index
-  <main checkout>/ops/logs/index.tsv` (specs/tooling/metrics.md; CI counts need #219). Inputs:
-  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
-    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
-    PR #220: 3, PR #227: 4 + final check (every Codex round found
-    a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; all majors
-    after round 1 but one were spec text about a future caller), PR #234: 4 + final check (each Codex round found a
-    new "what still passes" gap in a parser of cargo's text output or in how the flags were pinned), PR #241: 4 (4
-    of 5 majors were prose about actions/cache save/restore behavior in a proposal, at least one in each of rounds 1–3).
-  - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
+- Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
+  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
+- **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv`
+  (specs/tooling/metrics.md; #261 fixes a negative retro-lag line for past periods). Inputs carried from the last
+  STATUS:
+  - review rounds (ADR 0010): PR #169: 2, #171: 3, #178: 3, #183: 4 (cap, parked), #186: 4 + final check, #198: 2,
+    #201: 2, #204: 3, #209: 2, #212: 3, #215: 2, #220: 3, #227: 4 + final check, #232: 4 + final check (parked),
+    #234: 4 + final check, #241: 4. PR #183: every later round was a shell-tokenizer misread.
   - STATUS "in flight" goes stale as soon as its PR merges.
-  - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
-  - the template's `Area:` list lacks `tooling`.
-  - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
-  - audit 0004 AC.3 (no rule for a CI fix after a clean final check) and AC.4 (a proposal PR's `Closes #N` drops a
-    sev:high issue from rule d before the fix is on main, and the owner's new issue isn't told to keep
-    `security`/`sev:*`) (ops/TICK.md:29,
-    AUTOMATION.md:295).
-  - Codex on audits: audit 0005's brief (no ops/driver diff) ran ok (7 findings, 0 Codex-only bugs above sev:low),
-    but like PR #212's 3 runs it said its workspace commands timed out (brief-only review).
-  - ops/LESSONS.md has 63 entries (cap 60); PR #221 merged the new date lesson into an existing one.
-  - audit 0005: harness tests named for a limit that fail for another reason (AS.3), and proposal harnesses without
-    near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
-- **Next audit:** after 10 more merges or by 2026-11-29.
+  - first numbers of the #173 reply rule (picked-up/done pairs).
+  - the template's `Area:` list lacks `tooling`; ops/TICK.md §4 still cites guard-inert-post-text.md as pending
+    (applied in #145).
+  - audit 0004 AC.3 and AC.4 (ops/TICK.md:29, AUTOMATION.md:295).
+  - Codex on audits: audits 0005 and 0006 ran ok but brief-only (workspace commands timed out).
+  - ops/LESSONS.md has 63 entries (cap 60).
+  - audits 0004–0006: gates that pass when nothing ran ("what still passes"), now in #262 and #261.
+- **Next audit:** after 10 more merges or by 2026-11-30.
 
 ## Blockers / owner-todo
-- #254: apply ops/proposals/ci-fuzz-tools-cache.md (CI caches; test plan in the proposal).
+- #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
+- #257: drop the Playwright cache step in ci.yml (protected).
+- #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
 - #179: PR #184 merged; run test step 3 of ops/proposals/owner-comment-tracking.md (a PR comment and an inline
