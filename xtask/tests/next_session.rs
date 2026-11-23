@@ -470,6 +470,14 @@ fn step11_records_malformed_exit_1() {
         assert_eq!(o.status.code(), Some(1), "{text:?}");
         assert!(o.stdout.is_empty(), "{text:?}");
     }
+    // R1.5: a malformed line after a Planner record dated today still fails (no early return).
+    let o = run_with(&[set(
+        "records.txt",
+        "ops/journal/2026-11-24/a.md\t- Session: planner\nbad line\n".to_owned(),
+    )])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty());
     // Parsed whatever is picked.
     let o = run_with(&[
         set("records.txt", "bad\n".to_owned()),

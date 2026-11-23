@@ -62,9 +62,14 @@ adds step 6.
   15. `records.txt`: session records (ADR 0011 §3), one line `<path>\t<line>` per line
       starting `- Session: ` of a journal file. Live: for `refs/remotes/origin/main` and, for
       each open agent PR in `prs.json`, `refs/remotes/origin/<headRefName>`,
-      `git ls-tree -r <ref> -- ops/journal/<today>/` (the UTC day of the same clock reading as
-      `now.txt`), then `git cat-file blob <id>` for
-      each regular `.md` file listed (each blob id and path once). The refs are what the
+      `git -c core.quotePath=true ls-tree -r --full-tree <ref> -- ops/journal/<today>/` (the
+      UTC day of the same clock reading as `now.txt`; `--full-tree` so the path is from the
+      repository root wherever the command runs), then `git cat-file blob <id>` for each regular
+      file (mode `100644`) listed whose path is `ops/journal/<today>/<name>.md` with a plain
+      `<name>` (no `/`, not C-quoted: git quotes any unusual byte), each blob id and path once,
+      so everything listed parses below. A blob that can't be read as text (not UTF-8, over the
+      output cap, a failed `cat-file`) is skipped: its records are missed, which costs at most one
+      more Planner run that day, never a stopped scheduler. The refs are what the
       session's last `git fetch` brought (TICK §1); a ref that doesn't exist (a PR branch pushed
       after that fetch) is a failed command, exit 2.
 
@@ -292,6 +297,12 @@ never 2 (no command ran).
     failure rule turns into a bug issue. The live assembly of `blocked.json` and the git
     command lines (which paths `--name-status` prints) are not run by the tests; they were
     checked once by hand on 2026-11-23 (the pick was `retro due`, from #162, #168 and #187).
+    For `records.txt`, the listing filter, the dedupe and the skip of unreadable blobs are unit
+    tested (`session_lines` in `xtask/src/next_session.rs`, on a fake listing and reader); the
+    ref list, the two git command lines and the clock-to-day step are not. They were checked by
+    hand on 2026-11-23: the `ls-tree` line run from `xtask/` lists main's three journal files of
+    that day with root-relative paths, and the scheduler ran live with exit 0. A producer that
+    read the wrong refs would pass every test.
   - Labels and `Depends on:` lines are written by the agent account, so a session can move work
     up or down the queue by editing them (ADR 0011 Consequences); the journal shows the pick.
 
@@ -317,8 +328,8 @@ of inputs where no step before 11 applies (→ `planner`):
 - step 11: `idle` from a Planner record dated today in any line order, `planner` without one;
   near misses: a Planner record dated yesterday or tomorrow, `planners`, `Planner`, `planner`
   as a later word, a worker record, an empty file; the day boundary at midnight UTC and one
-  second before; an earlier step outranks `idle`; malformed lines (no tab, another first word,
-  a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
+  second before; an earlier step outranks `idle`; malformed lines (no tab, text not starting with `- Session: `,
+  a malformed line after a Planner record dated today, a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
 - steps 7 and 10: each record kind, product path and incident with its near misses (a changed
   record, a 3-digit name, a path that only starts like a product path, a revert before the
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,

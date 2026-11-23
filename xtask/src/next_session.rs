@@ -128,33 +128,66 @@ fn records_live(prs: &str, day: i64) -> Result<String, Error> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = String::new();
     for r in &refs {
-        let tree =
-            cmd("git", &["ls-tree", "-r", r.as_str(), "--", dir.as_str()]).map_err(
-                |e| match e {
-                    Error::Unknown(m) => {
-                        Error::Unknown(format!("{m} (is {r} fetched? run git fetch)"))
-                    }
-                    b @ Error::Broken(_) => b,
-                },
-            )?;
-        for line in tree.lines() {
-            // `<mode> blob <oid>\t<path>`
-            let Some((meta, path)) = line.split_once('\t') else {
-                continue;
-            };
-            let Some(oid) = meta.strip_prefix("100644 blob ") else {
-                continue;
-            };
-            if !path.ends_with(".md") || !seen.insert((oid.to_owned(), path.to_owned())) {
-                continue;
-            }
-            let text = cmd("git", &["cat-file", "blob", oid])?;
-            for l in text.lines().filter(|l| l.starts_with(SESSION_LINE)) {
-                let _ = writeln!(out, "{path}\t{l}");
-            }
-        }
+        // `--full-tree`: the path is from the repository root whatever the current directory
+        // (R1.3). `core.quotePath`: any unusual byte in a name is C-quoted, so the listing is
+        // ASCII and such a name is skipped below.
+        let tree = cmd(
+            "git",
+            &[
+                "-c",
+                "core.quotePath=true",
+                "ls-tree",
+                "-r",
+                "--full-tree",
+                r.as_str(),
+                "--",
+                dir.as_str(),
+            ],
+        )
+        .map_err(|e| match e {
+            Error::Unknown(m) => Error::Unknown(format!("{m} (is {r} fetched? run git fetch)")),
+            b @ Error::Broken(_) => b,
+        })?;
+        session_lines(&tree, &dir, &mut seen, &mut out, |oid| {
+            cmd("git", &["cat-file", "blob", oid]).ok()
+        });
     }
     Ok(out)
+}
+
+/// Appends `<path>\t<line>` to `out` for each `- Session: ` line of each journal file in a
+/// `git ls-tree -r` listing (`<mode> blob <oid>\t<path>` lines) whose path is `<dir><name>.md`
+/// (`<name>` plain: no `/`, not C-quoted) and whose (oid, path) is not in `seen`. A blob that
+/// `read` can't return (not UTF-8, over the output cap, a git error) is skipped: a missed record
+/// costs one more Planner run that day, never a stopped scheduler (R1.1).
+fn session_lines(
+    tree: &str,
+    dir: &str,
+    seen: &mut std::collections::BTreeSet<(String, String)>,
+    out: &mut String,
+    mut read: impl FnMut(&str) -> Option<String>,
+) {
+    for line in tree.lines() {
+        let Some((meta, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(oid) = meta.strip_prefix("100644 blob ") else {
+            continue;
+        };
+        let plain = path
+            .strip_prefix(dir)
+            .and_then(|n| n.strip_suffix(".md"))
+            .is_some_and(|n| !n.is_empty() && !n.contains('/'));
+        if !plain || path.starts_with('"') || !seen.insert((oid.to_owned(), path.to_owned())) {
+            continue;
+        }
+        let Some(text) = read(oid) else {
+            continue;
+        };
+        for l in text.lines().filter(|l| l.starts_with(SESSION_LINE)) {
+            let _ = writeln!(out, "{path}\t{l}");
+        }
+    }
 }
 
 fn list_of(v: &Value) -> &[Value] {
@@ -1260,6 +1293,45 @@ mod tests {
         assert_eq!(dependencies("Depends on: #1 (open"), [1]);
         // R1.2: prose after the phrase names nothing.
         assert!(dependencies("with its Depends on: issues closed, task 2 (#244).").is_empty());
+    }
+
+    #[test]
+    fn session_lines_from_a_listing() {
+        let dir = "ops/journal/2026-11-24/";
+        let tree = "100644 blob aa\tops/journal/2026-11-24/0100-a.md\n\
+                    100644 blob bb\tops/journal/2026-11-24/sub/b.md\n\
+                    100644 blob cc\t\"ops/journal/2026-11-24/\\303\\251.md\"\n\
+                    120000 blob dd\tops/journal/2026-11-24/link.md\n\
+                    100644 blob ee\tops/journal/2026-11-24/notes.txt\n\
+                    100644 blob ff\tops/journal/2026-11-24/0200-bad.md\n\
+                    100644 blob 11\tops/journal/2026-11-24/.md\n\
+                    100644 blob aa\tops/journal/2026-11-24/0100-a.md\n\
+                    100644 blob a2\tops/journal/2026-11-240/x.md\n\
+                    no tab here\n";
+        let mut read_ids = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = String::new();
+        session_lines(tree, dir, &mut seen, &mut out, |oid| {
+            read_ids.push(oid.to_owned());
+            match oid {
+                "aa" => Some(
+                    "## x\n- Session: planner\n - Session: worker\n- Session: idle\n".to_owned(),
+                ),
+                // Unreadable (not UTF-8, too large): skipped, never an error.
+                _ => None,
+            }
+        });
+        assert_eq!(read_ids, ["aa", "ff"]);
+        assert_eq!(
+            out,
+            "ops/journal/2026-11-24/0100-a.md\t- Session: planner\n\
+             ops/journal/2026-11-24/0100-a.md\t- Session: idle\n"
+        );
+        // The same (oid, path) on a second ref is read once.
+        session_lines(tree, dir, &mut seen, &mut out, |_| {
+            Some("- Session: planner\n".to_owned())
+        });
+        assert_eq!(out.lines().count(), 2);
     }
 
     #[test]

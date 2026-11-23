@@ -432,11 +432,14 @@ session.
   is not a record commit, so it goes into the work PR **before its last review round**. A lesson
   found after that goes under `## Pending lessons` in `ops/STATUS.md` (the record commit carries
   it); the next session that opens a work PR moves each one into `ops/LESSONS.md` before that
-  PR's round 1 and deletes it from the list.
+  PR's round 1 and deletes it from the list. Skip a lesson that an open agent PR already moves
+  (its branch's `ops/STATUS.md` no longer lists it: `git show origin/<branch>:ops/STATUS.md`),
+  so two open PRs never add it twice.
 - **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
   step, blockers. It has no "last session" section (the journal files are that record). A merge
   of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
-  0011 §3), dropping lines about PRs that have merged since, and keeps its `Pending lessons`.
+  0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
+  list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
