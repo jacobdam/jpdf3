@@ -1,8 +1,8 @@
 # 11. Session types, a scheduler, and bounded escalation to design
 
-Status: proposed (owner issue #238, 2026-11-22). Needs the owner's approval before merge: the PR
-carries `owner-todo` and no auto-merge. Absorbs #224 (the architect role becomes the
-**design: technical** session type). Implementation tasks: §9, filed only after this ADR merges.
+Status: accepted (owner issue #238, 2026-11-22; the owner approved PR #239, merged in 662bde6).
+Absorbs #224 (the architect role becomes the **design: technical** session type; #224 is closed
+into #245). Implementation tasks: §9, filed as #242–#251 (task 4 split in two: #246, #247).
 
 ## Context
 The loop discovers and fixes, one issue per session, and each session picks its own work from
