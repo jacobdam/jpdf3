@@ -119,8 +119,8 @@ on every platform.
 ## Performance
 `--short` adds about 30 s of fuzzing (one batch of 3 targets on the 4-core CI runner; it was
 93 s one after another, #240) plus the one-off nightly build (about 34 s) to `ci linux`; on CI
-the install of the nightly and cargo-fuzz takes about 25 s more when `project-linux`'s caches
-miss (cargo-fuzz builds from source). The caches (`ops/proposals/ci-fuzz-tools-cache.md`,
+the nightly install, plus a cargo-fuzz build from source when its cache misses, takes about
+25 s more. The caches (`ops/proposals/ci-fuzz-tools-cache.md`,
 applied in #254) restore the cargo-fuzz binary, the fuzz build output and the Playwright
 browser, so on a hit the cargo-fuzz build is gone and only the workspace crates rebuild. On a
 2-core machine the short run takes two batches, about 60 s. Locally, a 20 s run reaches ≈ 900
