@@ -44,8 +44,29 @@ struct Inputs {
     issues: String,
     runs: String,
     worktrees: String,
-    alarm: bool,
+    /// The judge-alarm file's text, if the file exists.
+    alarm: Option<String>,
+    now: String,
+    main_log: String,
+    tags: String,
+    milestones: String,
+    blocked: String,
 }
+
+/// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
+const PRODUCT_PATHS: [&str; 6] = [
+    "crates/",
+    "bindings/",
+    "apps/",
+    "fuzz/",
+    "tools/jpdf-cli/",
+    "tools/fsio/",
+];
+/// Labels step 10 skips besides `SKIP_LABELS`.
+const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
+const WEEK: i64 = 7 * 86_400;
+const AUDIT_MERGES: usize = 10;
+const BLOCKED_INCIDENT: usize = 3;
 
 /// The value of the script's `FLOOR="…"` line.
 fn floor_of(script: &str) -> Option<&str> {
@@ -61,12 +82,35 @@ fn read(dir: &Path, name: &str) -> Result<String, Error> {
     fs::read_to_string(&p).map_err(|e| Error::Broken(format!("read {}: {e}", p.display())))
 }
 
-fn exists(p: &Path) -> Result<bool, Error> {
-    match fs::metadata(p) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+/// The file's text, or `None` when it doesn't exist.
+fn optional(p: &Path) -> Result<Option<String>, Error> {
+    match fs::read_to_string(p) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(Error::Broken(format!("read {}: {e}", p.display()))),
     }
+}
+
+/// Live `blocked.json`: each issue labeled `blocked` and updated since `since` (a day), with
+/// its events (one page of 100), as `[{"number":N,"events":[…]}]`.
+fn blocked_live(since: &str) -> Result<String, Error> {
+    let list = gh(&format!(
+        "issue list --label blocked --state all --search updated:>={since} --limit 100 --json number"
+    ))?;
+    let v = parse_list(&list, "gh issue list --label blocked").map_err(Error::Broken)?;
+    let mut parts = Vec::new();
+    for i in list_of(&v) {
+        let n = number(i, "number", "gh issue list --label blocked").map_err(Error::Broken)?;
+        let events = gh(&format!(
+            "api repos/jacobdam/jpdf3/issues/{n}/events?per_page=100"
+        ))?;
+        parts.push(format!("{{\"number\":{n},\"events\":{events}}}"));
+    }
+    Ok(format!("[{}]", parts.join(",")))
+}
+
+fn list_of(v: &Value) -> &[Value] {
+    v.as_array().unwrap_or_default()
 }
 
 fn cmd(program: &str, args: &[&str]) -> Result<String, Error> {
@@ -91,9 +135,24 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             issues: read(dir, "issues.json")?,
             runs: read(dir, "runs.json")?,
             worktrees: read(dir, "worktrees.txt")?,
-            alarm: exists(&dir.join("judge-alarm-since"))?,
+            alarm: optional(&dir.join("judge-alarm-since"))?,
+            now: read(dir, "now.txt")?.trim().to_owned(),
+            main_log: read(dir, "main-log.txt")?,
+            tags: read(dir, "tags.txt")?,
+            milestones: read(dir, "milestones.json")?,
+            blocked: read(dir, "blocked.json")?,
         });
     }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| Error::Broken(format!("system clock: {e}")))?
+        .as_secs();
+    let week_ago = crate::metrics::fmt_day(
+        i64::try_from(now / 86_400)
+            .ok()
+            .and_then(|d| d.checked_sub(7))
+            .ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?,
+    );
     let script = root.join(FEED_SCRIPT);
     let feed = cmd(&script.to_string_lossy(), &[])?;
     let text = read(root, FEED_SCRIPT)?;
@@ -118,12 +177,36 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         prs: gh(
             "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
         )?,
-        issues: gh("issue list --state open --limit 1000 --json number,title,labels")?,
+        issues: gh(
+            "issue list --state open --limit 1000 --json number,title,labels,body,milestone",
+        )?,
         runs: gh(
             "run list --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,event",
         )?,
         worktrees: cmd("git", &["worktree", "list", "--porcelain"])?,
-        alarm: exists(&root.join(ALARM_FILE))?,
+        alarm: optional(&root.join(ALARM_FILE))?,
+        now: now.to_string(),
+        main_log: cmd(
+            "git",
+            &[
+                "log",
+                "--first-parent",
+                "--no-renames",
+                "--name-status",
+                "--format=commit %H %ct %s",
+                "origin/main",
+            ],
+        )?,
+        tags: cmd(
+            "git",
+            &[
+                "for-each-ref",
+                "--format=%(refname:short) %(creatordate:unix)",
+                "refs/tags",
+            ],
+        )?,
+        milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
+        blocked: blocked_live(&week_ago)?,
     })
 }
 
@@ -314,6 +397,9 @@ struct Issue {
     number: u64,
     title: String,
     labels: Vec<String>,
+    body: String,
+    /// The milestone's title, `None` without one.
+    milestone: Option<String>,
 }
 
 fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
@@ -325,9 +411,180 @@ fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
             number: number(i, "number", what)?,
             title: text(i, "title", what)?.to_owned(),
             labels: labels(i, what)?,
+            body: text(i, "body", what)?.to_owned(),
+            milestone: match field(i, "milestone", what)? {
+                Value::Null => None,
+                m => Some(text(m, "title", what)?.to_owned()),
+            },
         });
     }
     out.sort_by_key(|i| i.number);
+    Ok(out)
+}
+
+/// Every `#N` after `Depends on:` on the lines that hold it (bold markers allowed around it).
+fn dependencies(body: &str) -> Vec<u64> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        for rest in line.split("Depends on:").skip(1) {
+            for part in rest.split('#').skip(1) {
+                let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+                if let Ok(n) = digits.parse() {
+                    out.push(n);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The lowest `M<n>` title among the open milestones (`n` digits only), as that title.
+fn current_milestone(text_: &str) -> Result<Option<String>, String> {
+    let what = "milestones.json";
+    let v = parse_list(text_, what)?;
+    let mut best: Option<(u64, String)> = None;
+    for m in list(&v, what)? {
+        let title = text(m, "title", what)?;
+        let n = title
+            .strip_prefix('M')
+            .filter(|d| !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|d| d.parse::<u64>().ok());
+        if let Some(n) = n
+            && best.as_ref().is_none_or(|(b, _)| n < *b)
+        {
+            best = Some((n, title.to_owned()));
+        }
+    }
+    Ok(best.map(|(_, t)| t))
+}
+
+/// Unix seconds: digits only, within the years 1970..=9999 (`metrics::utc_day`).
+fn unix(s: &str, what: &str) -> Result<i64, String> {
+    crate::metrics::utc_day(s)
+        .and_then(|_| s.parse().ok())
+        .ok_or_else(|| format!("{what}: {s:?} is not Unix seconds"))
+}
+
+/// Unix seconds as GitHub writes timestamps (`YYYY-MM-DDTHH:MM:SSZ`), so text comparison works.
+fn iso(secs: i64) -> String {
+    let t = secs.rem_euclid(86_400);
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        crate::metrics::fmt_day(secs.div_euclid(86_400)),
+        t / 3600,
+        t % 3600 / 60,
+        t % 60
+    )
+}
+
+/// One first-parent commit of origin/main, newest first.
+struct Commit {
+    sha: String,
+    time: i64,
+    subject: String,
+    /// (status letter, path) per `--name-status` line.
+    files: Vec<(String, String)>,
+}
+
+fn parse_log(text_: &str) -> Result<Vec<Commit>, String> {
+    let what = "main-log.txt";
+    let mut out: Vec<Commit> = Vec::new();
+    for line in text_.lines().filter(|l| !l.is_empty()) {
+        if let Some(rest) = line.strip_prefix("commit ") {
+            let (sha, rest) = rest
+                .split_once(' ')
+                .ok_or_else(|| format!("{what}: bad commit line {line:?}"))?;
+            let (time, subject) = rest.split_once(' ').unwrap_or((rest, ""));
+            if sha.len() != 40 || !sha.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!("{what}: bad commit id in {line:?}"));
+            }
+            out.push(Commit {
+                sha: sha.to_owned(),
+                time: unix(time, what)?,
+                subject: subject.to_owned(),
+                files: Vec::new(),
+            });
+            continue;
+        }
+        let (status, path) = line
+            .split_once('\t')
+            .filter(|(s, p)| matches!(*s, "A" | "M" | "D" | "T") && !p.is_empty())
+            .ok_or_else(|| format!("{what}: unexpected line {line:?}"))?;
+        out.last_mut()
+            .ok_or_else(|| format!("{what}: file line before the first commit"))?
+            .files
+            .push((status.to_owned(), path.to_owned()));
+    }
+    Ok(out)
+}
+
+/// git C-quotes unusual paths (`"crates/\303\251.rs"`); compare without the opening quote.
+fn unquoted(path: &str) -> &str {
+    path.strip_prefix('"').unwrap_or(path)
+}
+
+/// `<dir>/NNNN.md` with exactly four digits.
+fn is_record(path: &str, dir: &str) -> bool {
+    path.strip_prefix(dir)
+        .and_then(|r| r.strip_suffix(".md"))
+        .is_some_and(|n| n.len() == 4 && n.bytes().all(|c| c.is_ascii_digit()))
+}
+
+/// The index of the newest commit that adds a record in one of `dirs`.
+fn last_record(log: &[Commit], dirs: &[&str]) -> Option<usize> {
+    log.iter().position(|c| {
+        c.files
+            .iter()
+            .any(|(s, p)| s == "A" && dirs.iter().any(|d| is_record(p, d)))
+    })
+}
+
+fn product_merge(c: &Commit) -> bool {
+    c.files
+        .iter()
+        .any(|(_, p)| PRODUCT_PATHS.iter().any(|d| unquoted(p).starts_with(d)))
+}
+
+/// Creation times of the milestone tags `m<digits>` in `tags.txt`.
+fn milestone_tags(text_: &str) -> Result<Vec<(String, i64)>, String> {
+    let what = "tags.txt";
+    let mut out = Vec::new();
+    for line in text_.lines().filter(|l| !l.is_empty()) {
+        let (name, time) = line
+            .rsplit_once(' ')
+            .ok_or_else(|| format!("{what}: bad line {line:?}"))?;
+        let time = unix(time, what)?;
+        let digits = name.strip_prefix('m').unwrap_or("");
+        if !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit()) {
+            out.push((name.to_owned(), time));
+        }
+    }
+    Ok(out)
+}
+
+/// Issues with a `labeled` `blocked` event created at or after `since` (ISO text).
+fn blocked_since(text_: &str, since: &str) -> Result<Vec<u64>, String> {
+    let what = "blocked.json";
+    let v = parse_list(text_, what)?;
+    let mut out = Vec::new();
+    for i in list(&v, what)? {
+        let n = number(i, "number", what)?;
+        let mut hit = false;
+        for e in list(field(i, "events", what)?, what)? {
+            let at = text(e, "created_at", what)?;
+            if !valid_floor(at) {
+                return Err(format!(
+                    "{what}: created_at {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                ));
+            }
+            if text(e, "event", what)? == "labeled" {
+                hit |= text(field(e, "label", what)?, "name", what)? == "blocked" && at >= since;
+            }
+        }
+        if hit && !out.contains(&n) {
+            out.push(n);
+        }
+    }
     Ok(out)
 }
 
@@ -510,10 +767,106 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     }))
 }
 
+/// Step 7 (TICK rules g, h): an audit slot due, then a retro due.
+fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, String> {
+    let log = parse_log(&inp.main_log)?;
+    let tags = milestone_tags(&inp.tags)?;
+    let short = |c: &Commit| c.sha.get(..7).unwrap_or(&c.sha).to_owned();
+    let age = |t: i64| {
+        now.checked_sub(t)
+            .ok_or_else(|| "time difference out of range".to_owned())
+    };
+    let root = log
+        .last()
+        .ok_or_else(|| "main-log.txt: no commits".to_owned())?;
+
+    let audit = match last_record(&log, &["docs/audits/", "docs/advocate/"]) {
+        None => Some("no audit record on origin/main".to_owned()),
+        Some(i) => {
+            let c = log.get(i).ok_or("record index")?;
+            let merges = log
+                .get(..i)
+                .unwrap_or_default()
+                .iter()
+                .filter(|c| product_merge(c))
+                .count();
+            let days = age(c.time)?;
+            if merges >= AUDIT_MERGES {
+                Some(format!("{merges} product merges since {}", short(c)))
+            } else if days >= WEEK {
+                Some(format!("{} days since {}", days / 86_400, short(c)))
+            } else {
+                None
+            }
+        }
+    };
+    if let Some(why) = audit {
+        let range = last_record(&log, &["docs/audits/", "docs/advocate/"])
+            .and_then(|i| log.get(i))
+            .map_or_else(
+                || "git log --first-parent --oneline origin/main".to_owned(),
+                |c| format!("git log --first-parent --oneline {}..origin/main", short(c)),
+            );
+        return Ok(Some(pick(
+            "audit due".to_owned(),
+            &format!("g (audit due: {why})"),
+            vec!["ops/TICK.md §6".to_owned(), range],
+        )));
+    }
+
+    let (since, newer, from) = match last_record(&log, &["docs/retros/"]) {
+        Some(i) => {
+            let c = log.get(i).ok_or("record index")?;
+            (c.time, log.get(..i).unwrap_or_default(), short(c))
+        }
+        None => (root.time, &log[..], "the first commit".to_owned()),
+    };
+    let week_start = now
+        .checked_sub(WEEK)
+        .ok_or_else(|| "time out of range".to_owned())?;
+    let blocked_from = iso(since.saturating_add(1).max(week_start));
+    let blocked = blocked_since(&inp.blocked, &blocked_from)?;
+    let why = if age(since)? >= WEEK {
+        Some(format!("{} days since {from}", age(since)? / 86_400))
+    } else if let Some(c) = newer.iter().find(|c| c.subject.starts_with("Revert \"")) {
+        Some(format!("incident: revert {} since {from}", short(c)))
+    } else if alarm.is_some_and(|t| t > since) {
+        Some(format!("incident: judge alarm since {from}"))
+    } else if let Some((name, _)) = tags.iter().find(|(_, t)| *t > since) {
+        Some(format!("incident: milestone tag {name} since {from}"))
+    } else if blocked.len() >= BLOCKED_INCIDENT {
+        let list: Vec<String> = blocked.iter().map(|n| format!("#{n}")).collect();
+        Some(format!(
+            "incident: {} issues labeled blocked in the last 7 days ({})",
+            blocked.len(),
+            list.join(", ")
+        ))
+    } else {
+        None
+    };
+    Ok(why.map(|why| {
+        pick(
+            "retro due".to_owned(),
+            &format!("h (retro due: {why})"),
+            vec![
+                "ops/TICK.md §7".to_owned(),
+                "cargo xtask metrics --index <main checkout>/ops/logs/index.tsv".to_owned(),
+            ],
+        )
+    }))
+}
+
 fn decide(inp: &Inputs) -> Result<String, String> {
     let prs = parse_prs(&inp.prs)?;
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
+    let now = unix(&inp.now, "now.txt")?;
+    let alarm = inp
+        .alarm
+        .as_deref()
+        .map(|t| unix(t.trim(), "judge-alarm-since"))
+        .transpose()?;
+    let milestone = current_milestone(&inp.milestones)?;
     let in_flight = |n: u64| {
         prs.iter()
             .any(|p| p.open && linked_issue(&p.body) == Some(n))
@@ -528,7 +881,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     };
 
     let mut chosen = step1(inp, &prs)?;
-    if chosen.is_none() && !inp.alarm {
+    if chosen.is_none() && alarm.is_none() {
         chosen = red.map(|id| {
             pick(
                 format!("worker main-red run {id}"),
@@ -626,7 +979,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .collect();
     branches.sort_unstable();
     let mut notes = Vec::new();
-    if inp.alarm {
+    if alarm.is_some() {
         notes.push(format!(
             "judge alarm active ({ALARM_FILE} exists): step 2 skipped{}",
             if red.is_some() { ", main is red" } else { "" }
@@ -660,11 +1013,33 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                 )
             });
     }
+    // Step 7 is parsed whatever is picked, so a broken input always fails.
+    let seven = step7(inp, now, alarm)?;
+    if chosen.is_none() {
+        chosen = seven;
+    }
+    if chosen.is_none() {
+        let open = |n: u64| issues.iter().any(|i| i.number == n);
+        chosen = issues
+            .iter()
+            .filter(workable)
+            .filter(|i| milestone.is_some() && i.milestone == milestone)
+            .filter(|i| has_label(&i.labels, "ready"))
+            .filter(|i| !NOT_READY_LABELS.iter().any(|l| has_label(&i.labels, l)))
+            .find(|i| !dependencies(&i.body).into_iter().any(open))
+            .map(|i| {
+                pick(
+                    format!("worker ready #{}", i.number),
+                    "i (the lowest-numbered ready issue in the current milestone with its dependencies closed)",
+                    vec![view_issue(i.number)],
+                )
+            });
+    }
     let p = chosen.unwrap_or_else(|| {
         pick(
             "legacy".to_owned(),
-            "none of steps 1–5 applies; use TICK §2 rules g–j",
-            vec!["ops/TICK.md §2 rules g–j".to_owned()],
+            "none of steps 1–10 applies; use TICK §2 rule j",
+            vec!["ops/TICK.md §2 rule j".to_owned()],
         )
     });
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
