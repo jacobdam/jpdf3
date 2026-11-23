@@ -33,8 +33,8 @@ Phase: bootstrap (pilot)
 
 ## Next step (suggested order, TICK letters)
 0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
-   runs are still in progress it can pick an older red run that a newer run may fix; check `gh run list --branch
-   main` first.
+   runs are still in progress it can pick an older red run that a newer run may fix; check
+   `gh run list --branch main` first.
    On `legacy`: rule i, lowest number first: #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260
    (tagged) asks for #245 next once the owner comments on it untagged.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.

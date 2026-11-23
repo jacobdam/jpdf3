@@ -133,7 +133,7 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   step failed or was skipped, it's a real bug. Durable fix proposed in
   `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63).
 - main red on an infra job while a newer main `ci` run is in progress → don't `rerun --failed`: it queues in the main
-  concurrency group and the next push cancels it (run 45249100863 attempt 2 ran no job). Read the newer run's result
+  concurrency group, and a later push before it starts cancels it (run 45249100863 attempt 2 ran no job). Read the newer run's result
   for the same job instead, and record the run's state after acting ([journal](journal/2026-11-23.md), PR #271).
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
