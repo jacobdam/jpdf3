@@ -4,6 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **PR #264** (#210): ops/proposals/hold-automerge.md (`/hold` turns auto-merge off; the owner-commands comment
+  reports the state read back from GitHub). `ai-review` success after round 3, auto-merge on. When it merges (#210
+  closes): file the owner's part (apply the proposal, run T0 and T1–T4) as a new issue with `owner-todo`, and add
+  T1–T4 to #208.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
   comment exists: rule a, start with #242.
@@ -17,14 +21,15 @@ Phase: bootstrap (pilot)
 - ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR) waits for #245 (owner direction on #236).
 - #146 stays open (decode/raster gate; waits for #25 or #236). #235 is the dependency gate's follow-up.
 - #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. The /hold drill fails:
-  #210. Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
+  #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- g: audit 0006 (PR #259). Journal 2026-11-23 16:19.
+- i: #210 → PR #264 (proposal for owner-commands.yml). Journal 2026-11-23 17:10.
+- Before it, g: audit 0006 (PR #259, merged bb09d0e). Journal 2026-11-23 16:19.
 
 ## Next step (suggested order, TICK letters)
 0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
-   #210, #216, #219, #235, #242, #261.
+   #216, #219, #235, #242, #261.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
