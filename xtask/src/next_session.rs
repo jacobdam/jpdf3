@@ -114,8 +114,7 @@ fn blocked_live(since: &str) -> Result<String, Error> {
     Ok(format!("[{}]", parts.join(",")))
 }
 
-/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day` or the day before
-/// it, on origin/main and on the head branch of each open agent PR, as `<path>\t<line>`. The
+/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day`, on origin/main and on the head branch of each open agent PR, as `<path>\t<line>`. The
 /// refs come from the last `git fetch` (TICK §1); a branch that isn't fetched is exit 2.
 fn records_live(prs: &str, day: i64) -> Result<String, Error> {
     let mut refs = vec!["refs/remotes/origin/main".to_owned()];
@@ -125,19 +124,19 @@ fn records_live(prs: &str, day: i64) -> Result<String, Error> {
             refs.push(format!("refs/remotes/origin/{}", p.branch));
         }
     }
-    let dirs: Vec<String> = [day.saturating_sub(1), day]
-        .iter()
-        .map(|d| format!("{JOURNAL}{}/", crate::metrics::fmt_day(*d)))
-        .collect();
+    let dir = format!("{JOURNAL}{}/", crate::metrics::fmt_day(day));
     let mut seen = std::collections::BTreeSet::new();
     let mut out = String::new();
     for r in &refs {
-        let mut args = vec!["ls-tree", "-r", r.as_str(), "--"];
-        args.extend(dirs.iter().map(String::as_str));
-        let tree = cmd("git", &args).map_err(|e| match e {
-            Error::Unknown(m) => Error::Unknown(format!("{m} (is {r} fetched? run git fetch)")),
-            b @ Error::Broken(_) => b,
-        })?;
+        let tree =
+            cmd("git", &["ls-tree", "-r", r.as_str(), "--", dir.as_str()]).map_err(
+                |e| match e {
+                    Error::Unknown(m) => {
+                        Error::Unknown(format!("{m} (is {r} fetched? run git fetch)"))
+                    }
+                    b @ Error::Broken(_) => b,
+                },
+            )?;
         for line in tree.lines() {
             // `<mode> blob <oid>\t<path>`
             let Some((meta, path)) = line.split_once('\t') else {
@@ -218,7 +217,10 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
     let prs = gh(
         "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
     )?;
-    let records = records_live(&prs, today)?;
+    // The same day as `now.txt`, so a run at midnight reads the day step 11 compares with.
+    let day = i64::try_from(now / 86_400)
+        .map_err(|_| Error::Broken("system clock out of range".to_owned()))?;
+    let records = records_live(&prs, day)?;
     Ok(Inputs {
         feed,
         floor,

@@ -8,14 +8,15 @@ Status: implemented
 ## Behavior
 `cargo xtask next-session [--from DIR]` decides what the session does, so sessions stop picking
 their own work from prose (ADR 0011 §2). Task 1a (#242) added precedence steps 1–5 (TICK rules
-a–f); task 1b part 1 (#273) adds steps 7 (rules g, h) and 10 (rule i) and the interim
-product-merge counter (ADR 0011 §3). When none of them applies it prints `legacy`, and the
-session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or idle); task 3
-(#245) adds step 6.
+a–f); task 1b part 1 (#273) added steps 7 (rules g, h) and 10 (rule i) and the interim
+product-merge counter (ADR 0011 §3); part 2 (#243) adds step 11 (Planner or idle), which
+replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 (#245)
+adds step 6.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
-  - first line: `<type> <step> <reference>`, `audit due`, `retro due`, or `legacy`. Types:
-    `worker`, `audit`, `retro`. Steps and references:
+  - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner` or `idle`.
+    Its first word is the session type: `worker`, `audit`, `retro`, `planner`, or `idle` (no
+    session: exit at once). Steps and references:
 
     | Step | TICK rule | First line |
     |---|---|---|
@@ -26,6 +27,7 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
     | 10 | i | `worker ready #N` |
+    | 11 | j | `planner`, `idle` |
 
   - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
     picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
@@ -55,7 +57,15 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
   14. `blocked.json`: live, built from read commands: for each number in
       `gh issue list --label blocked --state all --search updated:>=<UTC day 7 days before now> --limit 100 --json number`,
       the array that `gh api repos/jacobdam/jpdf3/issues/<n>/events?per_page=100` prints, written
-      as `[{"number":N,"events":[…]}, …]`.
+      as `[{"number":N,"events":[…]}, …]`;
+  15. `records.txt`: session records (ADR 0011 §3), one line `<path>\t<line>` per line
+      starting `- Session: ` of a journal file. Live: for `refs/remotes/origin/main` and, for
+      each open agent PR in `prs.json`, `refs/remotes/origin/<headRefName>`,
+      `git ls-tree -r <ref> -- ops/journal/<today>/` (the UTC day of the same clock reading as
+      `now.txt`), then `git cat-file blob <id>` for
+      each regular `.md` file listed (each blob id and path once). The refs are what the
+      session's last `git fetch` brought (TICK §1); a ref that doesn't exist (a PR branch pushed
+      after that fetch) is a failed command, exit 2.
 
   `issues.json` (input 6) also reads `body` and `milestone`:
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
@@ -148,6 +158,8 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
      The user-advocate slot (every 2nd audit slot) comes with task 8 (#251); until then every
      due slot is an audit.
   8. QC, Planner, Design: product or UI, and 9. Gardener: not in this part (tasks 2, 4–8).
+     Step 8's Planner triggers (a milestone starts, 7 days since the last plan, the work-mix
+     budget) come with task 2 (#244); until then the Planner runs only from step 11.
   10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
       open milestone whose title is `M<digits>` with the smallest number), with no skip label
       and none of `in-progress` (claimed), `design`, `design-pending`, not in flight, and with its
@@ -157,7 +169,14 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
       first other text (a tab, a second or nested note included), so prose after the phrase
       names nothing (bold markers around the words allowed; case matters). Lowest
       number first. The work-mix ordering of ADR 0011 §3 comes with task 2 (#244).
-  11. Otherwise: `legacy` (TICK rule j; part 2, #243, replaces it with the Planner or idle).
+  11. **Planner or idle** (rule j; ADR 0011 §1, the Planner's bound): nothing above applies.
+      `idle` when `records.txt` has a line whose path is `ops/journal/<today>/<name>.md` (today:
+      the UTC day of `now`; `<name>` without `/`) and whose text after `- Session: ` has
+      `planner` as its first whitespace-separated word (case matters): the Planner ran today,
+      so the session exits at once and writes nothing. Otherwise `planner`: until task 2 (#244)
+      adds the Planner session, the session does TICK rule j and its record says
+      `- Session: planner`. A Planner record on a closed unmerged PR is not on any listed ref,
+      so it doesn't count (that run's labels may still stand; a second run that day is harmless).
 - **Exit codes** (ADR 0011 §2 Failure):
   - **0**: a pick was printed.
   - **2**: unknown. A command could not start, failed or printed too much (gh or network
@@ -181,13 +200,15 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
   `tags.txt`: `<name> <Unix seconds>` per non-empty line. `milestones.json`: objects with a
   string `title`. `blocked.json`: objects with a number `number` and an array `events` of
   objects with strings `event` and `created_at` (`YYYY-MM-DDTHH:MM:SSZ`); a `labeled` event also
-  needs `label: {name}`. `issues.json`: `body` a string, `milestone` null or an object with a
+  needs `label: {name}`. `records.txt`: every non-empty line is `<path>\t<text>` with `<path>`
+  `ops/journal/YYYY-MM-DD/<name>.md` (a real date, `<name>` without `/`) and `<text>` starting
+  with `- Session: `; anything else is an error. `issues.json`: `body` a string, `milestone` null or an object with a
   string `title`. Unix seconds (`now.txt`, the alarm file after trimming whitespace, the log,
   the tags) are digits only, within the years 1970–9999 (`cargo xtask metrics`' rule).
 
 ## Persistence
-None. It writes nothing; the pick goes to the session's journal entry once task 1b adds
-`Session:` records.
+None. It writes nothing. The session copies the first line into its journal entry as
+`- Session: <first line>` (TICK §5), which step 11 reads back on later runs.
 
 ## Undo
 Not applicable.
@@ -217,6 +238,10 @@ never 2 (no command ran).
   it grows by about 250 bytes per merge.
 - A `Depends on:` number that `issues.json` doesn't list counts as closed, so a list cut off at
   1000 issues could release an issue early.
+- `records.txt`: one `git ls-tree` per open agent PR plus main, and one `git cat-file` per
+  journal file of the day on any of those refs (about 10 a day today), each capped like any
+  command. A record is found only in a file under its own day's directory, so an entry filed
+  under the wrong day counts for the day its path says.
 - No loop runs on a count from the input except over the parsed lists themselves.
 
 ## Security
@@ -232,11 +257,18 @@ never 2 (no command ran).
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
   list.
-- **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `git worktree list` and
-  the protected feed script, which only reads. It writes no file.
+- **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `git worktree list`,
+  `git log`, `git for-each-ref`, `git ls-tree`, `git cat-file` and the protected feed script,
+  which only reads. It writes no file.
+- **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
+  branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
+  rest of the day's fallback picks into `idle`. The cost is bounded: `idle` happens only when
+  steps 1–10 found nothing, and the next UTC day starts clean. A branch name from `prs.json`
+  goes to git only as `refs/remotes/origin/<name>`, so it can't be read as an option, and git's
+  ref-name rules forbid `:` (no `<ref>:<path>` reads). Record lines are matched, never printed.
 - Self-check:
   - Arithmetic: the 14-day and 7-day subtractions from today (`i64` days since 1970,
-    checked), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
+    checked), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
     and `since + 1` (saturating).
   - What broken implementation still passes? Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
@@ -258,17 +290,23 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Nine `gh` calls, one more per blocked issue updated in the last 7 days, two `git` reads and the
+Nine `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
+plus one `git ls-tree` per open agent PR and one `git cat-file` per recent journal file, and the
 feed script (which makes its own); a few seconds.
 
 ## Tests
 `xtask/tests/next_session.rs` runs the binary with `--from` on fixtures built from a base set
-of inputs where no step applies (→ `legacy`):
+of inputs where no step before 11 applies (→ `planner`):
 - one test per step and sub-case that selects it, with the expected first line, and its near
   misses that must not select it;
 - precedence: all steps apply, then each is removed in turn and the next one is picked;
 - exit 1 for each malformed input and a missing `--from` file; exit 0 with a missing
   `judge-alarm-since`; exit 1 for a usage error;
+- step 11: `idle` from a Planner record dated today in any line order, `planner` without one;
+  near misses: a Planner record dated yesterday or tomorrow, `planners`, `Planner`, `planner`
+  as a later word, a worker record, an empty file; the day boundary at midnight UTC and one
+  second before; an earlier step outranks `idle`; malformed lines (no tab, another first word,
+  a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
 - steps 7 and 10: each record kind, product path and incident with its near misses (a changed
   record, a 3-digit name, a path that only starts like a product path, a revert before the
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,
