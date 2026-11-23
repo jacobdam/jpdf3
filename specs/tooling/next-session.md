@@ -328,8 +328,8 @@ of inputs where no step before 11 applies (→ `planner`):
 - step 11: `idle` from a Planner record dated today in any line order, `planner` without one;
   near misses: a Planner record dated yesterday or tomorrow, `planners`, `Planner`, `planner`
   as a later word, a worker record, an empty file; the day boundary at midnight UTC and one
-  second before; an earlier step outranks `idle`; malformed lines (no tab, text not starting with `- Session: `,
-  a malformed line after a Planner record dated today, a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
+  second before; an earlier step outranks `idle`; malformed lines (no tab, text not starting
+  with `- Session: `, a malformed line after a Planner record dated today, a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
 - steps 7 and 10: each record kind, product path and incident with its near misses (a changed
   record, a 3-digit name, a path that only starts like a product path, a revert before the
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,

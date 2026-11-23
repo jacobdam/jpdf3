@@ -433,8 +433,8 @@ session.
   found after that goes under `## Pending lessons` in `ops/STATUS.md` (the record commit carries
   it); the next session that opens a work PR moves each one into `ops/LESSONS.md` before that
   PR's round 1 and deletes it from the list. Skip a lesson that an open agent PR already moves
-  (its branch's `ops/STATUS.md` no longer lists it: `git show origin/<branch>:ops/STATUS.md`),
-  so two open PRs never add it twice.
+  (its branch's `ops/LESSONS.md` has it: `git show origin/<branch>:ops/LESSONS.md`), so two
+  open PRs never add it twice.
 - **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
   step, blockers. It has no "last session" section (the journal files are that record). A merge
   of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
