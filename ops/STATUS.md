@@ -6,10 +6,11 @@ Phase: bootstrap (pilot)
 ## In flight
 - PR #269 (#242, ADR 0011 task 1a) merged (959c4c6): `cargo xtask next-session` decides TICK rules a–f and prints
   `legacy` otherwise; ops/TICK.md §2 runs it. `deferred` on #236, #146 and #231 so the scheduler skips them.
-- main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra); rerun --failed requested.
+- main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra). The rerun was cancelled by the
+  main concurrency group (no job ran); 959c4c6's run 45254461191 has `project-macos` green instead.
 - PRs #267 (#219) and #268 (#235) merged. Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths` can be removed
   (the scheduler's `Notes:` list them).
-- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
+- PR #265 (#216, owner-comment harness 2) merged (c863a0d).
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -31,10 +32,11 @@ Phase: bootstrap (pilot)
 - Before it, i: #242 → PR #269 (the scheduler, task 1a). Journal 2026-11-23 19:55.
 
 ## Next step (suggested order, TICK letters)
-0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer runs
-   are in progress it can pick an older, already superseded red run; check `gh run list --branch main` first. On `legacy`: rule i, lowest number first:
-   #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
-   comments on it untagged.
+0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
+   runs are still in progress it can pick an older red run that a newer run may fix; check `gh run list --branch
+   main` first.
+   On `legacy`: rule i, lowest number first: #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260
+   (tagged) asks for #245 next once the owner comments on it untagged.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
