@@ -157,8 +157,8 @@ each mutant passed all 71 of the earlier cases unless noted): `startswith($tag) 
 untagged check (17), the untagged regex without its leading `\s*` (17), `[ \n\t]*` instead of
 `\s*` (5), every shown review body replaced by an agent review's body (5), every shown review
 comment body replaced by another shown review comment's body (2), every shown comment body
-replaced by another shown comment's body (4), every issue body replaced by a constant (2), every review printed
-twice (9; 4 of the earlier 71 already failed). The whitespace class still differs from the guard's
+replaced by another shown comment's body (4), every issue body replaced by a constant (2), every
+review printed twice (9; 4 of the earlier 71 already failed). The whitespace class still differs from the guard's
 for U+001C to U+001F (#217, sev:medium): the harness pins only space, newline, tab, carriage return,
 vertical tab and form feed.
 
