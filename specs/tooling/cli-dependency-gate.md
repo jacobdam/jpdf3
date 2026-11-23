@@ -88,7 +88,8 @@ as `cargo metadata` reports it, since `cargo tree` doesn't show that.
     `cargo metadata failed`.
   - `control_target_paths_outside_the_crate_are_reported`: real `cargo metadata` output for a
     fixture workspace under `CARGO_TARGET_TMPDIR` whose members point a `[lib] path`, a `[[bin]]
-    path` and a `build = …` at a `victim` crate's files, a `[lib] path` at the sibling `pre-x`
+    path`, a `build = …`, a proc-macro `[lib] path` and a `crate-type = ["cdylib"]` `[lib] path` at
+    a `victim` crate's files (kinds `lib`, `bin`, `custom-build`, `proc-macro`, `cdylib`), a `[lib] path` at the sibling `pre-x`
     from `pre` (a string-prefix near miss) and, on unix, a `src/lib.rs` symlink to the victim's:
     each is exactly one violation naming the crate and the target kind. The victim, a `[lib] path`
     detour back into its own crate and `pre-x` pass. The fixture is removed after a pass.
@@ -144,7 +145,10 @@ generate-lockfile` and two (about 150 ms). The target-path tests run one `cargo 
     1, R1.1). The target-path check (#235) catches the manifest cases: a target root outside the
     crate's directory, also through a symlink. It sees target roots only: a module file under
     `src/` that is a symlink out of the directory, `#[path = …] mod` and `include!` are still
-    review matters.
+    review matters. "Inside the directory" is all the check knows: another workspace crate nested
+    under an allowed crate's directory (a decode crate at `crates/jpdf-engine/filters/`, with
+    `[lib] path = "filters/src/lib.rs"`) counts as inside and passes. No workspace crate is nested
+    today; review is the check (R1.3).
   - Edge kinds: dev-dependencies are not on the binary's path and are not checked (`jpdf-cli` uses
     `jpdf-testgen` in its tests). Checked by hand-made mutants on this PR's branch: an optional
     `jpdf-filters` dependency behind a `jpdf-engine` feature fails `cli_graph_is_parse_only` (only
@@ -164,7 +168,8 @@ generate-lockfile` and two (about 150 ms). The target-path tests run one `cargo 
     after a manifest edit the lockfile doesn't record, the command fails.
   - The target-path check: checked by hand-made mutants on this PR's branch (each killed): the
     inside test always true, a string-prefix comparison instead of path components, no
-    canonicalization, relative paths resolved, more than one listing accepted, an empty target
+    canonicalization, only the kinds `lib`, `bin` and `custom-build` checked (R1.2), relative paths
+    resolved, more than one listing accepted, an empty target
     list accepted, the manifest directory ignored, and the package name ignored.
 - What the tests can't see: `--offline` needs every lockfile package's sources downloaded. Today the
   lockfile has no registry packages; once it has, CI builds the workspace before running tests, so

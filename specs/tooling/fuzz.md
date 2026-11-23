@@ -31,7 +31,9 @@ Status: implemented
    the unit tests in `crates/jpdf-syntax/src/xref.rs` keep a private writer (`file`,
    `with_xref`) and write some hand-placed or broken sections inline. Seeds are generated, never committed: CONSTITUTION 18
    keeps PDFs out of the repo except minimized repros in `tests/regress/`. `fuzz/corpus/` and
-   `fuzz/artifacts/` are git-ignored.
+   `fuzz/artifacts/` are git-ignored. The crate also holds `jpdf_testgen::json`, the strict JSON
+   reader that xtask and the jpdf-cli dependency gate read tool output with (moved from xtask in
+   #235; specs/tooling/cli-dependency-gate.md).
 4. **`cargo xtask fuzz [--short] [--seconds N] [--target NAME]`** writes the seeds into
    `fuzz/corpus/<target>/seed-<name>` (overwriting old seed files, keeping what the fuzzer
    found), builds all targets (`cargo fuzz build --debug-assertions`; a build failure is

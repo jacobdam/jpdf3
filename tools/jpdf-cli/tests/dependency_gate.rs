@@ -512,7 +512,8 @@ fn control_cargo_metadata_failure_is_an_error() {
 
 /// Writes a fixture workspace under `CARGO_TARGET_TMPDIR` whose members point targets at a
 /// `victim` crate's sources: `libout` (`[lib] path`), `binout` (`[[bin]] path`), `buildout`
-/// (`build = …`), `pre` (`[lib] path` into the sibling `pre-x`, a string-prefix near miss), and
+/// (`build = …`), `pmout` and `cdout` (a proc-macro and a cdylib `[lib] path`), `pre` (`[lib]
+/// path` into the sibling `pre-x`, a string-prefix near miss), and
 /// on unix `linkout`, whose own `src/lib.rs` is a symlink to the victim's. `detour` points its
 /// `[lib] path` back into itself through `..` (must pass). Returns the root manifest path.
 fn target_fixture() -> std::io::Result<PathBuf> {
@@ -543,8 +544,17 @@ fn target_fixture() -> std::io::Result<PathBuf> {
     pkg("pre-x", "")?;
     pkg("pre", "\n[lib]\npath = \"../pre-x/src/lib.rs\"\n")?;
     pkg("detour", "\n[lib]\npath = \"../detour/src/lib.rs\"\n")?;
+    // R1.2: a proc-macro and a cdylib library report their own kind, not `lib`.
+    pkg(
+        "pmout",
+        "\n[lib]\nproc-macro = true\npath = \"../victim/src/lib.rs\"\n",
+    )?;
+    pkg(
+        "cdout",
+        "\n[lib]\ncrate-type = [\"cdylib\"]\npath = \"../victim/src/lib.rs\"\n",
+    )?;
     let mut members = vec![
-        "victim", "libout", "binout", "buildout", "pre-x", "pre", "detour",
+        "victim", "libout", "binout", "buildout", "pre-x", "pre", "detour", "pmout", "cdout",
     ];
     #[cfg(unix)]
     {
@@ -589,6 +599,8 @@ fn control_target_paths_outside_the_crate_are_reported() {
         ("binout", "(bin)"),
         ("buildout", "(custom-build)"),
         ("pre", "(lib)"),
+        ("pmout", "(proc-macro)"),
+        ("cdout", "(cdylib)"),
     ];
     if cfg!(unix) {
         cases.push(("linkout", "(lib)"));
