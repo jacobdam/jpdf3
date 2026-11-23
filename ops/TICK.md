@@ -371,8 +371,10 @@ Each round K runs in this order:
      `needs-design`, then comment the ledger on the issue starting
      `🤖 jpdf-agent escalated to design: PR #N`. The next Design: technical session (§8) takes
      it (and posts that comment first if it is missing). **Exception (the per-issue bound):**
-     if the issue already has an `escalated to design:` comment naming **another** PR, or its
-     body has a `Designed in: #<n>` line, the design step was spent: label the issue `blocked`,
+     if the issue already has an `escalated to design:` comment naming **another** PR, or one
+     naming this PR while the PR already has a `Design ruling` or the issue a `Design question`
+     (§8; its design step ran), or the issue body has a `Designed in: #<n>` line, the design step
+     was spent: label the issue `blocked`,
      comment both
      ledgers on it (this PR's and the design PR's or ruling), add `owner-todo` (§0) and leave the
      decision to the owner (see K ≥ 6 above);
@@ -388,7 +390,7 @@ Each round K runs in this order:
    | the same, but the issue was already escalated or carries `Designed in:` | `blocked`, `owner-todo`, both ledgers → the owner |
    | §8 output 1 (split) or 3 (ruling): its final check clean and every ruling accepted | `ai-review` success, merge |
    | §8 output 1 or 3: its final check reports anything or rejects a ruling | §8 output 4 |
-   | §8 output 1 or 3: the diff since the last reviewed commit is over 100 lines or adds a file | §8 output 4, no check runs |
+   | §8 output 3: the diff since the last reviewed commit is over 100 lines or adds a file (output 1 has no size rule) | §8 output 4, no check runs |
    | §8 output 2 (ADR or principle) | the PR is closed unmerged; tasks filed with `Designed in:` |
    | §8 output 4 (owner question) | `owner-todo`; no review round until an owner comment |
    | a `/hold` at any point | nothing moves until `/release` (§5) |
@@ -516,7 +518,9 @@ specs/tooling/design-technical.md.
    `design session <time>`. **Resume first:** an earlier design session may have died midway.
    Post the issue's `escalated to design: PR #N` comment if it is missing. If the PR already has
    a Design ruling (step 3 output 3), output 3 was chosen: if a design final check was posted
-   after it, act on its result, else run the check; never rule again. If an open issue has
+   after it, act on its result, else run the check; never rule again. If the issue already has
+   a `Design question` from this design step, output 4 was chosen: finish it (`owner-todo`,
+   remove `needs-design`) and stop. If an open issue has
    `Designed in: #<escalated issue>` and the label `design`, output 2 was chosen: reuse it and
    its ADR PR (`Closes #<it>`), if any, and continue from the first step not done.
 2. **Load:** the issue; for a PR, every review and triage comment on it and on earlier PRs for the
@@ -529,7 +533,8 @@ specs/tooling/design-technical.md.
    1. **split:** only if every line of the part that converged is already in the original PR's
       diff at its last reviewed commit, unchanged. File one issue for that part and one per
       remaining part, each with `Designed in: #<escalated issue>`; open the split PR from
-      origin/main with those lines only (`Closes #<split issue>`), close the original PR
+      origin/main with those lines only (`Closes #<split issue>`; label it `design` if the
+      original PR had that label, so step 6 gives it the 24-hour window), close the original PR
       unmerged with a comment linking both, and close the escalated issue as split into the new
       ones. If the split needs any new line, it is not a split: take output 2 or 4.
    2. **ADR or principle:** write `docs/adr/NNNN-<title>.md` from `docs/adr/_TEMPLATE-design.md`
@@ -588,7 +593,8 @@ specs/tooling/design-technical.md.
    gets 24 hours on what merges.
 6. **Finish outputs 1 and 3:** if the PR has a `/hold` after its last `/release`, stop: nothing
    moves until `/release` (§5). If the PR is labeled `design` (an ADR PR that was itself
-   escalated), step 5's window applies: `owner-todo` and the comment, no auto-merge. Otherwise
+   escalated, or a split of one), run `gh pr ready N`, then step 5 from "file the tasks" on:
+   the tasks the ADR lists, `owner-todo` and the window comment, no auto-merge. Otherwise
    `gh pr ready N` and enable auto-merge.
 7. **Bound:** one design per escalated issue. A PR over the cap whose issue already has an
    `escalated to design:` comment naming another PR, or a `Designed in:` line, goes to the owner
