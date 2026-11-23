@@ -1838,8 +1838,9 @@ mod tests {
     #[test]
     fn job_reads_stop_at_the_newest_hundred() {
         // Run k fails at second k of 2026-11-15 with id 1000 − k, so an older run has a larger
-        // id, and the list is shuffled (reversed) with a later success mixed in: only the
-        // order by `createdAt` keeps the newest 100 (PR #267 R1.1).
+        // id; the list is rotated to start at k = 50, so the oldest run sits in the middle and
+        // neither list order nor its reverse is time order; a later success is mixed in. Only
+        // the order by `createdAt` keeps the newest 100 (PR #267 R1.1, R2.1).
         let runs = |n: u64| {
             let mut items: Vec<String> = (0..n)
                 .map(|k| {
@@ -1861,7 +1862,7 @@ mod tests {
                 1,
                 "2026-11-15T23:00:00Z",
             ));
-            items.reverse();
+            items.rotate_left(50);
             format!("[{}]", items.join(","))
         };
         let ids = |n: u64| {
