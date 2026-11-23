@@ -36,7 +36,7 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   3. `owner-open.json`: `gh issue list --state open --author jacobdam --limit 1000 --json number,labels,comments`;
   4. `owner-closed.json`: `gh issue list --state closed --author jacobdam --search closed:>=<today − 14 days> --limit 1000 --json number,body,comments`
      (today is the UTC day from the system clock, as in `cargo xtask metrics`);
-  5. `prs.json`: `gh pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup`;
+  5. `prs.json`: `gh pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable`;
   6. `issues.json`: `gh issue list --state open --limit 1000 --json number,title,labels`;
   7. `runs.json`: `gh run list --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,event`;
   8. `worktrees.txt`: `git worktree list --porcelain`;
@@ -56,7 +56,11 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   - *Failing* open PR: a head check run whose conclusion is `FAILURE`, `TIMED_OUT`,
     `STARTUP_FAILURE`, `ACTION_REQUIRED` or `CANCELLED`, or a status context in state `FAILURE`
     or `ERROR`, or no `ai-review` status context in state `SUCCESS` on the head (unreviewed, as a
-    session that died before review leaves it, or reviewed and failed).
+    session that died before review leaves it, or reviewed and failed), or `mergeable`
+    `CONFLICTING` (a merge conflict with its base: auto-merge can never land it, #270).
+    `MERGEABLE` and `UNKNOWN` (GitHub computes mergeability lazily, so a fresh push or base
+    change reads `UNKNOWN` for a while) don't count; a conflict that `UNKNOWN` hides is seen by
+    a later run.
 - **Precedence** (first match wins; within a step, the order given):
   1. **Owner instructions** (rule a, §0 of TICK):
      - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
@@ -114,7 +118,8 @@ TICK rules g–j (task 1b, #243, moves those into the scheduler).
   `issue` lines need a boolean `is_pr` and, when it is false, a number `number`; comment kinds a string `url` and `created_at`; other
   kinds are an error. The lists are JSON arrays of objects; the fields named above must have the
   right type (labels: `[{name}]`; comments: `[{author: {login}, body}]`, a null author counts as
-  not the owner; `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
+  not the owner; `mergeable`: a string, one of `MERGEABLE`, `CONFLICTING`, `UNKNOWN`;
+  `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
   `conclusion`) or `StatusContext` (`context`, `state`), other entries are ignored). Timestamps
   are compared as ISO 8601 UTC text (GitHub writes one fixed form).
 
@@ -162,10 +167,10 @@ never 2 (no command ran).
   - What broken implementation still passes? Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
     `pull_request` run, a PR with the skip label only on its issue, a `t/` branch with a
-    closed PR, …), and a precedence test where every step applies and each one is removed in
+    closed PR, a green PR whose `mergeable` is `UNKNOWN` or `MERGEABLE`, …), and a precedence test where every step applies and each one is removed in
     turn. A scheduler that ignored a filter, or swapped two steps, fails one of them.
   - What the tests can't see: the live `gh` field shapes (the fixtures are written from
-    `gh --json` output seen on 2026-11-23); a field rename is a parse error, exit 1, which the
+    `gh --json` output seen on 2026-11-23; `mergeable` on PRs #265 and #271); a field rename is a parse error, exit 1, which the
     failure rule turns into a bug issue.
 
 ## Accessibility
