@@ -1059,6 +1059,7 @@ fn malformed_inputs_exit_1() {
     );
     let out = run_with(&[set("prs.json", format!("[{bad_rollup},{merged}]"))]).unwrap();
     assert_eq!(out.status.code(), Some(1), "{bad_rollup}");
+    assert!(out.stdout.is_empty(), "{bad_rollup}");
     for v in ["", "1", "null", r#""DIRTY""#, r#""conflicting""#] {
         for (o, m) in [
             (set_mergeable(&open, v), merged.clone()),

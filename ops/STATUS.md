@@ -4,9 +4,8 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #269 (#242, ADR 0011 task 1a) merged: `cargo xtask next-session` runs in TICK §2. It misses a conflicting
-  own PR (#270). Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths`, `t/242-next-session` can be removed.
-- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on; main merged in again 20:05 UTC.
+- PR #269 (#242, ADR 0011 task 1a) merged: `cargo xtask next-session` runs in TICK §2. **PR #272** (#270): it
+  now picks a conflicting own PR. PR #265 (#216) merged.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -24,13 +23,14 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c (by hand; scheduler said `legacy`, #270): PR #265 conflicts with main fixed. Journal 2026-11-23 20:05.
-- Before it, i: #242 → PR #269 (merged). Journal 2026-11-23 19:55.
+- c (scheduler pick `worker scheduler-bug #270`): PR #272, a conflicting agent PR is now a rule c pick. Journal
+  2026-11-23 20:12. PR #271 (journal-only rule b record) is conflicting; the next run picks it once #272 merges.
+- Before it, c by hand: PR #265 conflicts fixed (merged). Journal 2026-11-23 20:05.
 
 ## Next step (suggested order, TICK letters)
 0. Start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
    #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
-   comments on it untagged. #270 (scheduler misses a conflicting PR) is small; fold it into #243 or do it first.
+   comments on it untagged. 
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
