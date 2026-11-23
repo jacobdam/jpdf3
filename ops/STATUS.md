@@ -4,13 +4,13 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #269 (#242, ADR 0011 task 1a) merged (959c4c6): `cargo xtask next-session` decides TICK rules a–f and prints
-  `legacy` otherwise; ops/TICK.md §2 runs it. `deferred` on #236, #146 and #231 so the scheduler skips them.
-  **PR #272** (#270) merged: it now picks a conflicting own PR. PR #265 (#216) merged (c863a0d).
-- main CI run 45249100863 (64905cf): `project-macos` never got a hosted runner (infra). The rerun was cancelled by the
-  main concurrency group (no job ran); 959c4c6's run 45254461191 has `project-macos` green instead.
-- Leftover worktrees `t/219-ci-metrics`, `t/235-target-paths`, `t/242-next-session`, `t/270-conflicting-pr` can be
-  removed (merged PRs; the scheduler's `Notes:` list them).
+- **PR #274** (#273, ADR 0011 task 1b part 1): `cargo xtask next-session` now decides steps 7 (audit, retro) and 10
+  (ready issue); `legacy` means rule j only. Part 2 is #243 (step 11 Planner/idle, Session: records). Live data says
+  **retro due** (3 issues labeled blocked since retro 0001), so the next session after the merge runs the retro.
+- `ready` removed from umbrella issues #14, #20, #22 (they close after later-milestone issues); step 10 would pick
+  them otherwise. Issues whose work waits on others need a `Depends on:` list or no `ready`.
+- PR #269 (#242, task 1a), PR #272 (#270) and PR #265 (#216) merged. `deferred` on #236, #146 and #231 so the
+  scheduler skips them. main CI run 45249100863's `project-macos` was infra (no hosted runner); later runs are green.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -28,17 +28,20 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #245 split; part 1 is PR #276 (Design: technical session: ops/TICK.md §4 step 6 escalation to `needs-design`,
-  new §8, docs/adr/_TEMPLATE-design.md, docs/PRINCIPLES.md P1–P3); 4 review rounds + final check; deferred #277.
-  Part 2 is #275 (next-session step 6; PR #274 for #273 has merged). Journal 2026-11-23 21:21.
-- Before it, c by hand: PR #271 (rule b records) conflicts fixed. Journal 2026-11-23 20:26.
+- i (scheduler `legacy`, before PR #274 merged): split #245; part 1 is **PR #276** (Design: technical session:
+  ops/TICK.md §4 step 6 escalates a PR over the cap to `needs-design`, new §8, §2 by-hand step 6 before a step 7/10
+  pick or `legacy` until #275, docs/adr/_TEMPLATE-design.md, docs/PRINCIPLES.md P1–P3); 4 review rounds + final
+  check; deferred #277. Part 2 is #275 (next-session step 6). Journal 2026-11-23 21:21.
+- Before it, c (scheduler `worker own-pr #274`): PR #274 conflicted with main after PR #271 merged; merged origin/main
+  (journal and STATUS only). Journal 2026-11-23 20:55.
+- Before it, i (scheduler `legacy`): split #243, PR #274 for #273. Journal 2026-11-23 20:30. Before that, c: PR #271
+  conflicts (20:26).
 
 ## Next step (suggested order, TICK letters)
-0. Start with `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run, so while newer
-   runs are still in progress it can pick an older red run that a newer run may fix; check
-   `gh run list --branch main` first.
-   On `legacy`: first the by-hand step 6 check (ops/TICK.md §2, until #275), then rule i, lowest number first:
-   #243 (task 1b 2/2, now that #273 merged), #275 (task 3 2/2, after PR #276), then #261, #277.
+0. Start with `cargo xtask next-session` (TICK §2); it now also decides audits, retros and ready issues. It reads the
+   newest *completed* main `ci` run, so check `gh run list --branch main` first. Expected next: the retro (rule h
+   incident), then #243 (task 1b 2/2), #275 (task 3 2/2, after PR #276), then #261, #277. Until #275, check step 6
+   by hand before a step 7/10 pick (ops/TICK.md §2).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).

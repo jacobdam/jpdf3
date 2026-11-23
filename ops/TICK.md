@@ -111,14 +111,7 @@ git fetch -q origin
 gh pr list --author @me --state merged --limit 10 --json number,title,mergedAt,files \
   --jq '.[] | select(any(.files[]; .path | startswith("ops/proposals/"))) | [.number,.mergedAt,.title] | @tsv'
 git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protected.txt)
-# audit due? commit that ADDED the last audit record, then merges since it
-# (due at >= 10 merges or 7 days; if the first line is empty, no audit exists yet: due now)
-git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md'
-a=$(git log -1 --diff-filter=A --format=%H origin/main -- 'docs/audits/[0-9][0-9][0-9][0-9].md')
-[ -n "$a" ] && git rev-list --count --first-parent "$a"..origin/main || true
-# retro due? date the last retro record was ADDED (due after 7 days; empty: due 7 days after
-# bootstrap). The pattern is exact `NNNN.md`, so 0000-pilot.md doesn't reset the clock.
-git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0-9][0-9][0-9].md'
+# audit and retro due: `cargo xtask next-session` (§2) decides them (step 7)
 # design ADR PRs waiting out their 24-hour window (§8 step 5; ADR 0011 §7)
 gh pr list --state open --label design --json number,isDraft,autoMergeRequest,title \
   --jq '.[] | [.number, .isDraft, (.autoMergeRequest != null), .title] | @tsv'
@@ -130,28 +123,32 @@ journal entry lists it). Task #275 moves this into the scheduler's step 3.
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
 `cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
-- **Exit 0, `worker <step> <ref>`:** do that item. Steps 1–5 are rules a–f below, which still
-  say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
+- **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
+  (`audit due`, `retro due`; the reason is on the `Rule:` line) and step 10 is rule i
+  (`worker ready #N`); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's `Picked:`
   line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
-  `deferred`, and issues that an open agent PR links (`Closes #N`; that PR is worked under rule c
+  `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
+  open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head).
-- **Exit 0, `legacy`:** no rule a–f applies. First check precedence step 6 by hand (task #275
-  moves it into the scheduler) with the scheduler's skips: the lowest-numbered open agent PR
-  labeled `needs-design` where neither the PR nor the issue it closes carries `owner-todo`,
-  `blocked` or `deferred`; else the lowest-numbered open issue labeled both `design` and `ready`,
-  without those labels, that no open agent PR links (`Closes #N`) → a **Design: technical**
-  session (§8) on it. Candidates:
+- **Before acting on a step 7 or step 10 pick, and on `legacy`:** check precedence step 6 by
+  hand (task #275 moves it into the scheduler, ahead of steps 7 and 10) with the scheduler's
+  skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the
+  issue it closes carries `owner-todo`, `blocked` or `deferred`; else the lowest-numbered open
+  issue labeled both `design` and `ready`, without those labels, that no open agent PR links
+  (`Closes #N`) → a **Design: technical** session (§8) on it instead. Candidates:
   `gh pr list --state open --label needs-design --json number,body,labels --jq '.[] | select(.body | test("^\\s*🤖 jpdf-agent")) | [.number, ([.labels[].name] | join(","))] | @tsv'`,
   then `gh issue view <n> --json labels` for the issue each one closes;
   `gh issue list --state open --label design --label ready --json number,labels --jq '.[] | select([.labels[].name] | any(. == "owner-todo" or . == "blocked" or . == "deferred") | not) | .number'`,
   then `gh pr list --state open --search '"Closes #<n>" in:body'` for each. If nothing is left,
-  pick from rules g–j below (task 1b, #243, moves them into the scheduler).
+  do the scheduler's pick.
 - **A `worker` rule c pick of a PR labeled `needs-design`** (until #275: the PR is a draft with
   `ai-review` failure on purpose, so the scheduler reads it as failing, at step 3 instead of
   ADR 0011's step 6) → first check rules d and e by hand (`gh issue list --state open --label
   crash`, `--label security`, `--label flaky`, without the skip labels above); if one applies,
   work it instead. Otherwise a Design: technical session (§8) on the PR, not a rule c fix.
+- **Exit 0, `legacy`:** no rule a–i applies and no step 6 item (above); use rule j below (task
+  1b part 2, #243, replaces it with the Planner).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
 - **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
   open `bug` issue titled `next-session: <first line of the error>` (file it if none, with the
@@ -197,11 +194,17 @@ d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`*
    label it first (higher level when unsure).
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
 f. **A leftover branch/worktree from a dead session** → resume it if valuable, else delete it.
-g. **AUDIT session due** (§1 shows ≥ 10 merges since the last audit, or 7 days) → §6.
-h. **RETRO session due** (7 days since the last one, a gate just passed, or an incident: revert,
-   main red > 2 sessions, judge alarm, ≥ 3 issues blocked this week) → §7.
-i. **A `ready` issue in the current milestone** with dependencies met, not `owner-todo` (lowest
-   number first).
+g. **AUDIT session due** (≥ 10 product merges since the last audit record, or 7 days; a product
+   merge changes a path under `crates/`, `bindings/`, `apps/`, `fuzz/`, `tools/jpdf-cli/` or
+   `tools/fsio/`, ADR 0011 §3) → §6.
+h. **RETRO session due** (7 days since the last one, or an incident since it: a revert on main,
+   a judge alarm, a milestone tag `mN` (a gate passed), ≥ 3 issues labeled `blocked` (that still
+   carry it); main red
+   > 2 sessions ends in a revert) → §7.
+i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with every issue on its
+   `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
+   (lowest number first). An issue whose remaining work is in other issues (an umbrella that
+   closes after them) loses `ready`, or names them on a `Depends on:` line.
 j. **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
    read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
    and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
