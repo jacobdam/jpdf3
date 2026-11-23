@@ -370,6 +370,22 @@ fn step1_owner_comment() {
         in_pr("CLOSED", format!("Owner instruction: {url}"), GREEN),
         format!("worker owner-comment {url}")
     );
+    // A green PR in conflict with its base doesn't hold the comment either (#270).
+    let conflicted = set_mergeable(
+        &pr(
+            320,
+            "OPEN",
+            &format!("Owner instruction: {url}"),
+            "t/9-q",
+            &[],
+            GREEN,
+        ),
+        r#""CONFLICTING""#,
+    );
+    assert_eq!(
+        pick(&[feed_plus(&[c(FLOOR)]), plus("prs.json", &[conflicted])]),
+        format!("worker owner-comment {url}")
+    );
     // Owner issues come before owner comments.
     assert_eq!(
         pick(&[feed_plus(&[c(FLOOR), feed_issue(260)])]),
@@ -722,6 +738,15 @@ fn step3_conflicting_pr() {
         )),
         "worker own-pr #340"
     );
+    // And a failing PR before a conflicting one with a higher number.
+    let failing = pr(339, "OPEN", "", "t/1-a", &[], "[]");
+    assert_eq!(
+        with(format!(
+            "{},{failing}",
+            m(green("OPEN", &[]), "CONFLICTING")
+        )),
+        "worker own-pr #339"
+    );
 }
 
 #[test]
@@ -1027,6 +1052,13 @@ fn malformed_inputs_exit_1() {
         pick(&[set("prs.json", format!("[{open},{merged}]"))]),
         "legacy"
     );
+    // A conflicting open PR's statusCheckRollup is still parsed (R1.1).
+    let bad_rollup = set_mergeable(
+        &pr(300, "OPEN", "Closes #301", "t/301-y", &[], "{}"),
+        r#""CONFLICTING""#,
+    );
+    let out = run_with(&[set("prs.json", format!("[{bad_rollup},{merged}]"))]).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{bad_rollup}");
     for v in ["", "1", "null", r#""DIRTY""#, r#""conflicting""#] {
         for (o, m) in [
             (set_mergeable(&open, v), merged.clone()),

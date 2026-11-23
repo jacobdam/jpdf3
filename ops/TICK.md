@@ -126,7 +126,7 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   is for the journal (and for removing worktrees whose PRs are merged). The journal's `Picked:`
   line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
   `deferred`, and issues that an open agent PR links (`Closes #N`; that PR is worked under rule c
-  when it fails CI, conflicts with main, or has no `ai-review` success on its head).
+  when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head).
 - **Exit 0, `legacy`:** no rule a–f applies; pick from rules g–j below (task 1b, #243, moves them
   into the scheduler).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
@@ -160,7 +160,8 @@ b. **main is red.** Read the failing run. Infra failure (network, outage, a miss
      its `ai-review` is `success`, with `ready for owner: apply the proposal in PR #N`. Once
      the owner's fix is on main, remove the label and close the proposal PR (comment: applied
      in <sha>).
-c. **Your own open PR** failing CI or review → fix it. Max 3 CI fix attempts per PR. Then label
+c. **Your own open PR** failing CI or review, or in conflict with its base (merge origin/main
+   into it, never rebase) → fix it. Max 3 CI fix attempts per PR. Then label
    the issue `blocked`, write hypotheses and evidence on it, and close or park the PR. Park it
    for the owner (`owner-todo` on its issue, §0) only when the next step needs the owner (a
    decision, a protected change, an infra fix only the owner can make); otherwise close it. Review

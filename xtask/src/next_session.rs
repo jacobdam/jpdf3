@@ -291,13 +291,15 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
         let body = text(p, "body", what)?;
         // Parsed for every PR (not only open ones), so a renamed field always fails.
         let conflict = conflicting(p, what)?;
+        // Read before combining with `conflict`, so a conflicting PR's rollup is checked too.
+        let rollup_bad = open && failing(field(p, "statusCheckRollup", what)?, what)?;
         let pr = Pr {
             number: number(p, "number", what)?,
             open,
             body: body.to_owned(),
             branch: text(p, "headRefName", what)?.to_owned(),
             labels: labels(p, what)?,
-            failing: open && (conflict || failing(field(p, "statusCheckRollup", what)?, what)?),
+            failing: open && (conflict || rollup_bad),
         };
         // The account is shared with the owner: only tagged PRs are the agent's own.
         if tagged(body) {
