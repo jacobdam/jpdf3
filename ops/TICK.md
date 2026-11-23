@@ -606,9 +606,9 @@ specs/tooling/design-technical.md.
 7. **Bound:** one design per escalated issue. A PR over the cap whose design step was spent
    (§4 step 6's Exception: an `escalated to design:` comment naming another PR, or naming this PR
    after a Design ruling or Design question, or a `Designed in:` line) goes to the owner. So a
-   chain gets at most two design PRs: a picked `design` issue's ADR PR over the cap is escalated once (the issue has neither mark yet), and the new design issue that
-   escalation files carries `Designed in:`, so its ADR PR over the cap goes to the owner. An
-   escalated Worker PR gets one design PR: the design issue filed for it already carries
-   `Designed in:`.
+   chain gets at most two design PRs: a picked `design` issue's ADR PR over the cap is escalated
+   once (the issue has neither mark yet), and the new design issue that escalation files
+   carries `Designed in:`, so its ADR PR over the cap goes to the owner. An escalated Worker PR
+   gets one design PR: the design issue filed for it already carries `Designed in:`.
 8. **Record** as §5 says (`Picked:` names the session type), and `done:` replies as §0 says if
    the issue is an owner instruction.
