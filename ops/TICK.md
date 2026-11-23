@@ -545,7 +545,8 @@ specs/tooling/design-technical.md.
 
    Output 1's split PR gets the same final check as output 3, with the original PR's last
    reviewed diff in its brief instead of rulings; the reviewer confirms every line of the split
-   is in it. Anything it reports → output 4.
+   is in it. Clean: post its triage, `ai-review` success, mark the split PR ready, enable
+   auto-merge. Anything it reports → output 4.
 4. **Allowed outputs:** the ADR, `docs/PRINCIPLES.md`, issues, comments and labels, and for
    output 1 the split PR. **No new code, tests or spec text** in a design PR: a reviewer grades
    any as a blocker (ADR 0011 §1). Findings about code that doesn't exist yet go into the ADR's
