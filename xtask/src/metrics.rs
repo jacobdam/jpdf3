@@ -148,7 +148,7 @@ fn iso_day(s: &str) -> Option<i64> {
     parse_date(s.get(..10)?)
 }
 
-fn today() -> Result<i64, String> {
+pub(crate) fn today() -> Result<i64, String> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("system clock: {e}"))?

@@ -119,8 +119,26 @@ git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0
 ```
 
 ## 2. Pick exactly one thing (strict priority)
-ADR 0011 (session types) will replace this section with `cargo xtask next-session`. Until its
-task 1a merges, these rules stay in force; each ADR 0011 task changes this file for its own part.
+Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
+`cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
+- **Exit 0, `worker <step> <ref>`:** do that item. Steps 1–5 are rules a–f below, which still
+  say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
+  is for the journal (and for removing worktrees whose PRs are merged). The journal's `Picked:`
+  line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
+  `deferred`, and issues that an open agent PR links (`Closes #N`; that PR is worked under rule c
+  when it fails CI or has no `ai-review` success on its head).
+- **Exit 0, `legacy`:** no rule a–f applies; pick from rules g–j below (task 1b, #243, moves them
+  into the scheduler).
+- **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
+- **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
+  open `bug` issue titled `next-session: <first line of the error>` (file it if none, with the
+  error output). While an open PR links it, add no comment and open no second PR: work that PR
+  under rule c if it fails CI or review or has no `ai-review` result on its head, else only rules
+  a, b and f. Otherwise comment `failed again in session <time>` on it and fix it as a Worker.
+  At 3 such comments, add `owner-todo`; from then on work only rules a, b, c and f and exit when
+  none applies, until the owner's part is done (ADR 0011 §2 Failure).
+
+Each later ADR 0011 task changes this section for its own part.
 
 Since retro 0001, due audits and retros (g, h) come **before** the backlog (i, j); in the old
 order a non-empty backlog starved them. Older journals use the old letters (audit = i,
