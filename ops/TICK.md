@@ -116,7 +116,13 @@ a=$(git log -1 --diff-filter=A --format=%H origin/main -- 'docs/audits/[0-9][0-9
 # retro due? date the last retro record was ADDED (due after 7 days; empty: due 7 days after
 # bootstrap). The pattern is exact `NNNN.md`, so 0000-pilot.md doesn't reset the clock.
 git log -1 --diff-filter=A --format='%h %cs' origin/main -- 'docs/retros/[0-9][0-9][0-9][0-9].md'
+# design ADR PRs waiting out their 24-hour window (§8 step 5; ADR 0011 §7)
+gh pr list --state open --label design --json number,isDraft,autoMergeRequest,title \
+  --jq '.[] | [.number, .isDraft, (.autoMergeRequest != null), .title] | @tsv'
 ```
+For each such agent PR without auto-merge: if its window has passed (§8 step 5), enable
+auto-merge and remove `owner-todo` from its issue now, whatever §2 picks (one command each; the
+journal entry lists it). Task #275 moves this into the scheduler's step 3.
 
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
@@ -127,8 +133,17 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
   `deferred`, and issues that an open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head).
-- **Exit 0, `legacy`:** no rule a–f applies; pick from rules g–j below (task 1b, #243, moves them
-  into the scheduler).
+- **Exit 0, `legacy`:** no rule a–f applies. First check precedence step 6 by hand (task #275
+  moves it into the scheduler): the lowest-numbered open agent PR labeled `needs-design`, else the
+  lowest-numbered open issue labeled both `design` and `ready` without `owner-todo`, `blocked` or
+  `deferred` → a **Design: technical** session (§8) on it:
+  `gh pr list --state open --label needs-design --json number,body --jq '.[] | select(.body | test("^\\s*🤖 jpdf-agent")) | .number'`,
+  `gh issue list --state open --label design --label ready --json number,labels --jq '.[] | select([.labels[].name] | any(. == "owner-todo" or . == "blocked" or . == "deferred") | not) | .number'`.
+  If neither lists anything, pick from rules g–j below (task 1b, #243, moves them into the
+  scheduler).
+- **A `worker` rule c pick of a PR labeled `needs-design`** (until #275: the PR is a draft with
+  `ai-review` failure on purpose, so the scheduler reads it as failing) → a Design: technical
+  session (§8) on it, not a rule c fix.
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
 - **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
   open `bug` issue titled `next-session: <first line of the error>` (file it if none, with the
@@ -220,6 +235,9 @@ spawn a **fresh reviewer subagent** that reads it. The brief contains ONLY:
 - the linked spec
 - CONSTITUTION.md
 - the severity rubric below
+- the `docs/PRINCIPLES.md` entries whose `Paths:` match a file the diff changes (each with its
+  ADR); ask the reviewer to check the diff against their invariants and "Reviewers check" lines
+- for a design PR (§8): `docs/adr/_TEMPLATE-design.md` and the ledgers the design read
 - from round 2 on: the **ledger** (every earlier finding, R and S, with its triage line) and the
   **fix diff** `git diff <last reviewed sha>..HEAD`
 
@@ -277,7 +295,8 @@ K = 1 + the highest K in an `AI review, round K` header already on the PR **or o
 for the same issue**, else 1 (a resumed or replacement PR continues). Every task PR body says
 `Closes #<issue>`, so `gh pr list --state all --search '"Closes #<issue>" in:body'` finds them.
 The final check (step 6) is round 5. **K ≥ 6, or any round after step 6 posted `ai-review`
-failure, is the owner's call:** run no review round until an owner comment on the PR or issue
+failure, is the design session's or the owner's call:** run no review round until a design
+ruling (§8 output 1 or 3, which names the review to run) or an owner comment on the PR or issue
 says what to run.
 Each round K runs in this order:
 1. **Before spawning** the reviewer, push and record the reviewed commit: `git rev-parse --short
@@ -334,12 +353,32 @@ Each round K runs in this order:
      CONSTITUTION.md. It confirms that each fix closes its finding, rules on each dispute and
      regrade (one line each, as in a delta round), and reports any blocker or major the diff
      adds;
-   - **anything** the final check reports (a fix that doesn't close its finding, a rejected
-     dispute or regrade, a new blocker or major), or a fix diff over the size limit: turn the
-     PR back into a draft (`gh pr ready N --undo`), label the issue `blocked`, comment the
-     ledger on it, add `owner-todo` (§0), post `ai-review` with `state=failure`, and leave the
+   - **anything** the final check reports (a finding of any grade, a fix that doesn't close its
+     finding, a rejected dispute or regrade), or a post-cap diff over the size limit (so no final
+     check ran): **escalate to design** (ADR 0011 §5). Turn the PR back into a draft
+     (`gh pr ready N --undo`), post `ai-review` with `state=failure`, comment the ledger on the
+     issue starting `🤖 jpdf-agent escalated to design: PR #N`, and label the PR `needs-design`.
+     The next Design: technical session (§8) takes it. **Exception (the per-issue bound):** if
+     the issue already has an `escalated to design:` comment or its body has a
+     `Designed in: #<n>` line, the design step was spent: label the issue `blocked`, comment both
+     ledgers on it (this PR's and the design PR's or ruling), add `owner-todo` (§0) and leave the
      decision to the owner (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
+
+   The states after round 4 (ADR 0011 §5):
+
+   | State | Next step |
+   |---|---|
+   | post-cap diff empty, nothing open, disputed or regraded without a ruling | `ai-review` success, merge |
+   | final check clean | its triage, `ai-review` success, merge |
+   | final check reports anything, or the post-cap diff is over 100 lines or adds a file; no `escalated to design:` comment and no `Designed in:` line on the issue | `needs-design`, draft, `ai-review` failure → §8 |
+   | the same, but the issue was already escalated or carries `Designed in:` | `blocked`, `owner-todo`, both ledgers → the owner |
+   | §8 output 1 (split) or 3 (ruling): its final check clean and every ruling accepted | `ai-review` success, merge |
+   | §8 output 1 or 3: its final check reports anything or rejects a ruling | §8 output 4 |
+   | §8 output 1 or 3: the diff since the last reviewed commit is over 100 lines or adds a file | §8 output 4, no check runs |
+   | §8 output 2 (ADR or principle) | the PR is closed unmerged; tasks filed with `Designed in:` |
+   | §8 output 4 (owner question) | `owner-todo`; no review round until an owner comment |
+   | a `/hold` at any point | nothing moves until `/release` (§5) |
 
 Mechanics (the guard wants one simple command with the text inline, no files):
 - One post per Bash command, nothing chained before or after it.
@@ -455,3 +494,74 @@ leave the PR blocked.
    - metric trends and the retro summary
    - ADRs, proposals and `owner-todo` items
    - usage per merged PR
+
+## 8. DESIGN: TECHNICAL session (ADR 0011 §1, §5, §6; no new code)
+Picked by §2: a PR labeled `needs-design` (escalated by §4 step 6), else a `ready` issue labeled
+`design` (queued by an audit root-cause group, the owner, or another session). Specs:
+specs/tooling/design-technical.md.
+1. **Claim** the issue (for a PR: the issue it closes) as §3 step 1 says, comment
+   `design session <time>`.
+2. **Load:** the issue; for a PR, every review and triage comment on it and on earlier PRs for the
+   same issue (the ledger), its diff and spec; for a `design` issue, every issue it names (the
+   group) and their PRs' ledgers. Then the code and ADRs of the paths involved,
+   `docs/PRINCIPLES.md`, `docs/adr/_TEMPLATE-design.md`, ADR 0010 and ADR 0011 §5. If that won't
+   fit in about 60% of the context, read only the finding and triage lines of each ledger.
+3. **Choose exactly one output.** A `design` issue takes output 2, or output 4 when what is
+   missing is a scope, taste or money decision (ADR 0011 §7). A `needs-design` PR takes one of:
+   1. **split:** only if every line of the part that converged is already in the original PR's
+      last reviewed commit, unchanged. File one issue for that part and one per remaining part,
+      each with `Designed in: #<escalated issue>`; open the split PR from origin/main with those
+      lines only (`Closes #<split issue>`), close the original PR unmerged with a
+      comment linking both, and close the escalated issue as split into the new ones. If the
+      split needs any new line, it is not a split: take output 2 or 4.
+   2. **ADR or principle:** write `docs/adr/NNNN-<title>.md` from `docs/adr/_TEMPLATE-design.md`
+      (every section answered) and the `docs/PRINCIPLES.md` entries it adds, in one PR labeled
+      `design` that says `Closes #<design issue>`. The design issue is the picked `design` issue;
+      for a `needs-design` PR, file a new one (`Design: <problem class>`, label `design`, body
+      line `Designed in: #<escalated issue>`) so the ADR PR's review rounds count for it, not
+      for the escalated issue's spent cap. File the tasks the ADR lists, each sized by §0,
+      labeled `ready`, with `Designed in: #<escalated or design issue>` and
+      `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
+      issue (task #244 makes the Planner the gate into `ready`). For a `needs-design` PR: close
+      it unmerged, and close the escalated issue as folded into the design issue and the tasks,
+      linking them.
+   3. **ruling:** post `🤖 jpdf-agent **Design ruling**` on the PR, one line per open finding:
+      `<ID>: out of scope by <PRINCIPLES.md entry or ADR §>: <why>`. No ruling may cover a
+      blocker, a CONSTITUTION finding, a security finding that is `sev:high` or above by the ADR
+      0009 table, or a finding whose dispute or regrade a reviewer already rejected; if one is
+      open, take output 2 or 4. Then run **one** final check, header
+      `AI review, round K (design final check)` (K as §4 counts): only if the diff since the last
+      reviewed commit (record commits excepted: commits touching only `ops/journal/` and
+      `ops/STATUS.md`) adds ≤ 100 lines and no new file; otherwise take output 4. Its brief: that
+      diff, the ledger, the rulings, the rubric, CONSTITUTION.md and the principles cited. The
+      reviewer gives each ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a
+      missing line counts as rejected), and reports any blocker or major the diff adds. Clean
+      and every ruling accepted: post its triage, `ai-review` success, `gh pr ready N`, remove
+      `needs-design`, enable auto-merge. Anything else: output 4.
+   4. **owner question:** post `🤖 jpdf-agent **Design question**` on the issue with one specific
+      question, the options and what each implies, and links to the ledgers; add `owner-todo`
+      (§0) and remove `needs-design` from the PR (it stays a draft with `ai-review` failure). No
+      review round runs until an owner comment says what to run.
+
+   Output 1's split PR gets the same final check as output 3, with the original PR's last
+   reviewed diff in its brief instead of rulings; the reviewer confirms every line of the split
+   is in it. Anything it reports → output 4.
+4. **Allowed outputs:** the ADR, `docs/PRINCIPLES.md`, issues, comments and labels, and for
+   output 1 the split PR. **No new code, tests or spec text** in a design PR: a reviewer grades
+   any as a blocker (ADR 0011 §1). Findings about code that doesn't exist yet go into the ADR's
+   "Requirements on future callers", not into new issues.
+5. **The design PR** (output 2) is reviewed by §4 (the brief adds the template and the ledgers;
+   its rounds count for its own issue as §4 says). After `ai-review` success, don't enable
+   auto-merge: add `owner-todo` to its issue and comment `ready for owner: design ADR in PR #N
+   merges after 24 h unless you /hold it`. The 24 hours start at the latest of: the PR marked
+   ready, its last `ai-review` success, the owner's last `/release` on it. The first session
+   whose §1 sees the window passed, `ai-review` success on the head and no `/hold` after the last
+   `/release` enables auto-merge and removes `owner-todo` (ADR 0011 §7).
+6. **Bound:** one design per escalated issue. A PR over the cap whose issue already has an
+   `escalated to design:` comment or a `Designed in:` line goes to the owner (§4 step 6). So a
+   chain gets at most two design PRs: a picked `design` issue's ADR PR over the cap is escalated
+   once (the issue has neither mark yet), and the new design issue that escalation files carries
+   `Designed in:`, so its ADR PR over the cap goes to the owner. An escalated Worker PR gets one
+   design PR: the design issue filed for it already carries `Designed in:`.
+7. **Record** as §5 says (`Picked:` names the session type), and `done:` replies as §0 says if
+   the issue is an owner instruction.
