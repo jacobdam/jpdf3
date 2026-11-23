@@ -31,19 +31,32 @@ Phase: bootstrap (pilot)
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 - **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv`
-  (specs/tooling/metrics.md; #261 fixes a negative retro-lag line for past periods). Inputs carried from the last
-  STATUS:
-  - review rounds (ADR 0010): PR #169: 2, #171: 3, #178: 3, #183: 4 (cap, parked), #186: 4 + final check, #198: 2,
-    #201: 2, #204: 3, #209: 2, #212: 3, #215: 2, #220: 3, #227: 4 + final check, #232: 4 + final check (parked),
-    #234: 4 + final check, #241: 4. PR #183: every later round was a shell-tokenizer misread.
+  (specs/tooling/metrics.md; #261 fixes a negative retro-lag line for past periods). Inputs (carried from the
+  last STATUS, plus audit 0006):
+  - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
+    final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
+    PR #220: 3, PR #227: 4 + final check (every Codex round found
+    a new test-strength gap in a widened file-tree scan), PR #232: 4 + final check (parked on one sentence; all majors
+    after round 1 but one were spec text about a future caller), PR #234: 4 + final check (each Codex round found a
+    new "what still passes" gap in a parser of cargo's text output or in how the flags were pinned), PR #241: 4 (4
+    of 5 majors were prose about actions/cache save/restore behavior in a proposal, at least one in each of rounds 1–3).
+  - PR #183: every round after the first was a shell-tokenizer misread; a parser-shaped fix in a finding's PR.
   - STATUS "in flight" goes stale as soon as its PR merges.
-  - first numbers of the #173 reply rule (picked-up/done pairs).
-  - the template's `Area:` list lacks `tooling`; ops/TICK.md §4 still cites guard-inert-post-text.md as pending
-    (applied in #145).
-  - audit 0004 AC.3 and AC.4 (ops/TICK.md:29, AUTOMATION.md:295).
-  - Codex on audits: audits 0005 and 0006 ran ok but brief-only (workspace commands timed out).
-  - ops/LESSONS.md has 63 entries (cap 60).
+  - first numbers of the #173 reply rule (picked-up/done pairs, any instruction left without done).
+  - the template's `Area:` list lacks `tooling`.
+  - ops/TICK.md §4 (the guard-trigger list) still cites ops/proposals/guard-inert-post-text.md as pending (applied in #145).
+  - audit 0004 AC.3 (no rule for a CI fix after a clean final check) and AC.4 (a proposal PR's `Closes #N` drops a
+    sev:high issue from rule d before the fix is on main, and the owner's new issue isn't told to keep
+    `security`/`sev:*`) (ops/TICK.md:29,
+    AUTOMATION.md:295).
+  - Codex on audits: audit 0005's brief (no ops/driver diff) ran ok (7 findings, 0 Codex-only bugs above sev:low),
+    but like PR #212's 3 runs it said its workspace commands timed out (brief-only review).
+  - ops/LESSONS.md has 63 entries (cap 60); PR #221 merged the new date lesson into an existing one.
+  - audit 0005: harness tests named for a limit that fail for another reason (AS.3), and proposal harnesses without
+    near-miss cases (AC.1; audit 0004 AC.1 was the same pattern in the same harness).
   - audits 0004–0006: gates that pass when nothing ran ("what still passes"), now in #262 and #261.
+  - Codex on audit 0006: ok but brief-only again; 6 Codex-only findings, none above sev:low or minor.
+  - ops/proposals/: 4 applied or closed proposals still say "proposed" in their status line (docs/audits/0006.md).
 - **Next audit:** after 10 more merges or by 2026-11-30.
 
 ## Blockers / owner-todo
