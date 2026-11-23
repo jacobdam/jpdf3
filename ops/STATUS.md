@@ -4,8 +4,11 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #269 (#242, ADR 0011 task 1a) merged: `cargo xtask next-session` runs in TICK §2. **PR #272** (#270): it
-  now picks a conflicting own PR. PR #265 (#216) merged.
+- **PR #274** (#273, ADR 0011 task 1b part 1): `cargo xtask next-session` now decides steps 7 (audit, retro) and 10
+  (ready issue); `legacy` means rule j only. Part 2 is #243 (step 11 Planner/idle, Session: records). Live data says
+  **retro due** (3 issues labeled blocked since retro 0001), so the next session after the merge runs the retro.
+- `ready` removed from umbrella issues #14, #20, #22 (they close after later-milestone issues); step 10 would pick
+  them otherwise. Issues whose work waits on others need a `Depends on:` list or no `ready`.
 - PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
@@ -23,14 +26,11 @@ Phase: bootstrap (pilot)
   #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- c (scheduler pick `worker scheduler-bug #270`): PR #272, a conflicting agent PR is now a rule c pick. Journal
-  2026-11-23 20:12. PR #271 (ops records only, rule b record) is conflicting; the next run picks it once #272 merges.
-- Before it, c by hand: PR #265 conflicts fixed (merged). Journal 2026-11-23 20:05.
+- i (scheduler `legacy`): split #243, PR #274 for #273. Journal 2026-11-23 20:30.
 
 ## Next step (suggested order, TICK letters)
-0. Start with `cargo xtask next-session` (TICK §2). On `legacy`: rule i, lowest number first:
-   #243 (task 1b) or #245 (task 3; both need only #242), then #261. #260 (tagged) asks for #245 next once the owner
-   comments on it untagged.
+0. Start with `cargo xtask next-session` (TICK §2); it now also decides audits, retros and ready issues. Expected
+   next: the retro (rule h incident), then #245 (task 3), #243 after #273, then #261.
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
