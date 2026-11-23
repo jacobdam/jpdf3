@@ -126,7 +126,7 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   is for the journal (and for removing worktrees whose PRs are merged). The journal's `Picked:`
   line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
   `deferred`, and issues that an open agent PR links (`Closes #N`; that PR is worked under rule c
-  when it fails CI or has no `ai-review` success on its head).
+  when it fails CI, conflicts with main, or has no `ai-review` success on its head).
 - **Exit 0, `legacy`:** no rule a–f applies; pick from rules g–j below (task 1b, #243, moves them
   into the scheduler).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.

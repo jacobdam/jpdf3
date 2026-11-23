@@ -116,7 +116,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             "issue list --state closed --author {OWNER} --search closed:>={since} --limit 1000 --json number,body,comments"
         ))?,
         prs: gh(
-            "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup",
+            "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
         )?,
         issues: gh("issue list --state open --limit 1000 --json number,title,labels")?,
         runs: gh(
@@ -272,6 +272,16 @@ fn failing(rollup: &Value, what: &str) -> Result<bool, String> {
     Ok(bad || !reviewed)
 }
 
+/// `mergeable` is `CONFLICTING`: auto-merge can never land the PR (#270). `UNKNOWN` (GitHub
+/// computes it lazily) and `MERGEABLE` don't count; any other value is a parse error.
+fn conflicting(p: &Value, what: &str) -> Result<bool, String> {
+    match text(p, "mergeable", what)? {
+        "CONFLICTING" => Ok(true),
+        "MERGEABLE" | "UNKNOWN" => Ok(false),
+        other => Err(format!("{what}: unexpected mergeable {other:?}")),
+    }
+}
+
 fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
     let what = "prs.json";
     let v = parse_list(text_, what)?;
@@ -279,13 +289,15 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
     for p in list(&v, what)? {
         let open = text(p, "state", what)? == "OPEN";
         let body = text(p, "body", what)?;
+        // Parsed for every PR (not only open ones), so a renamed field always fails.
+        let conflict = conflicting(p, what)?;
         let pr = Pr {
             number: number(p, "number", what)?,
             open,
             body: body.to_owned(),
             branch: text(p, "headRefName", what)?.to_owned(),
             labels: labels(p, what)?,
-            failing: open && failing(field(p, "statusCheckRollup", what)?, what)?,
+            failing: open && (conflict || failing(field(p, "statusCheckRollup", what)?, what)?),
         };
         // The account is shared with the owner: only tagged PRs are the agent's own.
         if tagged(body) {
@@ -539,7 +551,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                 load.extend(linked_issue(&p.body).map(view_issue));
                 pick(
                     format!("worker own-pr #{}", p.number),
-                    "c (own open PR failing CI or without ai-review success on its head)",
+                    "c (own open PR failing CI, in conflict with its base, or without ai-review success on its head)",
                     load,
                 )
             });

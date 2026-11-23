@@ -44,12 +44,34 @@ fn pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &str) -
     raw_pr(n, state, &format!("{TAG} {body}"), branch, l, rollup)
 }
 
-/// A PR with exactly this body (untagged: the owner's).
+/// A PR with exactly this body (untagged: the owner's). `mergeable` is what `gh` shows live:
+/// `MERGEABLE` for an open PR, `UNKNOWN` for a merged or closed one.
 fn raw_pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &str) -> String {
+    let m = if state == "OPEN" {
+        "MERGEABLE"
+    } else {
+        "UNKNOWN"
+    };
     format!(
-        r#"{{"number":{n},"state":{state:?},"isDraft":false,"body":{body:?},"headRefName":{branch:?},"labels":{},"statusCheckRollup":{rollup}}}"#,
+        r#"{{"number":{n},"state":{state:?},"isDraft":false,"body":{body:?},"headRefName":{branch:?},"labels":{},"statusCheckRollup":{rollup},"mergeable":"{m}"}}"#,
         labels(l)
     )
+}
+
+/// The same PR object with its `mergeable` field (always last) replaced by the JSON `value`,
+/// or removed when `value` is empty.
+fn set_mergeable(pr_json: &str, value: &str) -> String {
+    let key = r#","mergeable":"#;
+    assert!(
+        pr_json.contains(key),
+        "pr object without mergeable: {pr_json}"
+    );
+    let head = pr_json.rsplit_once(key).map_or(pr_json, |(h, _)| h);
+    if value.is_empty() {
+        format!("{head}}}")
+    } else {
+        format!(r#"{head},"mergeable":{value}}}"#)
+    }
 }
 
 fn feed_issue(n: u64) -> String {
@@ -286,6 +308,22 @@ fn step1_owner_issue() {
     assert_eq!(linked("OPEN", GREEN), "legacy");
     assert_eq!(linked("OPEN", "[]"), "worker owner-issue #250");
     assert_eq!(linked("MERGED", GREEN), "worker owner-issue #250");
+    // A green PR in conflict with its base can't land: not in flight (#270).
+    let conflicted = |m: &str| {
+        pick(&[
+            feed_plus(&[feed_issue(250)]),
+            plus(
+                "prs.json",
+                &[set_mergeable(
+                    &pr(310, "OPEN", "x\nCloses #250", "t/250-z", &[], GREEN),
+                    &format!("{m:?}"),
+                )],
+            ),
+        ])
+    };
+    assert_eq!(conflicted("CONFLICTING"), "worker owner-issue #250");
+    assert_eq!(conflicted("UNKNOWN"), "legacy");
+    assert_eq!(conflicted("MERGEABLE"), "legacy");
 }
 
 #[test]
@@ -632,6 +670,61 @@ fn step3_own_pr() {
 }
 
 #[test]
+fn step3_conflicting_pr() {
+    // #270: an agent PR whose checks and ai-review are green but whose mergeable is
+    // CONFLICTING (auto-merge can't land it) is a rule c pick. Every list keeps base()'s
+    // merged PR #299, so its worktree is no leftover.
+    let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
+    let with = |p: String| pick(&[set("prs.json", format!("[{p},{merged}]"))]);
+    let green = |state: &str, l: &[&str]| pr(340, state, "Closes #301", "t/301-y", l, GREEN);
+    let m = |p: String, v: &str| set_mergeable(&p, &format!("{v:?}"));
+    assert_eq!(
+        with(m(green("OPEN", &[]), "CONFLICTING")),
+        "worker own-pr #340"
+    );
+    // Near misses: lazily computed or mergeable; not open; skip labels; the owner's PR.
+    for v in ["UNKNOWN", "MERGEABLE"] {
+        assert_eq!(with(m(green("OPEN", &[]), v)), "legacy", "{v}");
+    }
+    for state in ["MERGED", "CLOSED"] {
+        assert_eq!(
+            with(m(green(state, &[]), "CONFLICTING")),
+            "legacy",
+            "{state}"
+        );
+    }
+    for skip in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(
+            with(m(green("OPEN", &[skip]), "CONFLICTING")),
+            "legacy",
+            "{skip} on the PR"
+        );
+        let parked = set("issues.json", format!("[{}]", issue(301, "f", &[skip])));
+        let prs = set(
+            "prs.json",
+            format!("[{},{merged}]", m(green("OPEN", &[]), "CONFLICTING")),
+        );
+        assert_eq!(pick(&[prs, parked]), "legacy", "{skip} on the issue");
+    }
+    let owners = raw_pr(340, "OPEN", "Closes #301", "t/301-y", &[], GREEN);
+    // The owner's PR is no agent PR, so its branch's worktree (base()) is a leftover instead.
+    assert_eq!(
+        with(m(owners, "CONFLICTING")),
+        "worker leftover-worktree t/301-y",
+        "untagged"
+    );
+    // Rule c's order is by number, whatever the reason: a conflicting PR before a failing one.
+    let failing = pr(341, "OPEN", "", "t/1-a", &[], "[]");
+    assert_eq!(
+        with(format!(
+            "{failing},{}",
+            m(green("OPEN", &[]), "CONFLICTING")
+        )),
+        "worker own-pr #340"
+    );
+}
+
+#[test]
 fn step3_scheduler_bug() {
     let bug = |title: &str, l: &[&str]| pick(&[plus("issues.json", &[issue(400, title, l)])]);
     assert_eq!(
@@ -904,11 +997,11 @@ fn malformed_inputs_exit_1() {
         ("prs.json", r#"[{"number":-1}]"#),
         (
             "prs.json",
-            r#"[{"number":1,"state":"OPEN","isDraft":false,"body":"","headRefName":"b","labels":[],"statusCheckRollup":{}}]"#,
+            r#"[{"number":1,"state":"OPEN","isDraft":false,"body":"","headRefName":"b","labels":[],"statusCheckRollup":{},"mergeable":"MERGEABLE"}]"#,
         ),
         (
             "prs.json",
-            r#"[{"number":1,"state":"OPEN","isDraft":false,"body":"","headRefName":"b","labels":[],"statusCheckRollup":[{"__typename":"StatusContext","context":"ai-review"}]}]"#,
+            r#"[{"number":1,"state":"OPEN","isDraft":false,"body":"","headRefName":"b","labels":[],"statusCheckRollup":[{"__typename":"StatusContext","context":"ai-review"}],"mergeable":"MERGEABLE"}]"#,
         ),
         ("issues.json", r#"[{"number":1.5,"title":"t","labels":[]}]"#),
         (
@@ -925,6 +1018,25 @@ fn malformed_inputs_exit_1() {
         let o = run_with(&[set(name, text.to_owned())]).unwrap();
         assert_eq!(o.status.code(), Some(1), "{name}: {text}");
         assert!(o.stdout.is_empty(), "{name}: {text}");
+    }
+    // `mergeable` (#270): missing, not a string or an unknown value is exit 1, also on a
+    // merged PR (every PR is parsed in full). The unchanged list picks `legacy`.
+    let open = pr(300, "OPEN", "Closes #301", "t/301-y", &[], GREEN);
+    let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
+    assert_eq!(
+        pick(&[set("prs.json", format!("[{open},{merged}]"))]),
+        "legacy"
+    );
+    for v in ["", "1", "null", r#""DIRTY""#, r#""conflicting""#] {
+        for (o, m) in [
+            (set_mergeable(&open, v), merged.clone()),
+            (open.clone(), set_mergeable(&merged, v)),
+        ] {
+            let text = format!("[{o},{m}]");
+            let out = run_with(&[set("prs.json", text.clone())]).unwrap();
+            assert_eq!(out.status.code(), Some(1), "{text}");
+            assert!(out.stdout.is_empty(), "{text}");
+        }
     }
     for name in [
         "feed.jsonl",
