@@ -4,10 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #265** (#216): owner-comment harness, agent text after leading whitespace and exact output records (proposal
-  files only, 102 checks). `ai-review` success after round 2, auto-merge on.
-- PR #264 merged (#210 closed): the owner's part is #266 (`owner-todo`: apply ops/proposals/hold-automerge.md, run
-  T0–T4); T1–T4 linked on #208.
+- **PR #267** (#219): `cargo xtask metrics` CI section and metrics.json. `ai-review` success after round 3,
+  auto-merge on. Retro 0002 reads CI failure counts from it (the issue's success check).
+- **PR #265** (#216): owner-comment harness 2, `ai-review` success, auto-merge on.
+- PR #264 (#210) merged; #266 (`owner-todo`): the owner applies ops/proposals/hold-automerge.md and runs T0–T4.
 - **#260** (filed by an owner interactive session, tagged, `human`): work #242 then #245 ahead of the other M0
   `ready` issues. Not an instruction until the owner posts an untagged comment on it (ADR 0011 §7). Once that
   comment exists: rule a, start with #242.
@@ -21,22 +21,23 @@ Phase: bootstrap (pilot)
 - ADR 0011 (#238) accepted; tasks #242–#251. #236 (memory ADR) waits for #245 (owner direction on #236).
 - #146 stays open (decode/raster gate; waits for #25 or #236). #235 is the dependency gate's follow-up.
 - #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. The /hold drill fails:
-  #210, fix waits for the owner in #266. Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
+  #210 (proposal in PR #264). Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Last session
-- i: #216 → PR #265 (owner-comment harness 2). Journal 2026-11-23 17:32.
-- Before it, i: #210 → PR #264 (merged 17:31 UTC). Journal 2026-11-23 17:10.
+- i: #219 → PR #267 (metrics CI section + metrics.json). Journal 2026-11-23 17:49.
+- Before it, i: #210 → PR #264 (merged). Journal 2026-11-23 17:10.
 
 ## Next step (suggested order, TICK letters)
 0. **a: #260** (#242, then #245) once the owner has commented on it untagged; else rule i, lowest number first:
-   #219, #235, #242, #261.
+   #235, #242, #261 (#216 and #219 have PRs on auto-merge).
 1. **a/c: PR #232** only once the owner has commented on #187 or the PR.
 2. When #208 has the owner's results: add them and AC.4 to docs/retros/0000-pilot.md and close #21.
    - #14, #20 and #22 close only after issues in later milestones (#55, #70; #61; #64).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 - **Next retro (rule h): by 2026-11-28.** Start from `git fetch` + `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv`
-  (specs/tooling/metrics.md; #261 fixes a negative retro-lag line for past periods). Inputs (carried from the
+  (specs/tooling/metrics.md; now with CI failures by job and target/metrics/metrics.json; #261 fixes a negative
+  retro-lag line for past periods). Inputs (carried from the
   last STATUS, plus audit 0006):
   - review rounds: ADR 0010; first numbers PR #169: 2, PR #171: 3, PR #178: 3, PR #183: 4 (cap, parked), PR #186: 4 +
     final check (parked on one sentence), PR #198: 2, PR #201: 2, PR #204: 3, PR #209: 2, PR #212: 3, PR #215: 2,
@@ -67,7 +68,6 @@ Phase: bootstrap (pilot)
 ## Blockers / owner-todo
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
 - #257: drop the Playwright cache step in ci.yml (protected).
-- #266: apply ops/proposals/hold-automerge.md (signed commit), run T0–T4.
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
 - #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6.
