@@ -24,10 +24,11 @@ Phase: bootstrap (pilot)
 ## Next step
 0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
    M0 `ready` issue whose `Depends on:` issues are closed (#275 waits for PR #276).
-1. **Next audit:** 1 product merge since audit 0006 (8 merges in all); due at 10 product merges or 2026-11-30.
-2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (conflict-only sessions ≤ 1 in 20,
-   records-only PRs ≤ 15%; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
-   audit lag under the scheduler, and the product-merge share (baseline 23%). Carried inputs: 5 applied proposals
+1. **Next audit:** 1 product merge since audit 0006 (9 merges in all); due at 10 product merges or 2026-11-30.
+2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
+   conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
+   audit lag under the scheduler, the product-merge share (baseline 23%) and the records-only share
+   (baseline 24%, #243's measure). Carried inputs: 5 applied proposals
    still say "proposed" (audit 0006); audit 0004 AC.3/AC.4; Codex timeouts and brief-only reviews (PR #268, audits
    0005–0006).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
