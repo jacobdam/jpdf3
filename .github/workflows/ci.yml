@@ -234,6 +234,29 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      # #240: cargo-fuzz, built from source by `cargo xtask ci linux`. The key follows
+      # xtask/src/fuzz.rs, which holds CARGO_FUZZ_VERSION, so a version bump gets a new entry
+      # (built once, then saved). xtask reinstalls (`--force`) unless `cargo fuzz --version` is
+      # exactly that version, so a restored binary is never used at a wrong version.
+      - name: Cache cargo-fuzz
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/xtask/src/fuzz.rs') }}
+      # #240: the fuzz targets' build output, for one exact fuzz/Cargo.lock and
+      # xtask/src/fuzz.rs (which holds NIGHTLY). No restore-keys: restoring an older entry
+      # would make the new entry hold two toolchains' output and grow with every change.
+      - name: Cache fuzz build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pr/fuzz/target
+          key: fuzz-target-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/fuzz/Cargo.lock', 'pr/xtask/src/fuzz.rs') }}
+      # #240: the Playwright browser download (`--with-deps` still installs the apt packages).
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/apps/web/package-lock.json') }}
       - name: cargo xtask ci linux
         working-directory: pr
         run: cargo xtask ci linux --out ../e2e-linux
