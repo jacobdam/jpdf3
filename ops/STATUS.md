@@ -4,18 +4,17 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #276** (#245, ADR 0011 task 3 part 1): the owner said "Merge" (PR #276 comment 7116903325); origin/main
-  (PR #285) merged in, `ai-review` success on the owner's ruling, auto-merge on. Part 2: #275 (next-session step 6).
-  Follow-ups: #277.
+- PR #276 (#245, ADR 0011 task 3 part 1) merged (139ea44). Part 2: #275 (next-session step 6). Follow-ups: #277.
 - `cargo xtask next-session` decides steps 1–5, 7, 10 and 11 (PRs #269, #272, #274, #284, #285); step 6 is checked by
   hand until #275. Task 2 (#244, the Planner session, `ops/QUEUE.md`, work-mix budget) and #275 are next.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
-- **PR #232** (#187 part 1): parked for the owner (draft, `ai-review` failure on 0831d70 after 4 rounds + final
-  check). No review round until an owner comment. Part 2: #231 (sev:high, M2, `deferred`).
+- **PR #232** (#187 part 1): the owner said "Merge" (PR #232 comment 7116940288), accepting 0831d70 unreviewed;
+  origin/main merged in, `ai-review` success on the owner's ruling, auto-merge on. The "done:" reply waits for the
+  merge. Part 2: #231 (sev:high, M2, `deferred`).
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
-- #236 (memory ADR, `deferred`) waits for PR #276 to merge (it is the first design queue item). #146 stays open,
+- #236 (memory ADR, `deferred`) is the first design queue item now that PR #276 merged. #146 stays open,
   `deferred` (waits for #25 or #236).
 - #21 stays open until the owner's drills (#208) and AC.4 are in docs/retros/0000-pilot.md. Scratch branch
   `t/21-drill-crash` stays (the guard blocks deletes).
@@ -23,7 +22,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). It reads the newest *completed* main `ci` run. Expected: rule i, the lowest
-   M0 `ready` issue whose `Depends on:` issues are closed (#244; #275 once PR #276 merges), else `planner` (rule j, once a
+   M0 `ready` issue whose `Depends on:` issues are closed (#244, #275), else `planner` (rule j, once a
    day) or `idle`.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
@@ -36,7 +35,6 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #187 / PR #232: accept the final-check wording fix 0831d70 or ask for one more final check (options on #187).
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
 - #266: apply ops/proposals/hold-automerge.md and run T0–T4.
 - #257: drop the Playwright cache step in ci.yml (protected).
