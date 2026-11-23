@@ -132,8 +132,8 @@ sources (issues, comments, review comments, reviews: hidden, as the guard strips
 before its tag check), and a carriage return, a vertical tab or a form feed before the tag on a
 comment; each shown review and review comment once, with its own body, and the same for five
 comments and both shown issues (one with a null body); the output's URLs and issue numbers exactly
-the expected set (an untagged owner `done:` reply counts as an owner comment and is listed); no agent or stranger body anywhere in it; the
-`kind` of each; conversation and review comments both fetched from `FLOOR`, or from 14 days ago
+the expected set (an untagged owner `done:` reply counts as an owner comment and is listed); no
+agent or stranger body anywhere in it; the `kind` of each; conversation and review comments both fetched from `FLOOR`, or from 14 days ago
 when `FLOOR` is later; and a non-zero exit when any one of the six calls fails. The `WARN_DAYS`
 boundary is tested at ±2 minutes, not to the second: the script reads the clock itself.
 
@@ -156,8 +156,8 @@ Added for #216 (audit 0005 AC.1, AS.2 and CX.7, and PR #265 review round 1; fail
 each mutant passed all 71 of the earlier cases unless noted): `startswith($tag) | not` as the
 untagged check (17), the untagged regex without its leading `\s*` (17), `[ \n\t]*` instead of
 `\s*` (5), every shown review body replaced by an agent review's body (5), every shown review
-comment body replaced by another review comment's body (2), every shown comment body replaced by
-another owner comment's body (4), every issue body replaced by a constant (2), every review printed
+comment body replaced by another shown review comment's body (2), every shown comment body
+replaced by another shown comment's body (4), every issue body replaced by a constant (2), every review printed
 twice (9; 4 of the earlier 71 already failed). The whitespace class still differs from the guard's
 for U+001C to U+001F (#217, sev:medium): the harness pins only space, newline, tab, carriage return,
 vertical tab and form feed.
