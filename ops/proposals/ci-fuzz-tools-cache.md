@@ -1,7 +1,9 @@
 # Proposal: cache cargo-fuzz, the fuzz build and the Playwright browser in `project-linux`
 
-Status: **applied** by the owner's interactive session for owner issue #254, 2026-11-23 (the
-diff below, unchanged; #253's wording fix folded in). Proposed for #240 (fixes 2 and 3), 2026-11-22. Touches `.github/workflows/ci.yml`
+Status: **applied** by the owner's interactive session for owner issue #254 (PR #256),
+2026-11-23, with #253's wording fix and the PR #256 review fixes folded in: `runner.arch` in
+all three keys, and `--force` on xtask's cargo-fuzz reinstall. Proposed for #240 (fixes 2
+and 3), 2026-11-22. Touches `.github/workflows/ci.yml`
 (protected), so the owner applies it with signed commits. Fix 1 of #240 (the fuzz targets run
 in parallel) is project code and lands in the same PR as this file.
 
@@ -29,8 +31,8 @@ the file.
            node-version: "24"
 +      # #240: cargo-fuzz, built from source by `cargo xtask ci linux`. The key follows
 +      # xtask/src/fuzz.rs, which holds CARGO_FUZZ_VERSION, so a version bump gets a new entry
-+      # (built once, then saved). xtask reinstalls unless `cargo fuzz --version` is exactly
-+      # that version, so a restored binary is never used at a wrong version.
++      # (built once, then saved). xtask reinstalls (`--force`) unless `cargo fuzz --version` is
++      # exactly that version, so a restored binary is never used at a wrong version.
 +      - name: Cache cargo-fuzz
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
@@ -43,13 +45,13 @@ the file.
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
 +          path: pr/fuzz/target
-+          key: fuzz-target-${{ runner.os }}-${{ hashFiles('pr/fuzz/Cargo.lock', 'pr/xtask/src/fuzz.rs') }}
++          key: fuzz-target-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/fuzz/Cargo.lock', 'pr/xtask/src/fuzz.rs') }}
 +      # #240: the Playwright browser download (`--with-deps` still installs the apt packages).
 +      - name: Cache Playwright browsers
 +        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
 +          path: ~/.cache/ms-playwright
-+          key: playwright-${{ runner.os }}-${{ hashFiles('pr/apps/web/package-lock.json') }}
++          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/apps/web/package-lock.json') }}
        - name: cargo xtask ci linux
          working-directory: pr
          run: cargo xtask ci linux --out ../e2e-linux
@@ -94,13 +96,15 @@ without a checksum. The cache keeps the binary we build ourselves from crates.io
   `cargo-fuzz` or build output in a PR's own entry reaches only that PR's later
   `project-linux` runs, which already run its code.
 - Not solved here, and not caused by this proposal: the trusted `judge-verdict` job restores
-  its own caches (`corpus-smoke-…`, `ref-smoke-v1-…`) from the same PR scope, which PR code
-  holding the run's cache token could write. That is #252, with its own fix. These three new
-  keys are not ones the judge restores.
-- The cargo-fuzz entry on `main` is written by `cargo install --locked` in a `main` run.
+  its own caches (`corpus-smoke-…`, `ref-smoke-v1-…`, and on nightly runs
+  `exam-<run_id>`, a key the project code in the same run can predict) from the same scope,
+  which project code holding the run's cache token could write. That is #252, with its own
+  fix. These three new keys are not ones the judge restores.
+- The cargo-fuzz entry on `main` is written by `cargo install --force --locked` in a `main` run.
 - Size: the fuzz build output is a few hundred MB per entry (one toolchain, no
-  `restore-keys`, so entries don't accumulate), inside the 10 GB repository cache limit;
-  GitHub evicts the least recently used entries first.
+  `restore-keys`, so an entry doesn't grow; entries for older keys stay until evicted),
+  inside the 10 GB repository cache limit; GitHub evicts the least recently used entries
+  first.
 
 ## Test plan
 

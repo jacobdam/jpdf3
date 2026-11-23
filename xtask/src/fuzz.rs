@@ -160,10 +160,13 @@ const NIGHTLY_INSTALL: [&str; 6] = [
     "--profile",
     "minimal",
 ];
-const CARGO_FUZZ_INSTALL: [&str; 6] = [
+/// `--force`: a cargo-fuzz restored from the CI cache is not in cargo's install records, and
+/// without it `cargo install` refuses to replace a wrong or broken one (PR #256, R1.1).
+const CARGO_FUZZ_INSTALL: [&str; 7] = [
     "cargo",
     "install",
     "cargo-fuzz",
+    "--force",
     "--locked",
     "--version",
     CARGO_FUZZ_VERSION,
@@ -232,7 +235,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
     if !list.status.success() {
         return Err(format!(
             "`cargo +{NIGHTLY} fuzz list` failed (install: `rustup toolchain install {NIGHTLY} \
-             --profile minimal` and `cargo install cargo-fuzz --locked --version \
+             --profile minimal` and `cargo install cargo-fuzz --force --locked --version \
              {CARGO_FUZZ_VERSION}`): {}",
             String::from_utf8_lossy(&list.stderr).trim()
         ));
@@ -475,6 +478,7 @@ mod tests {
                 "cargo",
                 "install",
                 "cargo-fuzz",
+                "--force",
                 "--locked",
                 "--version",
                 "0.13.2"
