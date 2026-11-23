@@ -90,7 +90,7 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3
+cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3; ls ops/journal/$(date -u +%F) 2>/dev/null
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -363,7 +363,7 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
     `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
 
-  Proposal: `ops/proposals/guard-inert-post-text.md`.
+  Design record: `ops/proposals/guard-inert-post-text.md` (applied in PR #145).
 
 Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
@@ -384,7 +384,12 @@ leave the PR blocked.
   after `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
+- **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
+  start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
+  `2140-279-retro.md`); never edit another session's file. Separate files don't conflict when
+  two PRs carrying records merge in either order (retro 0002: 4 sessions on 2026-11-23 did
+  nothing but merge journal/STATUS conflicts). Entries written before retro 0002 stay in
+  the single `ops/journal/YYYY-MM-DD.md` files, so 2026-11-23 has both. Use this template:
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
   - Picked: <priority rule a–j> because <why>
@@ -398,8 +403,10 @@ leave the PR blocked.
 - **Lessons:** if the lesson would help a future session, add it to `ops/LESSONS.md` under the
   right heading, as one line in the form *situation → what to do* plus a link to the journal entry.
   Check for an existing entry first and refine it rather than duplicating it.
-- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, last session
-  summary, next intended step, blockers.
+- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
+  step, blockers. It has no "last session" section (the journal directory is that record). Leave
+  STATUS unchanged when none of those changed: a session whose only work is an infra rerun
+  (rule b) or merging origin/main into a PR (rule c) writes its journal file and nothing else.
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
