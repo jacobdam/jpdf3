@@ -1,6 +1,7 @@
 //! jpdf-testgen — writes small PDFs whose cross-reference data is correct by construction, for
 //! fuzz seeds, fuzz templates and the generated files of the engine, CLI and bench tests. Spec:
-//! specs/tooling/fuzz.md.
+//! specs/tooling/fuzz.md. It also holds [`json`], the strict JSON reader that xtask and the
+//! jpdf-cli dependency gate read tool output with.
 //!
 //! Only test tooling uses this crate: `jpdf-engine` and `jpdf-cli` take it as a dev-dependency
 //! (their tests), and no shipped code depends on it. Inputs are trusted (our
@@ -9,6 +10,8 @@
 #![forbid(unsafe_code)]
 
 use std::io::Write;
+
+pub mod json;
 
 /// File header with the binary comment line that ISO 32000-2 §7.5.2 recommends.
 pub const HEADER: &[u8] = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";

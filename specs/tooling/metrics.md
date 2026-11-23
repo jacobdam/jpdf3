@@ -145,7 +145,7 @@ Not applicable (read-only report; delete `--out` to undo).
 - Each command's stdout and stderr are capped at 16 MiB (the `capture` helper shared with
   `ci macos`); past the cap the command is killed and the run fails. No exact-boundary test yet:
   the helper's tests in xtask/src/macos.rs move 300 000 bytes only (audit 0006 AC.2, #261).
-- JSON nesting is capped at 128 (xtask/src/json.rs).
+- JSON nesting is capped at 128 (tools/jpdf-testgen/src/json.rs, moved from xtask in #235).
 - `gh` lists are capped at 1000 entries and report truncation. Boundary test, for each of the
   four lists: 999 entries aren't flagged, exactly 1000 are.
 - Job reads are capped at 100 failed runs (at most 100 `gh run view` calls). Boundary test:
