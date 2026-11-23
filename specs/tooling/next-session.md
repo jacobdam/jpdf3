@@ -150,7 +150,7 @@ session uses TICK rule j. Part 2 (#243) replaces that with step 11 (Planner or i
        PR's checks don't matter: a failing one is step 3's pick, and one whose issue carries a
        skip label is parked (`owner-todo`: the owner's turn; `blocked`, `deferred`: set aside),
        not a reason for a new audit. The hold has no time limit: a parked audit or retro PR holds
-       its term until it merges or closes, and each run's brief notes it. The brief notes it
+       its term until it merges or closes, and each run's brief notes it
        (`audit due (<why>) but PR #N is open for it: not picked`, lowest PR number), and the
        scheduler goes on: a retro due after an audit in flight is picked. The label is the
        signal, so the audit or retro issue must carry it (TICK §6, §7); one without it is not

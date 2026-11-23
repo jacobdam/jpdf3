@@ -1445,6 +1445,13 @@ fn step7_slot_in_flight() {
         )),
         "{out}"
     );
+    assert!(
+        out.contains(&format!(
+            "- retro due (8 days since {:07x}) but PR #411 is open for it: not picked\n",
+            103
+        )),
+        "{out}"
+    );
     // Two open PRs hold the audit: the note names the lowest number, whatever the list order.
     let two = vec![
         audit_due.clone(),
@@ -1466,13 +1473,6 @@ fn step7_slot_in_flight() {
     let lowest = String::from_utf8(run_with(&two).unwrap().stdout).unwrap();
     assert!(lowest.contains("but PR #401 is open for it"), "{lowest}");
     assert!(!lowest.contains("PR #403"), "{lowest}");
-    assert!(
-        out.contains(&format!(
-            "- retro due (8 days since {:07x}) but PR #411 is open for it: not picked\n",
-            103
-        )),
-        "{out}"
-    );
 }
 
 #[test]
