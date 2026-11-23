@@ -89,10 +89,11 @@ as `cargo metadata` reports it, since `cargo tree` doesn't show that.
   - `control_target_paths_outside_the_crate_are_reported`: real `cargo metadata` output for a
     fixture workspace under `CARGO_TARGET_TMPDIR` whose members point a `[lib] path`, a `[[bin]]
     path`, a `build = …`, a proc-macro `[lib] path` and a `crate-type = ["cdylib"]` `[lib] path` at
-    a `victim` crate's files (kinds `lib`, `bin`, `custom-build`, `proc-macro`, `cdylib`), a `[lib] path` at the sibling `pre-x`
-    from `pre` (a string-prefix near miss) and, on unix, a `src/lib.rs` symlink to the victim's:
-    each is exactly one violation naming the crate and the target kind. The victim, a `[lib] path`
-    detour back into its own crate and `pre-x` pass. The fixture is removed after a pass.
+    a `victim` crate's files (kinds `lib`, `bin`, `custom-build`, `proc-macro`, `cdylib`), a `[lib]
+    path` at the sibling `pre-x` from `pre` (a string-prefix near miss) and, on unix, a `src/lib.rs`
+    symlink to the victim's: each is exactly one violation naming the crate and the target kind. The
+    victim, a `[lib] path` detour back into its own crate and `pre-x` pass. The fixture is removed
+    after a pass.
   - Target checker cases on synthetic metadata (`synthetic::target_checker_*`): the crate's own
     source passes; another crate's file, a missing file and a relative path that does name the
     crate's own `lib.rs` from the test's working directory are each one violation; the crate
