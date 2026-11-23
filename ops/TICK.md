@@ -7,7 +7,7 @@ except files and GitHub.
 
 Repo: `jacobdam/jpdf3` (cwd). Owner: GitHub user `jacobdam`.
 Read **CONSTITUTION.md** first and obey it exactly. Then `ops/STATUS.md`, **`ops/LESSONS.md`**
-(what earlier sessions learned the hard way), then today's `ops/journal/` entry. Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
+(what earlier sessions learned the hard way), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
 milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 0. Ground rules for this session
@@ -93,7 +93,7 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md; ls ops/journal | tail -3
+cat ops/STATUS.md ops/LESSONS.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -124,15 +124,15 @@ journal entry lists it). Task #275 moves this into the scheduler's step 3.
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
 `cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
 - **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
-  (`audit due`, `retro due`; the reason is on the `Rule:` line) and step 10 is rule i
-  (`worker ready #N`); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
-  is for the journal (and for removing worktrees whose PRs are merged). The journal's `Picked:`
-  line quotes the first line. The scheduler skips issues labeled `owner-todo`, `blocked` or
-  `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
+  (`audit due`, `retro due`; the reason is on the `Rule:` line), step 10 is rule i
+  (`worker ready #N`) and step 11 is rule j (`planner`); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
+  is for the journal (and for removing worktrees whose PRs are merged). The journal's
+  `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The
+  scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
   open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head).
-- **Before acting on a step 7 or step 10 pick, and on `legacy`:** check precedence step 6 by
-  hand (task #275 moves it into the scheduler, ahead of steps 7 and 10) with the scheduler's
+- **Before acting on a step 7, 10 or 11 pick (`planner`, `idle`):** check precedence step 6 by
+  hand (task #275 moves it into the scheduler, ahead of steps 7, 10 and 11) with the scheduler's
   skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the
   issue it closes carries `owner-todo`, `blocked` or `deferred`; else the lowest-numbered open
   issue labeled both `design` and `ready`, without those labels, that no open agent PR links
@@ -147,8 +147,9 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   ADR 0011's step 6) → first check rules d and e by hand (`gh issue list --state open --label
   crash`, `--label security`, `--label flaky`, without the skip labels above); if one applies,
   work it instead. Otherwise a Design: technical session (§8) on the PR, not a rule c fix.
-- **Exit 0, `legacy`:** no rule a–i applies and no step 6 item (above); use rule j below (task
-  1b part 2, #243, replaces it with the Planner).
+- **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner`
+  record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
+  no PR), exit at once (ADR 0011 §3).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
 - **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
   open `bug` issue titled `next-session: <first line of the error>` (file it if none, with the
@@ -205,10 +206,20 @@ i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with ev
    `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
    (lowest number first). An issue whose remaining work is in other issues (an umbrella that
    closes after them) loses `ready`, or names them on a `Depends on:` line.
-j. **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
-   read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
-   and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
-   for every failing criterion.
+j. **Planner** (`planner`: nothing else applies and no Planner ran today; the interim form until
+   task 2, #244, adds the Planner session and `ops/QUEUE.md`). Make the current milestone's
+   backlog workable again, at most once a day (its record, `- Session: planner`, is what makes
+   later picks that day `idle`, so write it even when nothing changed, in a records PR):
+   - **Open issues in the milestone, none pickable:** for each one without `owner-todo`,
+     `blocked` or `deferred`, find what stops rule i (no `ready` label, an open `Depends on:`
+     issue, `in-progress` with no open PR and no live worktree: a dead claim). Fix the labels
+     where the issue is workable (add `ready`, remove a dead `in-progress`), split one that is
+     over the §0 sizing rule into numbered parts, and file issues for missing prerequisites.
+     Close nothing and change no milestone in this form.
+   - **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
+     read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
+     and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
+     for every failing criterion.
 
 **M0 bootstrap.** While the milestone is M0, the backlog itself is the work (rule i; a–h
 still come first). Do these in order, one per session:
@@ -229,8 +240,11 @@ still come first). Do these in order, one per session:
 2. **Spec first** (`specs/<area>/<feature>.md` from `specs/_TEMPLATE.md`, with every checklist
    section), then **failing tests**, then **code**. Answer the template's Security
    self-check and Limits boundary list in the spec **before** the review; they are the
-   reviewers' most frequent findings (retro 0001). Read the `docs/PRINCIPLES.md` entries whose
-   `Paths:` match the files you will change first, and keep their invariants.
+   reviewers' most frequent findings (retro 0001). A PR with no spec (an ADR, a proposal, a
+   TICK or tooling change) answers the self-check items that apply in its description before
+   round 1 (retro 0002: the filter, gate and loop-rule findings were mostly in such PRs). Read
+   the `docs/PRINCIPLES.md` entries whose `Paths:` match the files you will change first, and
+   keep their invariants.
 3. **Local checks:**
    - `cargo fmt --all`
    - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -357,7 +371,10 @@ Each round K runs in this order:
    - "the post-cap diff" is your own changes since round 4: `git show <c>` for each commit in
      `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
      merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
-     (it shows only what you changed while merging, conflict resolutions included);
+     (it shows only what you changed while merging, conflict resolutions included). A **record
+     commit** (one that changes only files under `ops/journal/` and `ops/STATUS.md`) and a merge
+     whose remerge-diff is empty or touches only those paths are left out (ADR 0011 §3); a
+     commit touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
      regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
      lines and no new file, one **final check** runs (header
@@ -419,7 +436,7 @@ Mechanics (the guard wants one simple command with the text inline, no files):
   - a body line, or text after a `;` or `|` in it, that starts with `patch`, `git apply` or a file-writing command (`rm`, `mv`,
     `cp`, `tee`, …) and names a protected path, and a `>` or arrow before a protected path.
 
-  Proposal: `ops/proposals/guard-inert-post-text.md`.
+  Design record: `ops/proposals/guard-inert-post-text.md` (applied in PR #145).
 
 Then post the status on the head commit:
 `git rev-parse HEAD`, after checking it matches `git ls-remote origin <branch>` (`gh pr view
@@ -429,9 +446,11 @@ gh api repos/jacobdam/jpdf3/statuses/<sha> \
   -f state=success -f context=ai-review -f description="reviewed: <one line>" \
   -f target_url=<URL of the last triage comment>
 ```
-(`state=failure` if unresolved findings remain.) `ai-review` is a required check: post it
-**before** enabling auto-merge and writing the journal, so a session that ends early doesn't
-leave the PR blocked.
+(`state=failure` if unresolved findings remain.) `ai-review` is a required check. Order (ADR 0011
+§3): write the records (§5), commit them to the PR as a record commit and push; then post
+`ai-review` on that head; then enable auto-merge. A session that ends before the post leaves a
+PR with no `ai-review` on its head, which `cargo xtask next-session` step 3 hands to the next
+session.
 
 ## 5. Merge and record
 - **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
@@ -440,9 +459,22 @@ leave the PR blocked.
   after `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Journal:** append to `ops/journal/YYYY-MM-DD.md` using this template:
+- **Records go into the work PR** (ADR 0011 §3): the journal entry and the STATUS rewrite are
+  one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
+  under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
+  ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
+  session without a work PR (a Planner run that changed only labels, a "done:" reply, an
+  `owner-todo` update) opens a **records PR** holding nothing but record files; it is never a
+  product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
+- **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
+  start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
+  `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
+  two PRs carrying records merge in either order (retro 0002: 4 sessions on 2026-11-23 did
+  nothing but merge journal/STATUS conflicts). Entries written before retro 0002 stay in
+  the single `ops/journal/YYYY-MM-DD.md` files, so 2026-11-23 has both. Use this template:
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
+  - Session: <first line of cargo xtask next-session, as printed; `fallback exit <code>` if it was broken>
   - Picked: <priority rule a–j> because <why>
   - Did: <what changed, links>
   - Result: <merged / CI red / blocked …, with numbers>
@@ -453,16 +485,28 @@ leave the PR blocked.
   ```
 - **Lessons:** if the lesson would help a future session, add it to `ops/LESSONS.md` under the
   right heading, as one line in the form *situation → what to do* plus a link to the journal entry.
-  Check for an existing entry first and refine it rather than duplicating it.
-- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, last session
-  summary, next intended step, blockers.
+  Check for an existing entry first and refine it rather than duplicating it. A LESSONS change
+  is not a record commit, so it goes into the work PR **before its last review round**. A lesson
+  found after that goes under `## Pending lessons` in `ops/STATUS.md` (the record commit carries
+  it); the next session that opens a work PR moves each one into `ops/LESSONS.md` before that
+  PR's round 1 and deletes it from the list. Skip a lesson that an open agent PR already moves
+  (its branch's `ops/LESSONS.md` has it: `git show origin/<branch>:ops/LESSONS.md`), so two
+  open PRs never add it twice.
+- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
+  step, blockers. It has no "last session" section (the journal files are that record). A merge
+  of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
+  0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
+  list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
 - **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
-- Commit journal/STATUS/ADR changes through a small PR (or include them in your task PR). **Exit**,
-  with nothing left running (§0).
+- ADRs and other non-record files go into the work PR before its review. **Exit**, with nothing
+  left running (§0).
 
 ## 6. AUDIT session (no feature work)
+- **Issue first:** file the audit's issue (title `Audit NNNN: …`, label `audit`), claim it (§3
+  step 1) and draft its PR with `Closes #<issue>` early: while that PR is open, `cargo xtask
+  next-session` doesn't pick `audit due` again (#282).
 - **Reviews:** a security review and a code review (fresh subagents) of everything merged since
   the last audit, plus a Codex security review of the same range (`ops/driver/codex-review.sh`,
   brief = the security reviewer's brief in `target/scratch/`). Findings → issues (protected-file
@@ -487,6 +531,9 @@ leave the PR blocked.
 - **Record:** write `docs/audits/NNNN.md`.
 
 ## 7. RETRO session (process, not product)
+0. File the retro's issue (title `Retro NNNN: …`, label `retro`), claim it (§3 step 1) and draft
+   its PR with `Closes #<issue>` early: while that PR is open, `cargo xtask next-session` doesn't
+   pick `retro due` again (#282).
 1. Gather numbers from the last period: merged PRs, sessions (`ops/logs/index.tsv`), PRs needing
    more than 1 fix round, reverts, reopened issues, review rejections by reason, top failing CI
    checks, flaky tests, infra failures, blocked issues and their age, sessions per task vs

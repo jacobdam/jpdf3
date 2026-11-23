@@ -1,5 +1,6 @@
-//! `cargo xtask next-session`: the session scheduler, precedence steps 1–5 (ADR 0011 §2, task 1a;
-//! specs/tooling/next-session.md). Read-only: it runs read commands and writes nothing.
+//! `cargo xtask next-session`: the session scheduler, precedence steps 1–5, 7, 10 and 11 (ADR 0011
+//! §2, tasks 1a and 1b; specs/tooling/next-session.md). Read-only: it runs read commands and writes
+//! nothing.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -51,6 +52,8 @@ struct Inputs {
     tags: String,
     milestones: String,
     blocked: String,
+    /// `<path>\t<line>` for each `- Session: ` line of the recent journal files (step 11).
+    records: String,
 }
 
 /// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
@@ -67,6 +70,8 @@ const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
 const BLOCKED_INCIDENT: usize = 3;
+const JOURNAL: &str = "ops/journal/";
+const SESSION_LINE: &str = "- Session: ";
 
 /// The value of the script's `FLOOR="…"` line.
 fn floor_of(script: &str) -> Option<&str> {
@@ -109,6 +114,82 @@ fn blocked_live(since: &str) -> Result<String, Error> {
     Ok(format!("[{}]", parts.join(",")))
 }
 
+/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day`, on origin/main and on the head branch of each open agent PR, as `<path>\t<line>`. The
+/// refs come from the last `git fetch` (TICK §1); a branch that isn't fetched is exit 2.
+fn records_live(prs: &str, day: i64) -> Result<String, Error> {
+    let mut refs = vec!["refs/remotes/origin/main".to_owned()];
+    for p in parse_prs(prs).map_err(Error::Broken)? {
+        if p.open {
+            // `refs/…` never reads as an option, and a ref name holds no `:` (git check-ref-format).
+            refs.push(format!("refs/remotes/origin/{}", p.branch));
+        }
+    }
+    let dir = format!("{JOURNAL}{}/", crate::metrics::fmt_day(day));
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = String::new();
+    for r in &refs {
+        // `--full-tree`: the path is from the repository root whatever the current directory
+        // (R1.3). `core.quotePath`: any unusual byte in a name is C-quoted, so the listing is
+        // ASCII and such a name is skipped below.
+        let tree = cmd(
+            "git",
+            &[
+                "-c",
+                "core.quotePath=true",
+                "ls-tree",
+                "-r",
+                "--full-tree",
+                r.as_str(),
+                "--",
+                dir.as_str(),
+            ],
+        )
+        .map_err(|e| match e {
+            Error::Unknown(m) => Error::Unknown(format!("{m} (is {r} fetched? run git fetch)")),
+            b @ Error::Broken(_) => b,
+        })?;
+        session_lines(&tree, &dir, &mut seen, &mut out, |oid| {
+            cmd("git", &["cat-file", "blob", oid]).ok()
+        });
+    }
+    Ok(out)
+}
+
+/// Appends `<path>\t<line>` to `out` for each `- Session: ` line of each journal file in a
+/// `git ls-tree -r` listing (`<mode> blob <oid>\t<path>` lines) whose path is `<dir><name>.md`
+/// (`<name>` plain: no `/`, not C-quoted) and whose (oid, path) is not in `seen`. A blob that
+/// `read` can't return (not UTF-8, over the output cap, a git error) is skipped: a missed record
+/// costs one more Planner run that day, never a stopped scheduler (R1.1).
+fn session_lines(
+    tree: &str,
+    dir: &str,
+    seen: &mut std::collections::BTreeSet<(String, String)>,
+    out: &mut String,
+    mut read: impl FnMut(&str) -> Option<String>,
+) {
+    for line in tree.lines() {
+        let Some((meta, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(oid) = meta.strip_prefix("100644 blob ") else {
+            continue;
+        };
+        let plain = path
+            .strip_prefix(dir)
+            .and_then(|n| n.strip_suffix(".md"))
+            .is_some_and(|n| !n.is_empty() && !n.contains('/'));
+        if !plain || path.starts_with('"') || !seen.insert((oid.to_owned(), path.to_owned())) {
+            continue;
+        }
+        let Some(text) = read(oid) else {
+            continue;
+        };
+        for l in text.lines().filter(|l| l.starts_with(SESSION_LINE)) {
+            let _ = writeln!(out, "{path}\t{l}");
+        }
+    }
+}
+
 fn list_of(v: &Value) -> &[Value] {
     v.as_array().unwrap_or_default()
 }
@@ -141,6 +222,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             tags: read(dir, "tags.txt")?,
             milestones: read(dir, "milestones.json")?,
             blocked: read(dir, "blocked.json")?,
+            records: read(dir, "records.txt")?,
         });
     }
     let now = std::time::SystemTime::now()
@@ -165,6 +247,13 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             .checked_sub(14)
             .ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?,
     );
+    let prs = gh(
+        "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
+    )?;
+    // The same day as `now.txt`, so a run at midnight reads the day step 11 compares with.
+    let day = i64::try_from(now / 86_400)
+        .map_err(|_| Error::Broken("system clock out of range".to_owned()))?;
+    let records = records_live(&prs, day)?;
     Ok(Inputs {
         feed,
         floor,
@@ -174,9 +263,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         owner_closed: gh(&format!(
             "issue list --state closed --author {OWNER} --search closed:>={since} --limit 1000 --json number,body,comments"
         ))?,
-        prs: gh(
-            "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
-        )?,
+        prs,
         issues: gh(
             "issue list --state open --limit 1000 --json number,title,labels,body,milestone",
         )?,
@@ -207,6 +294,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         )?,
         milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
         blocked: blocked_live(&week_ago)?,
+        records,
     })
 }
 
@@ -784,8 +872,25 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     }))
 }
 
-/// Step 7 (TICK rules g, h): an audit slot due, then a retro due.
-fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, String> {
+/// Step 7 (TICK rules g, h): an audit slot due, then a retro due. `audit_pr` and `retro_pr` are
+/// the open agent PRs already doing that slot (#282): a due term with one is not picked, and the
+/// returned notes say so.
+fn step7(
+    inp: &Inputs,
+    now: i64,
+    alarm: Option<i64>,
+    audit_pr: Option<u64>,
+    retro_pr: Option<u64>,
+) -> Result<(Option<Pick>, Vec<String>), String> {
+    let mut notes = Vec::new();
+    let mut in_flight = |kind: &str, why: &str, pr: Option<u64>| {
+        pr.map(|n| {
+            notes.push(format!(
+                "{kind} due ({why}) but PR #{n} is open for it: not picked"
+            ))
+        })
+        .is_some()
+    };
     let log = parse_log(&inp.main_log)?;
     let tags = milestone_tags(&inp.tags)?;
     let short = |c: &Commit| c.sha.get(..7).unwrap_or(&c.sha).to_owned();
@@ -829,6 +934,7 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
             }
         }
     };
+    let audit = audit.filter(|why| !in_flight("audit", why, audit_pr));
     if let Some(why) = audit {
         let range = last_record(&log, &["docs/audits/", "docs/advocate/"])
             .and_then(|i| log.get(i))
@@ -836,11 +942,12 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
                 || "git log --first-parent --oneline origin/main".to_owned(),
                 |c| format!("git log --first-parent --oneline {}..origin/main", short(c)),
             );
-        return Ok(Some(pick(
+        let p = pick(
             "audit due".to_owned(),
             &format!("g (audit due: {why})"),
             vec!["ops/TICK.md §6".to_owned(), range],
-        )));
+        );
+        return Ok((Some(p), notes));
     }
 
     let why = if age(since)? >= WEEK {
@@ -861,7 +968,8 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
     } else {
         None
     };
-    Ok(why.map(|why| {
+    let why = why.filter(|why| !in_flight("retro", why, retro_pr));
+    let p = why.map(|why| {
         pick(
             "retro due".to_owned(),
             &format!("h (retro due: {why})"),
@@ -870,7 +978,34 @@ fn step7(inp: &Inputs, now: i64, alarm: Option<i64>) -> Result<Option<Pick>, Str
                 "cargo xtask metrics --index <main checkout>/ops/logs/index.tsv".to_owned(),
             ],
         )
-    }))
+    });
+    Ok((p, notes))
+}
+
+/// Whether `records.txt` holds a `- Session: planner` line in a journal file dated `today`
+/// (ADR 0011 §1, the Planner's bound). Every line is checked, so a malformed one always fails.
+fn planner_ran(text_: &str, today: &str) -> Result<bool, String> {
+    let what = "records.txt";
+    let mut ran = false;
+    for line in text_.lines().filter(|l| !l.is_empty()) {
+        let (path, record) = line
+            .split_once('\t')
+            .ok_or_else(|| format!("{what}: no tab in {line:?}"))?;
+        let (day, _) = path
+            .strip_prefix(JOURNAL)
+            .and_then(|r| r.split_once('/'))
+            .filter(|(d, n)| {
+                crate::metrics::parse_date(d).is_some() && n.ends_with(".md") && !n.contains('/')
+            })
+            .ok_or_else(|| format!("{what}: {path:?} is not {JOURNAL}YYYY-MM-DD/<name>.md"))?;
+        let kind = record
+            .strip_prefix(SESSION_LINE)
+            .ok_or_else(|| format!("{what}: {record:?} is not a {SESSION_LINE:?} line"))?
+            .split_whitespace()
+            .next();
+        ran |= day == today && kind == Some("planner");
+    }
+    Ok(ran)
 }
 
 fn decide(inp: &Inputs) -> Result<String, String> {
@@ -884,6 +1019,10 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .map(|t| unix(t.trim(), "judge-alarm-since"))
         .transpose()?;
     let milestone = current_milestone(&inp.milestones)?;
+    let planned = planner_ran(
+        &inp.records,
+        &crate::metrics::fmt_day(now.div_euclid(86_400)),
+    )?;
     let in_flight = |n: u64| {
         prs.iter()
             .any(|p| p.open && linked_issue(&p.body) == Some(n))
@@ -1032,7 +1171,17 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     }
     // Step 7 runs whatever is picked and parses all its inputs before it returns, so a broken
     // input always fails.
-    let seven = step7(inp, now, alarm)?;
+    // An open agent PR whose linked issue is open and labeled `audit` or `retro` is doing that
+    // slot already (#282), whatever its checks say: a failing one is step 3's, or skipped as the
+    // owner's turn. Lowest number first.
+    let slot_pr = |label: &str| {
+        prs.iter()
+            .filter(|p| p.open)
+            .find(|p| linked_issue(&p.body).is_some_and(|n| has_label(labels_of(n), label)))
+            .map(|p| p.number)
+    };
+    let (seven, seven_notes) = step7(inp, now, alarm, slot_pr("audit"), slot_pr("retro"))?;
+    notes.extend(seven_notes);
     if chosen.is_none() {
         chosen = seven;
     }
@@ -1054,11 +1203,19 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             });
     }
     let p = chosen.unwrap_or_else(|| {
-        pick(
-            "legacy".to_owned(),
-            "none of steps 1–5, 7 or 10 applies; use TICK §2 rule j",
-            vec!["ops/TICK.md §2 rule j".to_owned()],
-        )
+        if planned {
+            pick(
+                "idle".to_owned(),
+                "j (nothing applies and the Planner ran today): exit now, write no record",
+                Vec::new(),
+            )
+        } else {
+            pick(
+                "planner".to_owned(),
+                "j (nothing applies and no Session: planner record is dated today): the Planner",
+                vec!["ops/TICK.md §2 rule j".to_owned()],
+            )
+        }
     });
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
     for l in &p.load {
@@ -1136,6 +1293,45 @@ mod tests {
         assert_eq!(dependencies("Depends on: #1 (open"), [1]);
         // R1.2: prose after the phrase names nothing.
         assert!(dependencies("with its Depends on: issues closed, task 2 (#244).").is_empty());
+    }
+
+    #[test]
+    fn session_lines_from_a_listing() {
+        let dir = "ops/journal/2026-11-24/";
+        let tree = "100644 blob aa\tops/journal/2026-11-24/0100-a.md\n\
+                    100644 blob bb\tops/journal/2026-11-24/sub/b.md\n\
+                    100644 blob cc\t\"ops/journal/2026-11-24/\\303\\251.md\"\n\
+                    120000 blob dd\tops/journal/2026-11-24/link.md\n\
+                    100644 blob ee\tops/journal/2026-11-24/notes.txt\n\
+                    100644 blob ff\tops/journal/2026-11-24/0200-bad.md\n\
+                    100644 blob 11\tops/journal/2026-11-24/.md\n\
+                    100644 blob aa\tops/journal/2026-11-24/0100-a.md\n\
+                    100644 blob a2\tops/journal/2026-11-240/x.md\n\
+                    no tab here\n";
+        let mut read_ids = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = String::new();
+        session_lines(tree, dir, &mut seen, &mut out, |oid| {
+            read_ids.push(oid.to_owned());
+            match oid {
+                "aa" => Some(
+                    "## x\n- Session: planner\n - Session: worker\n- Session: idle\n".to_owned(),
+                ),
+                // Unreadable (not UTF-8, too large): skipped, never an error.
+                _ => None,
+            }
+        });
+        assert_eq!(read_ids, ["aa", "ff"]);
+        assert_eq!(
+            out,
+            "ops/journal/2026-11-24/0100-a.md\t- Session: planner\n\
+             ops/journal/2026-11-24/0100-a.md\t- Session: idle\n"
+        );
+        // The same (oid, path) on a second ref is read once.
+        session_lines(tree, dir, &mut seen, &mut out, |_| {
+            Some("- Session: planner\n".to_owned())
+        });
+        assert_eq!(out.lines().count(), 2);
     }
 
     #[test]

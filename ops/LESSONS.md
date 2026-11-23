@@ -4,6 +4,8 @@ Format: **situation → what to do** (link to the journal entry or PR). Refine e
 instead of adding near-duplicates. Retro 0001 promoted the guard (force push, CLI writes),
 review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lessons into
 ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
+Retro 0002 promoted the checker/filter/parser/loop-rule lessons into the specs/_TEMPLATE.md self-check and
+dropped entries TICK §0 and §4 already state (background waits, "not proven" findings, post triggers).
 
 ## Tooling & environment
 - Dates and times → the machine's clock, the session's "today" and git `%cs`/`%cd` (committer time zone; some main
@@ -54,25 +56,20 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 
 - The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, or names a gh comment/issue command
   (it tries to parse it as a CLI write), even in a heredoc or python script writing markdown →
-  write such files with Write/Edit ([journal](journal/2026-11-22.md), PR #178).
+  write such files with Write/Edit ([journal](journal/2026-11-22.md), PR #178). The post triggers are listed in TICK
+  §4's mechanics; the terminal-multiplexer name also blocks in a commit message or a python one-liner; a body with an apostrophe (`'\''`) is never treated as inert, and Claude Code's own check refuses a
+  long post whose single-quoted body holds `$` + quote or `$$`+brace: split it or space the token and disclose it
+  ([journal](journal/2026-11-21.md), PR #129; [journal](journal/2026-11-22.md), PR #183).
   Never `cat > file` without a heredoc (it waits on stdin until the 2 min timeout) ([journal](journal/2026-11-21.md), PR #104).
-- Posting review text with `gh pr comment` (TICK §4) → the guard scans the whole command, so the terminal-multiplexer
-  name in a commit message or a python one-liner, a push command naming main, or `gh repo`/admin-merge text in a body
-  all block. Use Write/Edit for scripts, reword the token, and disclose it. A body with an apostrophe (`'\''`) is never
-  treated as inert ([journal](journal/2026-11-21.md), PR #129). Separately, Claude Code's own safety check refuses a
-  long post whose single-quoted body holds `$` + quote (`$'\''`) or `$$`+brace; split the post or space the token and
-  disclose it ([journal](journal/2026-11-22.md), PR #183).
-- Post or heredoc text with a `>` before a protected path (a reviewer's `<patched> ops/driver/x.sh`) → the guard
-  reads it as a redirect, quoted or not; reword that token (`PATCHED`), or write files with Write/Edit, and disclose
-  it ([journal](journal/2026-11-22.md), PR #194).
 - Proposing a guard/hook change that "skips quoted text" → shlex is not the shell: `#` comments, zsh `=word`, newlines
   inside quoted text and duplicated copies elsewhere in the command all differ. Allowlist the remainder word by word,
-  pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH).
-  It took 4 review rounds ([journal](journal/2026-11-21.md), PR #129). The same holds for a rule built on the guard's
-  own shell tokenizer: each round found a new misread (`${...}`, heredoc delimiters, backticks) and PR #183 hit the
-  cap. Design fail-closed from the start (a "couldn't read it the shell's way" marker the rule blocks on), never
-  compare counts between two parsers, and keep a fix that needs a parser out of a small finding's PR
-  ([journal](journal/2026-11-22.md), PR #183).
+  pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH)
+  ([journal](journal/2026-11-21.md), PR #129). A rule built on the guard's own shell tokenizer drew a new misread each
+  round (`${...}`, heredoc delimiters, backticks; PR #183 hit the cap): design it fail-closed (a "couldn't read it the
+  shell's way" marker the rule blocks on), never compare counts between two parsers, and keep a parser-shaped fix out
+  of a small finding's PR ([journal](journal/2026-11-22.md), PR #183). The hook fails open on a timeout or exception:
+  use a one-pass tokenizer, not nested-quantifier regexes, and self-test adversarial timing inputs that contain the
+  trigger word ([journal](journal/2026-11-21.md), PR #119).
 
 - Writing a shell check from grep/awk exit codes → BSD grep exits 2 on an ERE with an empty alternative (`(a|)$`),
   so `! grep -v …` passes everything: accept only the exact success code (`(( $? == 1 ))` for `grep -qv`) and test a
@@ -83,18 +80,10 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   sessions and not protected. Walk the ancestors, pin env overrides (`RUSTUP_TOOLCHAIN`), and keep anything that
   decides what to kill or run in the driver's memory, not a file ([journal](journal/2026-11-22.md), PR #171).
 
-- Writing a guard/hook rule over untrusted command text (a hook timeout or exception fails open) → use a
-  one-pass tokenizer, not nested-quantifier regexes, and give the self-test adversarial timing inputs that
-  contain the trigger word so the fast path can't skip them ([journal](journal/2026-11-21.md), PR #119).
-
 - `npx <tool>` in apps/web before `npm ci` → npx downloads whatever registry package has that name (it fetched
   an unrelated `biome@0.3.3`). Run `npm ci --ignore-scripts` in the worktree first and call `./node_modules/.bin/<tool>`
   ([journal](journal/2026-11-22.md), PR #121).
 
-- Waiting on a background agent or shell → don't set a ScheduleWakeup/CronCreate "fallback": `claude -p` stays alive
-  until the timer fires (up to 20 min idle after the final answer, #125). And never end the turn to wait: `claude -p`
-  kills background tasks still running 10 min after the last turn (a re-review was lost that way). Run reviewers in
-  the foreground ([journal](journal/2026-11-21.md), PR #127).
 - Timing tests that read file mtimes (`stat -f %m`, 1 s resolution) → an off-by-one at the limit survives; measure
   below a second (perl `Time::HiRes`) and test "half a second under survives / stops at the limit"
   ([journal](journal/2026-11-21.md), PR #127).
@@ -107,23 +96,6 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   their own group; test the guard with the kill command textually swapped for `echo` (assert the swap happened). Prove
   each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
-
-- A second-reviewer major saying "not proven" → state the limitation and file an issue; don't build enforcement
-  tooling in the same PR (owner, PR #151: a text-scan tripwire added for such a finding drew a new major in
-  rounds 6, 7 and 9 to 14). Now a TICK §4 triage rule (ADR 0010) ([journal](journal/2026-11-22.md), PR #151).
-
-- Writing a process rule that bounds a loop (review rounds, retries) → before the first review, write the state table:
-  every counter value (below the cap, at the cap, the extra check, past it) and every exit (clean, open finding,
-  regrade, dispute, a merge from main), each with its next step. A rule triggered by "when the PR merges" needs a step that notices the
-  merge: auto-merge lands after the session exits (PR #177). PR #157's reviewers found at least one unhandled
-  state in every round, 5 in a row ([journal](journal/2026-11-22.md), PR #157). In a design ADR, do it for every
-  counter, "once a day" bound and fallback, and for the loops each fix adds: PR #239's majors in rounds 2 to 4 were
-  states its own earlier fixes created ([journal](journal/2026-11-22.md), PR #239). The same goes for prose about
-  a cache or CI mechanism (exact hit, miss, failed run, eviction, PR scope): PR #241 drew a major on it in each of rounds 1–3.
-  For a session procedure with several GitHub side effects (labels, comments, closing PRs), also walk "the session dies
-  after each one": order them so the state left behind is picked and resumed, check what the scheduler skips and
-  picks for each label, and give every resume branch an exit once the owner answers. PR #276 drew 10 of its 11 majors on these
-  in rounds 1 to 3 ([journal](journal/2026-11-23.md), PR #276).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
@@ -143,11 +115,6 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27).
-- Writing a check that parses another tool's text output (`cargo tree`, git) → before round 1, print every line shape
-  from the real tool (markers before, after and instead of the source, delimiters inside paths, an empty field) and give
-  each a case, resolve only absolute paths, and pin the flags on the command actually run (`Command::get_args`), not on
-  a constant: PR #234's second reviewer found a new shape or flag gap in each of 4 rounds
-  ([journal](journal/2026-11-22.md), PR #234).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
@@ -242,8 +209,7 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
   ([journal](journal/2026-11-21.md), PR #56, PR #67, PR #93, PR #123, audit 0001).
 - Checking a backend-reported count whose unit the backend chooses (operations, work) → an absolute lower bound is
   covered by any flat rate (per sample, per input byte). Measure a difference between two inputs with the same output
-  and at least the same length. Before the first review, replace each new check term with `true` once and confirm a
-  self-test fails; reviewers found an unpinned term in 4 of 6 rounds ([journal](journal/2026-11-21.md), PR #135).
+  and at least the same length ([journal](journal/2026-11-21.md), PR #135).
 - Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
   so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
   checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).
@@ -298,20 +264,13 @@ ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 - Filtering GitHub lists by "the agent's own" (`--author @me`, comment authors) → the account is shared with the
   owner, so the author proves nothing: filter by the tag at the start of the body, and treat owner PRs in the owner
   feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269 R1.2, R1.3).
-- Writing a test harness for a filter (who counts as the owner, what is agent text, which URLs count) → a
-  should-hide case catches a dropped check but not one that is too broad. Give every filter a should-hide case and a
-  near-miss should-show case (owner text quoting the tag mid-body, a URL differing only in owner or repo), and kill a
-  hand mutant per term ([journal](journal/2026-11-22.md), PR #198). A filter that mirrors another check (the guard's
-  tag rule) needs cases run through both, including leading whitespace and the characters each side strips (audit
-  0005 AC.1, AS.1). Likewise, for "any of N triggers fails the
-  run", give each trigger its own case with every other trigger off; a combined case hid a mutant
-  ([journal](journal/2026-11-22.md), PR #201 R1.1). A fake CLI in such a harness must run the script's real arguments (build the JSON
-  from the requested `--json` fields and apply its `--jq` with jq), and every guard needs a case per command
-  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2). Show/hide membership passes a filter that pairs a URL
-  with another record's body or prints one twice: assert each shown record's body and the exact output set
-  ([journal](journal/2026-11-23.md), PR #265, CX.7). A "newest N by time" test needs a fixture where time order
-  differs from id order, list order and reversed list order (run k with id 1000 − k, list rotated), and each half of an
-  `a && b` condition a case where only that half is false ([journal](journal/2026-11-23.md), PR #267 R1.1, R1.2, R2.1).
+- Writing a test harness for a filter (beyond the template's self-check) → a filter that mirrors another check (the
+  guard's tag rule) needs cases run through both, including leading whitespace and the characters each side strips
+  (audit 0005 AC.1, AS.1). A fake CLI must run the script's real arguments (build the JSON from the requested
+  `--json` fields and apply its `--jq` with jq), and every guard needs a case per command
+  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2). Assert each shown record's body and the exact output set,
+  not membership ([journal](journal/2026-11-23.md), PR #265, CX.7). A "newest N by time" test needs a fixture where
+  time order differs from id order, list order and reversed list order ([journal](journal/2026-11-23.md), PR #267).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get

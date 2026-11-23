@@ -20,7 +20,7 @@ session applies step 6 by hand (ops/TICK.md §2).
   comment naming another PR, or a `Designed in: #<n>` line, the owner gets it as before
   (`blocked`, `owner-todo`, both ledgers). TICK §4 step 6 carries the state table.
 - **Picking** (ops/TICK.md §2, until #275): before acting on a scheduler step 7 or step 10 pick,
-  and on `legacy` (ADR 0011 §2 orders step 6 ahead of 7 and 10), the lowest-numbered open agent PR
+  and on a step 11 pick (`planner`, `idle`) (ADR 0011 §2 orders step 6 ahead of 7, 10 and 11), the lowest-numbered open agent PR
   labeled `needs-design` where neither it nor its issue carries `owner-todo`, `blocked` or
   `deferred`, else the lowest-numbered open issue labeled `design` and `ready` without those
   labels and not linked by an open agent PR (the scheduler's own skips). A scheduler rule c pick
@@ -85,7 +85,7 @@ Bounds (ADR 0011 §1 "every loop has a counter and a final state"):
   and unlocks no review round.
 - Self-check: no arithmetic on input; no checker or validator is added (part 2 adds the
   scheduler step and its fixtures). What a broken process still passes: a session that skips the
-  by-hand step 6 check before a step 7 or 10 pick or on `legacy` (until #275 nothing but the journal's `Picked:` line shows
+  by-hand step 6 check before a step 7, 10 or 11 pick (until #275 nothing but the journal's `Picked:` line shows
   it), and a session that labels its own PR `needs-design` early; the reviewer and the owner feed
   see both.
 
