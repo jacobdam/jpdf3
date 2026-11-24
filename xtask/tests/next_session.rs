@@ -255,7 +255,6 @@ fn base() -> Vec<(&'static str, String)> {
         ),
         ("records.txt", base_records()),
         ("queue.md", BASE_QUEUE.to_owned()),
-
         // PR 300 was held and released: not held.
         (
             "holds.json",
