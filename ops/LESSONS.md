@@ -43,6 +43,11 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   `target/scratch/` the jpdf-corpus tests refuse a cache inside the git tree and the baseline fails, so no mutant runs
   (audit 0003). For jpdf-traits (about 26 s per mutant) narrow it with `-f` to the non-suite files
   ([journal](journal/2026-11-21.md), audit 0001, audit 0002, [audit 0003](journal/2026-11-22.md)).
+- clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
+  → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
+- A reviewer subagent that builds a scratch copy of the repo can leave stale binaries in the worktree's `target/`
+  (`cannot run xtask`, fixture paths under the copy) → `cargo clean -p <crate>`, and tell reviewers to use their own
+  `CARGO_TARGET_DIR` ([journal](journal/2026-11-24/0430-275-step6.md)).
 - Judge-like memory checks: macOS RSS ≠ address space → run the Linux build in docker
   (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
 - `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF

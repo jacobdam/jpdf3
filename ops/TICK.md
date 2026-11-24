@@ -705,9 +705,15 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
    §4 step 6 would escalate it (§8) or hand it to the owner, close it unmerged instead with a
    comment linking its ledger, undo the GitHub changes its open findings name (labels, milestone
-   moves; reopen a milestone it closed), and file one `discovery` issue in the current milestone
-   with those findings and the link, which the next Planner works through step 2. An owner
-   `/hold` on a Planner PR: add `owner-todo` to the PR itself (it has no issue) and leave it;
+   moves; reopen a milestone it closed; close, with a comment linking the ledger, an issue it
+   created in step 3 or 4), and file one `discovery` issue in the current milestone with those
+   findings and the link. A pushed `mN` tag stays (the guard blocks deleting a remote ref): if a
+   finding names it, add `owner-todo` to that issue with the note `delete tag mN`. The issue is a
+   Worker issue like any other: the next Planner gates it into `ready` through step 2, and a
+   Worker closes it, by a PR's `Closes #N` when a finding needs a change on main, or with a
+   comment saying so when every finding was about the closed PR's own text, which never merged.
+   An owner `/hold` on a Planner PR: add `owner-todo` to the PR itself (it has no issue) and
+   leave it, and remove it from the PR after the owner's `/release` (§5);
    while it is held, later Planners change labels only and write records PRs, not QUEUE.md.
    If an open agent PR already changes `ops/QUEUE.md` (an earlier Planner's, still in CI or
    review, not held), don't open a second one: merge origin/main into it, update its QUEUE.md and
