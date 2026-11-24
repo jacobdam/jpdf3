@@ -118,7 +118,8 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Writing a local check that mirrors a judge script → match its Python regex semantics
   exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
   files and directories), and diff both side by side on probe trees before review
-  ([journal](journal/2026-11-20.md), PR #27).
+  ([journal](journal/2026-11-20.md), PR #27). A Rust check that mirrors a GitHub Actions `if:` expression → fold case:
+  `startsWith`/`contains` there ignore case (PR #296 R1.1: [journal](journal/2026-11-24/0150-295-hold-skip.md)).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
@@ -224,7 +225,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Hand mutation with sed → if the mutated literal also appears in the test's expected value, sed rewrites both
   and the mutant "survives"; replace only the first occurrence and check which line changed (PR #131). Undoing a
   mutant with `git checkout <file>` also drops your uncommitted edits in that file: commit first, or mutate and
-  restore a copy ([journal](journal/2026-11-22.md), PR #201).
+  restore a copy ([journal](journal/2026-11-22.md), PR #201). A mutant made with `sed -i.bak` and undone with `mv`
+  keeps the old mtime, so cargo reuses the mutated binary: `touch` the restored file before any live run
+  ([journal](journal/2026-11-24/0150-295-hold-skip.md)).
 - Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
   read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
   inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
@@ -292,6 +295,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
   Claiming a workflow or rule fired (drills) → cite the run log or the resulting state (timeline event, draft flag),
   never the bot's "applied" message: a `|| true` hid a permission error ([journal](journal/2026-11-22.md), PR #209 R1.1).
+  Writing a rule or session type whose PR closes no issue (Planner) → before round 1, walk that PR through every
+  TICK section keyed to an issue (§4 K and cap, §4 step 6 escalation, §5 `/hold` and `owner-todo`, §8) and write each
+  mapping down; PR #289 drew one such gap per round (R1.1 to R5.3) and reached design
+  ([journal](journal/2026-11-24/0004-244-planner.md)).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
