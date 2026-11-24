@@ -14,6 +14,8 @@ const ISSUE_URL: &str = "https://github.com/jacobdam/jpdf3/issues/";
 const FEED_SCRIPT: &str = "ops/driver/owner-issues.sh";
 const ALARM_FILE: &str = "ops/state/judge-alarm-since";
 const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
+/// The head-branch prefix of the owner's own protected changes (AUTOMATION.md §6.1, #298).
+const OWNER_BRANCH: &str = "owner/";
 
 pub struct Options {
     pub from: Option<PathBuf>,
@@ -55,6 +57,8 @@ struct Inputs {
     /// `<path>\t<line>` for each `- Session: ` line of the journal files of the last 7 UTC days
     /// (steps 8 and 11).
     records: String,
+    /// The comments of each open PR (`number`, `comments`), for the owner's `/hold` (step 3).
+    holds: String,
     /// `ops/QUEUE.md` on origin/main, if it is there and readable (step 8).
     queue: Option<String>,
 }
@@ -270,6 +274,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             milestones: read(dir, "milestones.json")?,
             blocked: read(dir, "blocked.json")?,
             records: read(dir, "records.txt")?,
+            holds: read(dir, "holds.json")?,
             queue: optional(&dir.join("queue.md"))?,
         });
     }
@@ -343,6 +348,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
         blocked: blocked_live(&week_ago)?,
         records,
+        holds: gh("pr list --author @me --state open --limit 200 --json number,comments")?,
         queue: queue_live()?,
     })
 }
@@ -463,6 +469,22 @@ struct Pr {
     branch: String,
     labels: Vec<String>,
     failing: bool,
+    /// Open and on the owner's `/hold` (`held_prs`), set by `decide`.
+    held: bool,
+}
+
+impl Pr {
+    /// The owner's own change: its head branch starts with `owner/` (AUTOMATION.md §6.1). The
+    /// owner signs its commits, posts its `ai-review` and merges it; a session can't push to it
+    /// (#298).
+    fn owner_branch(&self) -> bool {
+        self.branch.starts_with(OWNER_BRANCH)
+    }
+
+    /// Open, and not a session's to move: held (#295) or the owner's own change (#298).
+    fn parked(&self) -> bool {
+        self.open && (self.held || self.owner_branch())
+    }
 }
 
 fn failing(rollup: &Value, what: &str) -> Result<bool, String> {
@@ -520,6 +542,7 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
             branch: text(p, "headRefName", what)?.to_owned(),
             labels: labels(p, what)?,
             failing: open && (conflict || rollup_bad),
+            held: false,
         };
         // The account is shared with the owner: only tagged PRs are the agent's own.
         if tagged(body) {
@@ -527,6 +550,44 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
         }
     }
     out.sort_by_key(|p| p.number);
+    Ok(out)
+}
+
+/// The numbers of the PRs in `holds.json` whose newest owner command is a `/hold` (#295). A
+/// command is what `.github/workflows/owner-commands.yml` acts on: an owner-account comment
+/// whose body starts with `/hold` or `/release` and doesn't contain the tag, both ignoring case
+/// (Actions' `startsWith` and `contains` do; ASCII case here, R1.1). The workflow then holds when
+/// the body starts with `/hold` exactly and releases otherwise, so `/Hold` is a release. Newest is
+/// the largest `createdAt` (GitHub's `YYYY-MM-DDTHH:MM:SSZ`, so text order is time order); on a
+/// tie, the later in the list.
+fn held_prs(text_: &str) -> Result<Vec<u64>, String> {
+    let what = "holds.json";
+    let v = parse_list(text_, what)?;
+    let mut out = Vec::new();
+    for p in list(&v, what)? {
+        let n = number(p, "number", what)?;
+        let mut newest: Option<(&str, bool)> = None;
+        for c in list(field(p, "comments", what)?, what)? {
+            let body = text(c, "body", what)?;
+            let login = match field(c, "author", what)? {
+                Value::Null => None,
+                a => Some(text(a, "login", what)?),
+            };
+            let lower = body.to_ascii_lowercase();
+            let command = lower.starts_with("/hold") || lower.starts_with("/release");
+            if login != Some(OWNER) || lower.contains(&TAG.to_ascii_lowercase()) || !command {
+                continue;
+            }
+            let hold = body.starts_with("/hold");
+            let at = text(c, "createdAt", what)?;
+            if newest.is_none_or(|(t, _)| at >= t) {
+                newest = Some((at, hold));
+            }
+        }
+        if newest.is_some_and(|(_, hold)| hold) {
+            out.push(n);
+        }
+    }
     Ok(out)
 }
 
@@ -851,7 +912,7 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     let closed = parse_owner(&inp.owner_closed, "owner-closed.json", true)?;
     let in_flight_issue = |n: u64| {
         prs.iter()
-            .any(|p| p.open && !p.failing && linked_issue(&p.body) == Some(n))
+            .any(|p| p.open && (!p.failing || p.parked()) && linked_issue(&p.body) == Some(n))
     };
     let mut issues: Vec<u64> = Vec::new();
     for item in &feed {
@@ -887,7 +948,7 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
             *at >= inp.floor.as_str()
                 && !prs
                     .iter()
-                    .any(|p| p.open && !p.failing && names_url(&p.body, url))
+                    .any(|p| p.open && (!p.failing || p.parked()) && names_url(&p.body, url))
         })
         .collect();
     comments.sort_unstable();
@@ -1072,7 +1133,11 @@ fn plan_milestone(queue: Option<&str>) -> Option<&str> {
 }
 
 fn decide(inp: &Inputs) -> Result<String, String> {
-    let prs = parse_prs(&inp.prs)?;
+    let mut prs = parse_prs(&inp.prs)?;
+    let held = held_prs(&inp.holds)?;
+    for p in &mut prs {
+        p.held = p.open && held.contains(&p.number);
+    }
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
     let now = unix(&inp.now, "now.txt")?;
@@ -1112,7 +1177,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = prs
             .iter()
-            .filter(|p| p.open && p.failing && !skipped(&p.labels))
+            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked())
             .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
             .map(|p| {
                 let mut load = vec![
@@ -1195,6 +1260,18 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .collect();
     branches.sort_unstable();
     let mut notes = Vec::new();
+    for p in prs.iter().filter(|p| p.held) {
+        notes.push(format!(
+            "PR #{} is on the owner's /hold (no /release after it): step 3 doesn't pick it",
+            p.number
+        ));
+    }
+    for p in prs.iter().filter(|p| p.open && p.owner_branch()) {
+        notes.push(format!(
+            "PR #{} is the owner's own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it",
+            p.number
+        ));
+    }
     if alarm.is_some() {
         notes.push(format!(
             "judge alarm active ({ALARM_FILE} exists): step 2 skipped{}",

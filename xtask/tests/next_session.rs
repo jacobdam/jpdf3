@@ -255,6 +255,15 @@ fn base() -> Vec<(&'static str, String)> {
         ),
         ("records.txt", base_records()),
         ("queue.md", BASE_QUEUE.to_owned()),
+        // PR 300 was held and released: not held.
+        (
+            "holds.json",
+            format!(
+                r#"[{{"number":300,"comments":[{},{}]}}]"#,
+                cmd("jacobdam", "/hold", "2026-11-23T01:00:00Z"),
+                cmd("jacobdam", "/release", "2026-11-23T02:00:00Z")
+            ),
+        ),
         (
             "worktrees.txt",
             "worktree /w/main\nHEAD a\nbranch refs/heads/main\n\nworktree /w/a\nHEAD b\nbranch refs/heads/t/298-x\n\n\
@@ -267,6 +276,354 @@ fn base() -> Vec<(&'static str, String)> {
 
 /// `ops/QUEUE.md` on origin/main: it plans the current milestone, M0 (step 8 near miss).
 const BASE_QUEUE: &str = "# QUEUE\n\nMilestone: M0\nPlanned: 2026-11-23\n";
+
+/// A PR comment of `holds.json`.
+fn cmd(login: &str, body: &str, at: &str) -> String {
+    format!(r#"{{"author":{{"login":{login:?}}},"body":{body:?},"createdAt":{at:?}}}"#)
+}
+
+/// `holds.json` with one entry per (PR, comments).
+fn holds(entries: &[(u64, &[String])]) -> (&'static str, Option<String>) {
+    let e: Vec<String> = entries
+        .iter()
+        .map(|(n, c)| format!(r#"{{"number":{n},"comments":[{}]}}"#, c.join(",")))
+        .collect();
+    ("holds.json", Some(format!("[{}]", e.join(","))))
+}
+
+#[test]
+fn step3_skips_a_pr_on_the_owners_hold() {
+    // PR 300 fails (no ai-review); its issue 301 is the base's ready issue.
+    let failing = set(
+        "prs.json",
+        format!(
+            "[{},{}]",
+            pr(300, "OPEN", "Closes #301", "t/301-y", &[], "[]"),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let on = |c: &[String]| pick(&[failing.clone(), holds(&[(300, c)])]);
+    let h = |at: &str| cmd("jacobdam", "/hold", at);
+    let r = |at: &str| cmd("jacobdam", "/release", at);
+    const T1: &str = "2026-11-24T01:00:00Z";
+    const T2: &str = "2026-11-24T02:00:00Z";
+    // Unheld: picked.
+    assert_eq!(on(&[]), "worker own-pr #300");
+    // Held: not picked; the linked issue stays in flight, so step 10 doesn't take #301.
+    assert_eq!(on(&[h(T1)]), "planner");
+    assert_eq!(on(&[r(T1), h(T2)]), "planner", "hold after release");
+    assert_eq!(on(&[h(T2), r(T1)]), "planner", "list order doesn't matter");
+    assert_eq!(on(&[r(T1), h(T1)]), "planner", "a tie goes by list order");
+    assert_eq!(
+        on(&[cmd("jacobdam", "/holdx", T1)]),
+        "planner",
+        "the workflow's prefix match"
+    );
+    // Near misses: picked.
+    let picked = "worker own-pr #300";
+    assert_eq!(on(&[h(T1), r(T2)]), picked, "released");
+    assert_eq!(on(&[r(T2), h(T1)]), picked, "released, list order");
+    assert_eq!(on(&[h(T1), r(T1)]), picked, "a tie goes by list order");
+    assert_eq!(
+        on(&[cmd("jacobdam", &format!("/hold {TAG}"), T1)]),
+        picked,
+        "tagged"
+    );
+    assert_eq!(on(&[cmd("someone", "/hold", T1)]), picked, "not the owner");
+    assert_eq!(
+        on(&[cmd("jacobdam", " /hold", T1)]),
+        picked,
+        "not at the start"
+    );
+    assert_eq!(
+        on(&[cmd("jacobdam", "please /hold", T1)]),
+        picked,
+        "later text"
+    );
+    assert_eq!(on(&[cmd("jacobdam", "/Hold", T1)]), picked, "case");
+    // A tagged or stranger's /release doesn't lift the owner's hold.
+    assert_eq!(on(&[h(T1), cmd("someone", "/release", T2)]), "planner");
+    assert_eq!(
+        on(&[h(T1), cmd("jacobdam", &format!("{TAG} /release"), T2)]),
+        "planner"
+    );
+    assert_eq!(
+        on(&[
+            h(T1),
+            cmd("jacobdam", "/release x", T2),
+            cmd("jacobdam", "ok", "2026-11-25T00:00:00Z")
+        ]),
+        picked,
+        "an ordinary comment after the release changes nothing"
+    );
+    // R1.1: the workflow matches the command ignoring case, then holds only on `/hold` exactly.
+    for later in ["/Release", "/RELEASE", "/Hold", "/HOLD now"] {
+        assert_eq!(
+            on(&[h(T1), cmd("jacobdam", later, T2)]),
+            picked,
+            "{later} releases"
+        );
+    }
+    assert_eq!(
+        on(&[h(T1), cmd("jacobdam", "/release 🤖 JPDF-Agent", T2)]),
+        "planner",
+        "the tag in other case: no command"
+    );
+    assert_eq!(
+        on(&[cmd("jacobdam", "/hold 🤖 JPDF-AGENT", T1)]),
+        picked,
+        "the tag in other case: no command"
+    );
+    // R1.2: step 1 treats a held failing PR like a green one: its owner issue and an owner
+    // comment its body names wait for the /release.
+    let url = format!("{ISSUES}777#issuecomment-1");
+    let linking = set(
+        "prs.json",
+        format!(
+            "[{},{}]",
+            pr(
+                300,
+                "OPEN",
+                &format!("Closes #260\nOwner instruction: {url}"),
+                "t/301-y",
+                &[],
+                "[]"
+            ),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let feed = feed_plus(&[feed_issue(260)]);
+    assert_eq!(
+        pick(&[linking.clone(), feed.clone(), holds(&[(300, &[])])]),
+        "worker owner-issue #260"
+    );
+    assert_eq!(
+        pick(&[linking.clone(), feed, holds(&[(300, &[h(T1)])])]),
+        "worker ready #301",
+        "the base's ready issue #301 is no longer linked"
+    );
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[linking.clone(), comment.clone(), holds(&[(300, &[])])]),
+        format!("worker owner-comment {url}")
+    );
+    assert_eq!(
+        pick(&[linking, comment, holds(&[(300, &[h(T1)])])]),
+        "worker ready #301"
+    );
+    // R1.3: two held PRs are noted lowest first, whatever the list order.
+    let two = set(
+        "prs.json",
+        format!(
+            "[{},{},{}]",
+            pr(305, "OPEN", "", "t/9-b", &[], "[]"),
+            pr(300, "OPEN", "Closes #301", "t/301-y", &[], "[]"),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let o = run_with(&[two, holds(&[(305, &[h(T1)]), (300, &[h(T1)])])]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    let (a, b) = (
+        out.find("PR #300 is").unwrap(),
+        out.find("PR #305 is").unwrap(),
+    );
+    assert!(a < b, "{out}");
+    // A hold on another PR number doesn't hold this one.
+    assert_eq!(
+        pick(&[failing.clone(), holds(&[(301, &[h(T1)]), (300, &[])])]),
+        picked
+    );
+    // A comment with a null author (a deleted account) is not the owner's.
+    let ghost = r#"{"author":null,"body":"/hold","createdAt":"2026-11-24T01:00:00Z"}"#;
+    assert_eq!(on(&[ghost.to_owned()]), picked);
+    // The brief notes the held PR.
+    let o = run_with(&[failing.clone(), holds(&[(300, &[h(T1)])])]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(
+            "\n- PR #300 is on the owner's /hold (no /release after it): step 3 doesn't pick it\n"
+        ),
+        "{out}"
+    );
+    // A held green PR is noted too; a held merged PR is not.
+    let o = run_with(&[holds(&[(300, &[h(T1)]), (299, &[h(T1)])])]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.contains("- PR #300 is on the owner's /hold"), "{out}");
+    assert!(!out.contains("PR #299"), "{out}");
+    // Malformed: exit 1.
+    for bad in [
+        r#"[{"number":300}]"#.to_owned(),
+        r#"{}"#.to_owned(),
+        r#"[{"number":300,"comments":[{"author":{"login":"jacobdam"},"body":"/hold"}]}]"#
+            .to_owned(),
+        r#"[{"number":300,"comments":[{"author":{"login":"jacobdam"}}]}]"#.to_owned(),
+    ] {
+        let o = run_with(&[set("holds.json", bad.clone())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{bad}");
+        assert!(o.stdout.is_empty(), "{bad}");
+    }
+    // A non-command comment needs no createdAt.
+    let plain = r#"[{"number":300,"comments":[{"author":{"login":"jacobdam"},"body":"hi"}]}]"#;
+    assert_eq!(
+        pick(&[failing, set("holds.json", plain.to_owned())]),
+        picked
+    );
+}
+
+#[test]
+fn step3_skips_the_owners_own_pr_on_an_owner_branch() {
+    // #298: PR 300 fails (no ai-review) and is tagged (the owner's interactive session wrote
+    // it); its issue 301 is the base's ready issue.
+    // Only the main worktree, so a PR branch other than t/301-y leaves no leftover (rule f).
+    let wt = set(
+        "worktrees.txt",
+        "worktree /w/main\nHEAD a\nbranch refs/heads/main\n".to_owned(),
+    );
+    let on = |branch: &str| {
+        set(
+            "prs.json",
+            format!(
+                "[{},{}]",
+                pr(300, "OPEN", "Closes #301", branch, &[], "[]"),
+                pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+            ),
+        )
+    };
+    // The owner's branch: not picked; the linked issue stays in flight, so step 10 doesn't
+    // take #301 either.
+    assert_eq!(pick(&[wt.clone(), on("owner/hold-automerge")]), "planner");
+    assert_eq!(
+        pick(&[wt.clone(), on("owner/")]),
+        "planner",
+        "the bare prefix"
+    );
+    // Near misses: picked.
+    for branch in [
+        "t/301-y",
+        "owner",
+        "owners/x",
+        "Owner/x",
+        "t/owner/x",
+        " owner/x",
+        "x-owner/y",
+    ] {
+        assert_eq!(
+            pick(&[wt.clone(), on(branch)]),
+            "worker own-pr #300",
+            "{branch}"
+        );
+    }
+    // The brief notes it, once, without the branch name.
+    let o = run_with(&[wt.clone(), on("owner/hold-automerge")]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let note = "\n- PR #300 is the owner's own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it\n";
+    assert_eq!(out.matches(note).count(), 1, "{out}");
+    assert!(!out.contains("hold-automerge"), "{out}");
+    // A merged or closed owner PR is not noted, and doesn't hold the issue.
+    for state in ["MERGED", "CLOSED"] {
+        let gone = set(
+            "prs.json",
+            format!("[{}]", pr(300, state, "Closes #301", "owner/x", &[], "[]")),
+        );
+        let o = run_with(&[wt.clone(), gone]).unwrap();
+        let out = String::from_utf8(o.stdout).unwrap();
+        assert!(out.starts_with("worker ready #301\n"), "{state}: {out}");
+        assert!(!out.contains("PR #300"), "{state}: {out}");
+    }
+    // A green owner PR is noted too (it waits on the owner either way).
+    let green = set(
+        "prs.json",
+        format!(
+            "[{}]",
+            pr(300, "OPEN", "Closes #301", "owner/x", &[], GREEN)
+        ),
+    );
+    let o = run_with(&[wt.clone(), green]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    assert!(out.contains(note), "{out}");
+    // Held and on the owner's branch: both notes.
+    let o = run_with(&[
+        wt.clone(),
+        on("owner/x"),
+        holds(&[(300, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    assert!(out.contains(note), "{out}");
+    assert!(out.contains("- PR #300 is on the owner's /hold"), "{out}");
+    // R1.1: owner-branch notes come lowest number first, after the held ones, whatever the
+    // list order.
+    let mixed = set(
+        "prs.json",
+        format!(
+            "[{},{},{}]",
+            pr(302, "OPEN", "", "owner/b", &[], "[]"),
+            pr(300, "OPEN", "", "t/301-y", &[], "[]"),
+            pr(301, "OPEN", "", "owner/a", &[], "[]")
+        ),
+    );
+    let o = run_with(&[
+        wt.clone(),
+        mixed,
+        holds(&[(300, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.starts_with("worker ready #301\n"),
+        "none links #301: {out}"
+    );
+    let at = |s: &str| out.find(s).unwrap_or_else(|| panic!("{s}: {out}"));
+    let (h, a, b) = (
+        at("- PR #300 is on the owner's /hold"),
+        at("- PR #301 is the owner's own change"),
+        at("- PR #302 is the owner's own change"),
+    );
+    assert!(h < a && a < b, "{out}");
+    // Step 1: an owner issue the owner's PR closes, and an owner comment its body names, wait
+    // for that PR, as for a held one.
+    let url = format!("{ISSUES}777#issuecomment-1");
+    let linking = |branch: &str| {
+        set(
+            "prs.json",
+            format!(
+                "[{}]",
+                pr(
+                    300,
+                    "OPEN",
+                    &format!("Closes #260\nOwner instruction: {url}"),
+                    branch,
+                    &[],
+                    "[]"
+                )
+            ),
+        )
+    };
+    let feed = feed_plus(&[feed_issue(260)]);
+    assert_eq!(
+        pick(&[wt.clone(), linking("t/260-x"), feed.clone()]),
+        "worker owner-issue #260"
+    );
+    assert_eq!(
+        pick(&[wt.clone(), linking("owner/x"), feed]),
+        "worker ready #301",
+        "the base's ready issue #301 is no longer linked"
+    );
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[wt.clone(), linking("t/260-x"), comment.clone()]),
+        format!("worker owner-comment {url}")
+    );
+    assert_eq!(
+        pick(&[wt.clone(), linking("owner/x"), comment]),
+        "worker ready #301"
+    );
+}
 
 /// `records.txt` lines (`<path>\t<line>`).
 fn records(lines: &[(&str, &str)]) -> String {

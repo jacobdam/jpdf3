@@ -34,9 +34,10 @@ days without a Planner run) and widens `records.txt` to 7 days.
 
   - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
     picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
-    `Notes:` list when there is something to note (an active judge alarm; worktrees whose
-    branch's PR is merged or closed, which can be removed; a due audit or retro that step 7
-    didn't pick because its PR is open).
+    `Notes:` list when there is something to note (each open agent PR on the owner's `/hold`
+    and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
+    worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
+    retro that step 7 didn't pick because its PR is open).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -83,6 +84,8 @@ days without a Planner run) and widens `records.txt` to 7 days.
       blob that can't be read as text (a failed `cat-file`, not UTF-8, over the output cap),
       means no plan, never a stopped scheduler (the Planner rewrites the file). With `--from`,
       a missing file means no plan; a file that isn't UTF-8 is exit 1 (a broken fixture).
+  17. `holds.json`: `gh pr list --author @me --state open --limit 200 --json number,comments`
+      (the conversation comments of each open PR, for the owner's `/hold`, #295).
 
   `issues.json` (input 6) also reads `body` and `milestone`:
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
@@ -110,13 +113,14 @@ days without a Planner run) and widens `records.txt` to 7 days.
      - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
        owner's own work, and owner comments on it come as comment lines) that has no owner reply starting with
        `🤖 jpdf-agent done: <the issue's URL>` (exact URL, followed by whitespace or the end),
-       carries no skip label, and isn't linked by an open PR that isn't failing (that PR is
-       already doing it; a failing one is picked here, so rule a outranks rule c for it).
+       carries no skip label, and isn't linked by an open PR that isn't failing or is held
+       (step 3; that PR is already doing it, or waits for the owner's `/release`; a failing one
+       is picked here, so rule a outranks rule c for it).
        Lowest number first. `owner-open.json` supplies the replies and labels; an issue missing
        from it counts as pending with no labels;
      - an owner comment (feed kinds `comment`, `review_comment`, `review`) created at or after
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
-       that isn't failing. Oldest `created_at` first, then by URL;
+       that isn't failing or is held. Oldest `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
        `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
        (both exact, as above; a reply for a comment on the issue doesn't count)
@@ -128,7 +132,28 @@ days without a Planner run) and widens `records.txt` to 7 days.
      raised; the session continues with other work); the brief notes the alarm instead.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
-       carries a skip label. Lowest number first;
+       carries a skip label, and that is not *held*. Lowest number first. A PR is held when,
+       of its comments in `holds.json` that are an owner command, the newest (largest
+       `createdAt`; on a tie, the later in the list) is a hold. A command is a comment that
+       `.github/workflows/owner-commands.yml` acts on: author `jacobdam`, a body that starts
+       with `/hold` or `/release` and doesn't contain the tag, both ignoring case (Actions'
+       `startsWith` and `contains` do; ASCII case here). The workflow then holds when the body
+       starts with `/hold` exactly and releases otherwise, so `/Hold` or `/RELEASE` is a
+       release. TICK §5: nothing moves until
+       `/release`, so a session picked for it could do nothing, and every later session would
+       get the same pick (#295). The brief notes each held open agent PR
+       (`PR #N is on the owner's /hold (no /release after it): step 3 doesn't pick it`), lowest
+       number first. A held PR still links its issue (in flight), and step 1 treats it like a
+       PR that isn't failing: its owner issue or comment waits for the `/release` too. The
+       same goes for an open PR whose head branch starts with `owner/` (case and position
+       exact): AUTOMATION.md §6.1's branch for the owner's own protected change. The owner
+       signs its commits, posts its `ai-review` and merges it, so a session can't push to it
+       and has nothing to do; its body is tagged when the owner's interactive session wrote
+       it, so it is in `prs.json` (#298: PRs #290 and #291 link their issues with `Refs`, so
+       the linked-issue skip missed them). The brief notes each one (`PR #N is the owner's
+       own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it`, without
+       the branch name), lowest number first, after the held ones; a PR that is both gets
+       both notes;
      - an open issue labeled `bug` whose title starts with `next-session: `, with no skip
        label and not in flight.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
@@ -263,7 +288,11 @@ never 2 (no command ran).
   only the open ones (a handful) and the branches of local worktrees matter. A `gh issue list`
   `comments` field holds at most the first 100 comments of an issue (gh's GraphQL page), so a
   done: reply after the 100th comment is missed and the issue is picked again; the session
-  then sees the reply and exits under rule a. No owner issue has 100 comments today.
+  then sees the reply and exits under rule a. No owner issue has 100 comments today. The same
+  cap applies to `holds.json`: a `/hold` or `/release` after a PR's 100th comment is missed,
+  and step 3 judges the PR by the earlier commands (a missed `/hold` picks it as before #295;
+  the session then sees the hold and does nothing, TICK §5). No open PR has 100 comments
+  today.
 - Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
   (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
   every issue updated in the week would cost one events call each. At most 100 issues updated
@@ -291,7 +320,15 @@ never 2 (no command ran).
   comments are not owner replies, and a PR counts as in flight only when it is a tagged PR
   of the shared account (`--author @me`; the guard forces the tag on agent PRs, and the owner's
   own untagged PRs are ignored). The skip labels can be set by the agent account
-  (ADR 0011 Consequences: the guard can't check labels).
+  (ADR 0011 Consequences: the guard can't check labels). A hold counts only from an untagged
+  owner-account comment, as the workflow applies it, so a stranger's `/hold` or `/release`
+  changes nothing; an agent comment can't release a hold (it carries the tag). The owner's
+  commands only ever hold back step 3: a held PR is skipped, never picked. The `owner/`
+  branch skip only holds back step 3 too: any session can name a branch that way (the
+  account is shared), but that only stops its own PR from being picked, and whatever the PR
+  links then waits on it, as it would on a held PR: an owner issue or comment it names (step
+  1), and any other issue it closes, a `crash` or `security` one included (in flight, steps 4
+  to 10). An open PR with a skip label already does the same, so nothing new is exposed.
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
@@ -342,7 +379,7 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Nine `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
+Eight `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
 plus one `git ls-tree` per open agent PR and one `git cat-file` per journal file of the last 7
 days, two more for `ops/QUEUE.md`, and the feed script (which makes its own); a few seconds.
 
@@ -364,6 +401,21 @@ of inputs where no step before 11 applies (→ `planner`):
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,
   each skip label, an open dependency, a non-current milestone) and each 7-day boundary at
   the second it is reached and one second before;
+- step 3's hold (#295): a failing PR whose newest owner command is `/hold` is not picked and
+  the brief notes it; near misses: `/release` after the `/hold` (by `createdAt`, whatever the
+  list order), a tagged `/hold`, a `/hold` by another author, a body that only contains
+  `/hold` after other text, a hold on another PR number; an equal `createdAt` goes by list
+  order; a `/holdx` body counts as a hold (the workflow's prefix match); `/Release` or `/Hold`
+  after a `/hold` releases it, and a body with the tag in other case is no command; step 1:
+  an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
+  and two held PRs are noted lowest first; a malformed
+  `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+- step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
+  picked, its linked issue stays in flight, and the brief notes it once without the branch
+  name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,
+  `x-owner/y` (all picked); a merged or closed owner PR is not noted and doesn't hold its
+  issue; a green owner PR is noted; a held owner PR gets both notes; step 1: an owner issue
+  the owner PR closes and an owner comment its body names are not picked;
 - step 7's slot in flight: an open PR linking an `audit` or `retro` issue holds that term only
   (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the
   other label, a longer label, a merged, closed or untagged PR, no `Closes` link, a closed
