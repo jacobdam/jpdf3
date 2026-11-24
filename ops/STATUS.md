@@ -4,9 +4,12 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #316 (#277): TICK §4 step 6 says what happens after the last check (record-only merges re-post `ai-review`,
-  any other change goes to the owner) and `cargo xtask metrics` counts design final checks; round 3 clean,
-  auto-merge on.
+- PR #316 (#277) merged (3e4e342): TICK §4 step 6 after the last check; `cargo xtask metrics` counts design final
+  checks.
+- PR #318 (#294): TICK §9 step 6 wording for a Planner PR closed at the cap (created issues, a `Delete tag mN` owner
+  issue, who closes the discovery issue, `owner-todo` off after `/release`); 4 rounds, `ai-review` success, auto-merge
+  on. R4.1 deferred to #319 (no `ready`).
+- PR #317 (#288, the work-mix budget in next-session) is open.
 - #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
   Planner), part 3 is #247 (depends on #308).
 - PR #312 (#249, Design: product session 1/2) is an open draft.
@@ -27,7 +30,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#277 is in PR #316; #308 and #314 wait for the next Planner's `ready`), else `idle` today (the
+   are closed (#308, #314, #319 wait for the next Planner's `ready`), else `idle` today (the
    Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
@@ -37,7 +40,7 @@ Phase: bootstrap (pilot)
    still say "proposed" (audit 0006); audit 0004 AC.3/AC.4; Codex timeouts and brief-only reviews (PR #268, audits
    0005–0006).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
-  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
+  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262, #320 (guard: colon-refspec delete push).
 
 ## Blockers / owner-todo
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
@@ -53,4 +56,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none: PR #316 moved both into ops/LESSONS.md)
+- Orient: STATUS and LESSONS read from the main checkout before `git pull` can be stale (PR #318 re-added two lessons
+  #316 had already moved, R1.1) → read them from the worktree on origin/main, or `git pull` first
+  ([journal](journal/2026-11-24/0535-294-planner-cap.md)).
