@@ -2829,6 +2829,8 @@ fn step8_design_product() {
     // never stops a workable v1 issue (#313: `waiting` over v1's issues only, not all of them).
     for gap in [
         product(320, &["owner-todo"]),
+        product(320, &["blocked"]),
+        product(320, &["deferred"]),
         ready(320, "M5", &["design-product"], "Depends on: #5"),
     ] {
         assert_eq!(

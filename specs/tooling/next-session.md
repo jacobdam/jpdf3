@@ -589,7 +589,8 @@ of inputs where no step before 11 applies (→ `planner`):
   `x/docs/PRODUCT.md`, a quoted path) are v1; v1 with open `design-product` issues: the lowest
   one without `ready` with its brief, a ready one alone → plain v1, any waiting one (each skip
   label, an open dependency, also beside a workable one or a ready gap issue) → nothing with
-  the note, an issue with another label → plain v1; with the file present, the lowest ready
+  the note, a waiting ready gap issue (each skip label, an open dependency) beside a workable
+  v1 issue → that v1 issue (#313), an issue with another label → plain v1; with the file present, the lowest ready
   `design-product` issue in any milestone or none, its brief, and that it wins over a ready
   Worker issue; a closed dependency; near misses (not `ready`, each skip label, an open
   dependency, `design`, `design-products`); a ready `design-product` issue in M0 is never step 10's; while the file
