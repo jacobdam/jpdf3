@@ -130,7 +130,9 @@ tasks, a ruling followed by one final check, or one question for the owner. One 
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
 design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
 `ai-review` success, the owner's last `/release`, unless the owner `/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
-touches. Until #275 adds step 6 to the scheduler, sessions check it by hand before a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`).
+touches. Part 2 (#275) adds step 6 to the scheduler: after steps 1–5 it picks
+`design-technical needs-design #N` (an escalated PR, which step 3 no longer takes), else
+`design-technical design-issue #N` (a `design` and `ready` issue).
 
 Task 2 part 1 (#244) adds the **Planner** session (ops/TICK.md §9). It is the only gate into
 `ready` besides the owner: other sessions file Worker issues without it. The scheduler's step 8
