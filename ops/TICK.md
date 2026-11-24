@@ -33,8 +33,9 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   - When a PR waits for the owner, add `owner-todo` to its issue with a one-line note on what
     the owner needs to do: an owner `/hold` (note: waiting for `/release`; add it as soon as
     you see the `/hold`), a PR you parked for an owner decision (§2 c, §4 step 6), a design
-    session's owner question (§8 output 4), or a design ADR PR in its 24-hour `/hold` window
-    (§8 step 5).
+    session's owner question (§8 output 4), a design ADR PR in its 24-hour `/hold` window
+    (§8 step 5), or a `docs/PRODUCT.md` PR waiting for the owner (§10 step 6: v1's approval, or a
+    later change's 24-hour window).
   - Remove `owner-todo` once the owner's part is done (a merge on main applying it, which for a
     protected path needs the owner's signed commits, or the owner comment it waited for), or,
     for a design ADR PR, once its window has passed with no `/hold` (§8 step 5; the owner's
@@ -127,16 +128,17 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
 - **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
   (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
-  `Rule:` line), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
+  `Rule:` line), then rule k (`design product v1`, `design product #N`: a Design: product
+  session, §10), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
   `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
   `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The
-  scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
+  scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design`, `design-pending` and `design-product`), and issues that an
   open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head,
   unless the owner's newest `/hold` or `/release` on it is a `/hold` (§5, #295) or its head
   branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298)).
-- **Before acting on a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`):** check
+- **Before acting on a step 7, 8, 10 or 11 pick (`planner due`, `design product …`, `planner`, `idle`):** check
   precedence step 6 by hand (task #275 moves it into the scheduler, ahead of steps 7, 8, 10 and 11) with the scheduler's
   skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the
   issue it closes carries `owner-todo`, `blocked` or `deferred`; else the lowest-numbered open
@@ -215,6 +217,10 @@ j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone h
    `ops/QUEUE.md` on main, or no Planner record is dated in the last 7 UTC days) or step 11
    (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
    `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
+k. **Design: product** → §10. Picked at step 8 after the Planner's terms: `design product v1`
+   (`docs/PRODUCT.md` is not on main) or `design product #N` (the lowest open issue labeled
+   `design-product` and `ready`, once the file is on main); neither while an open agent PR
+   links an open `design-product` issue.
 
 **M0 bootstrap.** While the milestone is M0, the backlog itself is the work (rule i; a–h
 still come first). Do these in order, one per session:
@@ -709,3 +715,52 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    review, not held), don't open a second one: merge origin/main into it, update its QUEUE.md and
    records, and review the change there. Step 8's milestone term reads main only, so a Planner
    PR still open past midnight makes the Planner due again the next day; this is that case.
+
+## 10. DESIGN: PRODUCT session (ADR 0011 §1, §7; no code)
+Picked by §2 at step 8 (rule k). It decides what jpdf is for (`docs/PRODUCT.md`) and what users
+do with it (`specs/journeys/`); Workers build it, and Design: technical decides how. Specs:
+specs/tooling/next-session.md step 8.
+1. **Issue first.** `design product v1`: the open issue labeled `design-product` for v1 (#311),
+   else file `Product: docs/PRODUCT.md v1` with that label and no `ready`. `design product #N`:
+   that issue. Claim it (§3 step 1; an owner issue gets the §0 replies) and draft its PR with
+   `Closes #<issue>` early: while that PR is open, the scheduler picks no Design: product work.
+2. **Load:** the issue and the record it came from (an audit or user-advocate finding, an
+   owner comment); `docs/PRODUCT.md` (not for v1); PLAN.md §1 and §4; `specs/journeys/README.md`,
+   the PDFgear inventory `specs/journeys/RESEARCH.md` and the journey files the issue names. No
+   code.
+3. **Allowed outputs:** `docs/PRODUCT.md`; journeys in `specs/journeys/`, append-only
+   (CONSTITUTION 15: a new ID, or `superseded_by:` on an old one, never a deleted ID); and
+   issues: Worker issues for new journeys (without `ready`, §9), `design` issues for technical
+   questions (ADR 0011 §7: those don't go to the owner), `design-product` issues for gaps this
+   session doesn't close. **No code, tests, other specs, ADRs or PLAN.md changes:** a reviewer
+   grades any as a blocker. A change of scope in PLAN §4 is the owner's: put it in the PR as a
+   question (step 6), not in the diff.
+4. **`docs/PRODUCT.md`** says what is decided, in this order: who jpdf is for and the jobs they
+   do with it; the scope, PLAN §4's features grouped by job, each with the journeys that cover
+   it; non-goals; the promises users can rely on (security, fidelity, privacy, accessibility,
+   offline use), each pointing to the CONSTITUTION rule, ADR or PLAN section that enforces it
+   instead of restating it; the platforms; how the file changes (this section). It invents no
+   scope: a feature PLAN and the journeys don't have is a question for the owner in the PR, and
+   a journey gap is a `design-product` issue. Write the present tense only for what is on main
+   (LESSONS: overview docs).
+5. **Review** by §4 (no Codex: no `crates/` or `tools/` path). The brief adds this section, ADR
+   0011 §1 and §7, PLAN.md §4 and the journey files the diff touches; ask the reviewer to check
+   every claim against them (no invented scope, no feature without a journey, no false
+   present tense) and every journey change against CONSTITUTION 15. **Over the cap:** no
+   Design: technical escalation (product scope is the owner's call, ADR 0011 §7): where §4 step
+   6 would escalate, turn the PR back into a draft, post `ai-review` failure, add `owner-todo`
+   to the issue and comment the ledger on it.
+6. **Merge.**
+   - **v1 merges only on the owner's explicit approval, with no timeout** (ADR 0011 §7). Never
+     label it `design` or enable auto-merge. After `ai-review` success, mark the PR ready, add
+     `owner-todo` to its issue and comment on the issue `ready for owner: docs/PRODUCT.md v1 in
+     PR #N merges only on your approval (an untagged comment on the PR)`, listing the
+     questions from step 4 if any. The owner's comment is an owner instruction (rule a): an
+     approval → enable auto-merge, remove `owner-todo`, §0's replies; requested changes → work
+     them in the PR (§4 rounds count for the issue), then ask again.
+   - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` and
+     follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
+     in PR #N merges after 24 h unless you /hold it`; §1's window check enables auto-merge.
+7. **Bound:** one PR per session and one product PR open at a time (the scheduler's rule). A
+   product issue whose PR closed unmerged stays open and is picked again.
+8. **Record** as §5 says (`Picked: rule k (Design: product)`).
