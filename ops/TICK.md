@@ -602,10 +602,11 @@ specs/tooling/design-technical.md.
       count for it, not for the escalated issue's spent cap. Then open the ADR PR; only then, for
       a `needs-design` PR, close that PR unmerged and close the escalated issue as folded into
       the design issue, linking both. When the escalated issue is labeled `design-product`, its
-      product part is not the ADR's (ADR 0011 §7): step 5's tasks include one new issue for it,
-      labeled `design-product` and `ready` (§10 step 3), with the usual `Designed in:` and
-      `Depends on:` lines, so it waits for the ADR and starts its own review count. The tasks
-      are filed in step 5, after the review.
+      product part is not the ADR's (ADR 0011 §7): file one new issue for it **before** closing
+      the escalated one, labeled `design-product` (plus `ready` unless it was v1's: the
+      scheduler's v1 term reads the ones without `ready`), with `Designed in: #<escalated
+      issue>` and `Depends on: #<design issue>`, so it waits for the ADR, starts its own review
+      count, and step 5 skips it. The tasks are filed in step 5, after the review.
    3. **ruling:** post `🤖 jpdf-agent **Design ruling**` on the PR, one line per open finding,
       `<ID>: out of scope by <PRINCIPLES.md entry or ADR §>: <why>`, and a last line
       `Next review: one design final check (ops/TICK.md §8)`. No ruling may cover a blocker, a
@@ -732,9 +733,8 @@ Picked by §2 at step 8 (rule k). It decides what jpdf is for (`docs/PRODUCT.md`
 do with it (`specs/journeys/`); Workers build it, and Design: technical decides how. Specs:
 specs/tooling/next-session.md step 8.
 1. **Issue first.** `design product v1 #N`: that issue (the lowest open `design-product` issue
-   without a skip label and with its `Depends on:` issues closed; #311 for the first v1).
-   `design product v1` with no number (no open `design-product` issue): file
-   `Product: docs/PRODUCT.md v1` with that label and no `ready`. `design product #N`:
+   without `ready`: v1's; #311 for the first v1). `design product v1` with no number (no such
+   issue): file `Product: docs/PRODUCT.md v1` with that label and no `ready`. `design product #N`:
    that issue. Claim it (§3 step 1; an owner issue gets the §0 replies) and draft its PR with
    `Closes #<issue>` early: while that PR is open, the scheduler picks no Design: product work.
 2. **Load:** the issue and the record it came from (an audit or user-advocate finding, an

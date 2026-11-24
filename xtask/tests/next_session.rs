@@ -2751,11 +2751,11 @@ fn step8_design_product() {
         );
         assert_ne!(got, "design product #901");
     }
-    // While the file is missing, v1 works the lowest workable open design-product issue,
-    // `ready` or not, and a ready product issue is not picked as `#N`.
+    // While the file is missing, v1 reads only the design-product issues without `ready`
+    // (v1's; a ready one is a gap issue for later, R4.2), and a ready one is never `#N`.
     assert_eq!(
         pick(&[missing.clone(), plus("issues.json", &[product(901, &[])])]),
-        "design product v1 #901"
+        "design product v1"
     );
     let v1_issue = |n: u64, l: &[&str], body: &str| {
         let mut all = vec!["design-product"];
@@ -2778,8 +2778,22 @@ fn step8_design_product() {
         ),
         "{out}"
     );
-    // A waiting one is passed over for the next; when every one waits, nothing is picked and
-    // the brief says why (R3.1: an escalated v1 issue waiting on its design ADR).
+    // While any v1 issue waits, nothing is picked (R3.1, R4.2: an escalated v1 issue waiting
+    // on its design ADR), whatever other v1 or gap issues are open.
+    assert_eq!(
+        pick(&[
+            missing.clone(),
+            plus(
+                "issues.json",
+                &[
+                    product(320, &[]),
+                    v1_issue(330, &[], "Depends on: #5"),
+                    issue(5, "design", &["design"]),
+                ],
+            ),
+        ]),
+        "planner"
+    );
     assert_eq!(
         pick(&[
             missing.clone(),
@@ -2793,7 +2807,7 @@ fn step8_design_product() {
                 ],
             ),
         ]),
-        "design product v1 #923"
+        "planner"
     );
     for waiting in [
         v1_issue(921, &["owner-todo"], ""),
@@ -2812,7 +2826,7 @@ fn step8_design_product() {
         let out = String::from_utf8(run_with(&changes).unwrap().stdout).unwrap();
         assert!(
             out.contains(
-                "- Design: product due (docs/PRODUCT.md is not on origin/main) but every open design-product issue has a skip label or an open dependency: not picked\n"
+                "- Design: product due (docs/PRODUCT.md is not on origin/main) but an open design-product issue without ready has a skip label or an open dependency: not picked\n"
             ),
             "{out}"
         );

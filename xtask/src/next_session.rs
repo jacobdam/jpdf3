@@ -1402,16 +1402,22 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             })
     } else {
         let why = format!("{PRODUCT_DOC} is not on origin/main");
-        // v1 works the lowest workable open `design-product` issue (no `ready` needed), or
-        // files one when there is none; while every one waits, nothing is picked.
-        match product_issues.iter().find(workable_product) {
-            Some(i) => Some((
+        // v1's issues are the `design-product` ones without `ready` (ready ones are gap
+        // issues for after v1, R4.2): the lowest is worked, one is filed when there is none,
+        // and nothing is picked while any of them waits.
+        let v1: Vec<&&Issue> = product_issues
+            .iter()
+            .filter(|i| !has_label(&i.labels, "ready"))
+            .collect();
+        let waiting = v1.iter().any(|i| !workable_product(i));
+        match v1.first() {
+            Some(i) if !waiting => Some((
                 format!("v1 #{}", i.number),
                 why,
                 issue_load(i.number, false),
             )),
             // With a product PR open, the slot rule's note says why instead.
-            None if product_issues.is_empty() || product_pr.is_some() => Some((
+            _ if v1.is_empty() || product_pr.is_some() => Some((
                 "v1".to_owned(),
                 why,
                 vec![
@@ -1420,9 +1426,9 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                     "specs/journeys/".to_owned(),
                 ],
             )),
-            None => {
+            _ => {
                 notes.push(format!(
-                    "Design: product due ({why}) but every open {PRODUCT_LABEL} issue has a skip label or an open dependency: not picked"
+                    "Design: product due ({why}) but an open {PRODUCT_LABEL} issue without ready has a skip label or an open dependency: not picked"
                 ));
                 None
             }

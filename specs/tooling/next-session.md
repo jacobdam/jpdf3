@@ -226,14 +226,14 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
      → `planner due`. The work-mix trigger comes with part 2 (#288).
 
      **Design: product** (rule k; ADR 0011 §1, TICK §10), when the Planner term didn't pick:
-     - *v1:* `docs/PRODUCT.md` is not on origin/main → `design product v1 #N` for the lowest
-       open issue labeled `design-product` with no skip label and its dependencies closed
-       (step 10's `Depends on:` test; `ready` not needed); `design product v1` when no open
-       issue has the label (the session files one); nothing when every such issue has a skip
-       label or an open dependency (an escalated v1 waiting on its design ADR, TICK §8 output
-       2), and the brief notes `Design: product due (<why>) but every open design-product issue
-       has a skip label or an open dependency: not picked` (unless a product PR is open: then
-       the slot rule's note below). Whether the file is there comes from `main-log.txt`
+     - *v1:* `docs/PRODUCT.md` is not on origin/main. v1's issues are the open ones labeled
+       `design-product` and not `ready` (ready ones are gap issues for after v1, TICK §10 step
+       3). None → `design product v1` (the session files one). Else, when any of them has a
+       skip label or an open dependency (step 10's `Depends on:` test; an escalated v1 waiting
+       on its design ADR, TICK §8 output 2) → nothing, and the brief notes `Design: product due
+       (<why>) but an open design-product issue without ready has a skip label or an open
+       dependency: not picked` (unless a product PR is open: then the slot rule's note below);
+       else `design product v1 #N`, the lowest. Whether the file is there comes from `main-log.txt`
        (newest first): the newest commit with a file line whose path is exactly
        `docs/PRODUCT.md` decides; status `D` means deleted, `A`, `M` or `T` present, and no
        such line means never added. `--no-renames` turns a rename into `D` plus `A`, so a
@@ -476,13 +476,13 @@ of inputs where no step before 11 applies (→ `planner`):
   `M`, `T`, `A` on top are present, also over an older `D`; `D` over an older `A` is v1); near
   misses of the path (`docs/PRODUCT.md.bak`, `docs/product.md`, `PRODUCT.md`,
   `x/docs/PRODUCT.md`, a quoted path) are v1; v1 with open `design-product` issues: the lowest
-  workable one (`ready` or not) with its brief, a waiting one (`owner-todo`, an open
-  dependency) passed over, each skip label and an open dependency alone → nothing with the
-  note, an issue with another label → plain v1; with the file present, the lowest ready
+  one without `ready` with its brief, a ready one alone → plain v1, any waiting one (each skip
+  label, an open dependency, also beside a workable one or a ready gap issue) → nothing with
+  the note, an issue with another label → plain v1; with the file present, the lowest ready
   `design-product` issue in any milestone or none, its brief, and that it wins over a ready
   Worker issue; a closed dependency; near misses (not `ready`, each skip label, an open
   dependency, `design`, `design-products`); a ready `design-product` issue in M0 is never step 10's; while the file
-  is missing a ready product issue is v1's (`design product v1 #N`), never `#N`; the slot rule (an open PR linking a
+  is missing a ready product issue is never picked; the slot rule (an open PR linking a
   `design-product` issue with `owner-todo` holds both terms with the note; a failing one is
   step 3's; near misses: the `design` label, another issue, no `Closes`, merged, closed,
   untagged, the label on the PR); `planner due` wins, and the note still shows; the
