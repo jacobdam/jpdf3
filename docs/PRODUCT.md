@@ -14,7 +14,7 @@ journeys win, and this file is fixed.
 ## 1. Who it is for, and the jobs they do
 
 jpdf is a general-purpose PDF reader, annotator and editor, not one built for a niche: for
-anyone who works with PDF files at home, and for people who use it at work in a business
+ordinary users, and for people who use it at work in a business
 ([owner decision](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945)). It runs on a Mac or in a web browser, and the files stay on the
 user's own device (PLAN R3, R11). It aims at feature
 parity with PDFgear (PLAN R7), with PDFgear's ideas and each platform's own look (PLAN R8): the
@@ -135,7 +135,7 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 | **Fast, without trading away safety.** A first page in under 200 ms for a typical 10 MB file, 60 fps scrolling | PLAN R2, §5; PLAN §8 rows M4 and M10 |
 | **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10 (no journey yet: #331) |
 | **Open source.** MIT, with only permissively licensed dependencies | PLAN R10; CONSTITUTION 10 |
-| **In four languages.** The apps' text in English, Vietnamese, Japanese and Chinese at v1.0 | [owner decision](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945); PLAN §8 row M10 (localization); no journey yet: #334 |
+| **In four languages.** The apps' text in English, Vietnamese, Japanese and Chinese at v1.0 | [owner decision](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945); PLAN §8 row M10 (localization scaffolding only; updating PLAN is the owner's); no journey yet: #334 |
 
 ## 5. Platforms
 
