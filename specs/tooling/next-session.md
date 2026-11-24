@@ -10,15 +10,15 @@ Status: implemented
 their own work from prose (ADR 0011 §2). Task 1a (#242) added precedence steps 1–5 (TICK rules
 a–f); task 1b part 1 (#273) added steps 7 (rules g, h) and 10 (rule i) and the interim
 product-merge counter (ADR 0011 §3); part 2 (#243) adds step 11 (Planner or idle), which
-replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 (#245)
-adds step 6. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
+replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 part 2
+(#275) adds step 6 (Design: technical) and takes `needs-design` PRs out of step 3. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
 days without a Planner run) and widens `records.txt` to 7 days.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
     `planner` or `idle`.
-    Its first word is the session type: `worker`, `audit`, `retro`, `planner`, or `idle` (no
-    session: exit at once). Steps and references:
+    Its first word is the session type: `worker`, `design-technical`, `audit`, `retro`,
+    `planner`, or `idle` (no session: exit at once). Steps and references:
 
     | Step | TICK rule | First line |
     |---|---|---|
@@ -27,13 +27,14 @@ days without a Planner run) and widens `records.txt` to 7 days.
     | 3 | c | `worker own-pr #N`, `worker scheduler-bug #N` |
     | 4 | d | `worker crash-security #N` |
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
+    | 6 | (§2 step 6, TICK §8) | `design-technical needs-design #N` (a PR), `design-technical design-issue #N` |
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
     | 8 | j | `planner due` (the reason is on the `Rule:` line) |
     | 10 | i | `worker ready #N` |
     | 11 | j | `planner`, `idle` |
 
-  - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
-    picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
+  - then a blank line and the brief: a `Rule:` line (the TICK letter, or `step 6`, which has
+    none, and why this item was picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
     `Notes:` list when there is something to note (each open agent PR on the owner's `/hold`
     and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
     worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
@@ -100,6 +101,9 @@ days without a Planner run) and widens `records.txt` to 7 days.
   - *Linked issue* of a PR: the first `Closes #N` in its body with digits after the `#` (a
     quoted `Closes #<issue>` is skipped; TICK §3 step 4).
   - *In flight:* an issue is in flight when an open agent PR links it.
+  - *Needs design:* an open agent PR labeled `needs-design` (exact name): escalated to a
+    design session (TICK §4 step 6). It is a draft with `ai-review` failure on purpose, so it is
+    failing too; step 6 picks it, never step 3.
   - *Failing* open PR: a head check run whose conclusion is `FAILURE`, `TIMED_OUT`,
     `STARTUP_FAILURE`, `ACTION_REQUIRED` or `CANCELLED`, or a status context in state `FAILURE`
     or `ERROR`, or no `ai-review` status context in state `SUCCESS` on the head (unreviewed, as a
@@ -113,14 +117,14 @@ days without a Planner run) and widens `records.txt` to 7 days.
      - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
        owner's own work, and owner comments on it come as comment lines) that has no owner reply starting with
        `🤖 jpdf-agent done: <the issue's URL>` (exact URL, followed by whitespace or the end),
-       carries no skip label, and isn't linked by an open PR that isn't failing or is held
-       (step 3; that PR is already doing it, or waits for the owner's `/release`; a failing one
-       is picked here, so rule a outranks rule c for it).
+       carries no skip label, and isn't linked by an open PR that isn't failing, is held or
+       needs design (step 3; that PR is already doing it, or waits for the owner's `/release` or
+       a design session, step 6; a failing one is picked here, so rule a outranks rule c for it).
        Lowest number first. `owner-open.json` supplies the replies and labels; an issue missing
        from it counts as pending with no labels;
      - an owner comment (feed kinds `comment`, `review_comment`, `review`) created at or after
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
-       that isn't failing or is held. Oldest `created_at` first, then by URL;
+       that isn't failing, is held or needs design. Oldest `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
        `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
        (both exact, as above; a reply for a comment on the issue doesn't count)
@@ -132,7 +136,7 @@ days without a Planner run) and widens `records.txt` to 7 days.
      raised; the session continues with other work); the brief notes the alarm instead.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
-       carries a skip label, and that is not *held*. Lowest number first. A PR is held when,
+       carries a skip label, that doesn't need design (step 6's), and that is not *held*. Lowest number first. A PR is held when,
        of its comments in `holds.json` that are an owner command, the newest (largest
        `createdAt`; on a tie, the later in the list) is a hold. A command is a comment that
        `.github/workflows/owner-commands.yml` acts on: author `jacobdam`, a body that starts
@@ -173,7 +177,24 @@ days without a Planner run) and widens `records.txt` to 7 days.
 
      Ratchet regressions show up as a red judge on main (step 2). The nightly that files
      findings as issues (#19) doesn't exist yet, so step 5 has no nightly term.
-  6. Design: technical: not in this part (task 3, #245).
+  6. **Design: technical** (ADR 0011 §2 step 6, TICK §8; #275), in this order:
+     - a PR that needs design, where neither the PR nor its linked issue carries a skip label,
+       not held and not on an `owner/` branch (as in step 3: nothing moves until `/release`,
+       TICK §5). Lowest number first → `design-technical needs-design #N`. The brief loads the
+       PR's comments (its ledger), its linked issue and the search for earlier PRs closing it
+       (their ledgers, TICK §8 step 2), then the design files below; a PR without a `Closes`
+       link gets no issue lines;
+     - an open issue labeled `design` and `ready` (exact names) with no skip label and not in
+       flight. Any milestone, none included (design queue items are filed by audits, the owner or
+       other sessions, ADR 0011 §1), and `in-progress` doesn't stop it (TICK §8 step 1 resumes
+       a design session that died). Lowest number first → `design-technical design-issue #N`.
+       The brief loads the issue, then the design files.
+
+     The design files, in order: `ops/TICK.md §8`, `specs/tooling/design-technical.md`,
+     `docs/PRINCIPLES.md`, `docs/adr/_TEMPLATE-design.md`,
+     `docs/adr/0010-review-rounds-converge.md`, `docs/adr/0011-session-types-and-scheduler.md §5`.
+     Not in this part: the third term of ADR 0011 §2 step 6 (an area over its threshold, task 4,
+     #247), and step 3's own design PR past its 24-hour window (#314).
   7. **Audit, then retro** (rules g, h). From `main-log.txt` (newest first): a *record commit*
      adds (status `A`) a file `docs/audits/NNNN.md` or `docs/advocate/NNNN.md` (an *audit slot*,
      ADR 0011 §1), or `docs/retros/NNNN.md` (a retro), with exactly four digits and nothing else
@@ -410,6 +431,19 @@ of inputs where no step before 11 applies (→ `planner`):
   an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
   and two held PRs are noted lowest first; a malformed
   `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+- step 6 (#275): a `needs-design` PR is picked and not step 3's, lowest number first, after a
+  failing PR without the label (step 3); near misses: `needs-designx`, `design`, `Needs-design`
+  (step 3 picks them), each skip label on the PR and on its issue, a merged or closed PR, an
+  `owner/` branch, an untagged PR, a held PR (none picked); a PR without a `Closes` link has no
+  issue lines; the whole brief. Step 1: an owner issue it closes and an owner comment its body
+  names are not picked, and are without the label. A `design` and `ready` issue in any
+  milestone, none, or claimed is picked, lowest first, after a `needs-design` PR; near misses:
+  `design` alone, `ready` alone, `design-pending`, each skip label, linked by an open PR (picked
+  when the PR is merged or closed); the whole brief. The precedence test has a step 6 entry
+  between steps 5 and 7 (its issue term), and a `needs-design` PR loses to main red, the
+  scheduler bug, a crash, a `sev:high` security issue, a flaky test and a leftover worktree and
+  wins over a due audit; step 10's `design` near miss is now step 6's pick (step 10's own
+  `design` skip is defensive only: step 6 takes any such issue first);
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,

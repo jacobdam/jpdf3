@@ -1602,6 +1602,12 @@ fn precedence_removes_each_step_in_turn() {
             )],
         ),
         (
+            "design-technical design-issue #650",
+            vec![],
+            vec![issue(650, "d", &["design", "ready"])],
+            vec![],
+        ),
+        (
             "audit due",
             vec![],
             vec![],
@@ -2248,7 +2254,14 @@ fn step10_ready_issue() {
         "design",
         "design-pending",
     ] {
-        assert_eq!(with(&[ready(701, "M0", &[l], "")]), "planner", "{l}");
+        // Since #275 step 6 takes a `design` and `ready` issue before step 10 sees it, so step
+        // 10's own `design` skip is defensive only and no fixture reaches it (R1.2).
+        let want = if l == "design" {
+            "design-technical design-issue #701"
+        } else {
+            "planner"
+        };
+        assert_eq!(with(&[ready(701, "M0", &[l], "")]), want, "{l}");
     }
     // #301 (ready, M0) is linked by the open PR #300 in the base; without the PR it's picked.
     let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
@@ -2545,4 +2558,326 @@ fn step8_once_a_day_and_precedence() {
         pick(&[feed_plus(&[feed_issue(250)]), ("queue.md", None)]),
         "worker owner-issue #250"
     );
+}
+
+/// Step 6 (#275): a Design: technical session on an open agent PR labeled `needs-design`, then
+/// on an open issue labeled `design` and `ready`.
+#[test]
+fn step6_needs_design_pr() {
+    // PR 320 is a draft with no ai-review success (failing, as an escalated PR is on purpose);
+    // it closes issue 321.
+    let nd = |n: u64, state: &str, branch: &str, l: &[&str]| {
+        pr(n, state, &format!("Closes #{}", n + 1), branch, l, "[]")
+    };
+    let issue321 = |l: &[&str]| plus("issues.json", &[issue(321, "x", l)]);
+    let with = |prs: &[String], l: &[&str]| pick(&[plus("prs.json", prs), issue321(l)]);
+    let picked = "design-technical needs-design #320";
+    assert_eq!(
+        with(&[nd(320, "OPEN", "t/321-a", &["needs-design"])], &[]),
+        picked,
+        "not step 3's own-pr"
+    );
+    // Lowest number first, whatever the list order.
+    assert_eq!(
+        with(
+            &[
+                nd(330, "OPEN", "t/331-a", &["needs-design"]),
+                nd(320, "OPEN", "t/321-a", &["needs-design"])
+            ],
+            &[]
+        ),
+        picked
+    );
+    // A failing PR without the label is step 3's, which comes first.
+    assert_eq!(
+        with(
+            &[
+                nd(320, "OPEN", "t/321-a", &["needs-design"]),
+                nd(330, "OPEN", "t/331-a", &[])
+            ],
+            &[]
+        ),
+        "worker own-pr #330"
+    );
+    // Near misses that a failing PR without the label would hit: step 3 picks them.
+    for label in ["needs-designx", "design", "Needs-design"] {
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &[label])], &[]),
+            "worker own-pr #320",
+            "{label}"
+        );
+    }
+    // Near misses: not picked by step 6 (nor by step 3).
+    for s in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &["needs-design", s])], &[]),
+            "planner",
+            "{s} on the PR"
+        );
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &["needs-design"])], &[s]),
+            "planner",
+            "{s} on its issue"
+        );
+    }
+    for state in ["MERGED", "CLOSED"] {
+        assert_eq!(
+            with(&[nd(320, state, "t/321-a", &["needs-design"])], &[]),
+            "planner",
+            "{state}"
+        );
+    }
+    assert_eq!(
+        with(&[nd(320, "OPEN", "owner/x", &["needs-design"])], &[]),
+        "planner",
+        "the owner's own change"
+    );
+    assert_eq!(
+        pick(&[
+            plus(
+                "prs.json",
+                &[raw_pr(
+                    320,
+                    "OPEN",
+                    "Closes #321",
+                    "t/321-a",
+                    &["needs-design"],
+                    "[]"
+                )]
+            ),
+            issue321(&[]),
+        ]),
+        "planner",
+        "an untagged PR is the owner's"
+    );
+    assert_eq!(
+        pick(&[
+            plus("prs.json", &[nd(320, "OPEN", "t/321-a", &["needs-design"])]),
+            issue321(&[]),
+            holds(&[(320, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+        ]),
+        "planner",
+        "held"
+    );
+    // Without a Closes link: picked, and the brief has no issue lines.
+    let o = run_with(&[plus(
+        "prs.json",
+        &[pr(
+            320,
+            "OPEN",
+            "Refs #321",
+            "t/321-a",
+            &["needs-design"],
+            "[]",
+        )],
+    )])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with(&format!("{picked}\n")), "{out}");
+    assert!(!out.contains("#321"), "{out}");
+    // The brief.
+    let o = run_with(&[
+        plus("prs.json", &[nd(320, "OPEN", "t/321-a", &["needs-design"])]),
+        issue321(&[]),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let brief = "design-technical needs-design #320\n\n\
+        Rule: step 6 (a PR escalated to design, ops/TICK.md §4 step 6: one design output, §8)\n\
+        Load:\n- gh pr view 320 --comments\n- gh issue view 321 --comments\n\
+        - gh pr list --state all --search '\"Closes #321\" in:body'\n\
+        - ops/TICK.md §8\n- specs/tooling/design-technical.md\n- docs/PRINCIPLES.md\n\
+        - docs/adr/_TEMPLATE-design.md\n- docs/adr/0010-review-rounds-converge.md\n\
+        - docs/adr/0011-session-types-and-scheduler.md §5\nNotes:\n";
+    assert!(out.starts_with(brief), "{out}");
+}
+
+#[test]
+fn step6_needs_design_pr_holds_its_owner_instruction() {
+    // Step 1 counts an owner issue closed by, or an owner comment named in, a needs-design PR
+    // as in flight (the design session is doing it), as it does for a held PR.
+    let url = format!("{ISSUES}40#issuecomment-123");
+    let nd =
+        |body: &str, l: &[&str]| plus("prs.json", &[pr(320, "OPEN", body, "t/250-a", l, "[]")]);
+    let issue = feed_plus(&[feed_issue(250)]);
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[issue.clone(), nd("Closes #250", &["needs-design"])]),
+        "design-technical needs-design #320"
+    );
+    assert_eq!(
+        pick(&[
+            comment.clone(),
+            nd(&format!("Owner instruction: {url}"), &["needs-design"])
+        ]),
+        "design-technical needs-design #320"
+    );
+    // Near misses: without the label the failing PR doesn't hold them.
+    assert_eq!(
+        pick(&[issue, nd("Closes #250", &[])]),
+        "worker owner-issue #250"
+    );
+    assert_eq!(
+        pick(&[comment, nd(&format!("Owner instruction: {url}"), &[])]),
+        format!("worker owner-comment {url}")
+    );
+}
+
+#[test]
+fn step6_ready_design_issue() {
+    let d = |n: u64, l: &[&str], m: &str| {
+        full_issue(n, "d", l, "", &format!(r#"{{"title":{m:?},"number":5}}"#))
+    };
+    let one = |l: &[&str]| pick(&[plus("issues.json", &[d(650, l, "M5")])]);
+    let picked = "design-technical design-issue #650";
+    // Any milestone, and a claimed one (a design session that died) too.
+    assert_eq!(one(&["design", "ready"]), picked);
+    assert_eq!(one(&["ready", "design", "in-progress"]), picked);
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[full_issue(650, "d", &["design", "ready"], "", "null")]
+        )]),
+        picked,
+        "no milestone"
+    );
+    // Lowest number first.
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[
+                d(660, &["design", "ready"], "M0"),
+                d(650, &["design", "ready"], "M5")
+            ]
+        )]),
+        picked
+    );
+    // Near misses.
+    assert_eq!(one(&["design"]), "planner", "not ready");
+    assert_eq!(one(&["ready"]), "planner", "not design (and not M0)");
+    assert_eq!(
+        one(&["design-pending", "ready"]),
+        "planner",
+        "another label"
+    );
+    for s in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(one(&["design", "ready", s]), "planner", "{s}");
+    }
+    // In flight: an open agent PR links it, whatever its checks; a merged one doesn't.
+    let linked = |state: &str, rollup: &str| {
+        pick(&[
+            plus("issues.json", &[d(650, &["design", "ready"], "M5")]),
+            plus(
+                "prs.json",
+                &[pr(
+                    651,
+                    state,
+                    "Closes #650",
+                    "t/650-a",
+                    &["design"],
+                    rollup,
+                )],
+            ),
+        ])
+    };
+    assert_eq!(linked("OPEN", GREEN), "planner", "an open PR links it");
+    assert_eq!(linked("MERGED", "[]"), picked, "a merged PR");
+    assert_eq!(linked("CLOSED", "[]"), picked, "a closed PR");
+    // A needs-design PR comes first; the brief.
+    let o = run_with(&[
+        plus("issues.json", &[d(650, &["design", "ready"], "M5")]),
+        plus(
+            "prs.json",
+            &[pr(
+                670,
+                "OPEN",
+                "Closes #671",
+                "t/671-a",
+                &["needs-design"],
+                "[]",
+            )],
+        ),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.starts_with("design-technical needs-design #670\n"),
+        "{out}"
+    );
+    let o = run_with(&[plus("issues.json", &[d(650, &["design", "ready"], "M5")])]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let brief = "design-technical design-issue #650\n\n\
+        Rule: step 6 (a ready design issue: an ADR or principle, or one owner question, ops/TICK.md §8)\n\
+        Load:\n- gh issue view 650 --comments\n\
+        - ops/TICK.md §8\n- specs/tooling/design-technical.md\n- docs/PRINCIPLES.md\n\
+        - docs/adr/_TEMPLATE-design.md\n- docs/adr/0010-review-rounds-converge.md\n\
+        - docs/adr/0011-session-types-and-scheduler.md §5\nNotes:\n";
+    assert!(out.starts_with(brief), "{out}");
+}
+
+#[test]
+fn step6_needs_design_pr_comes_after_steps_2_to_5() {
+    // R1.1: a needs-design PR (320, closing 321) loses to each of steps 2 to 5, and wins over
+    // step 7 once they are gone.
+    let nd = plus(
+        "prs.json",
+        &[pr(
+            320,
+            "OPEN",
+            "Closes #321",
+            "t/321-a",
+            &["needs-design"],
+            "[]",
+        )],
+    );
+    let wins = "design-technical needs-design #320";
+    assert_eq!(pick(std::slice::from_ref(&nd)), wins);
+    let cases: Vec<(&str, (&'static str, Option<String>))> = vec![
+        (
+            "worker main-red run 20",
+            set(
+                "runs.json",
+                format!("[{}]", run_entry(20, "completed", "failure", "push")),
+            ),
+        ),
+        (
+            "worker scheduler-bug #400",
+            plus("issues.json", &[issue(400, "next-session: x", &["bug"])]),
+        ),
+        (
+            "worker crash-security #500",
+            plus("issues.json", &[issue(500, "x", &["crash"])]),
+        ),
+        (
+            "worker crash-security #510",
+            plus("issues.json", &[issue(510, "x", &["security", "sev:high"])]),
+        ),
+        (
+            "worker flaky #600",
+            plus("issues.json", &[issue(600, "f", &["flaky"])]),
+        ),
+        (
+            "worker leftover-worktree t/9-z",
+            set(
+                "worktrees.txt",
+                "worktree /w/e\nHEAD f\nbranch refs/heads/t/9-z\n".to_owned(),
+            ),
+        ),
+    ];
+    for (want, change) in cases {
+        assert_eq!(pick(&[nd.clone(), change]), want);
+    }
+    // Step 7 comes after it.
+    let no_audit = set(
+        "main-log.txt",
+        [
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat(),
+    );
+    assert_eq!(pick(std::slice::from_ref(&no_audit)), "audit due");
+    assert_eq!(pick(&[nd, no_audit]), wins);
 }

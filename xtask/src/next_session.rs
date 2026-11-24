@@ -16,6 +16,17 @@ const ALARM_FILE: &str = "ops/state/judge-alarm-since";
 const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
 /// The head-branch prefix of the owner's own protected changes (AUTOMATION.md §6.1, #298).
 const OWNER_BRANCH: &str = "owner/";
+/// The label of a PR escalated to a Design: technical session (ops/TICK.md §4 step 6, §8).
+const NEEDS_DESIGN: &str = "needs-design";
+/// What a Design: technical session loads besides the PR or issue (ops/TICK.md §8 step 2).
+const DESIGN_LOAD: [&str; 6] = [
+    "ops/TICK.md §8",
+    "specs/tooling/design-technical.md",
+    "docs/PRINCIPLES.md",
+    "docs/adr/_TEMPLATE-design.md",
+    "docs/adr/0010-review-rounds-converge.md",
+    "docs/adr/0011-session-types-and-scheduler.md §5",
+];
 
 pub struct Options {
     pub from: Option<PathBuf>,
@@ -72,7 +83,8 @@ const PRODUCT_PATHS: [&str; 6] = [
     "tools/jpdf-cli/",
     "tools/fsio/",
 ];
-/// Labels step 10 skips besides `SKIP_LABELS`.
+/// Labels step 10 skips besides `SKIP_LABELS`. Since #275, `design` is defensive only: a
+/// `design` and `ready` issue step 10 could take (no skip label, not in flight) is step 6's first.
 const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
@@ -484,6 +496,13 @@ impl Pr {
     /// Open, and not a session's to move: held (#295) or the owner's own change (#298).
     fn parked(&self) -> bool {
         self.open && (self.held || self.owner_branch())
+    }
+
+    /// Open and labeled `needs-design`: escalated to a design session (ops/TICK.md §4 step 6).
+    /// It is a draft with `ai-review` failure on purpose, so it reads as failing; step 6 picks
+    /// it, never step 3, and step 1 counts its issue in flight (#275).
+    fn needs_design(&self) -> bool {
+        self.open && has_label(&self.labels, NEEDS_DESIGN)
     }
 }
 
@@ -911,8 +930,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     let open = parse_owner(&inp.owner_open, "owner-open.json", false)?;
     let closed = parse_owner(&inp.owner_closed, "owner-closed.json", true)?;
     let in_flight_issue = |n: u64| {
-        prs.iter()
-            .any(|p| p.open && (!p.failing || p.parked()) && linked_issue(&p.body) == Some(n))
+        prs.iter().any(|p| {
+            p.open
+                && (!p.failing || p.parked() || p.needs_design())
+                && linked_issue(&p.body) == Some(n)
+        })
     };
     let mut issues: Vec<u64> = Vec::new();
     for item in &feed {
@@ -946,9 +968,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
         })
         .filter(|(at, url)| {
             *at >= inp.floor.as_str()
-                && !prs
-                    .iter()
-                    .any(|p| p.open && (!p.failing || p.parked()) && names_url(&p.body, url))
+                && !prs.iter().any(|p| {
+                    p.open
+                        && (!p.failing || p.parked() || p.needs_design())
+                        && names_url(&p.body, url)
+                })
         })
         .collect();
     comments.sort_unstable();
@@ -1177,7 +1201,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = prs
             .iter()
-            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked())
+            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked() && !p.needs_design())
             .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
             .map(|p| {
                 let mut load = vec![
@@ -1303,6 +1327,46 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                         format!("git log --oneline origin/main..{b}"),
                         "git worktree list".to_owned(),
                     ],
+                )
+            });
+    }
+    // Step 6 (#275; ADR 0011 §2, ops/TICK.md §8): a Design: technical session on an open agent PR
+    // labeled `needs-design`, then on an open issue labeled `design` and `ready`. Skip labels
+    // count on the PR and its linked issue, as in step 3; a held or `owner/` PR waits for the
+    // owner (TICK §5).
+    if chosen.is_none() {
+        chosen = prs
+            .iter()
+            .filter(|p| p.needs_design() && !skipped(&p.labels) && !p.parked())
+            .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
+            .map(|p| {
+                let mut load = vec![format!("gh pr view {} --comments", p.number)];
+                if let Some(n) = linked_issue(&p.body) {
+                    load.push(view_issue(n));
+                    load.push(format!(
+                        "gh pr list --state all --search '\"Closes #{n}\" in:body'"
+                    ));
+                }
+                load.extend(DESIGN_LOAD.iter().map(|l| (*l).to_owned()));
+                pick(
+                    format!("design-technical needs-design #{}", p.number),
+                    "step 6 (a PR escalated to design, ops/TICK.md §4 step 6: one design output, §8)",
+                    load,
+                )
+            });
+    }
+    if chosen.is_none() {
+        chosen = issues
+            .iter()
+            .filter(workable)
+            .find(|i| has_label(&i.labels, "design") && has_label(&i.labels, "ready"))
+            .map(|i| {
+                let mut load = vec![view_issue(i.number)];
+                load.extend(DESIGN_LOAD.iter().map(|l| (*l).to_owned()));
+                pick(
+                    format!("design-technical design-issue #{}", i.number),
+                    "step 6 (a ready design issue: an ADR or principle, or one owner question, ops/TICK.md §8)",
+                    load,
                 )
             });
     }

@@ -7,8 +7,8 @@ Status: implemented
 
 ## Behavior
 ADR 0011 task 3, part 1 (#245): the Design: technical session type, as process text and
-templates. Part 2 (#275) adds precedence step 6 to `cargo xtask next-session`; until then a
-session applies step 6 by hand (ops/TICK.md §2).
+templates. Part 2 (#275) adds precedence step 6 to `cargo xtask next-session`
+(specs/tooling/next-session.md), which picks the design session.
 
 - **Labels.** `design`: an issue queued for a design session (or a design ADR PR). `needs-design`:
   an agent PR over ADR 0010's review cap, escalated to design.
@@ -19,14 +19,13 @@ session applies step 6 by hand (ops/TICK.md §2).
   that dies midway leaves a PR the next design session resumes). If the issue already has such a
   comment naming another PR, or a `Designed in: #<n>` line, the owner gets it as before
   (`blocked`, `owner-todo`, both ledgers). TICK §4 step 6 carries the state table.
-- **Picking** (ops/TICK.md §2, until #275): before acting on a scheduler step 7 or step 10 pick,
-  and on a step 11 pick (`planner`, `idle`) (ADR 0011 §2 orders step 6 ahead of 7, 10 and 11), the lowest-numbered open agent PR
-  labeled `needs-design` where neither it nor its issue carries `owner-todo`, `blocked` or
-  `deferred`, else the lowest-numbered open issue labeled `design` and `ready` without those
-  labels and not linked by an open agent PR (the scheduler's own skips). A scheduler rule c pick
-  of a `needs-design` PR is a design session too (the scheduler reads its `ai-review` failure as
-  failing until #275), after a by-hand check of rules d and e, which ADR 0011 puts ahead of
-  design.
+- **Picking** (ops/TICK.md §2): the scheduler's step 6, after steps 1–5 (so rules d and e come
+  first) and ahead of 7, 8, 10 and 11, prints `design-technical needs-design #N` for the
+  lowest-numbered open agent PR labeled `needs-design` where neither it nor its issue carries
+  `owner-todo`, `blocked` or `deferred` (not held, not on an `owner/` branch), else
+  `design-technical design-issue #N` for the lowest-numbered open issue labeled `design` and
+  `ready` without those labels and not linked by an open agent PR. Step 3 no longer picks a
+  `needs-design` PR (its `ai-review` failure is on purpose).
 - **The session** (ops/TICK.md §8): loads the issue group, ledgers, area code and ADRs,
   `docs/PRINCIPLES.md` and the template; picks exactly one output: 1 split (only lines already
   reviewed), 2 ADR or principle (a design PR closing a design issue, tasks with `Designed in:` and
@@ -83,11 +82,10 @@ Bounds (ADR 0011 §1 "every loop has a counter and a final state"):
   fresh reviewer must accept each ruling. A ruling counts only from the repository's account
   (`jacobdam`, shared by owner and agent) with the tag, so a stranger's imitation of one is data
   and unlocks no review round.
-- Self-check: no arithmetic on input; no checker or validator is added (part 2 adds the
-  scheduler step and its fixtures). What a broken process still passes: a session that skips the
-  by-hand step 6 check before a step 7, 10 or 11 pick (until #275 nothing but the journal's `Picked:` line shows
-  it), and a session that labels its own PR `needs-design` early; the reviewer and the owner feed
-  see both.
+- Self-check: no arithmetic on input; no checker or validator is added here (part 2 adds the
+  scheduler step and its fixtures, specs/tooling/next-session.md). What a broken process still
+  passes: a session that labels its own PR `needs-design` early, which takes it out of step 3
+  and into step 6; the reviewer and the owner feed see it.
 
 ## Accessibility
 Not applicable (no UI).
@@ -100,5 +98,5 @@ Not applicable.
 
 ## Tests
 Process text: no automated test in this part. Part 2 (#275) adds `--from` fixtures for step 6 and
-its near misses. The first escalation is checked by hand against the state table in ops/TICK.md
+its near misses (xtask/tests/next_session.rs, `step6_*`). The first escalation is checked by hand against the state table in ops/TICK.md
 §4 step 6.

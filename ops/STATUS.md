@@ -4,14 +4,16 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #309 (#246, ADR 0011 task 4 part 1 of 3): `ops/areas.toml` (16 areas) and `cargo xtask issue-lint`; round 3
-  clean, origin/main merged in (STATUS conflict only), auto-merge on. Part 2 is #308 (labels on every open issue, the
+- PR #309 (#246, ADR 0011 task 4 part 1 of 3) merged (65bbbb9): `ops/areas.toml` and `cargo xtask issue-lint`. Part 2 is #308 (labels on every open issue, the
   TICK filing rule, per-area metrics; needs `ready` from the Planner), part 3 is #247 (depends on #308).
 - PR #312 (#249, Design: product session 1/2) is an open draft.
 - Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
   #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
-- `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
-  an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca, which also carried #296's commits).
+- PR #315 (#275, task 3 part 2): `cargo xtask next-session` step 6 (`design-technical needs-design #N`, then
+  `design-technical design-issue #N`); step 3 no longer picks a `needs-design` PR; TICK §2's by-hand step 6 check is
+  gone. Review round 2 clean, auto-merge on. Part 3 is #314 (step 3's design PR past its 24-hour window; needs
+  `ready` from the Planner); until it lands TICK §1 checks the window by hand.
+- Step 3 skips an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
@@ -50,3 +52,6 @@ Phase: bootstrap (pilot)
 ## Pending lessons
 - Tooling: clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
   → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
+- Review: a reviewer subagent that builds a scratch copy of the repo can leave stale binaries in the worktree's
+  `target/` (`cannot run xtask`, fixture paths under the copy) → `cargo clean -p <crate>`, and tell reviewers to use
+  their own `CARGO_TARGET_DIR` ([journal](journal/2026-11-24/0430-275-step6.md)).
