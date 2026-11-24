@@ -466,8 +466,9 @@ session.
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
   session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
-  reply, an `owner-todo` update) opens a **records PR** holding nothing but record files; it is never a
-  product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
+  reply, an `owner-todo` update, a discovery issue closed by a comment, §9 step 6) opens a
+  **records PR** holding nothing but record files; it is never a product merge. An `idle` pick
+  or a scheduler exit 2 writes no record at all.
 - **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
   `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
@@ -715,9 +716,21 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
    §4 step 6 would escalate it (§8) or hand it to the owner, close it unmerged instead with a
    comment linking its ledger, undo the GitHub changes its open findings name (labels, milestone
-   moves; reopen a milestone it closed), and file one `discovery` issue in the current milestone
-   with those findings and the link, which the next Planner works through step 2. An owner
-   `/hold` on a Planner PR: add `owner-todo` to the PR itself (it has no issue) and leave it;
+   moves; reopen a milestone it closed; close, with a comment linking the ledger, an issue it
+   created in step 2, 3 or 4, unless an open PR already links it: then leave it and put the
+   finding in the issue below), and file one `discovery` issue in the current milestone with
+   those findings and the link. A pushed `mN` tag stays (deleting it is a delete push, which
+   the guard forbids): if the undo reopens `Mn` or a finding names the tag, file a separate
+   issue `Delete tag mN` with `owner-todo` in the reopened milestone `Mn`, so step 4 waits for
+   it; the owner closes it, or the next Planner does once `git ls-remote --tags origin mN`
+   prints nothing (the one exception to step 2's "Close nothing"). The retro the tag triggers
+   (§2 h) still runs (an undone gate is an incident). The `discovery` issue is a Worker issue
+   like any other: the next Planner gates it into `ready` through step 2, and a Worker closes
+   it, by a PR's `Closes #N` when a finding needs a change on main, or with a comment saying so
+   (and a records PR, §5) when every finding was about the closed PR's own text, which never
+   merged.
+   An owner `/hold` on a Planner PR: add `owner-todo` to the PR itself (it has no issue) and
+   leave it, and remove it from the PR after the owner's `/release` (§5);
    while it is held, later Planners change labels only and write records PRs, not QUEUE.md.
    If an open agent PR already changes `ops/QUEUE.md` (an earlier Planner's, still in CI or
    review, not held), don't open a second one: merge origin/main into it, update its QUEUE.md and
