@@ -181,7 +181,9 @@ ADR 0010 is unchanged up to its final check. Where TICK §4 step 6 now sends the
 failure and gets `needs-design` instead, and the next Design: technical session takes it with
 the full ledger. This applies to both of step 6's owner exits: the final check reported anything
 (ADR 0010's "anything": a finding of any grade, a rejected dispute or regrade), or the fix diff
-was over 100 lines or added a file, so no final check ran. Its output is exactly one of:
+was over 100 lines or added a file, so no final check ran. (A Planner PR closes no issue, so it
+has no escalated issue to design: at the cap it is closed unmerged and its open findings filed
+as an issue, ops/TICK.md §9 step 6; #244.) Its output is exactly one of:
 1. **split:** a new PR holding only lines already reviewed in the original PR (the part that
    converged), plus issues for the rest. If the split needs any new line, it is a task issue for
    a Worker instead;

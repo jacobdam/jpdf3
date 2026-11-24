@@ -11,10 +11,12 @@ their own work from prose (ADR 0011 §2). Task 1a (#242) added precedence steps 
 a–f); task 1b part 1 (#273) added steps 7 (rules g, h) and 10 (rule i) and the interim
 product-merge counter (ADR 0011 §3); part 2 (#243) adds step 11 (Planner or idle), which
 replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 (#245)
-adds step 6.
+adds step 6. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
+days without a Planner run) and widens `records.txt` to 7 days.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
-  - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner` or `idle`.
+  - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
+    `planner` or `idle`.
     Its first word is the session type: `worker`, `audit`, `retro`, `planner`, or `idle` (no
     session: exit at once). Steps and references:
 
@@ -26,6 +28,7 @@ adds step 6.
     | 4 | d | `worker crash-security #N` |
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
+    | 8 | j | `planner due` (the reason is on the `Rule:` line) |
     | 10 | i | `worker ready #N` |
     | 11 | j | `planner`, `idle` |
 
@@ -62,18 +65,25 @@ adds step 6.
   15. `records.txt`: session records (ADR 0011 §3), one line `<path>\t<line>` per line
       starting `- Session: ` of a journal file. Live: for `refs/remotes/origin/main` and, for
       each open agent PR in `prs.json`, `refs/remotes/origin/<headRefName>`,
-      `git -c core.quotePath=true ls-tree -r --full-tree <ref> -- ops/journal/<today>/` (the
-      UTC day of the same clock reading as `now.txt`; `--full-tree` so the path is from the
-      repository root wherever the command runs), then `git cat-file blob <id>` for each regular
-      file (mode `100644`) listed whose path is `ops/journal/<today>/<name>.md` with a plain
+      `git -c core.quotePath=true ls-tree -r --full-tree <ref> -- ops/journal/<day>/ …` with one
+      `<day>` for today and each of the 6 days before it (today: the UTC day of the same clock
+      reading as `now.txt`; `--full-tree` so the path is from the repository root wherever the
+      command runs), then `git cat-file blob <id>` for each regular
+      file (mode `100644`) listed whose path is `ops/journal/<day>/<name>.md` for one of those days, with a plain
       `<name>` (no `/`, not C-quoted: git quotes any unusual byte), each blob id and path once,
       so everything listed parses below. A blob that can't be read as text (not UTF-8, over the
       output cap, a failed `cat-file`) is skipped: its records are missed, which costs at most one
       more Planner run that day, never a stopped scheduler. The refs are what the
       session's last `git fetch` brought (TICK §1); a ref that doesn't exist (a PR branch pushed
       after that fetch) is a failed command, exit 2.
-
-  16. `holds.json`: `gh pr list --author @me --state open --limit 200 --json number,comments`
+  16. `queue.md`: `ops/QUEUE.md` on origin/main (the Planner's plan, TICK §9). Live:
+      `git ls-tree --full-tree refs/remotes/origin/main -- ops/QUEUE.md`; a failed command is
+      exit 2. When it lists a regular file (`100644 blob <id>\tops/QUEUE.md`),
+      `git cat-file blob <id>`. Optional, like `judge-alarm-since`: no such file on main, or a
+      blob that can't be read as text (a failed `cat-file`, not UTF-8, over the output cap),
+      means no plan, never a stopped scheduler (the Planner rewrites the file). With `--from`,
+      a missing file means no plan; a file that isn't UTF-8 is exit 1 (a broken fixture).
+  17. `holds.json`: `gh pr list --author @me --state open --limit 200 --json number,comments`
       (the conversation comments of each open PR, for the owner's `/hold`, #295).
 
   `issues.json` (input 6) also reads `body` and `milestone`:
@@ -190,9 +200,18 @@ adds step 6.
      revert (rule b), and a gate that passes gets its milestone tag (rule j).
      The user-advocate slot (every 2nd audit slot) comes with task 8 (#251); until then every
      due slot is an audit.
-  8. QC, Planner, Design: product or UI, and 9. Gardener: not in this part (tasks 2, 4–8).
-     Step 8's Planner triggers (a milestone starts, 7 days since the last plan, the work-mix
-     budget) come with task 2 (#244); until then the Planner runs only from step 11.
+  8. **Planner due** (rule j; ADR 0011 §1): skipped when the Planner ran today (step 11's
+     test). Otherwise due, with each reason that holds on the `Rule:` line, when:
+     - *the current milestone has no plan:* there is a current milestone (step 10's) and the
+       plan's milestone differs from its title, or there is no plan. The plan's milestone is
+       the text after `Milestone: ` on the first line of `queue.md` that starts so (no leading
+       space; case matters), trimmed; a missing file or no such line is no plan. The file's
+       text is never printed;
+     - *no plan in 7 days:* no `records.txt` line whose first word after `- Session: ` is
+       `planner` (so `planner due` counts) has a path day from today − 6 to today (UTC days of
+       `now`; a later day doesn't count).
+     → `planner due`. The work-mix trigger comes with part 2 (#288). QC, Design: product or UI
+     (step 8) and 9. Gardener: not in this part (tasks 4–8).
   10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
       open milestone whose title is `M<digits>` with the smallest number), with no skip label
       and none of `in-progress` (claimed), `design`, `design-pending`, not in flight, and with its
@@ -205,17 +224,16 @@ adds step 6.
   11. **Planner or idle** (rule j; ADR 0011 §1, the Planner's bound): nothing above applies.
       `idle` when `records.txt` has a line whose path is `ops/journal/<today>/<name>.md` (today:
       the UTC day of `now`; `<name>` without `/`) and whose text after `- Session: ` has
-      `planner` as its first whitespace-separated word (case matters): the Planner ran today,
-      so the session exits at once and writes nothing. Otherwise `planner`: until task 2 (#244)
-      adds the Planner session, the session does TICK rule j and its record says
-      `- Session: planner`. A Planner record on a closed unmerged PR is not on any listed ref,
+      `planner` as its first whitespace-separated word (case matters; `planner due` counts): the
+      Planner ran today, so the session exits at once and writes nothing. Otherwise `planner`:
+      a Planner session (TICK §9), whose record says `- Session: planner`. A Planner record on a closed unmerged PR is not on any listed ref,
       so it doesn't count (that run's labels may still stand; a second run that day is harmless).
 - **Exit codes** (ADR 0011 §2 Failure):
   - **0**: a pick was printed.
   - **2**: unknown. A command could not start, failed or printed too much (gh or network
     error); the message goes to stderr and the session does no work.
   - **1**: the scheduler is broken: a usage error, an unreadable or missing `--from` file
-    (other than `judge-alarm-since`), or an input that doesn't parse (not JSON, not the
+    (other than `judge-alarm-since` and `queue.md`), or an input that doesn't parse (not JSON, not the
     expected shape, no `FLOOR` line, a floor not in the form `YYYY-MM-DDTHH:MM:SSZ`). Every
     input is parsed in full whatever is picked, so a renamed field fails every run. A panic exits 101; any exit other than 0 and 2 sends the
     session to TICK's legacy fallback and the `next-session: <first line>` bug issue.
@@ -275,9 +293,12 @@ never 2 (no command ran).
   it grows by about 250 bytes per merge.
 - A `Depends on:` number that `issues.json` doesn't list counts as closed, so a list cut off at
   1000 issues could release an issue early.
-- `records.txt`: one `git ls-tree` per open agent PR plus main, and one `git cat-file` per
-  journal file of the day on any of those refs (about 10 a day today), each capped like any
-  command. A record is found only in a file under its own day's directory, so an entry filed
+- `records.txt`: one `git ls-tree` per open agent PR plus main (7 directory paths each), and
+  one `git cat-file` per journal file of those 7 days on any of those refs (an estimate for a
+  full week: about 15 a day, so about 100; at 48f63d9 main had 8, since per-day directories
+  started on 2026-11-23), each capped like any command. A Planner record older than 6 days is not
+  read, which is what step 8's 7-day term wants.
+- `queue.md`: one `git ls-tree` and at most one `git cat-file`, capped like any command. A record is found only in a file under its own day's directory, so an entry filed
   under the wrong day counts for the day its path says.
 - No loop runs on a count from the input except over the parsed lists themselves.
 
@@ -302,15 +323,20 @@ never 2 (no command ran).
   which only reads. It writes no file.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
   branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
-  rest of the day's fallback picks into `idle`. The cost is bounded: `idle` happens only when
-  steps 1–10 found nothing, and the next UTC day starts clean. A branch name from `prs.json`
+  rest of the day's fallback picks into `idle`, and turn step 8 off: both of its terms for that
+  day, and the 7-day term for 7 days. The cost is bounded: `idle` happens only when steps 1–10
+  found nothing, the milestone term comes back the next UTC day, and the 7-day term after 7
+  days (a forged record delays a Planner run by at most that long; step 11 still runs it
+  whenever nothing is ready). A branch name from `prs.json`
   goes to git only as `refs/remotes/origin/<name>`, so it can't be read as an option, and git's
   ref-name rules forbid `:` (no `<ref>:<path>` reads). Record lines are matched, never printed.
 - Self-check:
-  - Arithmetic: the 14-day and 7-day subtractions from today (`i64` days since 1970,
-    checked), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
+  - Arithmetic: the 14-day and 7-day subtractions from today and the records window's first
+    day (`i64` days since 1970, checked), step 8's `today - day` (only when `day <= today`;
+    both are days of the years 0000–9999, so it can't overflow), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
     and `since + 1` (saturating).
-  - What broken implementation still passes? Every step has a fixture that selects it and a
+  - What broken implementation still passes? The records window's day list is
+    `record_dirs`, unit tested on a known day; only its use in the live command is not run. Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
     `pull_request` run, a PR with the skip label only on its issue, a `t/` branch with a
     closed PR, a green PR whose `mergeable` is `UNKNOWN` or `MERGEABLE`, …), and a precedence test where every step applies and each one is removed in
@@ -322,7 +348,9 @@ never 2 (no command ran).
     checked once by hand on 2026-11-23 (the pick was `retro due`, from #162, #168 and #187).
     For `records.txt`, the listing filter, the dedupe and the skip of unreadable blobs are unit
     tested (`session_lines` in `xtask/src/next_session.rs`, on a fake listing and reader); the
-    ref list, the two git command lines and the clock-to-day step are not. They were checked by
+    ref list, the two git command lines and the clock-to-day step are not; nor are the two
+    `ops/QUEUE.md` command lines (checked by hand on 2026-11-24: the live run from the worktree
+    exits 0, and `ls-tree` on origin/main without the file prints nothing). They were checked by
     hand on 2026-11-23: the `ls-tree` line run from `xtask/` lists main's three journal files of
     that day with root-relative paths, and the scheduler ran live with exit 0. A producer that
     read the wrong refs would pass every test.
@@ -337,8 +365,8 @@ macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
 Eight `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
-plus one `git ls-tree` per open agent PR and one `git cat-file` per recent journal file, and the
-feed script (which makes its own); a few seconds.
+plus one `git ls-tree` per open agent PR and one `git cat-file` per journal file of the last 7
+days, two more for `ops/QUEUE.md`, and the feed script (which makes its own); a few seconds.
 
 ## Tests
 `xtask/tests/next_session.rs` runs the binary with `--from` on fixtures built from a base set
@@ -350,7 +378,7 @@ of inputs where no step before 11 applies (→ `planner`):
   `judge-alarm-since`; exit 1 for a usage error;
 - step 11: `idle` from a Planner record dated today in any line order, `planner` without one;
   near misses: a Planner record dated yesterday or tomorrow, `planners`, `Planner`, `planner`
-  as a later word, a worker record, an empty file; the day boundary at midnight UTC and one
+  as a later word, a worker record, an empty file (which is `planner due` since step 8: no Planner record in 7 days); the day boundary at midnight UTC and one
   second before; an earlier step outranks `idle`; malformed lines (no tab, text not starting
   with `- Session: `, a malformed line after a Planner record dated today, a path not `ops/journal/YYYY-MM-DD/<name>.md` in six ways) exit 1 whatever is picked;
 - steps 7 and 10: each record kind, product path and incident with its near misses (a changed
@@ -371,5 +399,16 @@ of inputs where no step before 11 applies (→ `planner`):
   (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the
   other label, a longer label, a merged, closed or untagged PR, no `Closes` link, a closed
   issue, the label on the PR instead of the issue), and the notes' text;
+- step 8: `planner due` with no `queue.md`, and for each near miss of the `Milestone:` line
+  (another milestone, `M01`, `M0x`, lower case, a leading space or `- `, no space after the
+  colon, an empty file, a later matching line after a non-matching one), `planner` with the
+  line trimmed or without a newline; the reason text for each term and both together, without
+  the file's text; the current milestone moving to M1; no current milestone; the 7-day term at
+  6 and 7 days and a record dated tomorrow, `planner due` as a Planner record and the other
+  kinds as near misses, the window at the last second of a day and at midnight; the once-a-day
+  bound (a `planner due` record today turns both terms off and step 11 into `idle`, and step
+  10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
+  test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
-  ISO time form and the `Depends on:` parser.
+  ISO time form, the `Depends on:` parser, the journal listing over several days, the
+  `ops/QUEUE.md` listing line and the `Milestone:` line.

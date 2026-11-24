@@ -57,6 +57,7 @@ GitHub (public repo jacobdam/jpdf3)
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
 | `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit; its `Pending lessons` list holds lessons found after a PR's last review round (ADR 0011 §3) | agent |
 | `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | one file per session (since retro 0002; earlier entries in `ops/journal/YYYY-MM-DD.md`), each with a `Session:` line; committed to the session's work PR, or a records PR when there is none (ADR 0011 §3) | agent |
+| `ops/QUEUE.md` | the Planner's plan for the current milestone: `Milestone:` line (read by `cargo xtask next-session` step 8), ready list, waits, critical path, design ahead (ops/TICK.md §9) | agent (Planner sessions) |
 | `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
 | `ops/proposals/*.md` | proposed changes to protected files (never blocking) | agent |
@@ -81,9 +82,11 @@ GitHub (public repo jacobdam/jpdf3)
    f. leftover branch from a dead session → resume or discard
    g. every 10th product merge or 7 days → AUDIT session instead (§10)
    h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
-   i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number)
-   j. nothing else → Planner (at most once a day; interim: make the milestone backlog
-      workable, or run the gate (§9) and generate the next milestone's backlog), else idle
+   i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number); j's
+      no-plan and 7-day terms come before it (the scheduler's step 8)
+   j. the milestone has no plan in `ops/QUEUE.md`, no Planner ran in 7 days, or nothing else
+      applies → Planner (at most once a day: ready the milestone's workable issues, or run the
+      gate (§9) and generate the next milestone's backlog; ops/TICK.md §9), else idle
 3. SIZE CHECK: will this fit in one session? If not → split into issues, exit.
 4. CLAIM: assign the issue + comment "claimed by session <id>", then re-read to confirm the claim.
 5. WORK in a worktree: spec (with checklist §5.2) → failing tests → code →
@@ -127,7 +130,15 @@ tasks, a ruling followed by one final check, or one question for the owner. One 
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
 design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
 `ai-review` success, the owner's last `/release`, unless the owner `/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
-touches. Until #275 adds step 6 to the scheduler, sessions check it by hand before a step 7, 10 or 11 pick (`planner`, `idle`).
+touches. Until #275 adds step 6 to the scheduler, sessions check it by hand before a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`).
+
+Task 2 part 1 (#244) adds the **Planner** session (ops/TICK.md §9). It is the only gate into
+`ready` besides the owner: other sessions file Worker issues without it. The scheduler's step 8
+makes it due when the current milestone has no plan (the `Milestone:` line of `ops/QUEUE.md`
+on main) or no `Session: planner` record is dated in the last 7 UTC days, at most once a day;
+step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
+ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
+work PR when it changes. The work-mix budget comes with part 2 (#288).
 
 ## 5. Completeness: building the right thing
 
