@@ -128,6 +128,8 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "jpdf-arlington",
+ "jpdf-bench",
+ "jpdf-corpus",
  "jpdf-fsio",
  "jpdf-testgen",
 ]

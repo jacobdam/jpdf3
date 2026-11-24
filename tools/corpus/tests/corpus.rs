@@ -463,3 +463,47 @@ fn concurrent_fetches_of_one_tier_do_not_clash() {
     assert_eq!(names.len(), 40, "no .part files left: {names:?}");
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+/// `is_verified` (what `cargo xtask nightly` runs on): only a regular file with the exact
+/// size and blob id; a missing file, one byte more or less, a changed byte, a directory and
+/// a FIFO (with no writer, so a blocking open would hang) are refused.
+#[test]
+fn is_verified_accepts_only_the_exact_file() {
+    use jpdf_corpus::fetch::is_verified;
+    let d = scratch("verified");
+    let bytes = b"%PDF-1.7 verified";
+    let e = entry("v.pdf", bytes);
+    let p = d.join("out/v.pdf");
+    assert!(!is_verified(&p, &e), "missing");
+    std::fs::write(&p, bytes).unwrap();
+    assert!(is_verified(&p, &e));
+    let mut longer = bytes.to_vec();
+    longer.push(b'\n');
+    std::fs::write(&p, &longer).unwrap();
+    assert!(!is_verified(&p, &e), "one byte more");
+    std::fs::write(&p, &bytes[..bytes.len() - 1]).unwrap();
+    assert!(!is_verified(&p, &e), "one byte less");
+    let mut changed = bytes.to_vec();
+    changed[0] = b'!';
+    std::fs::write(&p, &changed).unwrap();
+    assert!(!is_verified(&p, &e), "same size, other bytes");
+    std::fs::remove_file(&p).unwrap();
+    std::fs::create_dir(&p).unwrap();
+    assert!(!is_verified(&p, &e), "a directory");
+    std::fs::remove_dir(&p).unwrap();
+    let st = std::process::Command::new("mkfifo")
+        .arg(&p)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (p2, e2) = (p.clone(), e.clone());
+    std::thread::spawn(move || {
+        let _ = tx.send(is_verified(&p2, &e2));
+    });
+    let r = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("is_verified blocked on the FIFO");
+    assert!(!r, "a FIFO");
+    std::fs::remove_dir_all(&d).unwrap();
+}
