@@ -115,13 +115,11 @@ gh pr list --author @me --state merged --limit 10 --json number,title,mergedAt,f
   --jq '.[] | select(any(.files[]; .path | startswith("ops/proposals/"))) | [.number,.mergedAt,.title] | @tsv'
 git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protected.txt)
 # audit and retro due: `cargo xtask next-session` (§2) decides them (step 7)
-# design ADR PRs waiting out their 24-hour window (§8 step 5; ADR 0011 §7)
-gh pr list --state open --label design --json number,isDraft,autoMergeRequest,title \
-  --jq '.[] | [.number, .isDraft, (.autoMergeRequest != null), .title] | @tsv'
+# design PRs past their 24-hour window: `cargo xtask next-session` (§2) picks them (step 3)
 ```
-For each such agent PR without auto-merge: if its window has passed (§8 step 5), enable
-auto-merge and remove `owner-todo` from its issue now, whatever §2 picks (one command each; the
-journal entry lists it). Task #314 moves this into the scheduler's step 3.
+A design PR whose 24-hour window has passed (§8 step 5) is the scheduler's step 3 pick
+`worker design-window #N` (#314): enable auto-merge on it and remove `owner-todo` from its
+issue, then record the session (§5) in a records PR.
 
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
@@ -181,7 +179,9 @@ c. **Your own open PR** failing CI or review, or in conflict with its base (merg
    the issue `blocked`, write hypotheses and evidence on it, and close or park the PR. Park it
    for the owner (`owner-todo` on its issue, §0) only when the next step needs the owner (a
    decision, a protected change, an infra fix only the owner can make); otherwise close it. Review
-   rounds follow §4's cap (4 rounds, ADR 0010).
+   rounds follow §4's cap (4 rounds, ADR 0010). A `worker design-window #N` pick (#314) is
+   your own design PR past its 24-hour window (§8 step 5): `gh pr merge N --auto --squash`,
+   remove `owner-todo` from its issue, and record the session.
 d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`** (not
    `owner-todo`, §0). Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
@@ -712,9 +712,9 @@ specs/tooling/design-technical.md.
    issue. Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
-   `/release` on it. The first session whose §1 sees the window passed, `ai-review` success on
-   the head and no `/hold` after the last `/release` enables auto-merge and removes `owner-todo`
-   (ADR 0011 §7). **A push to a PR labeled `design`** (a fix, a merge of origin/main) starts
+   `/release` on it. Once the window has passed, with `ai-review` success on the head and no
+   `/hold` after the last `/release`, `cargo xtask next-session` picks `worker design-window #N`
+   (§2 step 3), and that session enables auto-merge and removes `owner-todo` (ADR 0011 §7). **A push to a PR labeled `design`** (a fix, a merge of origin/main) starts
    with `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review`
    success the PR goes through this step again (`owner-todo`, a new window), so the owner always
    gets 24 hours on what merges.
@@ -876,7 +876,8 @@ specs/tooling/next-session.md step 8.
    - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` when you
      open it (so every path to a merge, §8 step 6 included, sees the label), and after
      `ai-review` success follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
-     in PR #N merges after 24 h unless you /hold it`; §1's window check enables auto-merge.
+     in PR #N merges after 24 h unless you /hold it`; the scheduler's `worker design-window #N`
+     pick (§2 step 3) enables auto-merge.
 7. **Bound:** one PR per session and one product PR open at a time (the scheduler's rule). A
    product issue whose PR closed unmerged stays open and is picked again.
 8. **Record** as §5 says (`Picked: rule k (Design: product)`).

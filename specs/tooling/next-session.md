@@ -14,7 +14,9 @@ replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Ta
 (#275) adds step 6 (Design: technical) and takes `needs-design` PRs out of step 3. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
 days without a Planner run) and widens `records.txt` to 7 days. Task 2 part 2 (#288) adds the
 work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first order. Task 6
-part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's.
+part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's. Task 3
+part 3 (#314) adds step 3's third term: an own design PR past its 24-hour window (ADR 0011 §7),
+which TICK §1 checked by hand before.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
@@ -27,7 +29,7 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
     |---|---|---|
     | 1 | a | `worker owner-issue #N`, `worker owner-comment <url>`, `worker owner-done #N` |
     | 2 | b | `worker main-red run <databaseId>` |
-    | 3 | c | `worker own-pr #N`, `worker scheduler-bug #N` |
+    | 3 | c | `worker own-pr #N`, `worker scheduler-bug #N`, `worker design-window #N` |
     | 4 | d | `worker crash-security #N` |
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
     | 6 | (§2 step 6, TICK §8) | `design-technical needs-design #N` (a PR), `design-technical design-issue #N` |
@@ -53,7 +55,7 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
   3. `owner-open.json`: `gh issue list --state open --author jacobdam --limit 1000 --json number,labels,comments`;
   4. `owner-closed.json`: `gh issue list --state closed --author jacobdam --search closed:>=<today − 14 days> --limit 1000 --json number,body,comments`
      (today is the UTC day from the system clock, as in `cargo xtask metrics`);
-  5. `prs.json`: `gh pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable`;
+  5. `prs.json`: `gh pr list --author @me --state all --limit 200 --json number,state,isDraft,autoMergeRequest,createdAt,body,headRefName,labels,statusCheckRollup,mergeable`;
   6. `issues.json`: `gh issue list --state open --limit 1000 --json number,title,labels`;
   7. `runs.json`: `gh run list --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,event`;
   8. `worktrees.txt`: `git worktree list --porcelain`;
@@ -98,6 +100,12 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
       milestone of every issue, closed ones included, for the work mix);
   20. `areas.toml`: live, `ops/areas.toml` in the current directory (the main checkout), as
       `cargo xtask issue-lint` reads it: which `area:` labels are product (step 10).
+  21. `design-ready.json`: live, built from read commands: for each open agent PR in `prs.json`
+      labeled `design`, the `ready_for_review` events of
+      `gh api --paginate --slurp repos/jacobdam/jpdf3/issues/<n>/timeline?per_page=100` (every
+      page; other events are dropped, and each kept one only as `event` and `created_at`, which
+      must be `YYYY-MM-DDTHH:MM:SSZ`), written as `[{"number":N,"events":[…]}, …]` (#314). With
+      no such PR it is `[]` and no command runs.
 
   `issues.json` (input 6) also reads `body` and `milestone`:
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
@@ -123,7 +131,8 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
       counted nor in the window), or `worker` with a second word starting `owner-` (an owner
       instruction, rule a);
     - *on an issue:* exactly three words, the first `worker` or `qc`, the last `#<digits>`; the
-      issue is that number, except for the step `own-pr`, where it is that PR;
+      issue is that number, except for the steps `own-pr` and `design-window`, where it is
+      that PR;
     - *other:* everything else (audit, retro, Planner, `main-red`, `leftover-worktree`, a
       `fallback exit` line, any other text): in the window, never milestone work.
 
@@ -199,16 +208,37 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
        the branch name), lowest number first, after the held ones; a PR that is both gets
        both notes;
      - an open issue labeled `bug` whose title starts with `next-session: `, with no skip
-       label and not in flight.
+       label and not in flight;
+     - an open agent PR labeled `design` (exact name: a design ADR PR, TICK §8 step 5, or a
+       later `docs/PRODUCT.md` change, TICK §10 step 6; v1 never carries it) whose 24-hour
+       window has passed (ADR 0011 §7, #314): not a draft (`isDraft` false), auto-merge off
+       (`autoMergeRequest` null), not failing (so `ai-review` success is on its head and it has
+       no conflict), not held, not on an `owner/` branch, and with no skip label on the PR. Its
+       linked issue's `owner-todo` doesn't stop it (the issue carries it while the window runs,
+       and this session removes it), but `blocked` or `deferred` there does (the safe side:
+       a session or the owner parked the work). The window *has passed* when every one of these
+       times is at or before `now − 86 400` (so at exactly 24 hours it has passed): the PR marked
+       ready (the newest `created_at` of its `ready_for_review` events in `design-ready.json`,
+       or its `createdAt` when it has none: it was created ready); the newest `startedAt` of an
+       `ai-review` status context in state `SUCCESS` in its `statusCheckRollup`; and, when the
+       newest of its owner commands in `holds.json` (the hold rule above, unchanged) is a release,
+       that command's `createdAt`. A PR with no entry in `design-ready.json` (only a broken
+       fixture, live) is never picked. Lowest number first → `worker design-window #N`. The
+       `Rule:` line says `c (own design PR past its 24-hour window, ADR 0011 §7: enable
+       auto-merge, remove owner-todo from its issue)`; the brief loads `gh pr view N --comments`,
+       the linked issue (when there is a `Closes` link) and `ops/TICK.md §8 step 5`.
+
+       The order follows ADR 0011 §2 step 3: a failing PR first (a design PR whose CI fails is
+       fixed there when its issue has no skip label), then the scheduler's own bug (a broken
+       scheduler can mis-pick everything else), then the window, which is the least urgent: the
+       owner already had the 24 hours, and a later session merges it as well. It outranks step
+       4 because ADR 0011 §2 puts it in step 3.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
      `sev:critical`, `sev:high` or no `sev:*` label (TICK: label it first), with no skip label
      and not in flight. Order: `sev:critical` (on a `crash` or `security` issue), then
      `security` with no `sev:*`, then the rest; lowest number first within each.
 
-     Not in this part: ADR 0011 §2 step 3's own design or `PRODUCT.md` PR past its 24-hour
-     window (task 3's #275; a `PRODUCT.md` PR after v1 carries the `design` PR label, TICK
-     §10, so TICK §1's by-hand check covers it until then) and step 4's `design-pending`
-     containment rule (task 4, #246/#247).
+     Not in this part: step 4's `design-pending` containment rule (task 4, #246/#247).
   5. **Flaky and leftovers** (rules e, f): an open issue labeled `flaky` (same filters, lowest
      number first); then a worktree in `worktrees.txt` on a branch `t/…` (by name; the line
      `branch refs/heads/t/…`) for which `prs.json` has no PR of any state with that
@@ -235,7 +265,7 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
      `docs/PRINCIPLES.md`, `docs/adr/_TEMPLATE-design.md`,
      `docs/adr/0010-review-rounds-converge.md`, `docs/adr/0011-session-types-and-scheduler.md §5`.
      Not in this part: the third term of ADR 0011 §2 step 6 (an area over its threshold, task 4,
-     #247), and step 3's own design PR past its 24-hour window (#314).
+     #247).
   7. **Audit, then retro** (rules g, h). From `main-log.txt` (newest first): a *record commit*
      adds (status `A`) a file `docs/audits/NNNN.md` or `docs/advocate/NNNN.md` (an *audit slot*,
      ADR 0011 §1), or `docs/retros/NNNN.md` (a retro), with exactly four digits and nothing else
@@ -353,8 +383,14 @@ part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the P
   right type (labels: `[{name}]`; comments: `[{author: {login}, body}]`, a null author counts as
   not the owner; `mergeable`: a string, one of `MERGEABLE`, `CONFLICTING`, `UNKNOWN`;
   `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
-  `conclusion`) or `StatusContext` (`context`, `state`), other entries are ignored). Timestamps
-  are compared as ISO 8601 UTC text (GitHub writes one fixed form).
+  `conclusion`) or `StatusContext` (`context`, `state`), other entries are ignored; on an open PR
+  labeled `design`, an `ai-review` status in state `SUCCESS` also needs `startedAt` in the form
+  `YYYY-MM-DDTHH:MM:SSZ`). Every PR in `prs.json` needs `isDraft` (a boolean),
+  `autoMergeRequest` (null or an object) and `createdAt` (`YYYY-MM-DDTHH:MM:SSZ`).
+  `design-ready.json`: objects with a number `number` (each at most once) and an array `events`
+  of objects with a string `event`; a `ready_for_review` event also needs `created_at` in that
+  form, other events need nothing more. Timestamps are compared as ISO 8601 UTC text (GitHub
+  writes one fixed form).
   `main-log.txt`: non-empty lines are either `commit <40 hex digits> <Unix seconds>[ <subject>]`
   or `<status>\t<path>` with status `A`, `M`, `D` or `T` after a commit line; anything else (a
   rename line, a file line before the first commit) is an error, and so is a log with no commit.
@@ -397,6 +433,13 @@ never 2 (no command ran).
   and step 3 judges the PR by the earlier commands (a missed `/hold` picks it as before #295;
   the session then sees the hold and does nothing, TICK §5). No open PR has 100 comments
   today.
+- The design window (#314): `design-ready.json` reads every timeline page of each open agent
+  design PR (one `gh api` call each; one or two such PRs at a time), so no ready event is
+  missed. `holds.json`'s 100-comment cap applies to `/release` too: a release after a PR's
+  100th comment is missed, and the window would start at an earlier time, so the PR could be
+  picked before 24 hours after that release (the owner can `/hold` again; no open PR has 100
+  comments today). The `ai-review` time is the status's `startedAt` as `statusCheckRollup`
+  shows it (the newest status of each context on the head; checked on PR #327 on 2026-11-24).
 - Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
   (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
   every issue updated in the week would cost one events call each. At most 100 issues updated
@@ -451,11 +494,24 @@ never 2 (no command ran).
   later `docs/PRODUCT.md` change merges after a 24-hour window unless the owner `/hold`s it,
   so a forged `design product #N` pick can lead to a merged change the owner didn't stop in
   time, as a design ADR PR can (ADR 0011 §7).
+- **The design window** (#314). The pick only tells a session to enable auto-merge on its own
+  design PR; it never merges anything and never skips the owner's command: a held PR (the
+  owner's newest command is a `/hold`) is never picked, and an owner `/release` starts the
+  window again, both by step 3's unchanged command rule (untagged, from `jacobdam`, as the
+  workflow acts on it). A stranger's or an agent comment can't restart or end the window. The
+  times come from GitHub (the timeline, the status, the PR) and from owner comments; the
+  `ai-review` status is posted by the agent account, so a session could post one early and
+  start its own window early, as it could under TICK §1's by-hand check: the owner still gets
+  24 hours from the PR marked ready and from any `/release`. A wrong pick costs a design ADR
+  merged before the owner's 24 hours, which is why this term is in the strict lane (ADR 0012
+  §1, ADR 0011 §7). The cutoff `now − 86 400` saturates and is floored at the epoch (`now` is
+  in the years 1970–9999).
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
   list.
-- **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `git worktree list`,
+- **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `gh api` reads (GET
+  only: milestones, issue events, PR timelines), `git worktree list`,
   `git log`, `git for-each-ref`, `git ls-tree`, `git cat-file` and the protected feed script,
   which only reads. It writes no file.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
@@ -495,7 +551,10 @@ never 2 (no command ran).
     exits 0, and `ls-tree` on origin/main without the file prints nothing). They were checked by
     hand on 2026-11-23: the `ls-tree` line run from `xtask/` lists main's three journal files of
     that day with root-relative paths, and the scheduler ran live with exit 0. A producer that
-    read the wrong refs would pass every test.
+    read the wrong refs would pass every test. The live assembly of `design-ready.json` (#314)
+    is not run by the tests either: on 2026-11-24 the `--paginate --slurp` timeline of PR #327
+    printed one page, an array of event objects with its `ready_for_review` event and its
+    `created_at`, and the scheduler ran live with exit 0 (no open design PR, so no call).
   - The work mix: what broken implementation still passes? Each filter has a fixture whose
     removal changes the pick: the window's order by path (records written newest first), the
     newest 20 (older milestone records that would lift the share), the (path, text) dedupe
@@ -518,7 +577,7 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Ten `gh` calls (`pr-files.json` takes about 9 s), one more per blocked issue updated in the last 7 days, three `git` commands
+Ten `gh` calls (`pr-files.json` takes about 9 s), one more per blocked issue updated in the last 7 days and one (all pages) per open agent design PR, three `git` commands
 plus one `git ls-tree` per open agent PR and one `git cat-file` per journal file of the last 7
 days, two more for `ops/QUEUE.md`, and the feed script (which makes its own); a few seconds.
 
@@ -548,7 +607,8 @@ of inputs where no step before 11 applies (→ `planner`):
   after a `/hold` releases it, and a body with the tag in other case is no command; step 1:
   an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
   and two held PRs are noted lowest first; a malformed
-  `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+  `holds.json` (no `comments`, no `createdAt` on an owner command, an owner command's `createdAt`
+  not in GitHub's `YYYY-MM-DDTHH:MM:SSZ` form, a PR listed twice: #314) exits 1;
 - step 6 (#275): a `needs-design` PR is picked and not step 3's, lowest number first, after a
   failing PR without the label (step 3); near misses: `needs-designx`, `design`, `Needs-design`
   (step 3 picks them), each skip label on the PR and on its issue, a merged or closed PR, an
@@ -562,6 +622,29 @@ of inputs where no step before 11 applies (→ `planner`):
   scheduler bug, a crash, a `sev:high` security issue, a flaky test and a leftover worktree and
   wins over a due audit; step 10's `design` near miss is now step 6's pick (step 10's own
   `design` skip is defensive only: step 6 takes any such issue first);
+- step 3's design window (#314): an agent design PR whose issue carries `owner-todo` is picked
+  with its whole brief (and without a `Closes` link, without the issue line); each start time
+  being the latest (the newest of two ready events in either list order, `createdAt` with no
+  ready event, the newest of two `ai-review` successes, the owner's last `/release`, a `/Hold`
+  release) at exactly 24 hours (picked) and one second less (not); a ready event wins over a
+  later `createdAt`; near misses: a non-owner, tagged or prefixed `/release`, a release on
+  another PR, other timeline events, a pending `ai-review` or another context's later status
+  (all still picked); a draft, auto-merge on, held (noted), no `ai-review` success, an
+  `ai-review` failure, a failed check, a conflict, no label, `designx`, `Design`,
+  `needs-design`, each skip label on the PR, untagged, merged, closed, an `owner/` branch, no
+  `design-ready.json` entry (none picked); a failing design PR whose issue has no skip label
+  is `own-pr`; lowest number first, and a waiting lower PR doesn't hide a higher one; a failing
+  PR, the scheduler bug and main red win over it, and it wins over a crash; malformed
+  `design-ready.json` (7 shapes, also with no design PR open) and `prs.json` (`isDraft`,
+  `autoMergeRequest`, `createdAt` wrong or missing; an open design PR's `ai-review` success
+  without or with a malformed `startedAt`, which a PR without the label doesn't need) exit 1;
+  `design-window #N` is a PR for the work mix. Hand mutants of every filter (draft, auto-merge,
+  failing, parked, skip label, `<=` to `<`, `all` to `any`, the release, the review time, the
+  newest ready event, the missing entry, the event filter, the review state, context and
+  newest, `createdAt`, the duplicate check, the record word) each fail a test, except two that
+  are equivalent: the release lookup ignoring a newest `/hold` (that PR is held, so never
+  picked) and a looser label test in `design_label` (the review time is read only for the exact
+  label, so such a PR is never picked);
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,
@@ -614,4 +697,5 @@ of inputs where no step before 11 applies (→ `planner`):
   `areas.toml` exit 1, also when step 1 picks;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form, the `Depends on:` parser, the journal listing over several days, the
-  `ops/QUEUE.md` listing line, the `Milestone:` line and the record words of the work mix.
+  `ops/QUEUE.md` listing line, the `Milestone:` line and the record words of the work mix
+  (`design-window #N` among them).
