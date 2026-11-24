@@ -574,7 +574,10 @@ fn step3_skips_the_owners_own_pr_on_an_owner_branch() {
     ])
     .unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
-    assert!(out.starts_with("worker ready #301\n"), "none links #301: {out}");
+    assert!(
+        out.starts_with("worker ready #301\n"),
+        "none links #301: {out}"
+    );
     let at = |s: &str| out.find(s).unwrap_or_else(|| panic!("{s}: {out}"));
     let (h, a, b) = (
         at("- PR #300 is on the owner's /hold"),
