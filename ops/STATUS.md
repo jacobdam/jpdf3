@@ -8,8 +8,9 @@ Phase: bootstrap (pilot)
 - `cargo xtask next-session` decides steps 1–5, 7, 10 and 11 (PRs #269, #272, #274, #284, #285); step 6 is checked by
   hand until #275.
 - PR #296 (#295): `next-session` skips an own PR on the owner's `/hold` (step 3; step 1 waits for its items too).
-  Merged origin/main in (PR #289's step 8), round 3 delta review clean. After it merges, step 3 picks #291 (owner-apply
-  PR, no `ai-review`) unless the owner merges or holds it; PR #290 stays on the owner's `/hold`.
+  Merged origin/main in (PR #289's step 8), round 3 delta review clean.
+- PR #299 (#298, built on PR #296): step 3 also skips an open PR on an `owner/` branch (the owner's own protected
+  change, AUTOMATION.md §6.1), so owner-apply PRs #290 and #291 stop being picked. Round 2 delta review clean.
 - PR #289 (#244, task 2 part 1: Planner session TICK §9, `ops/QUEUE.md`, step 8) merged (5e4f6f7). Part 2 (work-mix
   budget): #288. Round 5 minors and nit: #294.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
