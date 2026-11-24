@@ -360,7 +360,7 @@ For PRs touching `crates/` or `tools/`, a Codex second reviewer (`ops/driver/cod
 trial) reviews the same brief. Every review and its triage is posted on the PR (ops/TICK.md §4).
 
 **Lanes (ADR 0012 §1).** A PR that changes only process-area files (origin/main's
-`ops/areas.toml` `process` and `records` areas, plus new `xtask/src/main.rs` arms) and nothing
+`ops/areas.toml` `process` and `records` areas; any `xtask/src/main.rs` change is strict) and nothing
 on the strict list (the paths `.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`,
 `ops/proposals/`, `ops/areas.toml`, `CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`, ADRs 0010 and
 0012; and the security, owner-instruction, guard, protected-path and review rules) is in the
@@ -376,7 +376,7 @@ The judge is the hard backstop.
 
 | Situation | Rule |
 |---|---|
-| Extra work needed | new `discovery` issue in the right milestone; process-area work goes in `Ops` unless it blocks a gate, is a live scheduler wrong pick, or is `crash`/`security` (ADR 0012 §2) |
+| Extra work needed | new `discovery` issue in the right milestone; process-area work goes in `Ops` unless it blocks a gate, is a live scheduler wrong pick, is `crash`/`security`, or is about a strict-list subject (ADR 0012 §2) |
 | Spec ambiguity | ① ISO 32000-2 text → ② errata / PDF Association notes → ③ reference-engine consensus → ④ the safer behavior. Record an ADR. |
 | Broken real-world files | **read leniently** (as the consensus engines do), **write strictly** (per spec) |
 | Reference engines disagree | page goes on the disputed list (excluded from ratchet); if ours matches neither, file a bug |

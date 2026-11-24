@@ -45,9 +45,8 @@ guard and the owner-instruction rules are not cheap to get wrong.
 ### 1. The light lane
 A PR is in the **light lane** when every file it changes is owned (longest prefix, read from
 **origin/main's** `ops/areas.toml`, so a PR can't widen its own lane) by the `process` or
-`records` area, or is a **new** match arm in `xtask/src/main.rs` that calls a function in a
-process-area file (a changed or removed existing arm is strict: `ci linux` is the judge's entry
-point), and it changes none of the **strict list**:
+`records` area (so any change to `xtask/src/main.rs`, which routes the judge's `ci` and
+`nightly` commands, is strict), and it changes none of the **strict list**:
 - the paths `.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/` (protected anyway),
   `ops/proposals/`, `ops/areas.toml`, `CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`,
   `docs/adr/0010-review-rounds-converge.md` and this ADR;
@@ -62,14 +61,15 @@ strict stays strict. The PR description's first line after the tag says `Lane: l
 or `Lane: strict`. The reviewer of each PR's first round, whatever its K, checks it and answers
 `lane: light accepted` or `lane: strict, because <file or term>`; a strict answer moves the PR
 to the strict lane for the rest of its rounds (K continues) and is final. A PR over 1500 added
-lines that this moves to the strict lane is split before its next round (TICK §0).
+lines that this moves to the strict lane is split before its next round or its `ai-review`,
+whichever comes first (TICK §0).
 
 In the light lane:
 | Rule | Strict lane (unchanged) | Light lane |
 |---|---|---|
 | Size (TICK §0) | ≤ 1500 added lines | ≤ 3000 added lines, still one issue per PR |
 | Tests (TICK §3 step 2, the template's self-check) | every term: a should-reject and a near-miss case; a case per line shape; state tables | each pick, trigger or rule it adds or changes: one test that selects it and one that doesn't (the nearest miss the author sees); one parse-error case per new input. The PR description answers one line instead of the filter/gate/parser items: "if this is wrong, what wrong pick follows, and which session notices" |
-| Review rounds (TICK §4, ADR 0010) | 4, then step 6 | **2**: a delta round 2 runs if round 1's triage fixed, disputed or regraded a blocker, or disputed or regraded a major, or if the fixes since round 1 fail step 6's post-cap test (over 100 added lines, or a new file) or touch the strict list (then the PR is strict from round 2 on). After round 2, §4 step 6 applies as it does after round 4 (post-cap diff, final check, design escalation), with round 2 in place of round 4: the final check is round 3, and K ≥ 4 is the design session's or the owner's call |
+| Review rounds (TICK §4, ADR 0010) | 4, then step 6 | **2**: a delta round 2 runs if round 1's triage fixed, disputed or regraded a blocker, or disputed or regraded a major, or if the fixes since round 1 fail step 6's post-cap test (over 100 added lines, or a new file) or change any file outside this section's light-lane definition (then the PR is strict from round 2 on). After round 2, §4 step 6 applies as it does after round 4 (post-cap diff, final check, design escalation), with round 2 in place of round 4: the final check is round 3, and K ≥ 4 is the design session's or the owner's call |
 | Majors | fixed in the PR | fixed in the PR; round 2 doesn't run for a major's fix alone |
 | Minors and nits | quick fix, else an issue (`deferred: #N`) | quick fix, else `dropped (light lane, ADR 0012)`: no issue |
 | AUTOMATION.md | updated in the same PR | TICK.md is updated in the PR; each AUTOMATION.md line it makes false is listed in the PR description as `AUTOMATION.md now false: §<n> <quoted line>`, and the next retro rewrites them (TICK §7 step 4) |
@@ -105,7 +105,7 @@ other. Retros report the `Ops` count and its growth.
   group of related issues it sees (a follow-up chain of 3 or more, or 5 or more open issues on
   one subsystem), listing the group in its body. The mechanical area threshold (§4: the
   threshold, both replays, `design-pending`, the per-area bound) and the Gardener wait (task 4
-  part 3, #247): they are built when a retro finds a group the Planner missed for 7 days (TICK §7 step 1 counts
+  part 3, #247): they are built when a retro finds a group the Planner missed for 7 days (TICK §7 step 4 counts
   them: a chain of 3 or more follow-ups, or 5 or more open issues on one subsystem, with no
   `design` issue filed within 7 days of the group forming).
 - **§9, tasks.** Task 4 part 2 (#308: `area:`/`origin:` labels, the filing rule, per-area
@@ -122,10 +122,11 @@ other. Retros report the `Ops` count and its growth.
 The first Planner run after this ADR merges creates the milestone (`gh api
 repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
 gate needs (ADR 0012 §2)"`), makes §3's moves with a comment on each, and applies §2 to the open
-M0 issues. By §2 these leave M0 as of 2026-11-24: #195, #313, #314 and #319 (process follow-ups,
-none blocking the gate) and the owner's #179 to `Ops`; #196 stays (`security`, `sev:high`, §2
-term 3) and #208 stays (#21 needs it). That takes M0 from 27 open issues (not counting #326,
-which this PR closes) to 17, before new inflow.
+M0 issues. By §2 these leave M0 as of 2026-11-24: #313, #314 and #319 (process follow-ups,
+none blocking the gate) and #328 (the lane-aware metrics; retros hand-count until one of them asks
+the Planner to pull it in, §2) to `Ops`. These stay: #196 (`security`, `sev:high`, §2 term 3), #195 and #179 (about
+`ops/proposals/` and the owner feed, §2 term 4) and #208 (#21 needs it). That takes M0 from 27
+open issues (not counting #326, which this PR closes, or #328) to 19, before new inflow.
 
 ## Consequences
 - Process PRs cost about one review round and leave no minor-finding issues; more process
@@ -147,7 +148,7 @@ which this PR closes) to 17, before new inflow.
   tool's cap and final-check shares as strict-lane numbers that light-lane PRs dilute.
 
 ## Success check (retro 0003, due by 2026-11-30, then retro 0004)
-- M0's open count falls: at most 17 plus the M0 issues filed since this merge, and M0 issues
+- M0's open count falls: at most 19 plus the M0 issues filed since this merge, and M0 issues
   filed per day below M0 issues closed per day over the period.
 - Light-lane PRs (hand count from the `Lane:` lines, until #328): median review rounds ≤ 1, and
   no light-lane PR files a minor-finding issue.

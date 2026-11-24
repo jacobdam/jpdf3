@@ -252,8 +252,8 @@ still come first). Do these in order, one per session:
 ## 4. Independent review (required)
 **Lanes (ADR 0012 §1).** A PR is in the **light lane** when every file it changes is owned
 (longest prefix, read from **origin/main's** `ops/areas.toml`) by the `process` or `records`
-area, or is a **new** match arm in `xtask/src/main.rs` that calls a function in a process-area
-file (a changed or removed arm is strict), and it touches nothing on the strict list: the paths
+area (so any `xtask/src/main.rs` change is strict: it routes the judge's commands), and it
+touches nothing on the strict list: the paths
 `.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`, `ops/proposals/`, `ops/areas.toml`,
 `CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`, ADR 0010 and ADR 0012; and, in any file, who counts as
 the owner or which text is an instruction (§0's first bullets, §2 rule a, ADR 0011 §7, the
@@ -264,7 +264,8 @@ stays strict. The PR description's first line after the tag is `Lane: light (ADR
 `Lane: strict`. The brief of each PR's first round, whatever its K, asks the reviewer to check
 it and answer, as its first line, `lane: light accepted` or `lane: strict, because <file or
 term>`; a strict answer is final and the PR follows the strict lane from then on (K continues).
-A PR over 1500 added lines moved to the strict lane is split before its next round (§0). In the
+A PR over 1500 added lines moved to the strict lane is split before its next round or its
+`ai-review`, whichever comes first (§0). In the
 light lane: the cap is **2 rounds** (step 5), majors are fixed without a re-review of their own,
 minors and nits that aren't quick fixes are dropped (steps 4 and 6), and TICK.md is updated in
 the PR while each AUTOMATION.md line it makes false is listed in the description as
@@ -382,8 +383,9 @@ Each round K runs in this order:
    **Light lane:** round 2 runs if round 1's triage fixed, disputed or regraded a blocker, or
    disputed or regraded a major (a fixed major alone doesn't start one), or if the fixes since
    round 1 fail step 6's post-cap test (over 100 added lines, or a new file; then round 2 is a
-   delta round) or touch the strict list (then the PR is strict, and round 2 follows the strict
-   lane); else post `ai-review`. Round 2 is the light lane's cap: after it, step 6 applies with "round 2" for "round 4", the final check is round 3 (header
+   delta round) or change any file outside the Lanes paragraph's light-lane definition, the
+   strict list included (then the PR is strict, and round 2 follows the strict lane); else post
+   `ai-review`. Round 2 is the light lane's cap: after it, step 6 applies with "round 2" for "round 4", the final check is round 3 (header
    `AI review, round 3 (final check)`), and K ≥ 4 is the design session's or the owner's call as
    K ≥ 6 is above.
 6. **Cap: 4 rounds per issue** (1 full + 3 delta; K counts across PRs, see above). After
@@ -755,15 +757,15 @@ gate them.
    umbrella whose remaining work is only in issues of later milestones moves to the latest of
    those milestones (it closes after them), and an issue that can't be done in this milestone
    (it needs a later milestone's work) moves to that milestone; say why in a comment. A
-   process-area issue in the current milestone that none of §5's three Discoveries terms keeps
+   process-area issue in the current milestone that none of §5's four Discoveries terms keeps
    there moves to `Ops`, and an `Ops` issue moves into the current milestone once term 1 or 2
    holds or a retro asks for it (ADR 0012 §2). **Once, on the first run after ADR 0012
    merges:** create the `Ops` milestone if it is missing (`gh api
    repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
    gate needs (ADR 0012 §2)"`) and make ADR 0012 §3's and §4's moves (#308 and #248 to M1, with
    #248's and #251's `Depends on: #247` changed to #308; #250 to M3; #251 to M4; #247 to `Ops`
-   labeled `deferred`; then §5's Discoveries rule over the open M0 issues, which keeps `security`
-   ones such as #196), with a comment on each. Close nothing.
+   labeled `deferred`; then §5's Discoveries rule over the open M0 issues, which keeps #196,
+   #195 and #179 and moves #313, #314, #319 and #328 to `Ops`), with a comment on each. Close nothing.
 2a. **Issue groups by judgement** (ADR 0012 §3, until #247's area threshold is built): when you
    see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
    open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
