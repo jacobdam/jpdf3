@@ -5,13 +5,13 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - PR #309 (#246, ADR 0011 task 4 part 1 of 3): `ops/areas.toml` (16 areas) and `cargo xtask issue-lint`; round 3
-  clean, auto-merge on. #246 was split: part 2 is #308 (labels on every open issue, the TICK filing rule, per-area
-  metrics; needs `ready` from the Planner), part 3 is #247 (renumbered 3/3, now depends on #308).
+  clean, origin/main merged in (STATUS conflict only), auto-merge on. Part 2 is #308 (labels on every open issue, the
+  TICK filing rule, per-area metrics; needs `ready` from the Planner), part 3 is #247 (depends on #308).
+- PR #312 (#249, Design: product session 1/2) is an open draft.
 - Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
   #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
 - `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
   an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca, which also carried #296's commits).
-- PR #296 (#295): its change is on main through PR #299; it is still open with auto-merge on.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
