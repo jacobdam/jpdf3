@@ -54,6 +54,8 @@ struct Inputs {
     blocked: String,
     /// `<path>\t<line>` for each `- Session: ` line of the recent journal files (step 11).
     records: String,
+    /// The comments of each open PR (`number`, `comments`), for the owner's `/hold` (step 3).
+    holds: String,
 }
 
 /// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
@@ -223,6 +225,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             milestones: read(dir, "milestones.json")?,
             blocked: read(dir, "blocked.json")?,
             records: read(dir, "records.txt")?,
+            holds: read(dir, "holds.json")?,
         });
     }
     let now = std::time::SystemTime::now()
@@ -295,6 +298,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
         blocked: blocked_live(&week_ago)?,
         records,
+        holds: gh("pr list --author @me --state open --limit 200 --json number,comments")?,
     })
 }
 
@@ -478,6 +482,40 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
         }
     }
     out.sort_by_key(|p| p.number);
+    Ok(out)
+}
+
+/// The numbers of the PRs in `holds.json` whose newest owner command is a `/hold` (#295): an
+/// owner-account comment without the tag whose body starts with `/hold` or `/release`, as
+/// `.github/workflows/owner-commands.yml` matches it. Newest is the largest `createdAt` (GitHub's
+/// `YYYY-MM-DDTHH:MM:SSZ`, so text order is time order); on a tie, the later in the list.
+fn held_prs(text_: &str) -> Result<Vec<u64>, String> {
+    let what = "holds.json";
+    let v = parse_list(text_, what)?;
+    let mut out = Vec::new();
+    for p in list(&v, what)? {
+        let n = number(p, "number", what)?;
+        let mut newest: Option<(&str, bool)> = None;
+        for c in list(field(p, "comments", what)?, what)? {
+            let body = text(c, "body", what)?;
+            let login = match field(c, "author", what)? {
+                Value::Null => None,
+                a => Some(text(a, "login", what)?),
+            };
+            let hold = body.starts_with("/hold");
+            if login != Some(OWNER) || body.contains(TAG) || !(hold || body.starts_with("/release"))
+            {
+                continue;
+            }
+            let at = text(c, "createdAt", what)?;
+            if newest.is_none_or(|(t, _)| at >= t) {
+                newest = Some((at, hold));
+            }
+        }
+        if newest.is_some_and(|(_, hold)| hold) {
+            out.push(n);
+        }
+    }
     Ok(out)
 }
 
@@ -1010,6 +1048,8 @@ fn planner_ran(text_: &str, today: &str) -> Result<bool, String> {
 
 fn decide(inp: &Inputs) -> Result<String, String> {
     let prs = parse_prs(&inp.prs)?;
+    let held = held_prs(&inp.holds)?;
+    let is_held = |p: &Pr| p.open && held.contains(&p.number);
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
     let now = unix(&inp.now, "now.txt")?;
@@ -1052,7 +1092,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = prs
             .iter()
-            .filter(|p| p.open && p.failing && !skipped(&p.labels))
+            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !is_held(p))
             .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
             .map(|p| {
                 let mut load = vec![
@@ -1135,6 +1175,12 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .collect();
     branches.sort_unstable();
     let mut notes = Vec::new();
+    for p in prs.iter().filter(|p| is_held(p)) {
+        notes.push(format!(
+            "PR #{} is on the owner's /hold (no /release after it): step 3 doesn't pick it",
+            p.number
+        ));
+    }
     if alarm.is_some() {
         notes.push(format!(
             "judge alarm active ({ALARM_FILE} exists): step 2 skipped{}",

@@ -73,6 +73,9 @@ adds step 6.
       session's last `git fetch` brought (TICK §1); a ref that doesn't exist (a PR branch pushed
       after that fetch) is a failed command, exit 2.
 
+  16. `holds.json`: `gh pr list --author @me --state open --limit 200 --json number,comments`
+      (the conversation comments of each open PR, for the owner's `/hold`, #295).
+
   `issues.json` (input 6) also reads `body` and `milestone`:
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
 
@@ -117,7 +120,15 @@ adds step 6.
      raised; the session continues with other work); the brief notes the alarm instead.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
-       carries a skip label. Lowest number first;
+       carries a skip label, and that is not *held*. Lowest number first. A PR is held when,
+       of its comments in `holds.json` that are an owner command (author `jacobdam`, a body
+       that doesn't contain the tag and starts with `/hold` or `/release`, byte for byte, as
+       `.github/workflows/owner-commands.yml` matches them), the newest (largest `createdAt`;
+       on a tie, the later in the list) starts with `/hold`. TICK §5: nothing moves until
+       `/release`, so a session picked for it could do nothing, and every later session would
+       get the same pick (#295). The brief notes each held open agent PR
+       (`PR #N is on the owner's /hold (no /release after it): step 3 doesn't pick it`). A
+       held PR still links its issue (in flight);
      - an open issue labeled `bug` whose title starts with `next-session: `, with no skip
        label and not in flight.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
@@ -244,7 +255,11 @@ never 2 (no command ran).
   only the open ones (a handful) and the branches of local worktrees matter. A `gh issue list`
   `comments` field holds at most the first 100 comments of an issue (gh's GraphQL page), so a
   done: reply after the 100th comment is missed and the issue is picked again; the session
-  then sees the reply and exits under rule a. No owner issue has 100 comments today.
+  then sees the reply and exits under rule a. No owner issue has 100 comments today. The same
+  cap applies to `holds.json`: a `/hold` or `/release` after a PR's 100th comment is missed,
+  and step 3 judges the PR by the earlier commands (a missed `/hold` picks it as before #295;
+  the session then sees the hold and does nothing, TICK §5). No open PR has 100 comments
+  today.
 - Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
   (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
   every issue updated in the week would cost one events call each. At most 100 issues updated
@@ -269,7 +284,10 @@ never 2 (no command ran).
   comments are not owner replies, and a PR counts as in flight only when it is a tagged PR
   of the shared account (`--author @me`; the guard forces the tag on agent PRs, and the owner's
   own untagged PRs are ignored). The skip labels can be set by the agent account
-  (ADR 0011 Consequences: the guard can't check labels).
+  (ADR 0011 Consequences: the guard can't check labels). A hold counts only from an untagged
+  owner-account comment, as the workflow applies it, so a stranger's `/hold` or `/release`
+  changes nothing; an agent comment can't release a hold (it carries the tag). The owner's
+  commands only ever hold back step 3: a held PR is skipped, never picked.
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
@@ -313,7 +331,7 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Nine `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
+Eight `gh` calls (seven before #295; the old text said nine), one more per blocked issue updated in the last 7 days, three `git` commands
 plus one `git ls-tree` per open agent PR and one `git cat-file` per recent journal file, and the
 feed script (which makes its own); a few seconds.
 
@@ -335,6 +353,12 @@ of inputs where no step before 11 applies (→ `planner`):
   retro record, a tag at the retro record's second, 2 blocked issues, an `unlabeled` event,
   each skip label, an open dependency, a non-current milestone) and each 7-day boundary at
   the second it is reached and one second before;
+- step 3's hold (#295): a failing PR whose newest owner command is `/hold` is not picked and
+  the brief notes it; near misses: `/release` after the `/hold` (by `createdAt`, whatever the
+  list order), a tagged `/hold`, a `/hold` by another author, a body that only contains
+  `/hold` after other text, a hold on another PR number; an equal `createdAt` goes by list
+  order; a `/holdx` body counts as a hold (the workflow's prefix match); a malformed
+  `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
 - step 7's slot in flight: an open PR linking an `audit` or `retro` issue holds that term only
   (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the
   other label, a longer label, a merged, closed or untagged PR, no `Closes` link, a closed
