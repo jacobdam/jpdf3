@@ -6,11 +6,12 @@ Phase: bootstrap (pilot)
 ## In flight
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
-- **PR #330** (#313) and **PR #329** (#319): light-lane follow-ups, 1 round each, `ai-review` success, auto-merge on.
-  #314 (step 3's design window) stays in `Ops` and is strict-lane (ADR 0011 §7, the owner's veto); TICK §1 checks the
-  window by hand.
+- **PR #332** (#311, docs/PRODUCT.md v1): reviewed (2 rounds), `ai-review` success, auto-merge off: it merges only on
+  the owner's approval (an untagged comment on the PR; TICK §10 step 6). Journey gap filed: #331 (web offline, M10).
+- #314 (step 3's design window, strict lane: ADR 0011 §7's owner veto) is being built in the owner session of
+  2026-11-24; until it lands TICK §1 checks the window by hand.
 - Merged today: #316 (#277), #317 (#288 part 2), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312
-  (#249, Design: product 1/2), #327 (#326).
+  (#249, Design: product 1/2), #327 (#326), #329 (#319), #330 (#313).
 - `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
   `ready`. Codex timed out (2400 s) on #321's three round briefs (45–110 KB).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
