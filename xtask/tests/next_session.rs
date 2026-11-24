@@ -3895,8 +3895,8 @@ fn reviewed(at: &str) -> String {
     )
 }
 
-/// An open agent design PR 320 (closes #321) created at `created`, reviewed at `review`, with
-/// `extra` labels; `draft` and `auto` (the `autoMergeRequest` JSON) as given.
+/// An open agent design PR `n` (closes #321) created at `created`, with the status rollup
+/// `rollup` and the labels `design` plus `l`; not a draft, auto-merge off.
 fn design_pr(n: u64, created: &str, rollup: &str, l: &[&str]) -> String {
     let mut all = vec!["design"];
     all.extend_from_slice(l);
@@ -3946,6 +3946,37 @@ fn step3_design_window() {
         go(&base_pr, ready_none.clone(), &[]),
         "worker design-window #320"
     );
+    // `blocked` or `deferred` on its issue stops it (R1.3); `owner-todo` alone doesn't (above).
+    for l in ["blocked", "deferred"] {
+        let parked = plus(
+            "issues.json",
+            &[issue(321, "adr", &["design", "owner-todo", l])],
+        );
+        assert_eq!(
+            pick(&[with_pr(&base_pr), ready_none.clone(), parked]),
+            "planner",
+            "{l}"
+        );
+    }
+    // An owner command's `createdAt` must be GitHub's form, and a PR is listed once (R1.1, R1.2).
+    for bad in [
+        holds(&[(320, &[cmd("jacobdam", "/release", "")])]),
+        holds(&[(320, &[cmd("jacobdam", "/release", "2026-11-24 01:00:00")])]),
+        holds(&[(320, &[]), (320, &[])]),
+    ] {
+        let o = run_with(&[
+            with_pr(&base_pr),
+            ready_none.clone(),
+            issue_todo.clone(),
+            bad.clone(),
+        ])
+        .unwrap();
+        assert_eq!(o.status.code(), Some(1), "{bad:?}");
+        assert!(
+            String::from_utf8(o.stderr).unwrap().contains("holds.json"),
+            "{bad:?}"
+        );
+    }
     let o = run_with(&[with_pr(&base_pr), ready_none.clone(), issue_todo.clone()]).unwrap();
     assert_eq!(
         String::from_utf8(o.stdout).unwrap(),

@@ -213,9 +213,10 @@ which TICK §1 checked by hand before.
        later `docs/PRODUCT.md` change, TICK §10 step 6; v1 never carries it) whose 24-hour
        window has passed (ADR 0011 §7, #314): not a draft (`isDraft` false), auto-merge off
        (`autoMergeRequest` null), not failing (so `ai-review` success is on its head and it has
-       no conflict), not held, not on an `owner/` branch, and with no skip label on the PR. A
-       skip label on its linked issue doesn't stop it: the issue carries `owner-todo` while the
-       window runs, which this session removes. The window *has passed* when every one of these
+       no conflict), not held, not on an `owner/` branch, and with no skip label on the PR. Its
+       linked issue's `owner-todo` doesn't stop it (the issue carries it while the window runs,
+       and this session removes it), but `blocked` or `deferred` there does (the safe side:
+       a session or the owner parked the work). The window *has passed* when every one of these
        times is at or before `now − 86 400` (so at exactly 24 hours it has passed): the PR marked
        ready (the newest `created_at` of its `ready_for_review` events in `design-ready.json`,
        or its `createdAt` when it has none: it was created ready); the newest `startedAt` of an
@@ -606,7 +607,8 @@ of inputs where no step before 11 applies (→ `planner`):
   after a `/hold` releases it, and a body with the tag in other case is no command; step 1:
   an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
   and two held PRs are noted lowest first; a malformed
-  `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+  `holds.json` (no `comments`, no `createdAt` on an owner command, an owner command's `createdAt`
+  not in GitHub's `YYYY-MM-DDTHH:MM:SSZ` form, a PR listed twice: #314) exits 1;
 - step 6 (#275): a `needs-design` PR is picked and not step 3's, lowest number first, after a
   failing PR without the label (step 3); near misses: `needs-designx`, `design`, `Needs-design`
   (step 3 picks them), each skip label on the PR and on its issue, a merged or closed PR, an

@@ -739,6 +739,7 @@ fn newest_commands(text_: &str) -> Result<Vec<(u64, String, bool)>, String> {
     let what = "holds.json";
     let v = parse_list(text_, what)?;
     let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for p in list(&v, what)? {
         let n = number(p, "number", what)?;
         let mut newest: Option<(&str, bool)> = None;
@@ -755,9 +756,18 @@ fn newest_commands(text_: &str) -> Result<Vec<(u64, String, bool)>, String> {
             }
             let hold = body.starts_with("/hold");
             let at = text(c, "createdAt", what)?;
+            // A release's time starts the design window (#314), so it must compare as time.
+            if !valid_floor(at) {
+                return Err(format!(
+                    "{what}: createdAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                ));
+            }
             if newest.is_none_or(|(t, _)| at >= t) {
                 newest = Some((at, hold));
             }
+        }
+        if !seen.insert(n) {
+            return Err(format!("{what}: PR {n} listed twice"));
         }
         if let Some((at, hold)) = newest {
             out.push((n, at.to_owned(), hold));
@@ -1638,6 +1648,13 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                     && !p.failing
                     && !p.parked()
                     && !skipped(&p.labels)
+                    // Its issue's `owner-todo` is the window's own; `blocked` or `deferred`
+                    // there stops the merge (the safe side, PR #333 R1.3).
+                    && !linked_issue(&p.body)
+                        .and_then(|n| issues.iter().find(|i| i.number == n))
+                        .is_some_and(|i| {
+                            has_label(&i.labels, "blocked") || has_label(&i.labels, "deferred")
+                        })
             })
             .find(|p| {
                 // No entry: its ready time is unknown, so it is never picked (the safe side;
