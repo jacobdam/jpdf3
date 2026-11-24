@@ -128,8 +128,8 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   technical** session (§8) on a PR labeled `needs-design` (`design-technical needs-design #N`)
   or a `design` and `ready` issue (`design-technical design-issue #N`), step 7 is rules g and h
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
-  (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
-  `Rule:` line), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
+  (`planner due`: the milestone has no plan, no Planner ran in 7 days, or the work mix is below
+  70%; the reason is on the `Rule:` line), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
   `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
   `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The
@@ -196,10 +196,13 @@ h. **RETRO session due** (7 days since the last one, or an incident since it: a 
    > 2 sessions ends in a revert) → §7.
 i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with every issue on its
    `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
-   (lowest number first). An issue whose remaining work is in other issues (an umbrella that
+   (lowest number first; while the work mix is below 70%, the lowest-numbered product issue, one
+   with a product `area:` label of `ops/areas.toml`, first, ADR 0011 §3). An issue whose remaining work is in other issues (an umbrella that
    closes after them) loses `ready`, or names them on a `Depends on:` line.
 j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone has no plan in
-   `ops/QUEUE.md` on main, or no Planner record is dated in the last 7 UTC days) or step 11
+   `ops/QUEUE.md` on main, no Planner record is dated in the last 7 UTC days, or the work mix is
+   below 70%: fewer than 14 of the last 20 counted `Session:` records are milestone work, ADR
+   0011 §3) or step 11
    (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
    `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
 
@@ -672,11 +675,18 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    the scheduler's current milestone moves on), and create the next milestone's issues from
    PLAN.md §8 and the journeys if it has none (then step 3 for that milestone). Otherwise create
    issues for every failing criterion.
-5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4: the `Milestone: <Mn>` line
+4a. **Work mix below 70%** (the brief's `work mix:` note; `planner due` names it, ADR 0011 §3):
+   the budget orders, it never blocks. Add product issues to the milestone from PLAN.md §8 (its
+   row) and the journeys, each sized by §0 and given its product `area:` label from
+   `ops/areas.toml` (until #308 creates the labels there are none, and step 10 doesn't reorder),
+   and ready the ones step 2 allows. You may move process issues to a later milestone or label them `deferred`,
+   with a comment saying why; never close one for the budget.
+5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4a: the `Milestone: <Mn>` line
    (the scheduler's step 8 reads it from main), a `Planned:` line with the date, the ready list
-   in step 10's order (lowest number first, dependencies closed), the issues waiting on a
-   dependency, the ones not workable and why, the critical path to the milestone's gate, the
-   design-ahead list and the work mix (#288). The labels stay the source of truth, and step 10
+   in step 10's order (lowest number first, dependencies closed; product issues first while the
+   work mix is below 70%), the issues waiting on a dependency, the ones not workable and why, the
+   critical path to the milestone's gate, the design-ahead list and the work mix (the brief's
+   `work mix:` note, as printed, in a `## Work mix` section). The labels stay the source of truth, and step 10
    picks from them. Change the file (and its `Planned:` date) only when its content changes.
 6. **Record:** the journal entry (`- Session: <first line>`, which makes later picks that day
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When

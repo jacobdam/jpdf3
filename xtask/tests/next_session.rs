@@ -255,6 +255,11 @@ fn base() -> Vec<(&'static str, String)> {
         ),
         ("records.txt", base_records()),
         ("queue.md", BASE_QUEUE.to_owned()),
+        // The work mix (#288): no PR changes files, no issue has a milestone, and the base's 5
+        // records are too few to measure.
+        ("pr-files.json", "[]".to_owned()),
+        ("all-issues.json", "[]".to_owned()),
+        ("areas.toml", AREAS.to_owned()),
         // PR 300 was held and released: not held.
         (
             "holds.json",
@@ -273,6 +278,11 @@ fn base() -> Vec<(&'static str, String)> {
         ),
     ]
 }
+
+/// `ops/areas.toml`: one product area and the two process areas issue-lint requires.
+const AREAS: &str = "[[area]]\nname = \"engine\"\nkind = \"product\"\npaths = [\"crates/\"]\n\n\
+                     [[area]]\nname = \"process\"\nkind = \"process\"\npaths = [\"ops/\"]\n\n\
+                     [[area]]\nname = \"records\"\nkind = \"process\"\npaths = [\"ops/journal/\"]\n";
 
 /// `ops/QUEUE.md` on origin/main: it plans the current milestone, M0 (step 8 near miss).
 const BASE_QUEUE: &str = "# QUEUE\n\nMilestone: M0\nPlanned: 2026-11-23\n";
@@ -736,7 +746,8 @@ fn base_is_planner_with_notes() {
         out,
         "planner\n\nRule: j (nothing applies and no Session: planner record is dated today): the Planner\n\
          Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
-         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n\
+         - work mix: not measured (5 of the 20 session records it needs)\n"
     );
 }
 
@@ -1767,6 +1778,9 @@ fn malformed_inputs_exit_1() {
         "milestones.json",
         "blocked.json",
         "records.txt",
+        "pr-files.json",
+        "all-issues.json",
+        "areas.toml",
     ] {
         let o = run_with(&[(name, None)]).unwrap();
         assert_eq!(o.status.code(), Some(1), "missing {name}");
@@ -2449,7 +2463,8 @@ fn step8_planner_due_on_an_unplanned_milestone() {
         String::from_utf8(o.stdout).unwrap(),
         "planner due\n\nRule: j (the Planner is due: ops/QUEUE.md on origin/main doesn't plan the current milestone M0)\n\
          Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
-         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n\
+         - work mix: not measured (5 of the 20 session records it needs)\n"
     );
     let o = run_with(&[("queue.md", None)]).unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
@@ -2880,4 +2895,567 @@ fn step6_needs_design_pr_comes_after_steps_2_to_5() {
     );
     assert_eq!(pick(std::slice::from_ref(&no_audit)), "audit due");
     assert_eq!(pick(&[nd, no_audit]), wins);
+}
+
+/// Work-mix fixtures (#288): issue #801 is in M0 (`all-issues.json`), and the merged agent PR
+/// #802 closes it and changes a product path (`pr-files.json`), so `worker ready #801` and
+/// `worker own-pr #802` are milestone work.
+fn mix_inputs() -> Vec<(&'static str, Option<String>)> {
+    vec![
+        plus(
+            "prs.json",
+            &[pr(802, "MERGED", "Closes #801", "t/801-m", &[], "[]")],
+        ),
+        set(
+            "pr-files.json",
+            r#"[{"number":802,"files":[{"path":"ops/TICK.md"},{"path":"crates/jpdf-cos/src/lib.rs"}]}]"#
+                .to_owned(),
+        ),
+        set(
+            "all-issues.json",
+            r#"[{"number":801,"milestone":{"title":"M0","number":1}},{"number":9,"milestone":null}]"#
+                .to_owned(),
+        ),
+    ]
+}
+
+/// Records, oldest first by path: a Planner record on `planner_day` (in the window, never
+/// milestone work), then `other` audit records and `milestone` Worker records on #801, all on
+/// 2026-11-24. They are written newest first, so the scheduler must order them by path.
+fn mix_records(milestone: usize, other: usize, planner_day: &str) -> String {
+    let mut lines = vec![(
+        format!("ops/journal/{planner_day}/0000-p.md"),
+        "- Session: planner".to_owned(),
+    )];
+    for i in 0..other {
+        lines.push((
+            format!("ops/journal/2026-11-24/01{i:02}-o.md"),
+            "- Session: audit due".to_owned(),
+        ));
+    }
+    for i in 0..milestone {
+        lines.push((
+            format!("ops/journal/2026-11-24/02{i:02}-m.md"),
+            "- Session: worker ready #801".to_owned(),
+        ));
+    }
+    lines.reverse();
+    lines.iter().map(|(p, l)| format!("{p}\t{l}\n")).collect()
+}
+
+/// `mix_inputs()` plus `changes` (later entries replace earlier ones of the same name).
+fn mix_pick(changes: &[(&'static str, Option<String>)]) -> String {
+    let mut all = mix_inputs();
+    all.extend_from_slice(changes);
+    pick(&all)
+}
+
+/// The whole output, or a description of the failure (so the caller's assertion shows it).
+fn mix_brief(changes: &[(&'static str, Option<String>)]) -> String {
+    let mut all = mix_inputs();
+    all.extend_from_slice(changes);
+    match run_with(&all) {
+        Err(e) => format!("io error: {e}"),
+        Ok(o) if o.status.code() != Some(0) => format!(
+            "exit {:?}: {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+    }
+}
+
+const BREACH_NOTE: &str =
+    "- work mix: 13 of the last 20 sessions on milestone work (65%; budget 70%)\n";
+
+#[test]
+fn work_mix_70_percent_of_the_last_20() {
+    let recs = |m: usize, o: usize| set("records.txt", mix_records(m, o, "2026-11-20"));
+    // 14 of 20 (70%) meets the budget; 13 of 20 (65%) is below it, and the Planner is due. With
+    // a window of 20, 13 is the nearest count under 70% (69% can't occur).
+    assert_eq!(mix_pick(&[recs(14, 5)]), "planner");
+    assert_eq!(mix_pick(&[recs(13, 6)]), "planner due");
+    assert_eq!(mix_pick(&[recs(20, 0)]), "planner");
+    assert_eq!(mix_pick(&[recs(0, 19)]), "planner due");
+    // Fewer than 20 records: not measured, never a breach.
+    assert_eq!(mix_pick(&[recs(0, 18)]), "planner");
+    assert_eq!(mix_pick(&[recs(13, 5)]), "planner");
+    // The briefs: the reading is a Planner pick's note, and the breach is a step 8 reason.
+    let out = mix_brief(&[recs(13, 6)]);
+    assert_eq!(
+        out,
+        format!(
+            "planner due\n\nRule: j (the Planner is due: the work mix is below 70%: 13 of the last 20 sessions on milestone work)\n\
+             Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
+             Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n{BREACH_NOTE}"
+        )
+    );
+    assert!(
+        mix_brief(&[recs(14, 5)]).ends_with(
+            "- work mix: 14 of the last 20 sessions on milestone work (70%; budget 70%)\n"
+        )
+    );
+    assert!(
+        mix_brief(&[recs(13, 5)])
+            .ends_with("- work mix: not measured (19 of the 20 session records it needs)\n")
+    );
+    // Every term together, in order.
+    let out = mix_brief(&[
+        set("records.txt", mix_records(13, 7, "2026-11-10")),
+        ("queue.md", None),
+    ]);
+    assert!(
+        out.starts_with(
+            "planner due\n\nRule: j (the Planner is due: ops/QUEUE.md is missing on origin/main or unreadable; \
+             no Session: planner record is dated in the last 7 UTC days; \
+             the work mix is below 70%: 13 of the last 20 sessions on milestone work)\n"
+        ),
+        "{out}"
+    );
+    // The reading is noted on Planner picks only.
+    let ready = plus("issues.json", &[ready(700, "M0", &[], "")]);
+    let out = mix_brief(&[recs(14, 5), ready]);
+    assert!(out.starts_with("worker ready #700\n"), "{out}");
+    assert!(!out.contains("work mix"), "{out}");
+    // No current milestone: not measured (and no milestone term).
+    let out = mix_brief(&[
+        recs(13, 6),
+        set("milestones.json", r#"[{"title":"Mx"}]"#.to_owned()),
+    ]);
+    assert!(
+        out.starts_with("planner\n")
+            && out.ends_with("- work mix: not measured (no current milestone)\n"),
+        "{out}"
+    );
+    // Once a day: a Planner record dated today turns the term off (idle, no note).
+    let out = mix_brief(&[set("records.txt", mix_records(13, 6, "2026-11-24"))]);
+    assert!(
+        out.starts_with("idle\n") && !out.contains("work mix"),
+        "{out}"
+    );
+}
+
+#[test]
+fn work_mix_window_is_the_newest_20_by_path() {
+    // Six older milestone records on 2026-11-21, then 7 audits and 13 milestone records: the
+    // newest 20 hold 13 (below). All 27 would be 20 of 27 (74%), the oldest 20 would be 19.
+    let older: String = (0..6)
+        .map(|i| format!("ops/journal/2026-11-21/03{i:02}-m.md\t- Session: worker ready #801\n"))
+        .collect();
+    let text = format!("{}{older}", mix_records(13, 7, "2026-11-20"));
+    assert_eq!(mix_pick(&[set("records.txt", text.clone())]), "planner due");
+    // Line order doesn't matter: the same records oldest first.
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines.sort_unstable();
+    let sorted: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    assert_eq!(mix_pick(&[set("records.txt", sorted)]), "planner due");
+    // A record on two refs (the same path and line twice) counts once. The Planner record,
+    // 14 milestone records, then 5 audits, each twice: counted once, 14 of 20; without it the
+    // newest 20 lines would be the last 10 records (5 milestone).
+    let mut once: Vec<String> =
+        vec!["ops/journal/2026-11-20/0000-p.md\t- Session: planner".to_owned()];
+    once.extend(
+        (0..14)
+            .map(|i| format!("ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801")),
+    );
+    once.extend(
+        (0..5).map(|i| format!("ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due")),
+    );
+    let text = |n: usize| -> String {
+        once.iter()
+            .flat_map(|l| std::iter::repeat_n(l, n))
+            .map(|l| format!("{l}\n"))
+            .collect()
+    };
+    assert_eq!(mix_pick(&[set("records.txt", text(1))]), "planner");
+    assert_eq!(mix_pick(&[set("records.txt", text(2))]), "planner");
+    // A different line in the same file is another record.
+    let extra: String = (0..5)
+        .map(|i| format!("ops/journal/2026-11-24/01{i:02}-o.md\t- Session: retro due\n"))
+        .collect();
+    assert_eq!(
+        mix_pick(&[set("records.txt", format!("{}{extra}", text(1)))]),
+        "planner due"
+    );
+}
+
+#[test]
+fn work_mix_leaves_out_owner_instructions_and_design_sessions() {
+    // 14 milestone records (oldest), then 6 Planner/audit records, then 5 newer ones of an
+    // excluded kind: left out, the window is 14 of 20; counted, it would be 9 of 20.
+    for kind in [
+        "worker owner-issue #801",
+        "worker owner-comment https://github.com/jacobdam/jpdf3/issues/1#issuecomment-2",
+        "worker owner-done #801",
+        "design-technical needs-design #802",
+        "design-technical design-issue #801",
+        "design-product x #801",
+    ] {
+        let mut text = String::new();
+        for i in 0..14 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801\n"
+            ));
+        }
+        text.push_str("ops/journal/2026-11-20/0000-p.md\t- Session: planner\n");
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due\n"
+            ));
+        }
+        let base = text.clone();
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/02{i:02}-x.md\t- Session: {kind}\n"
+            ));
+        }
+        assert_eq!(mix_pick(&[set("records.txt", base)]), "planner", "{kind}");
+        assert_eq!(mix_pick(&[set("records.txt", text)]), "planner", "{kind}");
+    }
+    // Near misses: these kinds are in the window and not milestone work, so 5 of them push 5
+    // milestone records out (9 of 20).
+    for kind in [
+        "worker main-red run 801",
+        "worker leftover-worktree t/801-m",
+        "Worker ready #801",
+        "worker ready #801 x",
+        "worker ready 801",
+        "worker ready #801x",
+        "workers ready #801",
+        "worker",
+        "design technical #801",
+        "audit due",
+        "retro due",
+        "fallback exit 1",
+        "worker owner",
+    ] {
+        let mut text = String::new();
+        for i in 0..14 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801\n"
+            ));
+        }
+        text.push_str("ops/journal/2026-11-20/0000-p.md\t- Session: planner\n");
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due\n"
+            ));
+        }
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/02{i:02}-x.md\t- Session: {kind}\n"
+            ));
+        }
+        assert_eq!(
+            mix_pick(&[set("records.txt", text)]),
+            "planner due",
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn work_mix_counts_milestone_work_only() {
+    // 14 of 20 records name the same work; a change that makes it not milestone work drops the
+    // count to 0 (planner due).
+    let with = |work: &str, extra: &[(&'static str, Option<String>)]| {
+        let text = mix_records(14, 5, "2026-11-20").replace("worker ready #801", work);
+        let mut changes = vec![set("records.txt", text)];
+        changes.extend_from_slice(extra);
+        mix_pick(&changes)
+    };
+    let prs = |p: String| plus("prs.json", &[p]);
+    let files = |list: &str| set("pr-files.json", list.to_owned());
+    let issues = |list: &str| set("all-issues.json", list.to_owned());
+    assert_eq!(with("worker ready #801", &[]), "planner");
+    // Every Worker step on an issue counts, and a QC session on one.
+    for w in [
+        "worker crash-security #801",
+        "worker flaky #801",
+        "worker scheduler-bug #801",
+        "qc any #801",
+    ] {
+        assert_eq!(with(w, &[]), "planner", "{w}");
+    }
+    // `own-pr #802`: the PR changes a product path and links #801, which is in M0.
+    assert_eq!(with("worker own-pr #802", &[]), "planner");
+    // The PR may be open, merged or closed.
+    for state in ["OPEN", "CLOSED"] {
+        let p = set(
+            "prs.json",
+            format!(
+                "[{},{}]",
+                base_of("prs.json")
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']'),
+                pr(802, state, "Closes #801", "t/801-m", &[], GREEN)
+            ),
+        );
+        assert_eq!(
+            with("worker ready #801", std::slice::from_ref(&p)),
+            "planner",
+            "{state}"
+        );
+        assert_eq!(with("worker own-pr #802", &[p]), "planner", "{state}");
+    }
+    // Near misses on the issue: another milestone, no milestone, not listed.
+    for list in [
+        r#"[{"number":801,"milestone":{"title":"M1"}}]"#,
+        r#"[{"number":801,"milestone":{"title":"m0"}}]"#,
+        r#"[{"number":801,"milestone":null}]"#,
+        r#"[{"number":8010,"milestone":{"title":"M0"}}]"#,
+        "[]",
+    ] {
+        assert_eq!(
+            with("worker ready #801", &[issues(list)]),
+            "planner due",
+            "{list}"
+        );
+        assert_eq!(
+            with("worker own-pr #802", &[issues(list)]),
+            "planner due",
+            "{list}"
+        );
+    }
+    // Near misses on the PR's files: no product path (paths that only start like one), no
+    // entry, an entry for another PR.
+    for list in [
+        r#"[{"number":802,"files":[{"path":"ops/TICK.md"},{"path":"cratesx/a.rs"},{"path":"tools/jpdf-clix/a"},{"path":"xtask/crates/a.rs"},{"path":"/crates/a.rs"}]}]"#,
+        r#"[{"number":802,"files":[]}]"#,
+        r#"[{"number":803,"files":[{"path":"crates/a.rs"}]}]"#,
+        "[]",
+    ] {
+        assert_eq!(
+            with("worker ready #801", &[files(list)]),
+            "planner due",
+            "{list}"
+        );
+        assert_eq!(
+            with("worker own-pr #802", &[files(list)]),
+            "planner due",
+            "{list}"
+        );
+    }
+    // Every product path counts.
+    for path in [
+        "crates/a.rs",
+        "bindings/b",
+        "apps/web/c.ts",
+        "fuzz/d.rs",
+        "tools/jpdf-cli/e.rs",
+        "tools/fsio/f.rs",
+    ] {
+        let list = format!(r#"[{{"number":802,"files":[{{"path":{path:?}}}]}}]"#);
+        assert_eq!(
+            with("worker ready #801", &[files(&list)]),
+            "planner",
+            "{path}"
+        );
+    }
+    // Near misses on the link: an untagged PR (the owner's), a PR closing another issue, no PR.
+    let base_prs = base_of("prs.json");
+    let base_inner = base_prs
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
+    let only = |p: String| set("prs.json", format!("[{base_inner},{p}]"));
+    assert_eq!(
+        with(
+            "worker ready #801",
+            &[only(raw_pr(
+                802,
+                "MERGED",
+                "Closes #801",
+                "t/801-m",
+                &[],
+                "[]"
+            ))]
+        ),
+        "planner due"
+    );
+    assert_eq!(
+        with(
+            "worker own-pr #802",
+            &[only(raw_pr(
+                802,
+                "MERGED",
+                "Closes #801",
+                "t/801-m",
+                &[],
+                "[]"
+            ))]
+        ),
+        "planner due"
+    );
+    let other = only(pr(802, "MERGED", "Closes #9", "t/9-m", &[], "[]"));
+    assert_eq!(
+        with("worker ready #801", std::slice::from_ref(&other)),
+        "planner due"
+    );
+    assert_eq!(with("worker own-pr #802", &[other]), "planner due");
+    assert_eq!(
+        with("worker ready #801", &[set("prs.json", base_of("prs.json"))]),
+        "planner due"
+    );
+    // A second PR for the issue that changes a product path is enough.
+    assert_eq!(
+        with(
+            "worker ready #801",
+            &[
+                prs(pr(805, "CLOSED", "Closes #801", "t/801-n", &[], "[]")),
+                files(r#"[{"number":802,"files":[]},{"number":805,"files":[{"path":"apps/x"}]}]"#)
+            ]
+        ),
+        "planner"
+    );
+    // `own-pr` names a PR, not an issue: #801 as a PR and #802 as an issue are not work.
+    assert_eq!(with("worker own-pr #801", &[]), "planner due");
+    assert_eq!(with("worker ready #802", &[]), "planner due");
+    // The current milestone moves: M1 work is milestone work once M0 is closed (the plan
+    // follows, so step 8's milestone term stays off).
+    let m1 = [
+        set("milestones.json", r#"[{"title":"M1"}]"#.to_owned()),
+        set("queue.md", "Milestone: M1\n".to_owned()),
+    ];
+    assert_eq!(with("worker ready #801", &m1), "planner due");
+    let mut moved = m1.to_vec();
+    moved.push(issues(r#"[{"number":801,"milestone":{"title":"M1"}}]"#));
+    assert_eq!(with("worker ready #801", &moved), "planner");
+}
+
+#[test]
+fn step10_product_issues_first_below_the_budget() {
+    // A Planner record dated today: step 8 is off, so step 10 picks.
+    let below = set("records.txt", mix_records(13, 6, "2026-11-24"));
+    let meets = set("records.txt", mix_records(14, 5, "2026-11-24"));
+    let ready_list = |extra: &[String]| plus("issues.json", extra);
+    let both = ready_list(&[
+        ready(701, "M0", &[], ""),
+        ready(702, "M0", &["area:process"], ""),
+        ready(703, "M0", &["area:engine"], ""),
+    ]);
+    assert_eq!(
+        mix_pick(&[meets.clone(), both.clone()]),
+        "worker ready #701"
+    );
+    let out = mix_brief(&[below.clone(), both]);
+    assert_eq!(
+        out,
+        "worker ready #703\n\nRule: i (the work mix is below 70%: the lowest-numbered ready product issue in the \
+         current milestone with its dependencies closed, this one)\nLoad:\n- gh issue view 703 --comments\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // The lowest product issue among several.
+    assert_eq!(
+        mix_pick(&[
+            below.clone(),
+            ready_list(&[
+                ready(705, "M0", &["area:engine"], ""),
+                ready(701, "M0", &[], ""),
+                ready(704, "M0", &["area:engine"], "")
+            ])
+        ]),
+        "worker ready #704"
+    );
+    // No product issue ready: the lowest ready issue, and the rule says so.
+    let out = mix_brief(&[
+        below.clone(),
+        ready_list(&[
+            ready(702, "M0", &[], ""),
+            ready(701, "M0", &["area:process"], ""),
+        ]),
+    ]);
+    assert!(
+        out.starts_with(
+            "worker ready #701\n\nRule: i (the work mix is below 70%: the lowest-numbered ready product issue in the \
+             current milestone with its dependencies closed, none, so the lowest-numbered ready issue)\n"
+        ),
+        "{out}"
+    );
+    // Near misses: labels that aren't a product area's, and product issues step 10 can't take
+    // (each filter applies first).
+    for l in [
+        "area:records",
+        "area:enginex",
+        "area:Engine",
+        "engine",
+        "area: engine",
+        "area:",
+    ] {
+        assert_eq!(
+            mix_pick(&[
+                below.clone(),
+                ready_list(&[ready(701, "M0", &[], ""), ready(702, "M0", &[l], "")])
+            ]),
+            "worker ready #701",
+            "{l}"
+        );
+    }
+    for product in [
+        ready(702, "M1", &["area:engine"], ""),
+        full_issue(702, "r", &["area:engine"], "", r#"{"title":"M0"}"#),
+        ready(702, "M0", &["area:engine", "in-progress"], ""),
+        ready(702, "M0", &["area:engine", "deferred"], ""),
+        ready(702, "M0", &["area:engine"], "Depends on: #150"),
+    ] {
+        assert_eq!(
+            mix_pick(&[
+                below.clone(),
+                ready_list(&[ready(701, "M0", &[], ""), product.clone()])
+            ]),
+            "worker ready #701",
+            "{product}"
+        );
+    }
+    // Product areas come from areas.toml: with `engine` a process area and `web` a product
+    // one, `area:web` comes first.
+    let swapped = AREAS.replace("kind = \"product\"", "kind = \"process\"")
+        + "\n[[area]]\nname = \"web\"\nkind = \"product\"\npaths = [\"apps/\"]\n";
+    assert_eq!(
+        mix_pick(&[
+            below,
+            set("areas.toml", swapped),
+            ready_list(&[
+                ready(701, "M0", &["area:engine"], ""),
+                ready(702, "M0", &["area:web"], "")
+            ])
+        ]),
+        "worker ready #702"
+    );
+}
+
+#[test]
+fn work_mix_inputs_malformed_exit_1() {
+    for (name, text) in [
+        ("pr-files.json", "{}"),
+        ("pr-files.json", r#"[{"number":1}]"#),
+        ("pr-files.json", r#"[{"files":[]}]"#),
+        ("pr-files.json", r#"[{"number":1,"files":[{"name":"a"}]}]"#),
+        ("pr-files.json", r#"[{"number":1,"files":[{"path":1}]}]"#),
+        ("all-issues.json", r#"[{"number":1}]"#),
+        ("all-issues.json", r#"[{"milestone":null}]"#),
+        (
+            "all-issues.json",
+            r#"[{"number":1,"milestone":{"title":1}}]"#,
+        ),
+        ("all-issues.json", r#"[{"number":1,"milestone":"M0"}]"#),
+        ("areas.toml", ""),
+        ("areas.toml", "[[area]]\nname = \"engine\"\n"),
+        // issue-lint's rules: both process areas are required.
+        (
+            "areas.toml",
+            "[[area]]\nname = \"engine\"\nkind = \"product\"\npaths = [\"crates/\"]\n",
+        ),
+    ] {
+        // Parsed whatever is picked: here an owner issue (step 1) comes first.
+        for first in [None, Some(feed_plus(&[feed_issue(250)]))] {
+            let mut changes = vec![set(name, text.to_owned())];
+            changes.extend(first);
+            let o = run_with(&changes).unwrap();
+            assert_eq!(o.status.code(), Some(1), "{name}: {text}");
+            assert!(o.stdout.is_empty(), "{name}: {text}");
+        }
+    }
 }
