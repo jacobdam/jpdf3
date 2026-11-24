@@ -2618,7 +2618,7 @@ fn step8_design_product() {
         String::from_utf8(o.stdout).unwrap(),
         "design product v1\n\nRule: k (Design: product is due: docs/PRODUCT.md is not on origin/main)\n\
          Load:\n- ops/TICK.md §10\n- gh issue list --state open --label design-product\n\
-         - PLAN.md §4\n- specs/journeys/\n\
+         - PLAN.md §1, §4\n- specs/journeys/\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
     // The newest commit touching the path decides: deleted → missing, re-added or changed →
@@ -2699,7 +2699,7 @@ fn step8_design_product() {
     assert!(
         out.starts_with(
             "design product #901\n\nRule: k (Design: product is due: a ready design-product issue)\n\
-             Load:\n- gh issue view 901 --comments\n- ops/TICK.md §10\n- docs/PRODUCT.md\n- specs/journeys/\n"
+             Load:\n- gh issue view 901 --comments\n- ops/TICK.md §10\n- docs/PRODUCT.md\n- PLAN.md §1, §4\n- specs/journeys/\n"
         ),
         "{out}"
     );
@@ -2711,9 +2711,18 @@ fn step8_design_product() {
         )]),
         "design product #901"
     );
-    // Near misses: not ready, a skip label, in flight, the wrong label; and while the file
+    // Its dependencies must be closed, as in step 10: a `Depends on:` issue not in issues.json
+    // is closed.
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[ready(901, "M5", &["design-product"], "Depends on: #5")]
+        )]),
+        "design product #901"
+    );
+    // Near misses: not ready, a skip label, an open dependency, the wrong label (an in-flight
+    // issue is the slot rule's, below); and while the file
     // is missing only v1 is picked.
-    let in_flight = pr(950, "OPEN", "Closes #901", "t/901-p", &[], GREEN);
     for (issues, prs) in [
         (
             vec![full_issue(901, "p", &["design-product"], "", "null")],
@@ -2724,7 +2733,13 @@ fn step8_design_product() {
         (vec![product(901, &["deferred"])], vec![]),
         (vec![ready(901, "M5", &["design"], "")], vec![]),
         (vec![ready(901, "M5", &["design-products"], "")], vec![]),
-        (vec![product(901, &[])], vec![in_flight.clone()]),
+        (
+            vec![
+                ready(901, "M5", &["design-product"], "Depends on: #5"),
+                issue(5, "dep", &[]),
+            ],
+            vec![],
+        ),
     ] {
         let mut changes = vec![plus("issues.json", &issues)];
         if !prs.is_empty() {

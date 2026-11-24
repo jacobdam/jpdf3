@@ -232,9 +232,12 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
        such line means never added. `--no-renames` turns a rename into `D` plus `A`, so a
        rename away from the path reads as a delete. The file's text is never read;
      - *a product issue:* the file is on origin/main, and an open issue is labeled
-       `design-product` and `ready`, with no skip label and not in flight (any milestone, or
-       none: product decisions aren't milestone work) → `design product #N`, lowest number
-       first. While the file is missing, only v1 is picked;
+       `design-product` and `ready`, with no skip label and its dependencies closed (step 10's
+       `Depends on:` test), in any milestone or none (product decisions aren't milestone work;
+       such issues are filed `ready`, TICK §9's opening, so no Planner run is needed) →
+       `design product #N`, lowest number first. An in-flight one needs no filter of its own:
+       the PR linking it trips the slot rule below. While the file is missing, only v1 is
+       picked;
      - *one product PR at a time:* neither is picked while an open agent PR links an open issue
        labeled `design-product` (step 7's slot rule, #282: any checks, any other labels; a
        failing one is step 3's). The brief notes the term instead (`Design: product due (<why>)
@@ -355,9 +358,11 @@ never 2 (no command ran).
   to 10). An open PR with a skip label already does the same, so nothing new is exposed.
 - **Design: product.** Its terms read the agent account's labels and main's history, so a
   session can hold them off (an open PR linking a `design-product` issue) or call one up (the
-  label): the same exposure as step 7's slot rule. The v1 PR merges only on the owner's
-  explicit approval (TICK §10), so a forged pick can produce a PR, never a merged
-  `docs/PRODUCT.md`.
+  label): the same exposure as step 7's slot rule. Nothing here is a mechanical merge gate:
+  under TICK §10 step 6, v1 merges only after an untagged owner comment approves it, and a
+  later `docs/PRODUCT.md` change merges after a 24-hour window unless the owner `/hold`s it,
+  so a forged `design product #N` pick can lead to a merged change the owner didn't stop in
+  time, as a design ADR PR can (ADR 0011 §7).
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
@@ -465,8 +470,8 @@ of inputs where no step before 11 applies (→ `planner`):
   misses of the path (`docs/PRODUCT.md.bak`, `docs/product.md`, `PRODUCT.md`,
   `x/docs/PRODUCT.md`, a quoted path) are v1; with the file present, the lowest ready
   `design-product` issue in any milestone or none, its brief, and that it wins over a ready
-  Worker issue; near misses (not `ready`, each skip label, in flight, `design`,
-  `design-products`); a ready `design-product` issue in M0 is never step 10's; while the file
+  Worker issue; a closed dependency; near misses (not `ready`, each skip label, an open
+  dependency, `design`, `design-products`); a ready `design-product` issue in M0 is never step 10's; while the file
   is missing a ready product issue is not picked; the slot rule (an open PR linking a
   `design-product` issue with `owner-todo` holds both terms with the note; a failing one is
   step 3's; near misses: the `design` label, another issue, no `Closes`, merged, closed,

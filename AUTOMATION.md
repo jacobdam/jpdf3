@@ -147,10 +147,11 @@ Task 6 part 1 (#249) adds the **Design: product** session (ops/TICK.md §10). Th
 step 8, after the Planner's terms, picks it when `docs/PRODUCT.md` is not on main
 (`design product v1`) or a `ready` issue is labeled `design-product` (`design product #N`),
 never while an open agent PR links an open `design-product` issue, so one product PR is open at
-a time. It writes `docs/PRODUCT.md`, append-only journey changes and issues, no code. Its PR
-is reviewed like any work PR; over ADR 0010's cap it goes to the owner, not to Design:
-technical, since product scope is the owner's call. v1 (#311) merges only on the owner's
-explicit approval; later `PRODUCT.md` PRs get the design ADR PR's 24-hour `/hold` window.
+a time. It writes `docs/PRODUCT.md`, append-only journey changes and issues (product-queue
+issues are filed `ready`, like design-queue ones), no code. Its PR is reviewed like any work PR
+and over ADR 0010's cap goes to Design: technical like any other (a scope question there goes
+to the owner). v1 (#311) merges only on the owner's explicit approval, asked again after any
+later push; later `PRODUCT.md` PRs get the design ADR PR's 24-hour `/hold` window.
 
 ## 5. Completeness: building the right thing
 

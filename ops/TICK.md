@@ -476,7 +476,7 @@ session.
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
   - Session: <first line of cargo xtask next-session, as printed; `fallback exit <code>` if it was broken>
-  - Picked: <priority rule a–j> because <why>
+  - Picked: <priority rule a–k> because <why>
   - Did: <what changed, links>
   - Result: <merged / CI red / blocked …, with numbers>
   - Cost: <rough share of the session's context used>; review rounds <N>/4 (or n/a); regraded <n>, overturned by the next reviewer <n>; deferred: <#issues>
@@ -666,7 +666,9 @@ Picked as `planner due` (step 8) or `planner` (step 11). The Planner makes the c
 milestone's backlog workable; it is **the only gate into `ready`** besides the owner. Other
 sessions file Worker issues (a split's parts, review deferrals, discoveries, a design ADR's
 tasks) without `ready`, and the next Planner run adds it. Issues for the design queue (`design`
-plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
+plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names, and so are issues for
+the product queue (`design-product` plus `ready`, §10; any milestone or none): this step doesn't
+gate them.
 1. **Load:** `ops/QUEUE.md`, the current milestone's open issues
    (`gh issue list --state open --milestone <Mn> --limit 200 --json number,title,labels,body`),
    PLAN.md §8 (the milestone's row) and `cargo xtask metrics`. No code.
@@ -725,14 +727,15 @@ specs/tooling/next-session.md step 8.
    that issue. Claim it (§3 step 1; an owner issue gets the §0 replies) and draft its PR with
    `Closes #<issue>` early: while that PR is open, the scheduler picks no Design: product work.
 2. **Load:** the issue and the record it came from (an audit or user-advocate finding, an
-   owner comment); `docs/PRODUCT.md` (not for v1); PLAN.md §1 and §4; `specs/journeys/README.md`,
+   owner comment); `docs/PRODUCT.md` (not for v1); PLAN.md §1 and §4 (the brief's `Load:` list); `specs/journeys/README.md`,
    the PDFgear inventory `specs/journeys/RESEARCH.md` and the journey files the issue names. No
    code.
 3. **Allowed outputs:** `docs/PRODUCT.md`; journeys in `specs/journeys/`, append-only
    (CONSTITUTION 15: a new ID, or `superseded_by:` on an old one, never a deleted ID); and
    issues: Worker issues for new journeys (without `ready`, §9), `design` issues for technical
    questions (ADR 0011 §7: those don't go to the owner), `design-product` issues for gaps this
-   session doesn't close. **No code, tests, other specs, ADRs or PLAN.md changes:** a reviewer
+   session doesn't close, filed with `ready` (§9's opening: product-queue issues, like
+   design-queue ones, don't wait for a Planner; any milestone or none). **No code, tests, other specs, ADRs or PLAN.md changes:** a reviewer
    grades any as a blocker. A change of scope in PLAN §4 is the owner's: put it in the PR as a
    question (step 6), not in the diff.
 4. **`docs/PRODUCT.md`** says what is decided, in this order: who jpdf is for and the jobs they
@@ -746,10 +749,9 @@ specs/tooling/next-session.md step 8.
 5. **Review** by §4 (no Codex: no `crates/` or `tools/` path). The brief adds this section, ADR
    0011 §1 and §7, PLAN.md §4 and the journey files the diff touches; ask the reviewer to check
    every claim against them (no invented scope, no feature without a journey, no false
-   present tense) and every journey change against CONSTITUTION 15. **Over the cap:** no
-   Design: technical escalation (product scope is the owner's call, ADR 0011 §7): where §4 step
-   6 would escalate, turn the PR back into a draft, post `ai-review` failure, add `owner-todo`
-   to the issue and comment the ledger on it.
+   present tense) and every journey change against CONSTITUTION 15. Over the cap, §4 step 6
+   applies as to any PR (Design: technical, §8, ADR 0011 §5); a finding there that is a scope or
+   taste call is §8 output 4, the owner's question (ADR 0011 §7).
 6. **Merge.**
    - **v1 merges only on the owner's explicit approval, with no timeout** (ADR 0011 §7). Never
      label it `design` or enable auto-merge. After `ai-review` success, mark the PR ready, add
@@ -757,7 +759,10 @@ specs/tooling/next-session.md step 8.
      PR #N merges only on your approval (an untagged comment on the PR)`, listing the
      questions from step 4 if any. The owner's comment is an owner instruction (rule a): an
      approval → enable auto-merge, remove `owner-todo`, §0's replies; requested changes → work
-     them in the PR (§4 rounds count for the issue), then ask again.
+     them in the PR (§4 rounds count for the issue), then ask again. **Any push after an
+     approval** (a fix, a merge of origin/main) starts with `gh pr merge N --disable-auto`, and
+     after the new `ai-review` success the PR asks again (`owner-todo` and the comment above):
+     the approval covers only the commit it saw.
    - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` and
      follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
      in PR #N merges after 24 h unless you /hold it`; §1's window check enables auto-merge.

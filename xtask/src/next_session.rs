@@ -1367,14 +1367,17 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     // Step 8, after the Planner: Design: product (ADR 0011 §1, ops/TICK.md §10). Off while an
     // open agent PR links an open `design-product` issue (one product PR at a time, as #282
     // does for audits); `docs/PRODUCT.md` missing on origin/main → v1, else the lowest
-    // workable `design-product` issue labeled `ready`.
+    // `design-product` issue labeled `ready`, without a skip label, with its dependencies
+    // closed (step 10's test). An in-flight one is already covered by the slot rule.
     let product_pr = slot_pr(PRODUCT_LABEL);
     let has_doc = on_main(&parse_log(&inp.main_log)?, PRODUCT_DOC);
+    let open = |n: u64| issues.iter().any(|i| i.number == n);
     let product = if has_doc {
         issues
             .iter()
-            .filter(workable)
-            .find(|i| has_label(&i.labels, PRODUCT_LABEL) && has_label(&i.labels, "ready"))
+            .filter(|i| !skipped(&i.labels))
+            .filter(|i| has_label(&i.labels, PRODUCT_LABEL) && has_label(&i.labels, "ready"))
+            .find(|i| !dependencies(&i.body).into_iter().any(open))
             .map(|i| {
                 (
                     format!("#{}", i.number),
@@ -1383,6 +1386,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                         view_issue(i.number),
                         "ops/TICK.md §10".to_owned(),
                         PRODUCT_DOC.to_owned(),
+                        "PLAN.md §1, §4".to_owned(),
                         "specs/journeys/".to_owned(),
                     ],
                 )
@@ -1394,7 +1398,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             vec![
                 "ops/TICK.md §10".to_owned(),
                 format!("gh issue list --state open --label {PRODUCT_LABEL}"),
-                "PLAN.md §4".to_owned(),
+                "PLAN.md §1, §4".to_owned(),
                 "specs/journeys/".to_owned(),
             ],
         ))
@@ -1415,7 +1419,6 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         }
     }
     if chosen.is_none() {
-        let open = |n: u64| issues.iter().any(|i| i.number == n);
         chosen = issues
             .iter()
             .filter(workable)
