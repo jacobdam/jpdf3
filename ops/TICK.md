@@ -809,7 +809,8 @@ gate them.
    those findings and the link. A pushed `mN` tag stays (deleting it is a delete push, which
    the guard forbids): if the undo reopens `Mn` or a finding names the tag, file a separate
    issue `Delete tag mN` with `owner-todo` in the reopened milestone `Mn`, so step 4 waits for
-   it; the owner closes it, or the next Planner does once `git ls-remote --tags origin mN`
+   it (in the current milestone when `Mn` stays closed, since step 1 loads only that one); the
+   owner closes it, or the next Planner does once `git ls-remote --tags origin mN`
    prints nothing (the one exception to step 2's "Close nothing"). The retro the tag triggers
    (§2 h) still runs (an undone gate is an incident). The `discovery` issue is a Worker issue
    like any other: the next Planner gates it into `ready` through step 2, and a Worker closes
