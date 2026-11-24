@@ -2825,6 +2825,28 @@ fn step8_design_product() {
         ]),
         "planner"
     );
+    // A waiting gap issue (`ready`, with a skip label or an open dependency) is not v1's, so it
+    // never stops a workable v1 issue (#313: `waiting` over v1's issues only, not all of them).
+    for gap in [
+        product(320, &["owner-todo"]),
+        ready(320, "M5", &["design-product"], "Depends on: #5"),
+    ] {
+        assert_eq!(
+            pick(&[
+                missing.clone(),
+                plus(
+                    "issues.json",
+                    &[
+                        gap.clone(),
+                        v1_issue(330, &[], ""),
+                        issue(5, "design", &["design"])
+                    ],
+                ),
+            ]),
+            "design product v1 #330",
+            "{gap}"
+        );
+    }
     assert_eq!(
         pick(&[
             missing.clone(),
