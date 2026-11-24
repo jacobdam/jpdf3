@@ -10,6 +10,11 @@ Phase: bootstrap (pilot)
   TICK §9 step 4a). Review round 2 clean; origin/main merged in (STATUS conflict only), `ai-review` re-posted,
   auto-merge on. Step 10's order changes only once #308 adds `area:` labels.
 - PR #318 (#294): TICK §9 step 6, a Planner PR closed at the cap; open.
+- PR #321 (#300, `cargo xtask nightly` 1/3): the regress tier through `jpdf-cli` under the judge's time limits and
+  (Linux) 2 GiB `ulimit -v`, `DIR/regress.json` + `regress-diff.json` (`--previous`). Rounds 1–3 posted and
+  triaged; `ai-review` success, auto-merge on. Deferred: #322 (keep stderr's tail, before #302), #323 (exec-bit
+  check by class). Parts 2 (#301, bench and fuzz time) and 3 (#302, issue filing; the CI `--previous` step needs the
+  owner) wait for the Planner's `ready`. Codex timed out (2400 s) on all three round briefs (45–110 KB).
 - #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
   Planner), part 3 is #247 (depends on #308).
 - PR #312 (#249, Design: product session 1/2) is an open draft.
@@ -25,7 +30,7 @@ Phase: bootstrap (pilot)
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
 - #236 (memory ADR, `deferred`) is the first design queue item. #146 stays open, `deferred` (waits for #25 or #236).
-- #21 waits on #19 (#300–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
+- #21 waits on #19 (#301–#302 after #300) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
