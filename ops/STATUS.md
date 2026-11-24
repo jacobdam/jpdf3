@@ -12,9 +12,9 @@ Phase: bootstrap (pilot)
 - PR #296 closed unmerged and #295 closed (2026-11-24): its change is on main through PR #299 (335d6ca).
 - PR #309 (#246, task 4 part 1: `ops/areas.toml`, `cargo xtask issue-lint`) is open.
 - **PR #312** (#249, task 6 part 1/2: Design: product session, TICK §10, next-session step 8 rule k, label
-  `design-product`) is **escalated to design** (`needs-design`, draft, `ai-review` failure): 4 rounds + final check;
-  R4.1–R4.3 closed, the final check's only finding is R5.1 (minor, one missing assertion). Part 2/2, `docs/PRODUCT.md`
-  v1, is #311 (`design-product`); the v1 trigger fires once #312 merges.
+  `design-product`): Design: technical ruled R5.1 (minor) out of scope by ADR 0010 §7, deferred to #313; the design
+  final check (round 6) accepted it. `ai-review` success, auto-merge on. Part 2/2, `docs/PRODUCT.md` v1, is #311
+  (`design-product`); the v1 trigger fires once #312 merges.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
