@@ -102,13 +102,14 @@ adds step 6.
      - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
        owner's own work, and owner comments on it come as comment lines) that has no owner reply starting with
        `🤖 jpdf-agent done: <the issue's URL>` (exact URL, followed by whitespace or the end),
-       carries no skip label, and isn't linked by an open PR that isn't failing (that PR is
-       already doing it; a failing one is picked here, so rule a outranks rule c for it).
+       carries no skip label, and isn't linked by an open PR that isn't failing or is held
+       (step 3; that PR is already doing it, or waits for the owner's `/release`; a failing one
+       is picked here, so rule a outranks rule c for it).
        Lowest number first. `owner-open.json` supplies the replies and labels; an issue missing
        from it counts as pending with no labels;
      - an owner comment (feed kinds `comment`, `review_comment`, `review`) created at or after
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
-       that isn't failing. Oldest `created_at` first, then by URL;
+       that isn't failing or is held. Oldest `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
        `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
        (both exact, as above; a reply for a comment on the issue doesn't count)
@@ -121,14 +122,18 @@ adds step 6.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
        carries a skip label, and that is not *held*. Lowest number first. A PR is held when,
-       of its comments in `holds.json` that are an owner command (author `jacobdam`, a body
-       that doesn't contain the tag and starts with `/hold` or `/release`, byte for byte, as
-       `.github/workflows/owner-commands.yml` matches them), the newest (largest `createdAt`;
-       on a tie, the later in the list) starts with `/hold`. TICK §5: nothing moves until
+       of its comments in `holds.json` that are an owner command, the newest (largest
+       `createdAt`; on a tie, the later in the list) is a hold. A command is a comment that
+       `.github/workflows/owner-commands.yml` acts on: author `jacobdam`, a body that starts
+       with `/hold` or `/release` and doesn't contain the tag, both ignoring case (Actions'
+       `startsWith` and `contains` do; ASCII case here). The workflow then holds when the body
+       starts with `/hold` exactly and releases otherwise, so `/Hold` or `/RELEASE` is a
+       release. TICK §5: nothing moves until
        `/release`, so a session picked for it could do nothing, and every later session would
        get the same pick (#295). The brief notes each held open agent PR
-       (`PR #N is on the owner's /hold (no /release after it): step 3 doesn't pick it`). A
-       held PR still links its issue (in flight);
+       (`PR #N is on the owner's /hold (no /release after it): step 3 doesn't pick it`), lowest
+       number first. A held PR still links its issue (in flight), and step 1 treats it like a
+       PR that isn't failing: its owner issue or comment waits for the `/release` too;
      - an open issue labeled `bug` whose title starts with `next-session: `, with no skip
        label and not in flight.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
@@ -331,7 +336,7 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Eight `gh` calls (seven before #295; the old text said nine), one more per blocked issue updated in the last 7 days, three `git` commands
+Eight `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
 plus one `git ls-tree` per open agent PR and one `git cat-file` per recent journal file, and the
 feed script (which makes its own); a few seconds.
 
@@ -357,7 +362,10 @@ of inputs where no step before 11 applies (→ `planner`):
   the brief notes it; near misses: `/release` after the `/hold` (by `createdAt`, whatever the
   list order), a tagged `/hold`, a `/hold` by another author, a body that only contains
   `/hold` after other text, a hold on another PR number; an equal `createdAt` goes by list
-  order; a `/holdx` body counts as a hold (the workflow's prefix match); a malformed
+  order; a `/holdx` body counts as a hold (the workflow's prefix match); `/Release` or `/Hold`
+  after a `/hold` releases it, and a body with the tag in other case is no command; step 1:
+  an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
+  and two held PRs are noted lowest first; a malformed
   `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
 - step 7's slot in flight: an open PR linking an `audit` or `retro` issue holds that term only
   (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the

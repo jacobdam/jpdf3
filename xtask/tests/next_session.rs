@@ -352,6 +352,79 @@ fn step3_skips_a_pr_on_the_owners_hold() {
         picked,
         "an ordinary comment after the release changes nothing"
     );
+    // R1.1: the workflow matches the command ignoring case, then holds only on `/hold` exactly.
+    for later in ["/Release", "/RELEASE", "/Hold", "/HOLD now"] {
+        assert_eq!(
+            on(&[h(T1), cmd("jacobdam", later, T2)]),
+            picked,
+            "{later} releases"
+        );
+    }
+    assert_eq!(
+        on(&[h(T1), cmd("jacobdam", "/release 🤖 JPDF-Agent", T2)]),
+        "planner",
+        "the tag in other case: no command"
+    );
+    assert_eq!(
+        on(&[cmd("jacobdam", "/hold 🤖 JPDF-AGENT", T1)]),
+        picked,
+        "the tag in other case: no command"
+    );
+    // R1.2: step 1 treats a held failing PR like a green one: its owner issue and an owner
+    // comment its body names wait for the /release.
+    let url = format!("{ISSUES}777#issuecomment-1");
+    let linking = set(
+        "prs.json",
+        format!(
+            "[{},{}]",
+            pr(
+                300,
+                "OPEN",
+                &format!("Closes #260\nOwner instruction: {url}"),
+                "t/301-y",
+                &[],
+                "[]"
+            ),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let feed = feed_plus(&[feed_issue(260)]);
+    assert_eq!(
+        pick(&[linking.clone(), feed.clone(), holds(&[(300, &[])])]),
+        "worker owner-issue #260"
+    );
+    assert_eq!(
+        pick(&[linking.clone(), feed, holds(&[(300, &[h(T1)])])]),
+        "worker ready #301",
+        "the base's ready issue #301 is no longer linked"
+    );
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[linking.clone(), comment.clone(), holds(&[(300, &[])])]),
+        format!("worker owner-comment {url}")
+    );
+    assert_eq!(
+        pick(&[linking, comment, holds(&[(300, &[h(T1)])])]),
+        "worker ready #301"
+    );
+    // R1.3: two held PRs are noted lowest first, whatever the list order.
+    let two = set(
+        "prs.json",
+        format!(
+            "[{},{},{}]",
+            pr(305, "OPEN", "", "t/9-b", &[], "[]"),
+            pr(300, "OPEN", "Closes #301", "t/301-y", &[], "[]"),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let o = run_with(&[two, holds(&[(305, &[h(T1)]), (300, &[h(T1)])])]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    let (a, b) = (
+        out.find("PR #300 is").unwrap(),
+        out.find("PR #305 is").unwrap(),
+    );
+    assert!(a < b, "{out}");
     // A hold on another PR number doesn't hold this one.
     assert_eq!(
         pick(&[failing.clone(), holds(&[(301, &[h(T1)]), (300, &[])])]),
