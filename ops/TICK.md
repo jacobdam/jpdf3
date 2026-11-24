@@ -807,10 +807,9 @@ gate them.
    created in step 2, 3 or 4, unless an open PR already links it: then leave it and put the
    finding in the issue below), and file one `discovery` issue in the current milestone with
    those findings and the link. A pushed `mN` tag stays (deleting it is a delete push, which
-   the guard forbids): if the undo reopens `Mn` or a finding names the tag, file a separate
-   issue `Delete tag mN` with `owner-todo` in the reopened milestone `Mn`, so step 4 waits for
-   it (in the current milestone when `Mn` stays closed, since step 1 loads only that one); the
-   owner closes it, or the next Planner does once `git ls-remote --tags origin mN`
+   the guard forbids): if the undo reopens `Mn`, file a separate issue `Delete tag mN` with
+   `owner-todo` in the reopened milestone `Mn`, so step 4 waits for it (when `Mn` stays closed
+   the tag stands, and a finding that names it is in the `discovery` issue); the owner closes it, or the next Planner does once `git ls-remote --tags origin mN`
    prints nothing (the one exception to step 2's "Close nothing"). The retro the tag triggers
    (§2 h) still runs (an undone gate is an incident). The `discovery` issue is a Worker issue
    like any other: the next Planner gates it into `ready` through step 2, and a Worker closes
