@@ -599,7 +599,9 @@ specs/tooling/design-technical.md.
       no `ready`, body line `Designed in: #<escalated issue>`) so the ADR PR's review rounds
       count for it, not for the escalated issue's spent cap. Then open the ADR PR; only then, for
       a `needs-design` PR, close that PR unmerged and close the escalated issue as folded into
-      the design issue, linking both. The tasks are filed in step 5, after the review.
+      the design issue, linking both; an escalated `design-product` issue stays open instead
+      (its product question is not the ADR's, §10 step 5) and gets `Depends on: #<design
+      issue>`. The tasks are filed in step 5, after the review.
    3. **ruling:** post `🤖 jpdf-agent **Design ruling**` on the PR, one line per open finding,
       `<ID>: out of scope by <PRINCIPLES.md entry or ADR §>: <why>`, and a last line
       `Next review: one design final check (ops/TICK.md §8)`. No ruling may cover a blocker, a
@@ -647,7 +649,10 @@ specs/tooling/design-technical.md.
    success the PR goes through this step again (`owner-todo`, a new window), so the owner always
    gets 24 hours on what merges.
 6. **Finish outputs 1 and 3:** if the PR has a `/hold` after its last `/release`, stop: nothing
-   moves until `/release` (§5). If the PR is labeled `design` (an ADR PR that was itself
+   moves until `/release` (§5). If the PR closes a `design-product` issue (a Design: product
+   PR, or a split of one, whose split issue keeps that label), run `gh pr ready N` and
+   continue at §10 step 6 (v1: the owner's approval; a later change: the 24-hour window); never
+   enable auto-merge here. Else, if the PR is labeled `design` (an ADR PR that was itself
    escalated, or a split of one), run `gh pr ready N`, then step 5 from "file the tasks" on:
    the tasks the ADR lists, `owner-todo` and the window comment, no auto-merge. Otherwise
    `gh pr ready N` and enable auto-merge.
@@ -751,7 +756,9 @@ specs/tooling/next-session.md step 8.
    every claim against them (no invented scope, no feature without a journey, no false
    present tense) and every journey change against CONSTITUTION 15. Over the cap, §4 step 6
    applies as to any PR (Design: technical, §8, ADR 0011 §5); a finding there that is a scope or
-   taste call is §8 output 4, the owner's question (ADR 0011 §7).
+   taste call is §8 output 4, the owner's question (ADR 0011 §7). The product issue stays open
+   through it (§8 output 2 doesn't fold it into the design issue), and §8 finishes the PR here,
+   at step 6, so it never merges without the owner's approval or window.
 6. **Merge.**
    - **v1 merges only on the owner's explicit approval, with no timeout** (ADR 0011 §7). Never
      label it `design` or enable auto-merge. After `ai-review` success, mark the PR ready, add
@@ -763,8 +770,9 @@ specs/tooling/next-session.md step 8.
      approval** (a fix, a merge of origin/main) starts with `gh pr merge N --disable-auto`, and
      after the new `ai-review` success the PR asks again (`owner-todo` and the comment above):
      the approval covers only the commit it saw.
-   - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` and
-     follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
+   - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` when you
+     open it (so every path to a merge, §8 step 6 included, sees the label), and after
+     `ai-review` success follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
      in PR #N merges after 24 h unless you /hold it`; §1's window check enables auto-merge.
 7. **Bound:** one PR per session and one product PR open at a time (the scheduler's rule). A
    product issue whose PR closed unmerged stays open and is picked again.

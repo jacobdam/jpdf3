@@ -150,7 +150,8 @@ never while an open agent PR links an open `design-product` issue, so one produc
 a time. It writes `docs/PRODUCT.md`, append-only journey changes and issues (product-queue
 issues are filed `ready`, like design-queue ones), no code. Its PR is reviewed like any work PR
 and over ADR 0010's cap goes to Design: technical like any other (a scope question there goes
-to the owner). v1 (#311) merges only on the owner's explicit approval, asked again after any
+to the owner), which hands it back to the Design: product merge rule, never to auto-merge, and
+leaves its product issue open. v1 (#311) merges only on the owner's explicit approval, asked again after any
 later push; later `PRODUCT.md` PRs get the design ADR PR's 24-hour `/hold` window.
 
 ## 5. Completeness: building the right thing
