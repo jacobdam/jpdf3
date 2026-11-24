@@ -4,10 +4,13 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #309 (#246, ADR 0011 task 4 part 1 of 3): `ops/areas.toml` (16 areas) and `cargo xtask issue-lint`; round 3
-  clean, origin/main merged in (STATUS conflict only), auto-merge on. Part 2 is #308 (labels on every open issue, the
-  TICK filing rule, per-area metrics; needs `ready` from the Planner), part 3 is #247 (depends on #308).
-- PR #312 (#249, Design: product session 1/2) is an open draft.
+- PR #309 (#246, task 4 part 1 of 3: `ops/areas.toml`, `cargo xtask issue-lint`) merged (65bbbb9). Part 2 is #308
+  (needs `ready` from the Planner), part 3 is #247 (depends on #308).
+- **PR #312** (#249, task 6 part 1/2, Design: product session): parked for the owner (#249 `blocked`, `owner-todo`).
+  After its design final check passed, #309 merged and it conflicted; origin/main merged in as bcee71c (AUTOMATION.md
+  keeps both paragraphs verbatim), auto-merge off. Not record-only at K = 6 with the design step spent, so the owner
+  says what review to run (#277 item 1 is this gap). Part 2/2, `docs/PRODUCT.md` v1, is #311.
+- PR #315 (#275, task 3 part 2: next-session step 6) is open.
 - Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
   #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
 - `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
@@ -23,7 +26,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#246 is in PR #309; #308 waits for the next Planner's `ready`), else `idle` today (the Planner ran).
+   are closed (#275 is in PR #315; #308 waits for the next Planner's `ready`), else `idle` today (the Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -35,6 +38,7 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
+- #249: say on PR #312 what to run for its merge resolution bcee71c (`ai-review` with no review, or one delta review).
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
 - #266: apply ops/proposals/hold-automerge.md and run T0–T4 (PR #290, on your `/hold`).
 - #257: drop the Playwright cache step in ci.yml (protected).
