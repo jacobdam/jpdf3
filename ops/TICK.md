@@ -381,6 +381,17 @@ Each round K runs in this order:
      ledgers on it (this PR's and the design PR's or ruling), add `owner-todo` (§0) and leave the
      decision to the owner (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
+   - **after the last check** (a clean final check, or a §8 design final check or split check
+     that passed): no review round runs again, so a change before the merge lands can't be
+     reviewed (#277). When the PR conflicts with its base (rule c), merge origin/main into it. If
+     every commit since the checked commit is a record commit or a merge whose remerge-diff is
+     empty or touches only record paths (the post-cap terms above), re-post `ai-review` success
+     on the new head (`target_url`: the check's triage comment) and re-enable auto-merge (for a
+     PR labeled `design`, §8 step 5's new window first). Anything else (a resolution that
+     edits another file, a new fix) is not pushed (`git merge --abort` for a resolution) and
+     escalates as when a final check reports anything: the escalation steps above, with the
+     Exception deciding between design and the owner. After a design final check or a split
+     check the design step is always spent, so it goes to the owner.
 
    The states after round 4 (ADR 0011 §5):
 
@@ -395,6 +406,8 @@ Each round K runs in this order:
    | §8 output 3: the diff since the last reviewed commit is over 100 lines or adds a file (output 1 has no size rule) | §8 output 4, no check runs |
    | §8 output 2 (ADR or principle) | the PR is closed unmerged; tasks filed with `Designed in:` |
    | §8 output 4 (owner question) | `owner-todo`; no review round until an owner comment |
+   | after the last check, the PR conflicts: the merge and every later commit are records only | `ai-review` success re-posted on the new head, merge |
+   | after the last check, any other change (a conflict resolution in another file, a new fix) | as a final check that reports anything: design, or the owner when the design step was spent (always after §8's check) |
    | a `/hold` at any point | nothing moves until `/release` (§5) |
 
 Mechanics (the guard wants one simple command with the text inline, no files):

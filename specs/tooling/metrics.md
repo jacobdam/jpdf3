@@ -69,13 +69,16 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
      exits, total and median duration in whole minutes, and session minutes per merged PR (one
      decimal, rounded down).
   2. *Review (ADR 0010):* for each merged PR with at least one review header, a row with its
-     rounds, whether a final check ran, findings by severity for each reviewer, and regrades.
+     rounds, whether a final check ran, whether a design final check ran, findings by severity for each reviewer, and regrades.
      - Only comments whose body starts (after leading whitespace) with `🤖 jpdf-agent` count;
        the agent and the owner share one account, so the author can't tell them apart.
      - Headers are read from the first line only. Rounds: the highest K in a
        `**AI review, round K` header on that PR. K counts across PRs for one issue (TICK §4),
        so a replacement PR can start above 1.
      - Final check: a `**AI review, round 5 (final check)` header (round 5 only, TICK §4 step 6).
+     - Design final check: a `**AI review, round K (design final check)` header with K ≥ 5
+       (TICK §8 output 3; a design session runs only after round 4, §4 step 6), counted apart
+       from the final check: a PR can have both (#277).
      - Findings: lines in review comments (`**AI review, round K` or
        `**AI review (second reviewer), round K` headers) that start with `R<K>.<n> [<severity>]`
        (subagent) or `S<K>.<n> [<severity>]` (second reviewer), severity one of blocker, major,
@@ -84,7 +87,7 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
        starts with `<ID>: regraded`, each ID once, and only IDs a review comment reported as a
        finding (audit 0006 AC.4).
      - Summary: PRs reviewed, median rounds, the share at 4 or more rounds and the share with a
-       final check, total findings by severity for each reviewer, total regrades.
+       final check and the share with a design final check, total findings by severity for each reviewer, total regrades.
   3. *CI* (workflow `ci.yml`, runs whose `createdAt` UTC day is in the period; each
      `databaseId` counts once, at its first entry):
      - runs, and runs by `conclusion` (an empty conclusion is shown as `in progress`);
@@ -120,8 +123,9 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
   names), `comments_truncated` (the PR numbers above, ascending), `throughput` (`merges`, `lines_added`, `lines_deleted`, `merged_prs`,
   `closed_issues`, `sessions`: `null` without an index, else `count`, `nonzero`,
   `total_seconds`, `median_seconds`, `malformed`), `review` (`prs`, `median_rounds`, `at_cap`,
-  `final_checks`, `regrades`, `subagent` and `second` as `{blocker, major, minor, nit}`,
-  `per_pr`: one object per reviewed PR), `ci` (`runs`, `by_conclusion` as an object,
+  `final_checks`, `design_final_checks`, `regrades`, `subagent` and `second` as `{blocker, major, minor, nit}`,
+  `per_pr`: one object per reviewed PR, with `pr`, `rounds`, `final_check`,
+  `design_final_check`, `subagent`, `second` and `regrades`), `ci` (`runs`, `by_conclusion` as an object,
   `failed_main`, `failed_other`, `reruns`, `reruns_success`, `jobs_read`, `jobs_unknown`,
   `jobs_capped`, `failing_jobs` as an object of name to count), `stuck` (`blocked` and
   `flaky`, each a list of `{number, title, age_days}`) and `lag` (`audits` and `retros`, each a
@@ -231,7 +235,8 @@ With it, 2026-11-21 to 2026-11-23 (82 merges, 410 CI runs, 5 failed runs read) t
   the default `--since`, including a newer record after `--until` skipped), index rows (malformed rows, impossible times included, skipped and
   counted; period edges; a signed exit code or duration), timestamps (nothing after the `Z`,
   time bounds), review parsing (tag check, header on the first line only, round K from review headers
-  only, final check in round 5 only, finding IDs counted once, restatements and audit IDs ignored, regrades,
+  only, final check in round 5 only, design final check from round 5 on and counted apart
+  (near misses: round 4, other wordings, a missing space, not the first line), finding IDs counted once, restatements and audit IDs ignored, regrades,
   a regrade of an ID no review reported not counted),
   the period filter for merges, PRs, closed issues and CI runs, the CI counts (conclusions,
   main vs other branches including a pull request from a branch named `main`, re-runs,

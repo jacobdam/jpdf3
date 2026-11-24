@@ -264,6 +264,8 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   case assert where the uncached path first fails ([journal](journal/2026-11-21.md), PR #139).
 - Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
   comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
+- clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
+  → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
 - The workspace denies `as` casts in tests too → convert floats with a bit-setting helper
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
