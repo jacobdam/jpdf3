@@ -9,9 +9,8 @@ Phase: bootstrap (pilot)
   hand until #275. Task 2 (#244, the Planner session, `ops/QUEUE.md`, work-mix budget) and #275 are next.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
-- **PR #232** (#187 part 1): the owner said "Merge" (PR #232 comment 7116940288), accepting 0831d70 unreviewed;
-  origin/main merged in, `ai-review` success on the owner's ruling, auto-merge on. The "done:" reply waits for the
-  merge. Part 2: #231 (sev:high, M2, `deferred`).
+- PR #232 (#187 part 1) merged (48f63d9) on the owner's "Merge"; "done:" posted. Part 2: #231 (sev:high, M2,
+  `deferred`).
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
 - #236 (memory ADR, `deferred`) is the first design queue item now that PR #276 merged. #146 stays open,
