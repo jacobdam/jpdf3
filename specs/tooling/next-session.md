@@ -128,10 +128,13 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
     `records.txt` covers), or no current milestone (step 10's): *not measured*, never below the
     budget. Otherwise a record is *milestone work* when it is on issue N, N's milestone in
     `all-issues.json` is the current milestone (exact title), and an agent PR in `prs.json` of
-    any state links N (*Linked issue*) and changes a *product path* (a `pr-files.json` path
+    any state links N (*Linked issue*, its first `Closes #N` only) and changes a *product path* (a `pr-files.json` path
     starting with one of step 7's prefixes, no unquoting: `gh` writes paths plain); for `own-pr
     #N`, when PR N is an agent PR that changes a product path and links an issue in the current
-    milestone. The work mix is *below the budget* when fewer than 70% of the window
+    milestone. A record names no PR, so on issue N it counts when *any* agent PR linking N
+    changes a product path, not only the one that session opened: a process-only follow-up
+    session on an issue whose earlier PR changed `crates/` counts (an approximation of ADR 0011
+    §3's "its PR"). The work mix is *below the budget* when fewer than 70% of the window
     (`counted × 100 < 70 × 20`, so 13 or fewer of 20) is milestone work. The *reading* is a
     `Notes:` line: `work mix: <c> of the last 20 sessions on milestone work (<c × 5>%; budget
     70%)`, `work mix: not measured (<n> of the 20 session records it needs)` or `work mix: not
@@ -538,7 +541,7 @@ of inputs where no step before 11 applies (→ `planner`):
   10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
   test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - the work mix (#288): 14 of 20 meets the budget, 13 of 20 is below it (`planner due`, its
-  reason and the note), 20/20, 0/20, 19 and 18 records (not measured), all three step 8 reasons
+  reason and the note), 20/20, 0/20, 19 records (not measured), all three step 8 reasons
   together, the note only on Planner picks, no current milestone, a Planner record dated today
   (idle); the newest 20 by path whatever the line order; a duplicated line counted once and a
   different line in the same file counted; each left-out kind and 13 near misses; each Worker

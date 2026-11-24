@@ -201,8 +201,8 @@ i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with ev
    closes after them) loses `ready`, or names them on a `Depends on:` line.
 j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone has no plan in
    `ops/QUEUE.md` on main, no Planner record is dated in the last 7 UTC days, or the work mix is
-   below 70%: fewer than 14 of the last 20 counted `Session:` records are milestone work, ADR
-   0011 §3) or step 11
+   below 70%: fewer than 14 of the newest 20 counted `Session:` records of the last 7 days are
+   milestone work, ADR 0011 §3; with fewer than 20 there, it isn't measured) or step 11
    (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
    `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
 

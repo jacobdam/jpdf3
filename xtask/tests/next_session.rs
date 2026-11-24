@@ -3037,8 +3037,9 @@ fn work_mix_70_percent_of_the_last_20() {
 
 #[test]
 fn work_mix_window_is_the_newest_20_by_path() {
-    // Six older milestone records on 2026-11-21, then 7 audits and 13 milestone records: the
-    // newest 20 hold 13 (below). All 27 would be 20 of 27 (74%), the oldest 20 would be 19.
+    // The Planner record (2026-11-20), six older milestone records (2026-11-21), then 7 audits
+    // and 13 milestone records: the newest 20 hold 13 (below). The 27 together hold 19 milestone
+    // records (70%, not below); the oldest 20 would hold 12.
     let older: String = (0..6)
         .map(|i| format!("ops/journal/2026-11-21/03{i:02}-m.md\t- Session: worker ready #801\n"))
         .collect();
@@ -3081,12 +3082,13 @@ fn work_mix_window_is_the_newest_20_by_path() {
 
 #[test]
 fn work_mix_leaves_out_owner_instructions_and_design_sessions() {
-    // 14 milestone records (oldest), then 6 Planner/audit records, then 5 newer ones of an
-    // excluded kind: left out, the window is 14 of 20; counted, it would be 9 of 20.
+    // The Planner record (oldest by path), 14 milestone records, 5 audits, then 5 newer ones of
+    // an excluded kind: left out, the window is 14 of 20; in the window, 10 of 20. The owner
+    // kinds name #9 (no milestone), so they'd not be milestone work if they were counted (R1.1).
     for kind in [
-        "worker owner-issue #801",
+        "worker owner-issue #9",
         "worker owner-comment https://github.com/jacobdam/jpdf3/issues/1#issuecomment-2",
-        "worker owner-done #801",
+        "worker owner-done #9",
         "design-technical needs-design #802",
         "design-technical design-issue #801",
         "design-product x #801",
@@ -3112,8 +3114,8 @@ fn work_mix_leaves_out_owner_instructions_and_design_sessions() {
         assert_eq!(mix_pick(&[set("records.txt", base)]), "planner", "{kind}");
         assert_eq!(mix_pick(&[set("records.txt", text)]), "planner", "{kind}");
     }
-    // Near misses: these kinds are in the window and not milestone work, so 5 of them push 5
-    // milestone records out (9 of 20).
+    // Near misses: these kinds are in the window and not milestone work, so 5 of them push 4
+    // milestone records and the Planner record out (10 of 20).
     for kind in [
         "worker main-red run 801",
         "worker leftover-worktree t/801-m",
