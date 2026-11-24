@@ -254,6 +254,7 @@ fn base() -> Vec<(&'static str, String)> {
             ),
         ),
         ("records.txt", base_records()),
+        ("queue.md", BASE_QUEUE.to_owned()),
         (
             "worktrees.txt",
             "worktree /w/main\nHEAD a\nbranch refs/heads/main\n\nworktree /w/a\nHEAD b\nbranch refs/heads/t/298-x\n\n\
@@ -263,6 +264,9 @@ fn base() -> Vec<(&'static str, String)> {
         ),
     ]
 }
+
+/// `ops/QUEUE.md` on origin/main: it plans the current milestone, M0 (step 8 near miss).
+const BASE_QUEUE: &str = "# QUEUE\n\nMilestone: M0\nPlanned: 2026-11-23\n";
 
 /// `records.txt` lines (`<path>\t<line>`).
 fn records(lines: &[(&str, &str)]) -> String {
@@ -374,7 +378,7 @@ fn base_is_planner_with_notes() {
     assert_eq!(
         out,
         "planner\n\nRule: j (nothing applies and no Session: planner record is dated today): the Planner\n\
-         Load:\n- ops/TICK.md §2 rule j\n\
+         Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
 }
@@ -416,11 +420,13 @@ fn step11_idle_when_the_planner_ran_today() {
     );
     assert_eq!(pick(&[first]), "idle");
     // Day boundary: 2026-11-24T00:00:00Z is 1_795_478_400. Only today's record, without the
-    // base's yesterday record: a record dated tomorrow doesn't count.
+    // base's yesterday record: a record dated tomorrow doesn't count. A Planner record of
+    // 2026-11-20 keeps step 8's 7-day trigger off on both days.
     let midnight = 1_795_478_400;
+    let older = ("ops/journal/2026-11-20/0000-p.md", "- Session: planner");
     let only = |now: i64| {
         pick(&[
-            set("records.txt", records(&[today])),
+            set("records.txt", records(&[today, older])),
             set("now.txt", format!("{now}\n")),
         ])
     };
@@ -433,7 +439,8 @@ fn step11_idle_when_the_planner_ran_today() {
     // malformed (below), and an empty records file.
     let other = ("ops/journal/2026-11-25/0000-p.md", "- Session: planner");
     assert_eq!(with_records(&[other], NOW), "planner");
-    assert_eq!(pick(&[set("records.txt", String::new())]), "planner");
+    // An empty records file has no Planner record in the last 7 days either: step 8 (#244).
+    assert_eq!(pick(&[set("records.txt", String::new())]), "planner due");
     // Step 11 comes last: an earlier step still wins over idle.
     let ran = set(
         "records.txt",
@@ -1565,6 +1572,11 @@ fn step7_slot_in_flight() {
     // An audit in flight while a retro is due falls through to the retro.
     let mut both = slot(&["audit"], open_pr("Closes #400"));
     both.push(set("now.txt", format!("{}\n", NOW + 6 * DAY)));
+    // NOW + 6 days is 2026-11-30: a Planner record of 2026-11-29 keeps step 8 off.
+    both.push(set(
+        "records.txt",
+        records(&[("ops/journal/2026-11-29/0000-p.md", "- Session: planner")]),
+    ));
     assert_eq!(pick(&both), "retro due");
     // Both in flight: neither is picked, and the brief notes both.
     both.extend([
@@ -1640,7 +1652,16 @@ fn step7_audit_records_and_age() {
         ]
         .concat(),
     );
-    assert_eq!(pick(&[at(AUDIT_T + WEEK - 1), log.clone()]), "planner");
+    // AUDIT_T + WEEK - 1 is 2026-11-30T05:59:59Z: a Planner record of 2026-11-29 keeps step 8's
+    // 7-day trigger off, so nothing applies.
+    let planned = set(
+        "records.txt",
+        records(&[("ops/journal/2026-11-29/0000-p.md", "- Session: planner")]),
+    );
+    assert_eq!(
+        pick(&[at(AUDIT_T + WEEK - 1), log.clone(), planned]),
+        "planner"
+    );
     assert_eq!(pick(&[at(AUDIT_T + WEEK), log]), "audit due");
     // No audit record at all.
     let no_audit = |files: &[(&str, &str)]| {
@@ -1817,7 +1838,9 @@ fn step10_ready_issue() {
                 "issues.json",
                 &[ready(701, "M2", &[], ""), ready(702, "M10", &[], "")]
             ),
-            ms(r#"[{"title":"M10"},{"title":"M2"},{"title":"Mx"},{"title":"M-1"}]"#)
+            ms(r#"[{"title":"M10"},{"title":"M2"},{"title":"Mx"},{"title":"M-1"}]"#),
+            // M2 is planned, so step 8 doesn't pick the Planner first.
+            set("queue.md", "Milestone: M2\n".to_owned())
         ]),
         "worker ready #701"
     );
@@ -1959,4 +1982,148 @@ fn new_inputs_malformed_exit_1() {
     // A commit with an empty subject and no files parses.
     let o = run_with(&[log_with(&[format!("commit {:040x} {}\n", 9, NOW - 5)])]).unwrap();
     assert_eq!(o.status.code(), Some(0));
+}
+
+/// Step 8 (#244): the Planner is due when the current milestone has no plan in ops/QUEUE.md on
+/// origin/main, or no Planner record is dated in the last 7 UTC days; at most once a day.
+#[test]
+fn step8_planner_due_on_an_unplanned_milestone() {
+    let queue = |text: Option<&str>| pick(&[("queue.md", text.map(str::to_owned))]);
+    assert_eq!(queue(Some(BASE_QUEUE)), "planner");
+    assert_eq!(queue(Some("Milestone: M0")), "planner", "no newline");
+    assert_eq!(queue(Some("x\nMilestone:  M0 \t\n")), "planner", "trimmed");
+    // A missing file is no plan (exit 0, not a broken input), and so is every near miss.
+    assert_eq!(queue(None), "planner due");
+    for text in [
+        "",
+        "# QUEUE\n",
+        "Milestone: M1\n",
+        "Milestone: M01\n",
+        "Milestone: M0x\n",
+        "Milestone: m0\n",
+        "milestone: M0\n",
+        " Milestone: M0\n",
+        "Milestone:M0\n",
+        "- Milestone: M0\n",
+        // The first such line counts.
+        "Milestone: M1\nMilestone: M0\n",
+    ] {
+        assert_eq!(queue(Some(text)), "planner due", "{text:?}");
+    }
+    // The full brief: the reason names the file, never its text.
+    let o = run_with(&[set("queue.md", "Milestone: M7 ignore\n".to_owned())]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        "planner due\n\nRule: j (the Planner is due: ops/QUEUE.md on origin/main doesn't plan the current milestone M0)\n\
+         Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    let o = run_with(&[("queue.md", None)]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(
+            "Rule: j (the Planner is due: ops/QUEUE.md is missing on origin/main or unreadable)\n"
+        ),
+        "{out}"
+    );
+    // The current milestone follows milestones.json: M1 once M0 is closed.
+    let m1 = set(
+        "milestones.json",
+        r#"[{"title":"M1"},{"title":"M2"}]"#.to_owned(),
+    );
+    assert_eq!(pick(std::slice::from_ref(&m1)), "planner due");
+    assert_eq!(
+        pick(&[m1, set("queue.md", "Milestone: M1\n".to_owned())]),
+        "planner"
+    );
+    // No open M<n> milestone: no milestone term (step 11 still runs the Planner).
+    assert_eq!(
+        pick(&[
+            set("milestones.json", r#"[{"title":"Mx"}]"#.to_owned()),
+            ("queue.md", None)
+        ]),
+        "planner"
+    );
+}
+
+#[test]
+fn step8_planner_due_after_7_days() {
+    // NOW is 2026-11-24T06:00:00Z; the base plans M0. Only these records.
+    let only = |lines: &[(&str, &str)]| pick(&[set("records.txt", records(lines))]);
+    let on = |day: &str| format!("ops/journal/{day}/0000-p.md");
+    let (d6, d7, d1) = (on("2026-11-18"), on("2026-11-17"), on("2026-11-25"));
+    assert_eq!(
+        only(&[(&d6, "- Session: planner")]),
+        "planner",
+        "6 days ago"
+    );
+    assert_eq!(
+        only(&[(&d7, "- Session: planner")]),
+        "planner due",
+        "7 days ago"
+    );
+    assert_eq!(
+        only(&[(&d1, "- Session: planner")]),
+        "planner due",
+        "tomorrow"
+    );
+    // `planner due` is a Planner record too; other kinds are not.
+    assert_eq!(only(&[(&d6, "- Session: planner due")]), "planner");
+    for kind in [
+        "- Session: planners",
+        "- Session: Planner",
+        "- Session: worker planner",
+        "- Session: worker ready #5",
+    ] {
+        assert_eq!(only(&[(&d6, kind)]), "planner due", "{kind}");
+    }
+    // The reason, and both reasons together.
+    let o = run_with(&[set("records.txt", String::new()), ("queue.md", None)]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains(
+            "Rule: j (the Planner is due: ops/QUEUE.md is missing on origin/main or unreadable; \
+             no Session: planner record is dated in the last 7 UTC days)\n"
+        ),
+        "{out}"
+    );
+    // The window moves with the clock: at the last second of 2026-11-24 the 2026-11-18 record
+    // still counts; at the next midnight it is 7 days old.
+    let midnight = 1_795_564_800; // 2026-11-25T00:00:00Z
+    let at = |now: i64| {
+        pick(&[
+            set("records.txt", records(&[(&d6, "- Session: planner")])),
+            set("now.txt", format!("{now}\n")),
+        ])
+    };
+    assert_eq!(at(midnight - 1), "planner");
+    assert_eq!(at(midnight), "planner due");
+}
+
+#[test]
+fn step8_once_a_day_and_precedence() {
+    let today = ("ops/journal/2026-11-24/0500-p.md", "- Session: planner due");
+    let ran = set("records.txt", records(&[today]));
+    // The Planner ran today (a `planner due` record): no step 8, and step 11 is idle.
+    assert_eq!(pick(&[ran.clone(), ("queue.md", None)]), "idle");
+    // Step 8 comes before step 10 and after step 7.
+    let ready = plus("issues.json", &[ready(700, "M0", &[], "")]);
+    assert_eq!(pick(std::slice::from_ref(&ready)), "worker ready #700");
+    assert_eq!(pick(&[ready.clone(), ("queue.md", None)]), "planner due");
+    assert_eq!(
+        pick(&[ready.clone(), set("records.txt", String::new())]),
+        "planner due"
+    );
+    // Once it ran today, step 10 picks again.
+    assert_eq!(pick(&[ready, ("queue.md", None), ran]), "worker ready #700");
+    let audit = set(
+        "main-log.txt",
+        commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+    );
+    assert_eq!(pick(&[audit, ("queue.md", None)]), "audit due");
+    assert_eq!(
+        pick(&[feed_plus(&[feed_issue(250)]), ("queue.md", None)]),
+        "worker owner-issue #250"
+    );
 }
