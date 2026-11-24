@@ -100,7 +100,12 @@ fn base_log() -> Vec<String> {
             "Revert \"x\" (#7)",
             &[("M", "crates/z.rs")],
         ),
-        commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        commit(
+            101,
+            ROOT_T,
+            "Add plan",
+            &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+        ),
     ]
 }
 
@@ -1609,7 +1614,12 @@ fn precedence_removes_each_step_in_turn() {
                 "main-log.txt",
                 [
                     commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
-                    commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+                    commit(
+                        101,
+                        ROOT_T,
+                        "Add plan",
+                        &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+                    ),
                 ]
                 .concat(),
             )],
@@ -1619,6 +1629,12 @@ fn precedence_removes_each_step_in_turn() {
             vec![],
             vec![],
             vec![("tags.txt", format!("m1 {}\n", RETRO_T + 1))],
+        ),
+        (
+            "design product #800",
+            vec![],
+            vec![ready(800, "M3", &["design-product"], "")],
+            vec![],
         ),
         (
             "worker ready #700",
@@ -1650,12 +1666,17 @@ fn precedence_removes_each_step_in_turn() {
         let got = pick(&changes);
         assert!(got.starts_with(steps[start].0), "from step {start}: {got}");
     }
-    // Step 8 (#244) can't sit in the list above: the `idle` entry's Planner record of today turns
+    // Step 8's Planner term (#244) can't sit in the list above: the `idle` entry's Planner record of today turns
     // it off. Without that entry and with no ops/QUEUE.md, every step from 1 to 7 still wins
     // over `planner due`, and `planner due` wins over the ready issue of step 10.
     let ready_at = steps
         .iter()
         .position(|s| s.0 == "worker ready #700")
+        .unwrap();
+    // `planner due` also wins over Design: product, its step-8 neighbour (#249).
+    let product_at = steps
+        .iter()
+        .position(|s| s.0 == "design product #800")
         .unwrap();
     for start in 0..=ready_at {
         let mut feed = Vec::new();
@@ -1668,7 +1689,7 @@ fn precedence_removes_each_step_in_turn() {
         }
         changes.push(feed_plus(&feed));
         changes.push(plus("issues.json", &issues));
-        let want = if start == ready_at {
+        let want = if start >= product_at {
             "planner due"
         } else {
             steps[start].0
@@ -1934,7 +1955,12 @@ fn step7_slot_in_flight() {
                 &[("A", "docs/audits/0006.md")],
             ),
             commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
-            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+            commit(
+                101,
+                ROOT_T,
+                "Add plan",
+                &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+            ),
         ]
         .concat(),
     );
@@ -2031,7 +2057,12 @@ fn step7_audit_records_and_age() {
                 &[("A", "docs/retros/0001.md")],
             ),
             commit(104, AUDIT_T, "Audit", &[("A", "docs/audits/0006.md")]),
-            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+            commit(
+                101,
+                ROOT_T,
+                "Add plan",
+                &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+            ),
         ]
         .concat(),
     );
@@ -2051,7 +2082,12 @@ fn step7_audit_records_and_age() {
         let log = [
             commit(110, NOW - 60, "x", files),
             commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
-            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+            commit(
+                101,
+                ROOT_T,
+                "Add plan",
+                &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+            ),
         ]
         .concat();
         pick(&[set("main-log.txt", log)])
@@ -2082,7 +2118,12 @@ fn step7_retro() {
         let log = [
             commit(104, audit, "Audit", &[("A", "docs/audits/0006.md")]),
             commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
-            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+            commit(
+                101,
+                ROOT_T,
+                "Add plan",
+                &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+            ),
         ]
         .concat();
         set("main-log.txt", log)
@@ -2099,7 +2140,12 @@ fn step7_retro() {
     let no_retro = |now: i64| {
         let log = [
             commit(104, now - 10, "Audit", &[("A", "docs/audits/0006.md")]),
-            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+            commit(
+                101,
+                ROOT_T,
+                "Add plan",
+                &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+            ),
         ]
         .concat();
         // The base's tag and blocked events would be incidents since the first commit.
@@ -2538,11 +2584,248 @@ fn step8_once_a_day_and_precedence() {
     assert_eq!(pick(&[ready, ("queue.md", None), ran]), "worker ready #700");
     let audit = set(
         "main-log.txt",
-        commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        commit(
+            101,
+            ROOT_T,
+            "Add plan",
+            &[("A", "PLAN.md"), ("A", "docs/PRODUCT.md")],
+        ),
     );
     assert_eq!(pick(&[audit, ("queue.md", None)]), "audit due");
     assert_eq!(
         pick(&[feed_plus(&[feed_issue(250)]), ("queue.md", None)]),
         "worker owner-issue #250"
+    );
+}
+
+/// `main-log.txt` without `docs/PRODUCT.md`: the base log minus its root commit's line.
+fn log_without_product() -> (&'static str, Option<String>) {
+    let log = base_log().concat();
+    let line = "A\tdocs/PRODUCT.md\n";
+    assert_eq!(log.matches(line).count(), 1);
+    ("main-log.txt", Some(log.replace(line, "")))
+}
+
+/// Step 8, after the Planner (#249, ops/TICK.md §10): Design: product. `docs/PRODUCT.md`
+/// missing on origin/main → `design product v1`; else the lowest workable `ready`
+/// `design-product` issue; neither while an open agent PR links an open `design-product` issue.
+#[test]
+fn step8_design_product() {
+    let missing = log_without_product();
+    assert_eq!(pick(std::slice::from_ref(&missing)), "design product v1");
+    let o = run_with(std::slice::from_ref(&missing)).unwrap();
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        "design product v1\n\nRule: k (Design: product is due: docs/PRODUCT.md is not on origin/main)\n\
+         Load:\n- ops/TICK.md §10\n- gh issue list --state open --label design-product\n\
+         - PLAN.md §4\n- specs/journeys/\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // The newest commit touching the path decides: deleted → missing, re-added or changed →
+    // present. A rename (`--no-renames`: D plus A) away from the path is a delete.
+    let top = |st: &str, path: &str| commit(110, NOW - 60, "x", &[(st, path)]);
+    assert_eq!(
+        pick(&[log_with(&[top("D", "docs/PRODUCT.md")])]),
+        "design product v1"
+    );
+    for st in ["M", "T", "A"] {
+        assert_eq!(
+            pick(&[log_with(&[top(st, "docs/PRODUCT.md")])]),
+            "planner",
+            "{st}"
+        );
+    }
+    assert_eq!(
+        pick(&[log_with(&[
+            top("A", "docs/PRODUCT.md"),
+            commit(109, NOW - 120, "y", &[("D", "docs/PRODUCT.md")]),
+        ])]),
+        "planner"
+    );
+    assert_eq!(
+        pick(&[log_with(&[
+            top("D", "docs/PRODUCT.md"),
+            commit(109, NOW - 120, "y", &[("A", "docs/PRODUCT.md")]),
+        ])]),
+        "design product v1"
+    );
+    // Only the exact path counts.
+    for path in [
+        "docs/PRODUCT.md.bak",
+        "docs/product.md",
+        "PRODUCT.md",
+        "x/docs/PRODUCT.md",
+        "\"docs/PRODUCT.md\"",
+    ] {
+        let only = commit(1, ROOT_T, "root", &[("A", path)]);
+        let log = log_without_product()
+            .1
+            .unwrap()
+            .replace(&commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]), &only);
+        assert!(log.contains(path), "{path}");
+        assert_eq!(
+            pick(&[set("main-log.txt", log)]),
+            "design product v1",
+            "{path}"
+        );
+    }
+
+    // With the file on main: a ready design-product issue, lowest number first, in any
+    // milestone (or none).
+    let product = |n: u64, l: &[&str]| {
+        let mut all = vec!["design-product"];
+        all.extend_from_slice(l);
+        ready(n, "M5", &all, "")
+    };
+    assert_eq!(
+        pick(&[plus("issues.json", &[product(902, &[]), product(901, &[])])]),
+        "design product #901"
+    );
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[full_issue(
+                903,
+                "p",
+                &["design-product", "ready"],
+                "",
+                "null"
+            )]
+        )]),
+        "design product #903"
+    );
+    let o = run_with(&[plus("issues.json", &[product(901, &[])])]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.starts_with(
+            "design product #901\n\nRule: k (Design: product is due: a ready design-product issue)\n\
+             Load:\n- gh issue view 901 --comments\n- ops/TICK.md §10\n- docs/PRODUCT.md\n- specs/journeys/\n"
+        ),
+        "{out}"
+    );
+    // It wins over a ready Worker issue (step 10), and step 10 never takes it.
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[product(901, &[]), ready(10, "M0", &[], "")]
+        )]),
+        "design product #901"
+    );
+    // Near misses: not ready, a skip label, in flight, the wrong label; and while the file
+    // is missing only v1 is picked.
+    let in_flight = pr(950, "OPEN", "Closes #901", "t/901-p", &[], GREEN);
+    for (issues, prs) in [
+        (
+            vec![full_issue(901, "p", &["design-product"], "", "null")],
+            vec![],
+        ),
+        (vec![product(901, &["owner-todo"])], vec![]),
+        (vec![product(901, &["blocked"])], vec![]),
+        (vec![product(901, &["deferred"])], vec![]),
+        (vec![ready(901, "M5", &["design"], "")], vec![]),
+        (vec![ready(901, "M5", &["design-products"], "")], vec![]),
+        (vec![product(901, &[])], vec![in_flight.clone()]),
+    ] {
+        let mut changes = vec![plus("issues.json", &issues)];
+        if !prs.is_empty() {
+            changes.push(plus("prs.json", &prs));
+        }
+        let got = pick(&changes);
+        assert!(
+            got == "planner" || got == "worker ready #901",
+            "{issues:?}: {got}"
+        );
+        assert_ne!(got, "design product #901");
+    }
+    assert_eq!(
+        pick(&[missing.clone(), plus("issues.json", &[product(901, &[])])]),
+        "design product v1"
+    );
+
+    // One product PR at a time: an open agent PR linking an open design-product issue (any
+    // labels, any checks) turns both terms off, with a note.
+    let slot = |issue_labels: &[&str], pr_json: String| {
+        vec![
+            missing.clone(),
+            plus("issues.json", &[issue(911, "PRODUCT.md v1", issue_labels)]),
+            plus("prs.json", &[pr_json]),
+        ]
+    };
+    let open_pr = |body: &str| pr(912, "OPEN", body, "t/911-product", &[], GREEN);
+    let doing = slot(&["design-product", "owner-todo"], open_pr("Closes #911"));
+    assert_eq!(pick(&doing), "planner");
+    let out = String::from_utf8(run_with(&doing).unwrap().stdout).unwrap();
+    assert!(
+        out.contains(
+            "- Design: product due (docs/PRODUCT.md is not on origin/main) but PR #912 is open for it: not picked\n"
+        ),
+        "{out}"
+    );
+    let busy = vec![
+        plus(
+            "issues.json",
+            &[issue(911, "p", &["design-product"]), product(913, &[])],
+        ),
+        plus("prs.json", &[open_pr("Closes #911")]),
+    ];
+    assert_eq!(pick(&busy), "planner");
+    // A ready design-product issue in the current milestone is not a Worker's (step 10), even
+    // while the product terms are off.
+    let busy_m0 = vec![
+        plus(
+            "issues.json",
+            &[
+                issue(911, "p", &["design-product"]),
+                ready(913, "M0", &["design-product"], ""),
+            ],
+        ),
+        plus("prs.json", &[open_pr("Closes #911")]),
+    ];
+    assert_eq!(pick(&busy_m0), "planner");
+    let failing = pr(912, "OPEN", "Closes #911", "t/911-product", &[], "null");
+    assert_eq!(
+        pick(&slot(&["design-product"], failing)),
+        "worker own-pr #912"
+    );
+    for (l, p) in [
+        (vec!["design"], open_pr("Closes #911")),
+        (vec!["design-product"], open_pr("Closes #914")),
+        (vec!["design-product"], open_pr("See #911")),
+        (
+            vec!["design-product"],
+            pr(912, "MERGED", "Closes #911", "t/911-product", &[], "[]"),
+        ),
+        (
+            vec!["design-product"],
+            pr(912, "CLOSED", "Closes #911", "t/911-product", &[], "[]"),
+        ),
+        (
+            vec!["design-product"],
+            raw_pr(912, "OPEN", "Closes #911", "t/911-product", &[], GREEN),
+        ),
+        (
+            vec![],
+            pr(
+                912,
+                "OPEN",
+                "Closes #911",
+                "t/911-product",
+                &["design-product"],
+                GREEN,
+            ),
+        ),
+    ] {
+        assert_eq!(pick(&slot(&l, p.clone())), "design product v1", "{l:?} {p}");
+    }
+    // Steps 7 and the Planner come first; the product note still shows when they win.
+    let planner_due = ("queue.md", None);
+    assert_eq!(pick(&[missing.clone(), planner_due.clone()]), "planner due");
+    let mut held = doing.clone();
+    held.push(planner_due);
+    let out = String::from_utf8(run_with(&held).unwrap().stdout).unwrap();
+    assert!(out.starts_with("planner due\n"), "{out}");
+    assert!(
+        out.contains("but PR #912 is open for it: not picked"),
+        "{out}"
     );
 }

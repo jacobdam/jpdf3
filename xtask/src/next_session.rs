@@ -73,7 +73,11 @@ const PRODUCT_PATHS: [&str; 6] = [
     "tools/fsio/",
 ];
 /// Labels step 10 skips besides `SKIP_LABELS`.
-const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
+const NOT_READY_LABELS: [&str; 4] = ["in-progress", "design", "design-pending", PRODUCT_LABEL];
+/// The label of a Design: product session's issues (step 8, ops/TICK.md §10).
+const PRODUCT_LABEL: &str = "design-product";
+/// What a Design: product session writes first (ADR 0011 §1: its v1 trigger).
+const PRODUCT_DOC: &str = "docs/PRODUCT.md";
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
 const BLOCKED_INCIDENT: usize = 3;
@@ -754,6 +758,15 @@ fn last_record(log: &[Commit], dirs: &[&str]) -> Option<usize> {
     })
 }
 
+/// Whether `path` is on origin/main, from the newest first-parent commit that touches it: `D`
+/// means deleted, any other status means present, no such commit means it was never added.
+/// `--no-renames` turns a rename into `D` plus `A`, so both ends are seen.
+fn on_main(log: &[Commit], path: &str) -> bool {
+    log.iter()
+        .find_map(|c| c.files.iter().find(|(_, p)| p == path))
+        .is_some_and(|(s, _)| s != "D")
+}
+
 fn product_merge(c: &Commit) -> bool {
     c.files
         .iter()
@@ -1349,6 +1362,56 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                     "PLAN.md §8".to_owned(),
                 ],
             ));
+        }
+    }
+    // Step 8, after the Planner: Design: product (ADR 0011 §1, ops/TICK.md §10). Off while an
+    // open agent PR links an open `design-product` issue (one product PR at a time, as #282
+    // does for audits); `docs/PRODUCT.md` missing on origin/main → v1, else the lowest
+    // workable `design-product` issue labeled `ready`.
+    let product_pr = slot_pr(PRODUCT_LABEL);
+    let has_doc = on_main(&parse_log(&inp.main_log)?, PRODUCT_DOC);
+    let product = if has_doc {
+        issues
+            .iter()
+            .filter(workable)
+            .find(|i| has_label(&i.labels, PRODUCT_LABEL) && has_label(&i.labels, "ready"))
+            .map(|i| {
+                (
+                    format!("#{}", i.number),
+                    format!("a ready {PRODUCT_LABEL} issue"),
+                    vec![
+                        view_issue(i.number),
+                        "ops/TICK.md §10".to_owned(),
+                        PRODUCT_DOC.to_owned(),
+                        "specs/journeys/".to_owned(),
+                    ],
+                )
+            })
+    } else {
+        Some((
+            "v1".to_owned(),
+            format!("{PRODUCT_DOC} is not on origin/main"),
+            vec![
+                "ops/TICK.md §10".to_owned(),
+                format!("gh issue list --state open --label {PRODUCT_LABEL}"),
+                "PLAN.md §4".to_owned(),
+                "specs/journeys/".to_owned(),
+            ],
+        ))
+    };
+    if let Some((reference, why, load)) = product {
+        match product_pr {
+            Some(n) => notes.push(format!(
+                "Design: product due ({why}) but PR #{n} is open for it: not picked"
+            )),
+            None if chosen.is_none() => {
+                chosen = Some(pick(
+                    format!("design product {reference}"),
+                    &format!("k (Design: product is due: {why})"),
+                    load,
+                ));
+            }
+            None => {}
         }
     }
     if chosen.is_none() {
