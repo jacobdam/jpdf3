@@ -4,15 +4,15 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **PR #327** (#326, ADR 0012: light lane for process PRs, `Ops` milestone, ADR 0011 tasks 4.2/4.3/5/7/8 out of M0):
-  reviewed (3 rounds), `ai-review` success, auto-merge off: the owner merges it to accept the ADR. After the merge the
-  next Planner creates `Ops` and makes ADR 0012 §3–§4's moves (M0 27 → 19).
-- No open agent PR. Merged today: #316 (#277), #317 (#288 part 2; step 10's order changes only once #308 adds `area:`
-  labels), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312 (#249, Design: product 1/2).
+- ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
+  and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
+- **PR #330** (#313) and **PR #329** (#319): light-lane follow-ups, 1 round each, `ai-review` success, auto-merge on.
+  #314 (step 3's design window) stays in `Ops` and is strict-lane (ADR 0011 §7, the owner's veto); TICK §1 checks the
+  window by hand.
+- Merged today: #316 (#277), #317 (#288 part 2), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312
+  (#249, Design: product 1/2), #327 (#326).
 - `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
   `ready`. Codex timed out (2400 s) on #321's three round briefs (45–110 KB).
-- #246 part 2 is #308 (needs `ready`), part 3 is #247 (depends on #308). #314 (step 3's design-window check) needs
-  `ready`; until it lands TICK §1 checks the window by hand.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
@@ -24,7 +24,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#308 and #314 wait for the next Planner's `ready`), else `idle` today (the Planner ran). Planner
+   are closed, else `idle` today (the Planner ran). Planner
    picks now carry a `work mix:` note for QUEUE.md's Work mix section.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
