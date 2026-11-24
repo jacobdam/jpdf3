@@ -69,7 +69,8 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
      exits, total and median duration in whole minutes, and session minutes per merged PR (one
      decimal, rounded down).
   2. *Review (ADR 0010):* for each merged PR with at least one review header, a row with its
-     rounds, whether a final check ran, whether a design final check ran, findings by severity for each reviewer, and regrades.
+     rounds, whether a final check ran, whether a design final check ran, findings by severity
+     for each reviewer, and regrades.
      - Only comments whose body starts (after leading whitespace) with `🤖 jpdf-agent` count;
        the agent and the owner share one account, so the author can't tell them apart.
      - Headers are read from the first line only. Rounds: the highest K in a
@@ -87,7 +88,8 @@ its numbers from a command instead of counting by hand (#91, retro 0001; the CI 
        starts with `<ID>: regraded`, each ID once, and only IDs a review comment reported as a
        finding (audit 0006 AC.4).
      - Summary: PRs reviewed, median rounds, the share at 4 or more rounds and the share with a
-       final check and the share with a design final check, total findings by severity for each reviewer, total regrades.
+       final check and the share with a design final check, total findings by severity for
+       each reviewer, total regrades.
   3. *CI* (workflow `ci.yml`, runs whose `createdAt` UTC day is in the period; each
      `databaseId` counts once, at its first entry):
      - runs, and runs by `conclusion` (an empty conclusion is shown as `in progress`);
