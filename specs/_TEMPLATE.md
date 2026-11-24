@@ -34,7 +34,7 @@ Self-check before review (write the answers here):
   passes?** Known answers reach multi-block/padding boundaries; hostile fixtures have a
   control case proving the attack path was reached; only the specific error kinds pass.
 - For each filter, gate, parser or rule (who counts as the owner, which files ship, a tool's
-  text output, a process loop), before the first review (retro 0002: review findings in PRs #183,
+  text output, a process loop; a light-lane PR answers ADR 0012 §1's tests row instead), before the first review (retro 0002: review findings in PRs #183,
   #198, #201, #227, #234, #239, #241, #264, #265, #267 and audits 0004–0006, per ops/LESSONS.md):
   - every term or check has a should-reject case **and** a near-miss should-accept case, each
     with every other trigger off; replace each term with `true` once and see a test fail;

@@ -84,7 +84,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **Keep the session small.** If the work won't fit comfortably (≈60% of your context), split
   it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
   at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
-  **≤ 1500 added lines** (generated data and lockfiles excluded). Size it before claiming; if
+  **≤ 1500 added lines** (generated data and lockfiles excluded; **≤ 3000** for a light-lane PR,
+  §4 and ADR 0012 §1). Size it before claiming; if
   it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
   later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
   one this size.
@@ -233,7 +234,11 @@ still come first). Do these in order, one per session:
    self-check and Limits boundary list in the spec **before** the review; they are the
    reviewers' most frequent findings (retro 0001). A PR with no spec (an ADR, a proposal, a
    TICK or tooling change) answers the self-check items that apply in its description before
-   round 1 (retro 0002: the filter, gate and loop-rule findings were mostly in such PRs). Read
+   round 1 (retro 0002: the filter, gate and loop-rule findings were mostly in such PRs). A
+   **light-lane** PR (§4, ADR 0012 §1) skips the template's filter, gate and parser items: each
+   pick, trigger or rule it adds or changes gets one test that selects it and one that doesn't
+   (the nearest miss you see), each new input one parse-error case, and its description answers
+   one line: "if this is wrong, what wrong pick follows, and which session notices". Read
    the `docs/PRINCIPLES.md` entries whose `Paths:` match the files you will change first, and
    keep their invariants.
 3. **Local checks:**
@@ -245,6 +250,27 @@ still come first). Do these in order, one per session:
    and **explains any change to an existing test assertion**. Mark it ready when local checks pass.
 
 ## 4. Independent review (required)
+**Lanes (ADR 0012 §1).** A PR is in the **light lane** when every file it changes is owned
+(longest prefix, read from **origin/main's** `ops/areas.toml`) by the `process` or `records`
+area (so any `xtask/src/main.rs` change is strict: it routes the judge's commands), and it
+touches nothing on the strict list: the paths
+`.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`, `ops/proposals/`, `ops/areas.toml`,
+`CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`, ADR 0010 and ADR 0012; and, in any file, who counts as
+the owner or which text is an instruction (§0's first bullets, §2 rule a, ADR 0011 §7, the
+owner-feed filters), the tag, guard or protected-path rules, security severity, rule d or the
+deferral of security findings (ADR 0009), or the review rules (this section). Every other PR is
+in the **strict lane**. The lane belongs to the issue: an issue whose earlier PR ran strict
+stays strict. The PR description's first line after the tag is `Lane: light (ADR 0012)` or
+`Lane: strict`. The brief of each PR's first round, whatever its K, asks the reviewer to check
+it and answer, as its first line, `lane: light accepted` or `lane: strict, because <file or
+term>`; a strict answer is final and the PR follows the strict lane from then on (K continues).
+A PR over 1500 added lines moved to the strict lane is split before its next round or its
+`ai-review`, whichever comes first (§0). In the
+light lane: the cap is **2 rounds** (step 5), majors are fixed without a re-review of their own,
+minors and nits that aren't quick fixes are dropped (steps 4 and 6), and TICK.md is updated in
+the PR while each AUTOMATION.md line it makes false is listed in the description as
+`AUTOMATION.md now false: §<n> <quoted line>` for the next retro (§7 step 4).
+
 Write the reviewer brief to `target/scratch/review-<PR>.md` in your worktree (git-ignored), then
 spawn a **fresh reviewer subagent** that reads it. The brief contains ONLY:
 - the PR diff: `git fetch origin && git diff origin/main...HEAD` from your worktree (right after a push,
@@ -336,9 +362,11 @@ Each round K runs in this order:
      non-behavioral one (CONSTITUTION, license, code resembling another engine, a false
      statement) is checked against the cited lines, then fixed or disputed with the evidence.
    - Every regrade or dispute of a blocker or major goes to a reviewer before `ai-review` can
-     succeed: the next delta round (step 5), or in round 4 the final check (step 6).
+     succeed: the next delta round (step 5), or in round 4 (round 2 in the light lane) the final
+     check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
-     issue (`deferred: #N`, filed without `ready`, §9). A deferred security finding gets its `sev:*` label from the ADR 0009
+     issue (`deferred: #N`, filed without `ready`, §9; a process-area one in `Ops`, §5). In the
+     light lane they get no issue: `dropped (light lane, ADR 0012)`. A deferred security finding gets its `sev:*` label from the ADR 0009
      table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
      input, say) is never deferred once it reproduces: it is fixed in the PR. If a reviewer
@@ -352,9 +380,17 @@ Each round K runs in this order:
    fixed, regraded or disputed, or the fixes changed code, tests or logic beyond wording; else
    post `ai-review` (below) with `target_url` set to the URL that `gh pr comment` printed for
    the last triage comment. **K = 4: skip this step and go to step 6.**
+   **Light lane:** round 2 runs if round 1's triage fixed, disputed or regraded a blocker, or
+   disputed or regraded a major (a fixed major alone doesn't start one), or if the fixes since
+   round 1 fail step 6's post-cap test (over 100 added lines, or a new file; then round 2 is a
+   delta round) or change any file outside the Lanes paragraph's light-lane definition, the
+   strict list included (then the PR is strict, and round 2 follows the strict lane); else post
+   `ai-review`. Round 2 is the light lane's cap: after it, step 6 applies with "round 2" for "round 4", the final check is round 3 (header
+   `AI review, round 3 (final check)`), and K ≥ 4 is the design session's or the owner's call as
+   K ≥ 6 is above.
 6. **Cap: 4 rounds per issue** (1 full + 3 delta; K counts across PRs, see above). After
    round 4 there is no fifth full or delta round:
-   - open minors and nits go to issues;
+   - open minors and nits go to issues (in the light lane they are dropped, step 4);
    - each round-4 blocker or major is fixed (behavior: a test that fails before the fix and
      passes after it, both runs recorded in the triage line; a false statement: the corrected
      text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
@@ -506,7 +542,17 @@ session.
   of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
   0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
   list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
-- **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9). Decisions → `docs/adr/NNNN-*.md`
+- **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
+  A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
+  `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
+  unless (1) it blocks the current milestone's gate or last step, or the next milestone's first
+  issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use;
+  (3) it is `crash` or `security` (rule d and ADR 0009 as they are); or (4) it is about a
+  strict-list subject (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge, the
+  review rules). Until #308's `area:` labels exist, judge "process-area" by the files the issue
+  would change. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
+  that fails, file in the current milestone with the body line `Move to: Ops (ADR 0012 §2)`, and
+  the Planner moves it. Step 10 never picks from `Ops`. Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
 - ADRs and other non-record files go into the work PR before its review. **Exit**, with nothing
@@ -533,6 +579,9 @@ session.
   (XCUITest), and the same journeys in PDFgear. Screenshot each step (PDFgear shots →
   `~/jpdf-research/`, never the repo). A fresh vision reviewer scores ours against `specs/ui/`
   and Apple HIG/Material. Findings → `ux` issues; scores → `docs/ux-scores.md`.
+- **Lanes (ADR 0012 §1):** check every merged PR since the last audit whose description says
+  `Lane: light` against the strict list (§4 Lanes, read from origin/main's `ops/areas.toml` at
+  its merge); one that should have been strict is a finding.
 - **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; check every `owner-todo` label
   against §0 (add or remove it); reconcile PLAN/STATUS/issues
   with reality; remove dead or duplicated code; refresh deps through admission; update
@@ -562,7 +611,15 @@ session.
    promote any lesson that recurred 3+ times into this file, a template or an ADR (then remove
    it from LESSONS).
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
-   reviewer/worker prompt wording, PLAN task order. Protected files → `ops/proposals/` only.
+   reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
+   PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
+   such line**. Report the `Ops` milestone's open count and its change since the last retro; over
+   40 open, close the issues that are no longer true, with a comment. Count the light-lane PRs'
+   rounds, caps and final checks by hand from their `Lane:` lines and review headers (`cargo
+   xtask metrics` counts the strict cap and final check only, until #328), and the issue groups
+   the Planner missed (a chain of 3 or more follow-ups, or 5 or more open issues on one
+   subsystem, with no `design` issue within 7 days of forming): one or more means #247's area
+   threshold is due, so ask the Planner to move it into the current milestone (ADR 0012 §3). Protected files → `ops/proposals/` only.
 5. Add a **weekly digest** issue (title `Digest YYYY-Www`, label `digest`):
    - progress per milestone and a forecast finish date (trailing 4-week rate; flag a slip > 25%)
    - metric trends and the retro summary
@@ -699,8 +756,20 @@ gate them.
    and `ready` from an issue that no longer qualifies. **Milestone moves** (ADR 0011 §1): an
    umbrella whose remaining work is only in issues of later milestones moves to the latest of
    those milestones (it closes after them), and an issue that can't be done in this milestone
-   (it needs a later milestone's work) moves to that milestone; say why in a comment. Close
-   nothing.
+   (it needs a later milestone's work) moves to that milestone; say why in a comment. A
+   process-area issue in the current milestone that none of §5's four Discoveries terms keeps
+   there moves to `Ops`, and an `Ops` issue moves into the current milestone once term 1 or 2
+   holds or a retro asks for it (ADR 0012 §2). **Once, on the first run after ADR 0012
+   merges:** create the `Ops` milestone if it is missing (`gh api
+   repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
+   gate needs (ADR 0012 §2)"`) and make ADR 0012 §3's and §4's moves (#308 and #248 to M1, with
+   #248's and #251's `Depends on: #247` changed to #308; #250 to M3; #251 to M4; #247 to `Ops`
+   labeled `deferred`; then §5's Discoveries rule over the open M0 issues, which keeps #196,
+   #195 and #179 and moves #313, #314, #319 and #328 to `Ops`), with a comment on each. Close nothing.
+2a. **Issue groups by judgement** (ADR 0012 §3, until #247's area threshold is built): when you
+   see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
+   open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
+   that lists the group, and name it in `ops/QUEUE.md`.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a

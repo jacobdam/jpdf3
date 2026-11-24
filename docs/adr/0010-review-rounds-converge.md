@@ -3,6 +3,7 @@
 Status: accepted (owner issue #155, "Limit number of review round in PR: think systematically at
 process level", 2026-11-22). Supersedes `ops/proposals/review-round-cap.md` (owner request on PR
 #151), which proposed only the cap.
+Amended by ADR 0012 (light-lane PRs: a 2-round cap).
 
 ## Context
 TICK §4 step 5 asked for a fresh re-review whenever a round found a blocker or major, with no

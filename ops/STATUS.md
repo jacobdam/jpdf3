@@ -4,6 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **PR #327** (#326, ADR 0012: light lane for process PRs, `Ops` milestone, ADR 0011 tasks 4.2/4.3/5/7/8 out of M0):
+  reviewed (3 rounds), `ai-review` success, auto-merge off: the owner merges it to accept the ADR. After the merge the
+  next Planner creates `Ops` and makes ADR 0012 §3–§4's moves (M0 27 → 19).
 - No open agent PR. Merged today: #316 (#277), #317 (#288 part 2; step 10's order changes only once #308 adds `area:`
   labels), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312 (#249, Design: product 1/2).
 - `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
