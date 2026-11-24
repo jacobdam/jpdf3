@@ -695,7 +695,11 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
    journal and STATUS commits skip review); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
-   If an open agent PR already changes `ops/QUEUE.md` (an earlier Planner's, still in CI or
-   review), don't open a second one: merge origin/main into that PR, update its QUEUE.md and
-   records, and review the change there. Step 8's milestone term reads main only, so such a PR
+   A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
+   rounds on that PR only, the ledger and escalation comments go on the PR, and where §4 labels
+   the issue `blocked` and `owner-todo`, label the PR. If an open agent PR already changes
+   `ops/QUEUE.md` (an earlier Planner's, still in CI or review, with none of `needs-design`,
+   `blocked`, `owner-todo` or a `/hold`), don't open a second one: merge origin/main into that
+   PR, update its QUEUE.md and records, and review the change there. A parked one is not reused:
+   open a new Planner PR, and note the parked one in QUEUE.md. Step 8's milestone term reads main only, so such a PR
    open past midnight makes the Planner due again the next day; this is that case.

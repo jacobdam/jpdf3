@@ -1948,13 +1948,27 @@ fn queue_not_utf8_exit_1() {
             fs::write(dir.join(name), text).unwrap();
         }
     }
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["next-session", "--from", &dir.to_string_lossy()])
+            .output()
+            .unwrap()
+    };
+    // Control: the same fixture with a valid queue.md picks normally.
+    fs::write(dir.join("queue.md"), b"Milestone: M0\n").unwrap();
+    let o = run();
+    assert_eq!(o.status.code(), Some(0));
+    assert!(
+        String::from_utf8(o.stdout)
+            .unwrap()
+            .starts_with("planner\n")
+    );
     fs::write(dir.join("queue.md"), b"Milestone: M0\n\xff\n").unwrap();
-    let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["next-session", "--from", &dir.to_string_lossy()])
-        .output()
-        .unwrap();
+    let o = run();
     assert_eq!(o.status.code(), Some(1));
     assert!(o.stdout.is_empty());
+    let err = String::from_utf8(o.stderr).unwrap();
+    assert!(err.contains("queue.md"), "{err}");
 }
 
 #[test]

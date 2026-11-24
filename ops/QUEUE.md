@@ -16,6 +16,9 @@ lines stay the source of truth, and step 10 picks from them, not from this list.
 - #247 (task 4 2/2) on #246; #248 (QC) on #247; #250 (Design: UI) on #249; #251 (User advocate)
   on #247 and #249; #288 (task 2 2/2, the work-mix budget) on #244.
 
+## In flight
+- #244 (task 2 1/2, this file's PR #289): `in-progress`.
+
 ## Not workable now
 - #21 (pilot fire drill): `in-progress`; its `Depends on:` names #19 (open) and it waits for
   the owner's drill steps (#208).

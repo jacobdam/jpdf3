@@ -276,7 +276,7 @@ never 2 (no command ran).
   1000 issues could release an issue early.
 - `records.txt`: one `git ls-tree` per open agent PR plus main (7 directory paths each), and
   one `git cat-file` per journal file of those 7 days on any of those refs (an estimate for a
-  full week: about 15 a day, so about 100; on 2026-11-24 main had 8, since per-day directories
+  full week: about 15 a day, so about 100; at 48f63d9 main had 8, since per-day directories
   started on 2026-11-23), each capped like any command. A Planner record older than 6 days is not
   read, which is what step 8's 7-day term wants.
 - `queue.md`: one `git ls-tree` and at most one `git cat-file`, capped like any command. A record is found only in a file under its own day's directory, so an entry filed
