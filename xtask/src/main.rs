@@ -4,6 +4,7 @@
 mod arlington;
 mod bench;
 mod fuzz;
+mod issue_lint;
 mod macos;
 mod metrics;
 mod next_session;
@@ -17,7 +18,7 @@ const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --o
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
-     | next-session [--from DIR]";
+     | next-session [--from DIR] | issue-lint [--from DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -157,6 +158,27 @@ fn main() -> ExitCode {
                 Err(next_session::Error::Broken(e)) => {
                     eprintln!("xtask: next-session: {e}");
                     ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/issue-lint.md: area:/origin: labels (ADR 0011 §4). Exit 1 = problems
+        // found, 2 = the lint could not run.
+        (Some("issue-lint"), _) => {
+            let opts = match issue_lint::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: issue-lint: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match issue_lint::run(Path::new("."), &opts) {
+                Ok(report) => {
+                    print!("{}", report.text);
+                    ExitCode::from(u8::from(report.problems > 0))
+                }
+                Err(e) => {
+                    eprintln!("xtask: issue-lint: {e}");
+                    ExitCode::from(2)
                 }
             }
         }
