@@ -84,8 +84,9 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
   at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
   **≤ 1500 added lines** (generated data and lockfiles excluded). Size it before claiming; if
-  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1. When you
-  write new issues, give each one this size.
+  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
+  later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
+  one this size.
 - **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
   merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
   can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
@@ -124,15 +125,17 @@ journal entry lists it). Task #275 moves this into the scheduler's step 3.
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
 `cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
 - **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
-  (`audit due`, `retro due`; the reason is on the `Rule:` line), step 10 is rule i
-  (`worker ready #N`) and step 11 is rule j (`planner`); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
+  (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
+  (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
+  `Rule:` line), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
+  `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
   `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The
   scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
   open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head).
-- **Before acting on a step 7, 10 or 11 pick (`planner`, `idle`):** check precedence step 6 by
-  hand (task #275 moves it into the scheduler, ahead of steps 7, 10 and 11) with the scheduler's
+- **Before acting on a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`):** check
+  precedence step 6 by hand (task #275 moves it into the scheduler, ahead of steps 7, 8, 10 and 11) with the scheduler's
   skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the
   issue it closes carries `owner-todo`, `blocked` or `deferred`; else the lowest-numbered open
   issue labeled both `design` and `ready`, without those labels, that no open agent PR links
@@ -148,7 +151,7 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   crash`, `--label security`, `--label flaky`, without the skip labels above); if one applies,
   work it instead. Otherwise a Design: technical session (§8) on the PR, not a rule c fix.
 - **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner`
-  record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
+  or `- Session: planner due` record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
   no PR), exit at once (ADR 0011 §3).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
 - **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
@@ -206,20 +209,10 @@ i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with ev
    `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
    (lowest number first). An issue whose remaining work is in other issues (an umbrella that
    closes after them) loses `ready`, or names them on a `Depends on:` line.
-j. **Planner** (`planner`: nothing else applies and no Planner ran today; the interim form until
-   task 2, #244, adds the Planner session and `ops/QUEUE.md`). Make the current milestone's
-   backlog workable again, at most once a day (its record, `- Session: planner`, is what makes
-   later picks that day `idle`, so write it even when nothing changed, in a records PR):
-   - **Open issues in the milestone, none pickable:** for each one without `owner-todo`,
-     `blocked` or `deferred`, find what stops rule i (no `ready` label, an open `Depends on:`
-     issue, `in-progress` with no open PR and no live worktree: a dead claim). Fix the labels
-     where the issue is workable (add `ready`, remove a dead `in-progress`), split one that is
-     over the §0 sizing rule into numbered parts, and file issues for missing prerequisites.
-     Close nothing and change no milestone in this form.
-   - **Milestone backlog empty** → check the gates (`gh run download <latest nightly> -n judge-report`,
-     read `gates/gates.json`). If the current gate passes: tag `mN`, write `docs/milestones/mN.md`,
-     and create the next milestone's issues from PLAN.md §8 + journeys. Otherwise create issues
-     for every failing criterion.
+j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone has no plan in
+   `ops/QUEUE.md` on main, or no Planner record is dated in the last 7 UTC days) or step 11
+   (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
+   `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
 
 **M0 bootstrap.** While the milestone is M0, the backlog itself is the work (rule i; a–h
 still come first). Do these in order, one per session:
@@ -347,7 +340,7 @@ Each round K runs in this order:
    - Every regrade or dispute of a blocker or major goes to a reviewer before `ai-review` can
      succeed: the next delta round (step 5), or in round 4 the final check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
-     issue (`deferred: #N`). A deferred security finding gets its `sev:*` label from the ADR 0009
+     issue (`deferred: #N`, filed without `ready`, §9). A deferred security finding gets its `sev:*` label from the ADR 0009
      table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
      input, say) is never deferred once it reproduces: it is fixed in the PR. If a reviewer
@@ -463,8 +456,8 @@ session.
   one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
-  session without a work PR (a Planner run that changed only labels, a "done:" reply, an
-  `owner-todo` update) opens a **records PR** holding nothing but record files; it is never a
+  session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
+  reply, an `owner-todo` update) opens a **records PR** holding nothing but record files; it is never a
   product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
 - **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
@@ -497,7 +490,7 @@ session.
   of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
   0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
   list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
-- **Discoveries** → new issues (`discovery` + milestone). Decisions → `docs/adr/NNNN-*.md`
+- **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9). Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
 - ADRs and other non-record files go into the work PR before its review. **Exit**, with nothing
@@ -633,10 +626,10 @@ specs/tooling/design-technical.md.
    "Requirements on future callers", not into new issues.
 5. **The design PR** (output 2) is reviewed by §4 (the brief adds the template and the ledgers;
    its rounds count for its own issue as §4 says). After its `ai-review` success, file the tasks
-   the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0, labeled
-   `ready`, with `Designed in: #<escalated or design issue>` and `Depends on: #<design issue>`,
-   so they wait until the ADR merges and closes the design issue (task #244 makes the Planner
-   the gate into `ready`). Then add `owner-todo` to the design issue and comment
+   the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0,
+   without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
+   and `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
+   issue. Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
    `/release` on it. The first session whose §1 sees the window passed, `ai-review` success on
@@ -659,3 +652,58 @@ specs/tooling/design-technical.md.
    gets one design PR: the design issue filed for it already carries `Designed in:`.
 8. **Record** as §5 says (`Picked:` names the session type), and `done:` replies as §0 says if
    the issue is an owner instruction.
+
+## 9. PLANNER session (ADR 0011 §1; specs/tooling/next-session.md steps 8 and 11)
+Picked as `planner due` (step 8) or `planner` (step 11). The Planner makes the current
+milestone's backlog workable; it is **the only gate into `ready`** besides the owner. Other
+sessions file Worker issues (a split's parts, review deferrals, discoveries, a design ADR's
+tasks) without `ready`, and the next Planner run adds it. Issues for the design queue (`design`
+plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
+1. **Load:** `ops/QUEUE.md`, the current milestone's open issues
+   (`gh issue list --state open --milestone <Mn> --limit 200 --json number,title,labels,body`),
+   PLAN.md §8 (the milestone's row) and `cargo xtask metrics`. No code.
+2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
+   `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
+   scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first
+   and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
+   missing one). An umbrella whose remaining work is in other issues gets no `ready` (rule i).
+   Remove `in-progress` from a dead claim (no open PR links it and no worktree is on its branch),
+   and `ready` from an issue that no longer qualifies. **Milestone moves** (ADR 0011 §1): an
+   umbrella whose remaining work is only in issues of later milestones moves to the latest of
+   those milestones (it closes after them), and an issue that can't be done in this milestone
+   (it needs a later milestone's work) moves to that milestone; say why in a comment. Close
+   nothing.
+3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
+   list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
+   untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
+   `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`.
+4. **Milestone backlog empty** (no open issue in it): check the gates
+   (`gh run download <latest nightly> -n judge-report`, read `gates/gates.json`). If the current
+   gate passes: tag `mN`, write `docs/milestones/mN.md`, close the GitHub milestone `Mn` (so
+   the scheduler's current milestone moves on), and create the next milestone's issues from
+   PLAN.md §8 and the journeys if it has none (then step 3 for that milestone). Otherwise create
+   issues for every failing criterion.
+5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4: the `Milestone: <Mn>` line
+   (the scheduler's step 8 reads it from main), a `Planned:` line with the date, the ready list
+   in step 10's order (lowest number first, dependencies closed), the issues waiting on a
+   dependency, the ones not workable and why, the critical path to the milestone's gate, the
+   design-ahead list and the work mix (#288). The labels stay the source of truth, and step 10
+   picks from them. Change the file (and its `Planned:` date) only when its content changes.
+6. **Record:** the journal entry (`- Session: <first line>`, which makes later picks that day
+   skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
+   `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
+   (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
+   journal and STATUS commits skip review); the brief adds this section and ADR 0011 §1, and
+   asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
+   A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
+   rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
+   §4 step 6 would escalate it (§8) or hand it to the owner, close it unmerged instead with a
+   comment linking its ledger, undo the GitHub changes its open findings name (labels, milestone
+   moves; reopen a milestone it closed), and file one `discovery` issue in the current milestone
+   with those findings and the link, which the next Planner works through step 2. An owner
+   `/hold` on a Planner PR: add `owner-todo` to the PR itself (it has no issue) and leave it;
+   while it is held, later Planners change labels only and write records PRs, not QUEUE.md.
+   If an open agent PR already changes `ops/QUEUE.md` (an earlier Planner's, still in CI or
+   review, not held), don't open a second one: merge origin/main into it, update its QUEUE.md and
+   records, and review the change there. Step 8's milestone term reads main only, so a Planner
+   PR still open past midnight makes the Planner due again the next day; this is that case.

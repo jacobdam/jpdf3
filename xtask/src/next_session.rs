@@ -52,8 +52,11 @@ struct Inputs {
     tags: String,
     milestones: String,
     blocked: String,
-    /// `<path>\t<line>` for each `- Session: ` line of the recent journal files (step 11).
+    /// `<path>\t<line>` for each `- Session: ` line of the journal files of the last 7 UTC days
+    /// (steps 8 and 11).
     records: String,
+    /// `ops/QUEUE.md` on origin/main, if it is there and readable (step 8).
+    queue: Option<String>,
 }
 
 /// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
@@ -72,6 +75,11 @@ const AUDIT_MERGES: usize = 10;
 const BLOCKED_INCIDENT: usize = 3;
 const JOURNAL: &str = "ops/journal/";
 const SESSION_LINE: &str = "- Session: ";
+const QUEUE: &str = "ops/QUEUE.md";
+const MILESTONE_LINE: &str = "Milestone: ";
+/// Days of journal directories read for records: today and the 6 days before it (step 8's
+/// "7 days since the last plan").
+const RECORD_DAYS: i64 = 7;
 
 /// The value of the script's `FLOOR="…"` line.
 fn floor_of(script: &str) -> Option<&str> {
@@ -114,8 +122,10 @@ fn blocked_live(since: &str) -> Result<String, Error> {
     Ok(format!("[{}]", parts.join(",")))
 }
 
-/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day`, on origin/main and on the head branch of each open agent PR, as `<path>\t<line>`. The
-/// refs come from the last `git fetch` (TICK §1); a branch that isn't fetched is exit 2.
+/// Live `records.txt`: the `- Session: ` lines of the journal files dated `day` and the
+/// `RECORD_DAYS - 1` days before it, on origin/main and on the head branch of each open agent
+/// PR, as `<path>\t<line>`. The refs come from the last `git fetch` (TICK §1); a branch that
+/// isn't fetched is exit 2.
 fn records_live(prs: &str, day: i64) -> Result<String, Error> {
     let mut refs = vec!["refs/remotes/origin/main".to_owned()];
     for p in parse_prs(prs).map_err(Error::Broken)? {
@@ -124,45 +134,55 @@ fn records_live(prs: &str, day: i64) -> Result<String, Error> {
             refs.push(format!("refs/remotes/origin/{}", p.branch));
         }
     }
-    let dir = format!("{JOURNAL}{}/", crate::metrics::fmt_day(day));
+    let dirs =
+        record_dirs(day).ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?;
     let mut seen = std::collections::BTreeSet::new();
     let mut out = String::new();
     for r in &refs {
         // `--full-tree`: the path is from the repository root whatever the current directory
         // (R1.3). `core.quotePath`: any unusual byte in a name is C-quoted, so the listing is
         // ASCII and such a name is skipped below.
-        let tree = cmd(
-            "git",
-            &[
-                "-c",
-                "core.quotePath=true",
-                "ls-tree",
-                "-r",
-                "--full-tree",
-                r.as_str(),
-                "--",
-                dir.as_str(),
-            ],
-        )
-        .map_err(|e| match e {
+        let mut args = vec![
+            "-c",
+            "core.quotePath=true",
+            "ls-tree",
+            "-r",
+            "--full-tree",
+            r.as_str(),
+            "--",
+        ];
+        args.extend(dirs.iter().map(String::as_str));
+        let tree = cmd("git", &args).map_err(|e| match e {
             Error::Unknown(m) => Error::Unknown(format!("{m} (is {r} fetched? run git fetch)")),
             b @ Error::Broken(_) => b,
         })?;
-        session_lines(&tree, &dir, &mut seen, &mut out, |oid| {
+        session_lines(&tree, &dirs, &mut seen, &mut out, |oid| {
             cmd("git", &["cat-file", "blob", oid]).ok()
         });
     }
     Ok(out)
 }
 
+/// The journal directories `records.txt` reads: `day` and the `RECORD_DAYS - 1` days before
+/// it, oldest first, as `ops/journal/YYYY-MM-DD/`. `None` when `day` is too small.
+fn record_dirs(day: i64) -> Option<Vec<String>> {
+    let first = day.checked_sub(RECORD_DAYS - 1)?;
+    Some(
+        (first..=day)
+            .map(|d| format!("{JOURNAL}{}/", crate::metrics::fmt_day(d)))
+            .collect(),
+    )
+}
+
 /// Appends `<path>\t<line>` to `out` for each `- Session: ` line of each journal file in a
 /// `git ls-tree -r` listing (`<mode> blob <oid>\t<path>` lines) whose path is `<dir><name>.md`
+/// for one of `dirs`
 /// (`<name>` plain: no `/`, not C-quoted) and whose (oid, path) is not in `seen`. A blob that
 /// `read` can't return (not UTF-8, over the output cap, a git error) is skipped: a missed record
 /// costs one more Planner run that day, never a stopped scheduler (R1.1).
 fn session_lines(
     tree: &str,
-    dir: &str,
+    dirs: &[String],
     seen: &mut std::collections::BTreeSet<(String, String)>,
     out: &mut String,
     mut read: impl FnMut(&str) -> Option<String>,
@@ -174,10 +194,11 @@ fn session_lines(
         let Some(oid) = meta.strip_prefix("100644 blob ") else {
             continue;
         };
-        let plain = path
-            .strip_prefix(dir)
-            .and_then(|n| n.strip_suffix(".md"))
-            .is_some_and(|n| !n.is_empty() && !n.contains('/'));
+        let plain = dirs.iter().any(|dir| {
+            path.strip_prefix(dir.as_str())
+                .and_then(|n| n.strip_suffix(".md"))
+                .is_some_and(|n| !n.is_empty() && !n.contains('/'))
+        });
         if !plain || path.starts_with('"') || !seen.insert((oid.to_owned(), path.to_owned())) {
             continue;
         }
@@ -188,6 +209,32 @@ fn session_lines(
             let _ = writeln!(out, "{path}\t{l}");
         }
     }
+}
+
+/// Live `ops/QUEUE.md` on origin/main: `None` when the tree has no regular file at that path,
+/// or its blob can't be read as text (the Planner rewrites it; a stopped scheduler would stop
+/// the loop). A failed `ls-tree` is exit 2, as for `records.txt`.
+fn queue_live() -> Result<Option<String>, Error> {
+    let tree = cmd(
+        "git",
+        &[
+            "ls-tree",
+            "--full-tree",
+            "refs/remotes/origin/main",
+            "--",
+            QUEUE,
+        ],
+    )?;
+    Ok(queue_blob(&tree).and_then(|oid| cmd("git", &["cat-file", "blob", oid]).ok()))
+}
+
+/// The blob id of `ops/QUEUE.md` in a `git ls-tree` listing, if it is a regular file there.
+fn queue_blob(tree: &str) -> Option<&str> {
+    tree.lines().find_map(|l| {
+        let (meta, path) = l.split_once('\t')?;
+        (path == QUEUE).then_some(())?;
+        meta.strip_prefix("100644 blob ")
+    })
 }
 
 fn list_of(v: &Value) -> &[Value] {
@@ -223,6 +270,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             milestones: read(dir, "milestones.json")?,
             blocked: read(dir, "blocked.json")?,
             records: read(dir, "records.txt")?,
+            queue: optional(&dir.join("queue.md"))?,
         });
     }
     let now = std::time::SystemTime::now()
@@ -295,6 +343,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         milestones: gh("api repos/jacobdam/jpdf3/milestones?state=open&per_page=100")?,
         blocked: blocked_live(&week_ago)?,
         records,
+        queue: queue_live()?,
     })
 }
 
@@ -982,30 +1031,44 @@ fn step7(
     Ok((p, notes))
 }
 
-/// Whether `records.txt` holds a `- Session: planner` line in a journal file dated `today`
-/// (ADR 0011 §1, the Planner's bound). Every line is checked, so a malformed one always fails.
-fn planner_ran(text_: &str, today: &str) -> Result<bool, String> {
+/// When the Planner last ran, from `records.txt`'s `- Session: planner` lines (the first word
+/// `planner`, so `planner due` counts too): `(today, week)`, whether one is in a journal file
+/// dated `today` (ADR 0011 §1, the Planner's bound) and whether one is dated from `today - 6`
+/// to `today` (step 8's 7-day trigger). Every line is checked, so a malformed one always fails.
+fn planner_ran(text_: &str, today: i64) -> Result<(bool, bool), String> {
     let what = "records.txt";
-    let mut ran = false;
+    let (mut ran, mut week) = (false, false);
     for line in text_.lines().filter(|l| !l.is_empty()) {
         let (path, record) = line
             .split_once('\t')
             .ok_or_else(|| format!("{what}: no tab in {line:?}"))?;
-        let (day, _) = path
+        let day = path
             .strip_prefix(JOURNAL)
             .and_then(|r| r.split_once('/'))
-            .filter(|(d, n)| {
-                crate::metrics::parse_date(d).is_some() && n.ends_with(".md") && !n.contains('/')
-            })
+            .filter(|(_, n)| n.ends_with(".md") && !n.contains('/'))
+            .and_then(|(d, _)| crate::metrics::parse_date(d))
             .ok_or_else(|| format!("{what}: {path:?} is not {JOURNAL}YYYY-MM-DD/<name>.md"))?;
         let kind = record
             .strip_prefix(SESSION_LINE)
             .ok_or_else(|| format!("{what}: {record:?} is not a {SESSION_LINE:?} line"))?
             .split_whitespace()
             .next();
-        ran |= day == today && kind == Some("planner");
+        if kind == Some("planner") {
+            ran |= day == today;
+            // `today - day` can't overflow: both are days of years 0000–9999 at most.
+            week |= day <= today && today - day < RECORD_DAYS;
+        }
     }
-    Ok(ran)
+    Ok((ran, week))
+}
+
+/// The milestone that `ops/QUEUE.md` plans: the text after `Milestone: ` on its first line
+/// starting that way, trimmed. `None` when the file or the line is missing (no plan).
+fn plan_milestone(queue: Option<&str>) -> Option<&str> {
+    queue?
+        .lines()
+        .find_map(|l| l.strip_prefix(MILESTONE_LINE))
+        .map(str::trim)
 }
 
 fn decide(inp: &Inputs) -> Result<String, String> {
@@ -1019,10 +1082,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .map(|t| unix(t.trim(), "judge-alarm-since"))
         .transpose()?;
     let milestone = current_milestone(&inp.milestones)?;
-    let planned = planner_ran(
-        &inp.records,
-        &crate::metrics::fmt_day(now.div_euclid(86_400)),
-    )?;
+    let (planned, planned_week) = planner_ran(&inp.records, now.div_euclid(86_400))?;
     let in_flight = |n: u64| {
         prs.iter()
             .any(|p| p.open && linked_issue(&p.body) == Some(n))
@@ -1185,6 +1245,35 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = seven;
     }
+    // Step 8: the Planner is due (ADR 0011 §1) when the current milestone has no plan in
+    // ops/QUEUE.md on origin/main, or no Planner record is dated in the last 7 UTC days; at most
+    // once a day.
+    if chosen.is_none() && !planned {
+        let mut why = Vec::new();
+        if let Some(m) = &milestone
+            && plan_milestone(inp.queue.as_deref()) != Some(m.as_str())
+        {
+            // The file's text is not printed (Security: no file or issue text in the brief).
+            why.push(match inp.queue {
+                None => format!("{QUEUE} is missing on origin/main or unreadable"),
+                Some(_) => format!("{QUEUE} on origin/main doesn't plan the current milestone {m}"),
+            });
+        }
+        if !planned_week {
+            why.push("no Session: planner record is dated in the last 7 UTC days".to_owned());
+        }
+        if !why.is_empty() {
+            chosen = Some(pick(
+                "planner due".to_owned(),
+                &format!("j (the Planner is due: {})", why.join("; ")),
+                vec![
+                    "ops/TICK.md §9".to_owned(),
+                    QUEUE.to_owned(),
+                    "PLAN.md §8".to_owned(),
+                ],
+            ));
+        }
+    }
     if chosen.is_none() {
         let open = |n: u64| issues.iter().any(|i| i.number == n);
         chosen = issues
@@ -1213,7 +1302,11 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             pick(
                 "planner".to_owned(),
                 "j (nothing applies and no Session: planner record is dated today): the Planner",
-                vec!["ops/TICK.md §2 rule j".to_owned()],
+                vec![
+                    "ops/TICK.md §9".to_owned(),
+                    QUEUE.to_owned(),
+                    "PLAN.md §8".to_owned(),
+                ],
             )
         }
     });
@@ -1297,8 +1390,14 @@ mod tests {
 
     #[test]
     fn session_lines_from_a_listing() {
-        let dir = "ops/journal/2026-11-24/";
+        // Two of the window's days; a file of a day outside `dirs` is not read.
+        let dir = &[
+            "ops/journal/2026-11-24/".to_owned(),
+            "ops/journal/2026-11-18/".to_owned(),
+        ];
         let tree = "100644 blob aa\tops/journal/2026-11-24/0100-a.md\n\
+                    100644 blob a3\tops/journal/2026-11-18/0900-w.md\n\
+                    100644 blob a4\tops/journal/2026-11-17/0900-v.md\n\
                     100644 blob bb\tops/journal/2026-11-24/sub/b.md\n\
                     100644 blob cc\t\"ops/journal/2026-11-24/\\303\\251.md\"\n\
                     120000 blob dd\tops/journal/2026-11-24/link.md\n\
@@ -1317,21 +1416,65 @@ mod tests {
                 "aa" => Some(
                     "## x\n- Session: planner\n - Session: worker\n- Session: idle\n".to_owned(),
                 ),
+                "a3" => Some("- Session: worker ready #5\n".to_owned()),
                 // Unreadable (not UTF-8, too large): skipped, never an error.
                 _ => None,
             }
         });
-        assert_eq!(read_ids, ["aa", "ff"]);
+        assert_eq!(read_ids, ["aa", "a3", "ff"]);
         assert_eq!(
             out,
             "ops/journal/2026-11-24/0100-a.md\t- Session: planner\n\
-             ops/journal/2026-11-24/0100-a.md\t- Session: idle\n"
+             ops/journal/2026-11-24/0100-a.md\t- Session: idle\n\
+             ops/journal/2026-11-18/0900-w.md\t- Session: worker ready #5\n"
         );
         // The same (oid, path) on a second ref is read once.
         session_lines(tree, dir, &mut seen, &mut out, |_| {
             Some("- Session: planner\n".to_owned())
         });
-        assert_eq!(out.lines().count(), 2);
+        assert_eq!(out.lines().count(), 3);
+    }
+
+    #[test]
+    fn record_dirs_are_seven_days_to_today() {
+        // 2026-11-24 is day 20 781 since 1970.
+        assert_eq!(
+            record_dirs(20_781).unwrap(),
+            [
+                "ops/journal/2026-11-18/",
+                "ops/journal/2026-11-19/",
+                "ops/journal/2026-11-20/",
+                "ops/journal/2026-11-21/",
+                "ops/journal/2026-11-22/",
+                "ops/journal/2026-11-23/",
+                "ops/journal/2026-11-24/",
+            ]
+        );
+        assert!(record_dirs(i64::MIN).is_none());
+    }
+
+    #[test]
+    fn queue_blob_from_a_listing() {
+        assert_eq!(queue_blob("100644 blob ab12\tops/QUEUE.md\n"), Some("ab12"));
+        // Not a regular file, another path, a path that only starts the same, no tab.
+        assert_eq!(queue_blob("120000 blob ab12\tops/QUEUE.md\n"), None);
+        assert_eq!(queue_blob("040000 tree ab12\tops/QUEUE.md\n"), None);
+        assert_eq!(queue_blob("100644 blob ab12\tops/QUEUE.mdx\n"), None);
+        assert_eq!(queue_blob("100644 blob ab12 ops/QUEUE.md\n"), None);
+        assert_eq!(queue_blob(""), None);
+    }
+
+    #[test]
+    fn plan_milestone_line() {
+        assert_eq!(
+            plan_milestone(Some("# Q\nMilestone: M3 \nMilestone: M4\n")),
+            Some("M3")
+        );
+        assert_eq!(
+            plan_milestone(Some("# Q\n Milestone: M3\nmilestone: M3\n")),
+            None
+        );
+        assert_eq!(plan_milestone(None), None);
     }
 
     #[test]

@@ -80,6 +80,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   sessions and not protected. Walk the ancestors, pin env overrides (`RUSTUP_TOOLCHAIN`), and keep anything that
   decides what to kill or run in the driver's memory, not a file ([journal](journal/2026-11-22.md), PR #171).
 
+- A scheduler or tool input built live from command output (git reads) and parsed later → put the filtering in a
+  pure function over the command text with a fake reader, and decide per failure (bad bytes, oversize) whether it
+  skips, exits 1 or exits 2, before round 1 (PR #285 R1.1: [journal](journal/2026-11-23/2225-243-step11.md)).
+
 - `npx <tool>` in apps/web before `npm ci` → npx downloads whatever registry package has that name (it fetched
   an unrelated `biome@0.3.3`). Run `npm ci --ignore-scripts` in the worktree first and call `./node_modules/.bin/<tool>`
   ([journal](journal/2026-11-22.md), PR #121).
