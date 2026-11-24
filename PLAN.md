@@ -34,8 +34,12 @@ working in this repo are in [CLAUDE.md](CLAUDE.md).
 - Any server-side processing.
 
 ### Assumptions (change if wrong)
-- macOS build is designed for the **App Sandbox + Hardened Runtime**, so it can ship
+- macOS build is designed for the **App Sandbox + Hardened Runtime**, so it can later ship
   through the Mac App Store or as a notarized direct download.
+- **Distribution (owner, [#335](https://github.com/jacobdam/jpdf3/issues/335)):** v1.0 is released as source. Users build the macOS
+  app themselves, and build and host the web app on their own static hosting; the project
+  hosts a demo of the web app on GitHub. Publishing (Mac App Store, notarized downloads, other
+  channels) is Phase 2.
 - Minimum targets: macOS 14+, current evergreen browsers (Chrome, Safari, Firefox).
 - Project/crate name `jpdf` is a working name.
 
@@ -237,6 +241,8 @@ permissive licenses (e.g. PDFium's Foxit fonts (BSD) or Liberation (OFL)).
   voices the browser reports as on-device (`localService`); with no such voice the feature
   is disabled, never a network voice. Owner decision on #31; details scoped at Phase 2 start.
 - **iOS** (reuses UniFFI + much of the SwiftUI), then **Android** (UniFFI Kotlin + Jetpack Compose)
+- **Publishing:** Mac App Store, notarized direct downloads and other channels (v1.0 is released
+  as source, §1 assumptions)
 
 ---
 
@@ -353,8 +359,8 @@ Milestones M4+ can overlap once their dependencies are met.
 | **M7** | Forms | fill/create/flatten, safe built-in calculations | form corpus round-trip; no JS executed |
 | **M8** | Content editing | text/image edit, add text/images/links, watermark, header/footer, Bates, crop, redaction, compress | redaction verified by text-extraction + render; compress ratio vs qpdf/gs reported |
 | **M9** | Signatures | verify (all PAdES levels, MDP), sign via platform signer, LTV/DSS, timestamps | external validators accept our signatures; known-bad corpus rejected |
-| **M10** | Hardening & 1.0 | long fuzz campaign, perf tuning, accessibility, localization scaffolding, sandbox/notarization, PWA offline, CSP | 1.5× PDFium target; 30-day fuzz with 0 open crashes; no open `sev:medium`+ security issue (ADR 0009); release |
-| **P2** | Phase 2 | OCR, PDF→Office, AI chat, read aloud, iOS, Office→PDF, Android | scoped at the start of P2 |
+| **M10** | Hardening & 1.0 | long fuzz campaign, perf tuning, accessibility, localization (English, Vietnamese, Japanese, Simplified Chinese), sandbox, PWA offline, CSP, the web demo on GitHub | 1.5× PDFium target; 30-day fuzz with 0 open crashes; no open `sev:medium`+ security issue (ADR 0009); release as source |
+| **P2** | Phase 2 | OCR, PDF→Office, AI chat, read aloud, iOS, Office→PDF, Android, publishing (App Store, notarization) | scoped at the start of P2 |
 
 ---
 
