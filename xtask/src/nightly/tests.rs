@@ -889,3 +889,29 @@ fn the_previous_night_is_held_before_the_new_results_are_written() {
     );
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+/// R2.1: a `jpdf-cli` that `/bin/sh` could not exec is refused before the runs.
+#[cfg(unix)]
+#[test]
+fn only_an_executable_cli_is_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = scratch("exe");
+    let f = d.join("jpdf-cli");
+    assert!(!is_executable_file(&f), "missing");
+    std::fs::write(&f, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!is_executable_file(&f), "no execute bit");
+    // What the wrapper would make of it: an exit 126 that looks like a crash.
+    let st = Command::new("/bin/sh")
+        .args(["-c", "exec \"$0\""])
+        .arg(&f)
+        .status()
+        .unwrap();
+    assert_eq!(st.code(), Some(126));
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(is_executable_file(&f));
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o100)).unwrap();
+    assert!(is_executable_file(&f), "owner execute bit alone");
+    assert!(!is_executable_file(&d), "a directory");
+    std::fs::remove_dir_all(&d).unwrap();
+}

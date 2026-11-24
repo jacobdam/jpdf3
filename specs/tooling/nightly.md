@@ -24,7 +24,9 @@ filing issues is #302)
      plain decimal number is a usage error (exit 2) before anything runs.
 2. **Build.** `$CARGO build --release --locked -p jpdf-cli` (the judge's build, CONTRACT §1), then
    `<target>/release/jpdf-cli` (`<target>` = `$CARGO_TARGET_DIR` or `target`, as in
-   specs/tooling/bench.md item 11). A failed build is a tool failure.
+   specs/tooling/bench.md item 11; `CARGO_BUILD_TARGET_DIR`, a config `build.target-dir` or
+   `build.target` are not supported: with one of them set, an older binary at that path would
+   be run). A failed build, or no executable file at that path, is a tool failure.
 3. **Files.** The tier is always `regress` (`tools/corpus/manifests/regress.tsv`, through
    `jpdf_corpus::Tier::Regress`); there is no flag that names a manifest or another tier, so the
    sealed corpus is never read (CONSTITUTION 13). The manifest is loaded with the corpus tool's
@@ -120,8 +122,9 @@ filing issues is #302)
     - 1: a tool failure: an unreadable or invalid previous file, the build (or no `jpdf-cli`
       file where the build should have put it), the manifest, the cache, the watchdog, the
       memory probe on Linux, removing or writing the results, an integrity failure in the
-      fetch, a run that could not start (`jpdf-cli` missing or not executable: never counted
-      as a `jpdf-cli` crash only), or no file to run at all when the fetch was not an
+      fetch, no executable `jpdf-cli` after the build (checked before the runs: a regular file
+      with an execute bit), a run that could not start (without the memory wrapper, a spawn
+      failure), or no file to run at all when the fetch was not an
       infrastructure failure (every selected row missing: a run that checked nothing must not
       pass);
     - 75 with `JUDGE-INFRA-FAILURE` on stderr: more than `max(1, ⌊N/100⌋)` of the N rows could
@@ -129,10 +132,15 @@ filing issues is #302)
       This includes the case where every row is missing because of it (no network): that
       stops before the runs with 75, not 1, since the cause is infrastructure;
     - 0 otherwise, whatever the runs' statuses and `complete`.
-    Before the runs, `regress.json` and `regress-diff.json` from an earlier run in `DIR` are
-    removed, so a stale file never sits next to this night's. Once the runs started,
-    `regress.json` and the diff are written before the nightly exits 1 or 75, so nothing
-    measured is lost. A failure before the runs writes nothing.
+    Once the runs started, `regress.json` and the diff are written (each to a `.tmp` name,
+    then renamed over an earlier night's file) before the nightly exits 1 or 75, so nothing
+    measured is lost, and an earlier night's files stay on disk until this night's replace
+    them (a night that dies mid-run leaves the previous pair intact). If the diff can't be
+    written, an earlier `regress-diff.json` is removed, so it never sits next to this night's
+    `regress.json`. A failure before the runs writes nothing. Through the memory wrapper,
+    `/bin/sh` always starts; a `jpdf-cli` removed or made non-executable during the runs then
+    shows as `crash` with exit 126 or 127 (the wrapper's own failure is 125), like any other
+    such exit of `jpdf-cli`.
 
 ## Persistence
 No document persistence. `regress.json`, `regress-diff.json` and `work/` under `DIR`; nothing in
@@ -147,8 +155,9 @@ Each tool failure prints `xtask: nightly: <problem>` on stderr: `release build f
 the corpus tool's manifest or cache error, `cannot start the engine watchdog (/bin/sh)`,
 `ulimit -v 2097152 is not enforced here (the judge's Linux limit)`, `cannot write <path>: <io error>`,
 `fetch: <url>: <problem>` lines then `fetch: <summary>`, `previous results <path>: <problem>`,
-`no regress file to run (<N> rows missing)`, `no jpdf-cli at <path> after the build`,
-`cannot remove <path>: <io error>`, `<N> runs could not start <path>`. A usage error prints the problem and the usage line.
+`no regress file to run (<N> rows missing)`, `no executable jpdf-cli at <path> after the build`,
+`<N> runs could not start <path>` (and `cannot remove <path>: <io error>` when a stale diff
+can't be removed). A usage error prints the problem and the usage line.
 
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
@@ -188,7 +197,8 @@ Self-check:
 - Arithmetic: counts and totals use `saturating_add`; the deadline compares `Duration`s; `ms`
   comes from `Duration::as_millis` (`u128`, no cast).
 - What broken implementation still passes?
-  - A nightly that runs nothing: every selected row missing is exit 1 (test); a run where the
+  - A nightly that runs nothing: every selected row missing is exit 1 unless the fetch was an
+    infrastructure failure (75) (test); a run where the
     memory wrapper silently didn't apply: on Linux the probe must succeed or the nightly
     fails, and a test runs a fake `jpdf-cli` through the wrapper that prints its `ulimit -v`
     (2097152 expected wherever the probe succeeds).
@@ -203,8 +213,11 @@ Self-check:
     (schema 2, a string schema, no `files`, a bad blob, a repeated blob, an unknown op, a
     repeated op, an unknown status, a missing file with runs, too many files, too large), each
     with a near-miss that is accepted (extra members, `missing:false` with runs).
-- Not covered by tests: the real build, the real fetch (network) and the CI wiring; a local run
-  on the cached tier is recorded in the PR.
+- Not covered by tests: the real build, the real fetch (network), the CI wiring, and the order
+  of steps inside `run` (the previous file loaded before `regress.json` is written: the test
+  checks that the loaded copy is held in memory, not where `run` calls it); a local run on the
+  cached tier, including `--previous` naming the output's own `regress.json`, is recorded in
+  the PR.
 
 ## Accessibility
 Not applicable (command-line tool).

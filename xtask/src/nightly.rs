@@ -574,8 +574,11 @@ fn build_cli(root: &Path) -> Result<PathBuf, String> {
 pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     let previous = load_previous(opts.previous.as_deref())?;
     let cli = std::path::absolute(build_cli(root)?).map_err(|e| e.to_string())?;
-    if !cli.is_file() {
-        return Err(format!("no jpdf-cli at {} after the build", cli.display()));
+    if !is_executable_file(&cli) {
+        return Err(format!(
+            "no executable jpdf-cli at {} after the build",
+            cli.display()
+        ));
     }
     let cache = jpdf_corpus::resolve_cache(
         opts.cache.clone(),
@@ -607,18 +610,6 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     }
     let mem = memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))?;
     engine::start_watchdog()?;
-    // Earlier results in DIR must not survive next to this night's (spec item 10).
-    for name in ["regress.json", "regress-diff.json"] {
-        match std::fs::remove_file(opts.out.join(name)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                return Err(format!(
-                    "cannot remove {}: {e}",
-                    opts.out.join(name).display()
-                ));
-            }
-            _ => {}
-        }
-    }
     let work = opts.out.join("work");
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot write {}: {e}", work.display()))?;
     let png = std::path::absolute(work.join("render.png")).map_err(|e| e.to_string())?;
@@ -646,8 +637,15 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     let mut failed = false;
     let (text, line) = diff_for(&previous, &files);
     eprintln!("{line}");
-    if let Err(e) = write(&opts.out.join("regress-diff.json"), &text) {
+    let diff_path = opts.out.join("regress-diff.json");
+    if let Err(e) = write(&diff_path, &text) {
         eprintln!("xtask: nightly: {e}");
+        // An earlier night's diff must not sit next to this night's results (spec item 10).
+        if let Err(e) = std::fs::remove_file(&diff_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("xtask: nightly: cannot remove {}: {e}", diff_path.display());
+        }
         failed = true;
     }
     let n = unstarted(&files);
@@ -706,6 +704,21 @@ fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, String> {
     }
     eprintln!("xtask: nightly: the 2 GiB address-space limit is not applied on this OS");
     Ok(false)
+}
+
+/// A regular file with an execute bit set (unix). Through the memory wrapper `/bin/sh`
+/// always starts, so a `jpdf-cli` it can't exec would look like a crash (126) per run: it is
+/// refused before the runs instead (spec item 10).
+fn is_executable_file(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
 }
 
 /// The exit code once the runs are written (spec item 10): a tool failure (`failed`, or the
