@@ -1,0 +1,162 @@
+# Areas (ADR 0011 §4; specs/tooling/issue-lint.md). Every issue carries exactly one
+# `area:<name>` label from this file. `kind = "process"` areas are the autonomy system itself
+# (ADR 0011 §3); their merges are not product merges. Paths may nest: the longest listed path
+# that is a prefix of a file owns it. `cargo xtask issue-lint` checks this file.
+
+[[area]]
+name = "syntax"
+kind = "product"
+paths = [
+  "crates/jpdf-syntax/",
+  "crates/jpdf-cos/",
+  "crates/jpdf-filters/",
+  "crates/jpdf-crypt/",
+]
+
+[[area]]
+name = "render"
+kind = "product"
+paths = [
+  "crates/jpdf-render/",
+  "crates/jpdf-content/",
+  "crates/jpdf-color/",
+  "crates/jpdf-font/",
+]
+
+[[area]]
+name = "text"
+kind = "product"
+paths = ["crates/jpdf-text/"]
+
+[[area]]
+name = "annot"
+kind = "product"
+paths = ["crates/jpdf-annot/"]
+
+[[area]]
+name = "forms"
+kind = "product"
+paths = ["crates/jpdf-forms/"]
+
+[[area]]
+name = "edit"
+kind = "product"
+paths = ["crates/jpdf-edit/"]
+
+[[area]]
+name = "write"
+kind = "product"
+paths = ["crates/jpdf-write/"]
+
+[[area]]
+name = "sign"
+kind = "product"
+paths = ["crates/jpdf-sign/"]
+
+# The engine API, its limits and backends, and the CLI built on them.
+[[area]]
+name = "engine"
+kind = "product"
+paths = [
+  "crates/jpdf-engine/",
+  "crates/jpdf-traits/",
+  "crates/jpdf-backends/",
+  "tools/jpdf-cli/",
+  "tools/fsio/",
+  "specs/core/",
+  "specs/cli/",
+  "docs/PRINCIPLES.md",
+]
+
+[[area]]
+name = "ui-web"
+kind = "product"
+paths = ["apps/web/", "specs/ui-web/"]
+
+[[area]]
+name = "ui-macos"
+kind = "product"
+paths = ["apps/macos/", "specs/ui-macos/"]
+
+# What the product is: scope, journeys, the shared UI architecture and the product ADRs (the
+# process ADRs are listed under `process`; longer paths win).
+[[area]]
+name = "product"
+kind = "product"
+paths = [
+  "PLAN.md",
+  "README.md",
+  "specs/journeys/",
+  "specs/ui/",
+  "specs/TRACE.md",
+  "docs/adr/",
+]
+
+# Build, test and measurement tools for the product.
+[[area]]
+name = "tooling"
+kind = "product"
+paths = [
+  "xtask/",
+  "fuzz/",
+  "tools/arlington/",
+  "tools/bench/",
+  "tools/corpus/",
+  "tools/jpdf-testgen/",
+  "specs/tooling/",
+  "specs/README.md",
+  "specs/_TEMPLATE.md",
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  ".gitignore",
+]
+
+# The judge, CI and the dependency policy (protected, CONSTITUTION 12).
+[[area]]
+name = "judge"
+kind = "process"
+paths = [
+  "ops/judge/",
+  ".github/",
+  ".cargo/",
+  ".config/",
+  "deny.toml",
+  "clippy.toml",
+  "supply-chain/",
+]
+
+# The autonomy system: rules, driver, scheduler, metrics, reviews, audits and retros.
+[[area]]
+name = "process"
+kind = "process"
+paths = [
+  "ops/",
+  ".claude/",
+  "CONSTITUTION.md",
+  "AUTOMATION.md",
+  "CLAUDE.md",
+  "LICENSE",
+  "docs/adr/0010-review-rounds-converge.md",
+  "docs/adr/0011-session-types-and-scheduler.md",
+  "docs/adr/_TEMPLATE-design.md",
+  "docs/audits/",
+  "docs/retros/",
+  "xtask/src/next_session.rs",
+  "xtask/src/metrics.rs",
+  "xtask/src/issue_lint.rs",
+  "xtask/tests/next_session.rs",
+  "xtask/tests/metrics.rs",
+  "xtask/tests/issue_lint.rs",
+  "xtask/tests/fixtures/metrics/",
+  "specs/tooling/next-session.md",
+  "specs/tooling/metrics.md",
+  "specs/tooling/design-technical.md",
+  "specs/tooling/issue-lint.md",
+]
+
+# Session records: journal entries and STATUS (ADR 0011 §3).
+[[area]]
+name = "records"
+kind = "process"
+paths = ["ops/journal/", "ops/STATUS.md"]
