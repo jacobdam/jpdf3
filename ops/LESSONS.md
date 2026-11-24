@@ -298,7 +298,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   Writing a rule or session type whose PR closes no issue (Planner) → before round 1, walk that PR through every
   TICK section keyed to an issue (§4 K and cap, §4 step 6 escalation, §5 `/hold` and `owner-todo`, §8) and write each
   mapping down; PR #289 drew one such gap per round (R1.1 to R5.3) and reached design
-  ([journal](journal/2026-11-24/0004-244-planner.md)).
+  ([journal](journal/2026-11-24/0004-244-planner.md)). A session type with its own merge rule (owner approval, a
+  window) → also walk each §8 output (split labels, output 2's fold, step 6's auto-merge) and what the scheduler reads
+  of the kept or refiled issue; PR #312's routing fixes drew R2.1 and R3.1–R3.3
+  ([journal](journal/2026-11-24/0346-249-design-product.md)).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
