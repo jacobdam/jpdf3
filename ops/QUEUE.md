@@ -17,16 +17,21 @@ lines stay the source of truth, and step 10 picks from them, not from this list.
   on #247 and #249; #288 (task 2 2/2, the work-mix budget) on #244.
 
 ## Not workable now
-- #21 (pilot fire drill): `in-progress`, waits for the owner's drill steps (#208).
-- #14, #20, #22: umbrellas that close after issues in later milestones (STATUS).
+- #21 (pilot fire drill): `in-progress`; its `Depends on:` names #19 (open) and it waits for
+  the owner's drill steps (#208).
+- #14, #20, #22: umbrellas that close after issues in later milestones (#55, #70; #61; #64);
+  the first Planner run moves each to the latest of those milestones (ops/TICK.md §9 step 2).
 - #15, #16, #19, #25, #195, #277: no `ready` label yet; the first Planner run checks each one
   (ops/TICK.md §9 step 2).
-- Owner's turn (`owner-todo`): #179, #196, #266. Set aside (`deferred`): #146.
+- Owner's turn: #208 (drill steps), #260 (an untagged owner comment would make it an
+  instruction); `owner-todo`: #179, #196, #266. Set aside (`deferred`): #146.
 
 ## Critical path
 The judge's M0 gate passes (nightly 45179218903, 2026-11-23). The `m0` tag waits for an empty
-M0 backlog, so the longest chain is ADR 0011's tasks: #246 → #247 → #248, with #249 → #250 and
-#251 beside it, plus #21, which waits on the owner (#208).
+M0 backlog. The umbrellas #14, #20 and #22 can't close in M0 (their work is in M1, M2 and M9),
+so M0 can empty only after a Planner moves them. Of the work left in M0, the longest chains are
+#19 → #21 (with the owner's #208) and ADR 0011's tasks #246 → #247 → #248, with #249 → #250
+and #251 beside them.
 
 ## Design ahead (ADR 0011 §6)
 None yet. The Planner lists the next milestone's cross-cutting concerns when it opens that

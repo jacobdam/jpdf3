@@ -84,8 +84,9 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   it into issues and do only the first part. **Sizing rule** (retro 0001): one issue = one PR =
   at most **one new trait family, tool or crate, plus its suite**, and an expected diff of
   **≤ 1500 added lines** (generated data and lockfiles excluded). Size it before claiming; if
-  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1. When you
-  write new issues, give each one this size.
+  it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
+  later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
+  one this size.
 - **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
   merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
   can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
@@ -339,7 +340,7 @@ Each round K runs in this order:
    - Every regrade or dispute of a blocker or major goes to a reviewer before `ai-review` can
      succeed: the next delta round (step 5), or in round 4 the final check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
-     issue (`deferred: #N`). A deferred security finding gets its `sev:*` label from the ADR 0009
+     issue (`deferred: #N`, filed without `ready`, §9). A deferred security finding gets its `sev:*` label from the ADR 0009
      table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
      input, say) is never deferred once it reproduces: it is fixed in the PR. If a reviewer
@@ -455,8 +456,8 @@ session.
   one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
-  session without a work PR (a Planner run, a "done:" reply, an `owner-todo` update) opens a
-  **records PR** holding nothing but record files (for a Planner, `ops/QUEUE.md` too, §9); it is never a
+  session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
+  reply, an `owner-todo` update) opens a **records PR** holding nothing but record files; it is never a
   product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
 - **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
@@ -667,26 +668,34 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
    missing one). An umbrella whose remaining work is in other issues gets no `ready` (rule i).
    Remove `in-progress` from a dead claim (no open PR links it and no worktree is on its branch),
-   and `ready` from an issue that no longer qualifies. Close nothing; move no milestone except as
-   step 4 says.
+   and `ready` from an issue that no longer qualifies. **Milestone moves** (ADR 0011 §1): an
+   umbrella whose remaining work is only in issues of later milestones moves to the latest of
+   those milestones (it closes after them), and an issue that can't be done in this milestone
+   (it needs a later milestone's work) moves to that milestone; say why in a comment. Close
+   nothing.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
    `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`.
 4. **Milestone backlog empty** (no open issue in it): check the gates
    (`gh run download <latest nightly> -n judge-report`, read `gates/gates.json`). If the current
-   gate passes: tag `mN`, write `docs/milestones/mN.md`, and create the next milestone's issues
-   from PLAN.md §8 and the journeys (then step 3 for that milestone). Otherwise create issues for
-   every failing criterion.
+   gate passes: tag `mN`, write `docs/milestones/mN.md`, close the GitHub milestone `Mn` (so
+   the scheduler's current milestone moves on), and create the next milestone's issues from
+   PLAN.md §8 and the journeys if it has none (then step 3 for that milestone). Otherwise create
+   issues for every failing criterion.
 5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4: the `Milestone: <Mn>` line
    (the scheduler's step 8 reads it from main), a `Planned:` line with the date, the ready list
    in step 10's order (lowest number first, dependencies closed), the issues waiting on a
    dependency, the ones not workable and why, the critical path to the milestone's gate, the
-   design-ahead list and the work mix (#288). It is a planning record: the labels stay the source
-   of truth, and step 10 picks from them.
+   design-ahead list and the work mix (#288). The labels stay the source of truth, and step 10
+   picks from them. Change the file (and its `Planned:` date) only when its content changes.
 6. **Record:** the journal entry (`- Session: <first line>`, which makes later picks that day
-   skip step 8 and turn step 11 into `idle`), the STATUS rewrite and `ops/QUEUE.md` go in one PR
-   (`Planner YYYY-MM-DD: <one line>`), written even when nothing changed. Like a records PR it
-   holds only those files and gets no review round: post `ai-review` success with
-   `description="planner records"` on its head, then enable auto-merge (§5). A Planner run that
-   also writes `docs/milestones/mN.md` (step 4) puts it in that PR and runs a §4 review instead.
+   skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
+   `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
+   (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
+   journal and STATUS commits skip review); the brief adds this section and ADR 0011 §1, and
+   asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
+   If an open agent PR already changes `ops/QUEUE.md` (an earlier Planner's, still in CI or
+   review), don't open a second one: merge origin/main into that PR, update its QUEUE.md and
+   records, and review the change there. Step 8's milestone term reads main only, so such a PR
+   open past midnight makes the Planner due again the next day; this is that case.

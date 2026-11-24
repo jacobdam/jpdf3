@@ -82,7 +82,8 @@ GitHub (public repo jacobdam/jpdf3)
    f. leftover branch from a dead session → resume or discard
    g. every 10th product merge or 7 days → AUDIT session instead (§10)
    h. retro due (7 days / gate passed / incident) → RETRO session instead (§11)
-   i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number)
+   i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number); j's
+      no-plan and 7-day terms come before it (the scheduler's step 8)
    j. the milestone has no plan in `ops/QUEUE.md`, no Planner ran in 7 days, or nothing else
       applies → Planner (at most once a day: ready the milestone's workable issues, or run the
       gate (§9) and generate the next milestone's backlog; ops/TICK.md §9), else idle
@@ -136,8 +137,8 @@ Task 2 part 1 (#244) adds the **Planner** session (ops/TICK.md §9). It is the o
 makes it due when the current milestone has no plan (the `Milestone:` line of `ops/QUEUE.md`
 on main) or no `Session: planner` record is dated in the last 7 UTC days, at most once a day;
 step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
-ordered ready list, what waits, the critical path, the design-ahead list), in a PR holding only
-that file and its records. The work-mix budget comes with part 2 (#288).
+ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
+work PR when it changes. The work-mix budget comes with part 2 (#288).
 
 ## 5. Completeness: building the right thing
 

@@ -1293,6 +1293,32 @@ fn precedence_removes_each_step_in_turn() {
         let got = pick(&changes);
         assert!(got.starts_with(steps[start].0), "from step {start}: {got}");
     }
+    // Step 8 (#244) can't sit in the list above: the `idle` entry's Planner record of today turns
+    // it off. Without that entry and with no ops/QUEUE.md, every step from 1 to 7 still wins
+    // over `planner due`, and `planner due` wins over the ready issue of step 10.
+    let ready_at = steps
+        .iter()
+        .position(|s| s.0 == "worker ready #700")
+        .unwrap();
+    for start in 0..=ready_at {
+        let mut feed = Vec::new();
+        let mut issues = Vec::new();
+        let mut changes: Vec<(&str, Option<String>)> = vec![("queue.md", None)];
+        for (_, f, i, c) in &steps[start..=ready_at] {
+            feed.extend(f.iter().cloned());
+            issues.extend(i.iter().cloned());
+            changes.extend(c.iter().map(|(n, t)| (*n, Some(t.clone()))));
+        }
+        changes.push(feed_plus(&feed));
+        changes.push(plus("issues.json", &issues));
+        let want = if start == ready_at {
+            "planner due"
+        } else {
+            steps[start].0
+        };
+        let got = pick(&changes);
+        assert!(got.starts_with(want), "step 8, from step {start}: {got}");
+    }
 }
 
 #[test]
@@ -1908,6 +1934,27 @@ fn step10_dependencies() {
         )]),
         "worker ready #702"
     );
+}
+
+#[test]
+fn queue_not_utf8_exit_1() {
+    // `--from` reads `queue.md` as text: bad bytes are a broken fixture, not "no plan".
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("next-session-queue-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for (name, text) in base() {
+        if name != "queue.md" {
+            fs::write(dir.join(name), text).unwrap();
+        }
+    }
+    fs::write(dir.join("queue.md"), b"Milestone: M0\n\xff\n").unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["next-session", "--from", &dir.to_string_lossy()])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty());
 }
 
 #[test]

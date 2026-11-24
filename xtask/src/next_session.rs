@@ -134,12 +134,8 @@ fn records_live(prs: &str, day: i64) -> Result<String, Error> {
             refs.push(format!("refs/remotes/origin/{}", p.branch));
         }
     }
-    let first = day
-        .checked_sub(RECORD_DAYS - 1)
-        .ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?;
-    let dirs: Vec<String> = (first..=day)
-        .map(|d| format!("{JOURNAL}{}/", crate::metrics::fmt_day(d)))
-        .collect();
+    let dirs =
+        record_dirs(day).ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?;
     let mut seen = std::collections::BTreeSet::new();
     let mut out = String::new();
     for r in &refs {
@@ -165,6 +161,17 @@ fn records_live(prs: &str, day: i64) -> Result<String, Error> {
         });
     }
     Ok(out)
+}
+
+/// The journal directories `records.txt` reads: `day` and the `RECORD_DAYS - 1` days before
+/// it, oldest first, as `ops/journal/YYYY-MM-DD/`. `None` when `day` is too small.
+fn record_dirs(day: i64) -> Option<Vec<String>> {
+    let first = day.checked_sub(RECORD_DAYS - 1)?;
+    Some(
+        (first..=day)
+            .map(|d| format!("{JOURNAL}{}/", crate::metrics::fmt_day(d)))
+            .collect(),
+    )
 }
 
 /// Appends `<path>\t<line>` to `out` for each `- Session: ` line of each journal file in a
@@ -1426,6 +1433,24 @@ mod tests {
             Some("- Session: planner\n".to_owned())
         });
         assert_eq!(out.lines().count(), 3);
+    }
+
+    #[test]
+    fn record_dirs_are_seven_days_to_today() {
+        // 2026-11-24 is day 20 781 since 1970.
+        assert_eq!(
+            record_dirs(20_781).unwrap(),
+            [
+                "ops/journal/2026-11-18/",
+                "ops/journal/2026-11-19/",
+                "ops/journal/2026-11-20/",
+                "ops/journal/2026-11-21/",
+                "ops/journal/2026-11-22/",
+                "ops/journal/2026-11-23/",
+                "ops/journal/2026-11-24/",
+            ]
+        );
+        assert!(record_dirs(i64::MIN).is_none());
     }
 
     #[test]

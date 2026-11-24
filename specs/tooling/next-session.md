@@ -275,8 +275,9 @@ never 2 (no command ran).
 - A `Depends on:` number that `issues.json` doesn't list counts as closed, so a list cut off at
   1000 issues could release an issue early.
 - `records.txt`: one `git ls-tree` per open agent PR plus main (7 directory paths each), and
-  one `git cat-file` per journal file of those 7 days on any of those refs (about 15 a day, so
-  about 100 today), each capped like any command. A Planner record older than 6 days is not
+  one `git cat-file` per journal file of those 7 days on any of those refs (an estimate for a
+  full week: about 15 a day, so about 100; on 2026-11-24 main had 8, since per-day directories
+  started on 2026-11-23), each capped like any command. A Planner record older than 6 days is not
   read, which is what step 8's 7-day term wants.
 - `queue.md`: one `git ls-tree` and at most one `git cat-file`, capped like any command. A record is found only in a file under its own day's directory, so an entry filed
   under the wrong day counts for the day its path says.
@@ -300,8 +301,11 @@ never 2 (no command ran).
   which only reads. It writes no file.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
   branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
-  rest of the day's fallback picks into `idle`. The cost is bounded: `idle` happens only when
-  steps 1–10 found nothing, and the next UTC day starts clean. A branch name from `prs.json`
+  rest of the day's fallback picks into `idle`, and turn step 8 off: both of its terms for that
+  day, and the 7-day term for 7 days. The cost is bounded: `idle` happens only when steps 1–10
+  found nothing, the milestone term comes back the next UTC day, and the 7-day term after 7
+  days (a forged record delays a Planner run by at most that long; step 11 still runs it
+  whenever nothing is ready). A branch name from `prs.json`
   goes to git only as `refs/remotes/origin/<name>`, so it can't be read as an option, and git's
   ref-name rules forbid `:` (no `<ref>:<path>` reads). Record lines are matched, never printed.
 - Self-check:
@@ -309,7 +313,8 @@ never 2 (no command ran).
     day (`i64` days since 1970, checked), step 8's `today - day` (only when `day <= today`;
     both are days of the years 0000–9999, so it can't overflow), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
     and `since + 1` (saturating).
-  - What broken implementation still passes? Every step has a fixture that selects it and a
+  - What broken implementation still passes? The records window's day list is
+    `record_dirs`, unit tested on a known day; only its use in the live command is not run. Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
     `pull_request` run, a PR with the skip label only on its issue, a `t/` branch with a
     closed PR, a green PR whose `mergeable` is `UNKNOWN` or `MERGEABLE`, …), and a precedence test where every step applies and each one is removed in
@@ -371,7 +376,8 @@ of inputs where no step before 11 applies (→ `planner`):
   6 and 7 days and a record dated tomorrow, `planner due` as a Planner record and the other
   kinds as near misses, the window at the last second of a day and at midnight; the once-a-day
   bound (a `planner due` record today turns both terms off and step 11 into `idle`, and step
-  10 picks again); step 8 after steps 1 and 7 and before step 10;
+  10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
+  test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form, the `Depends on:` parser, the journal listing over several days, the
   `ops/QUEUE.md` listing line and the `Milestone:` line.
