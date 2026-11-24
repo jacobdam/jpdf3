@@ -359,12 +359,15 @@ A fresh subagent receives the diff, the spec, CONSTITUTION and the `docs/PRINCIP
 For PRs touching `crates/` or `tools/`, a Codex second reviewer (`ops/driver/codex-review.sh`, a
 trial) reviews the same brief. Every review and its triage is posted on the PR (ops/TICK.md §4).
 
-**Lanes (ADR 0012 §1).** A PR that changes only process-area files (`ops/areas.toml`'s
-`process` and `records` areas) and nothing on the strict list (security, owner-instruction,
-guard, protected-path and review rules) is in the light lane: ≤ 3000 lines, one test that
-selects and one that doesn't per pick or rule, at most 2 review rounds, minors dropped instead
-of filed. Everything else, the product and the apps included, keeps the full rules
-(ops/TICK.md §4).
+**Lanes (ADR 0012 §1).** A PR that changes only process-area files (origin/main's
+`ops/areas.toml` `process` and `records` areas, plus new `xtask/src/main.rs` arms) and nothing
+on the strict list (the paths `.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`,
+`ops/proposals/`, `ops/areas.toml`, `CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`, ADRs 0010 and
+0012; and the security, owner-instruction, guard, protected-path and review rules) is in the
+light lane: ≤ 3000 lines, one test that selects and one that doesn't per pick or rule, at most 2
+review rounds (the final check is round 3), majors fixed without a re-review of their own,
+minors dropped instead of filed. Everything else, the product and the apps included, keeps the
+full rules (ops/TICK.md §4).
 
 This check is softer than the judge: it runs locally and could in principle be faked.
 The judge is the hard backstop.

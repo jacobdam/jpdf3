@@ -251,20 +251,24 @@ still come first). Do these in order, one per session:
 
 ## 4. Independent review (required)
 **Lanes (ADR 0012 §1).** A PR is in the **light lane** when every file it changes is owned
-(longest prefix, `ops/areas.toml`) by the `process` or `records` area, or is a line in
-`xtask/src/main.rs` that only adds or routes a subcommand, and it touches nothing on the strict
-list: the paths `.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`, `ops/proposals/`,
+(longest prefix, read from **origin/main's** `ops/areas.toml`) by the `process` or `records`
+area, or is a **new** match arm in `xtask/src/main.rs` that calls a function in a process-area
+file (a changed or removed arm is strict), and it touches nothing on the strict list: the paths
+`.claude/`, `ops/driver/`, `ops/judge/`, `ops/rulesets/`, `ops/proposals/`, `ops/areas.toml`,
 `CONSTITUTION.md`, `LICENSE`, `CLAUDE.md`, ADR 0010 and ADR 0012; and, in any file, who counts as
 the owner or which text is an instruction (§0's first bullets, §2 rule a, ADR 0011 §7, the
 owner-feed filters), the tag, guard or protected-path rules, security severity, rule d or the
 deferral of security findings (ADR 0009), or the review rules (this section). Every other PR is
-in the **strict lane**. The PR description's first line after the tag is `Lane: light (ADR 0012)`
-or `Lane: strict`. The round 1 brief asks the reviewer to check it and answer, as its first
-line, `lane: light accepted` or `lane: strict, because <file or term>`; a strict answer is final
-and the PR follows the strict lane from then on (K continues). In the light lane: the cap is
-**2 rounds** (step 5), majors are fixed without a re-review of their own, minors and nits that
-aren't quick fixes are dropped (step 4), and TICK.md is updated in the PR while the AUTOMATION.md
-lines it makes false are listed in the description for the next retro (§7 step 4).
+in the **strict lane**. The lane belongs to the issue: an issue whose earlier PR ran strict
+stays strict. The PR description's first line after the tag is `Lane: light (ADR 0012)` or
+`Lane: strict`. The brief of each PR's first round, whatever its K, asks the reviewer to check
+it and answer, as its first line, `lane: light accepted` or `lane: strict, because <file or
+term>`; a strict answer is final and the PR follows the strict lane from then on (K continues).
+A PR over 1500 added lines moved to the strict lane is split before its next round (§0). In the
+light lane: the cap is **2 rounds** (step 5), majors are fixed without a re-review of their own,
+minors and nits that aren't quick fixes are dropped (steps 4 and 6), and TICK.md is updated in
+the PR while each AUTOMATION.md line it makes false is listed in the description as
+`AUTOMATION.md now false: §<n> <quoted line>` for the next retro (§7 step 4).
 
 Write the reviewer brief to `target/scratch/review-<PR>.md` in your worktree (git-ignored), then
 spawn a **fresh reviewer subagent** that reads it. The brief contains ONLY:
@@ -357,7 +361,8 @@ Each round K runs in this order:
      non-behavioral one (CONSTITUTION, license, code resembling another engine, a false
      statement) is checked against the cited lines, then fixed or disputed with the evidence.
    - Every regrade or dispute of a blocker or major goes to a reviewer before `ai-review` can
-     succeed: the next delta round (step 5), or in round 4 the final check (step 6).
+     succeed: the next delta round (step 5), or in round 4 (round 2 in the light lane) the final
+     check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
      issue (`deferred: #N`, filed without `ready`, §9; a process-area one in `Ops`, §5). In the
      light lane they get no issue: `dropped (light lane, ADR 0012)`. A deferred security finding gets its `sev:*` label from the ADR 0009
@@ -374,14 +379,16 @@ Each round K runs in this order:
    fixed, regraded or disputed, or the fixes changed code, tests or logic beyond wording; else
    post `ai-review` (below) with `target_url` set to the URL that `gh pr comment` printed for
    the last triage comment. **K = 4: skip this step and go to step 6.**
-   **Light lane:** round 2 runs only if round 1's triage fixed, disputed or regraded a blocker,
-   or disputed or regraded a major (a fixed major alone doesn't start one), and round 2 is the
-   cap: after it, step 6 applies with "round 2" for "round 4", the final check is round 3 (header
+   **Light lane:** round 2 runs if round 1's triage fixed, disputed or regraded a blocker, or
+   disputed or regraded a major (a fixed major alone doesn't start one), or if the fixes since
+   round 1 fail step 6's post-cap test (over 100 added lines, or a new file; then round 2 is a
+   delta round) or touch the strict list (then the PR is strict, and round 2 follows the strict
+   lane); else post `ai-review`. Round 2 is the light lane's cap: after it, step 6 applies with "round 2" for "round 4", the final check is round 3 (header
    `AI review, round 3 (final check)`), and K ≥ 4 is the design session's or the owner's call as
    K ≥ 6 is above.
 6. **Cap: 4 rounds per issue** (1 full + 3 delta; K counts across PRs, see above). After
    round 4 there is no fifth full or delta round:
-   - open minors and nits go to issues;
+   - open minors and nits go to issues (in the light lane they are dropped, step 4);
    - each round-4 blocker or major is fixed (behavior: a test that fails before the fix and
      passes after it, both runs recorded in the triage line; a false statement: the corrected
      text quoted), or disputed or regraded with the reason (no concrete scenario, or it doesn't
@@ -537,9 +544,13 @@ session.
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
   unless (1) it blocks the current milestone's gate or last step, or the next milestone's first
-  issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use; or
-  (3) it is `crash` or `security` (rule d and ADR 0009 as they are). Step 10 never picks from
-  `Ops`. Decisions → `docs/adr/NNNN-*.md`
+  issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use;
+  (3) it is `crash` or `security` (rule d and ADR 0009 as they are); or (4) it is about a
+  strict-list subject (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge, the
+  review rules). Until #308's `area:` labels exist, judge "process-area" by the files the issue
+  would change. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
+  that fails, file in the current milestone with the body line `Move to: Ops (ADR 0012 §2)`, and
+  the Planner moves it. Step 10 never picks from `Ops`. Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
   read leniently, write strictly).
 - ADRs and other non-record files go into the work PR before its review. **Exit**, with nothing
@@ -566,6 +577,9 @@ session.
   (XCUITest), and the same journeys in PDFgear. Screenshot each step (PDFgear shots →
   `~/jpdf-research/`, never the repo). A fresh vision reviewer scores ours against `specs/ui/`
   and Apple HIG/Material. Findings → `ux` issues; scores → `docs/ux-scores.md`.
+- **Lanes (ADR 0012 §1):** check every merged PR since the last audit whose description says
+  `Lane: light` against the strict list (§4 Lanes, read from origin/main's `ops/areas.toml` at
+  its merge); one that should have been strict is a finding.
 - **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; check every `owner-todo` label
   against §0 (add or remove it); reconcile PLAN/STATUS/issues
   with reality; remove dead or duplicated code; refresh deps through admission; update
@@ -596,9 +610,14 @@ session.
    it from LESSONS).
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
    reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
-   PRs since the last retro listed as made false (ADR 0012 §1). Report the `Ops` milestone's
-   open count and its change since the last retro; over 40 open, close the issues that are no
-   longer true, with a comment. Protected files → `ops/proposals/` only.
+   PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
+   such line**. Report the `Ops` milestone's open count and its change since the last retro; over
+   40 open, close the issues that are no longer true, with a comment. Count the light-lane PRs'
+   rounds, caps and final checks by hand from their `Lane:` lines and review headers (`cargo
+   xtask metrics` counts the strict cap and final check only, until #328), and the issue groups
+   the Planner missed (a chain of 3 or more follow-ups, or 5 or more open issues on one
+   subsystem, with no `design` issue within 7 days of forming): one or more means #247's area
+   threshold is due, so ask the Planner to move it into the current milestone (ADR 0012 §3). Protected files → `ops/proposals/` only.
 5. Add a **weekly digest** issue (title `Digest YYYY-Www`, label `digest`):
    - progress per milestone and a forecast finish date (trailing 4-week rate; flag a slip > 25%)
    - metric trends and the retro summary
@@ -743,7 +762,8 @@ gate them.
    repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
    gate needs (ADR 0012 §2)"`) and make ADR 0012 §3's and §4's moves (#308 and #248 to M1, with
    #248's and #251's `Depends on: #247` changed to #308; #250 to M3; #251 to M4; #247 to `Ops`
-   labeled `deferred`), with a comment on each. Close nothing.
+   labeled `deferred`; then §5's Discoveries rule over the open M0 issues, which keeps `security`
+   ones such as #196), with a comment on each. Close nothing.
 2a. **Issue groups by judgement** (ADR 0012 §3, until #247's area threshold is built): when you
    see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
    open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
