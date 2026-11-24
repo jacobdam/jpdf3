@@ -123,7 +123,8 @@ filing issues is #302)
       file where the build should have put it), the manifest, the cache, the watchdog, the
       memory probe on Linux, removing or writing the results, an integrity failure in the
       fetch, no executable `jpdf-cli` after the build (checked before the runs: a regular file
-      with an execute bit), a run that could not start (without the memory wrapper, a spawn
+      with an execute bit; any class's bit counts, so a mode like 0o610 passes and then fails
+      each run with 126: #323), a run that could not start (without the memory wrapper, a spawn
       failure), or no file to run at all when the fetch was not an
       infrastructure failure (every selected row missing: a run that checked nothing must not
       pass);
@@ -135,16 +136,21 @@ filing issues is #302)
     Once the runs started, `regress.json` and the diff are written (each to a `.tmp` name,
     then renamed over an earlier night's file) before the nightly exits 1 or 75, so nothing
     measured is lost, and an earlier night's files stay on disk until this night's replace
-    them (a night that dies mid-run leaves the previous pair intact). If the diff can't be
-    written, an earlier `regress-diff.json` is removed, so it never sits next to this night's
-    `regress.json`. A failure before the runs writes nothing. Through the memory wrapper,
+    them (a night that dies mid-run leaves the previous pair intact). So the files in `DIR` are
+    this night's only when the nightly exited 0 or 75 after the runs; neither file names its
+    night, so a reader (part 3, #302) must check the exit code before it reads `DIR`. If the
+    diff can't be written, an earlier `regress-diff.json` is removed (best effort: a failed
+    removal is only logged), and a kill between the two renames can leave this night's
+    `regress.json` next to an earlier diff; the exit code tells these cases apart too. A
+    failed rename can leave `regress.json.tmp` or `regress-diff.json.tmp` in `DIR`. A failure
+    before the runs writes nothing. Through the memory wrapper,
     `/bin/sh` always starts; a `jpdf-cli` removed or made non-executable during the runs then
     shows as `crash` with exit 126 or 127 (the wrapper's own failure is 125), like any other
     such exit of `jpdf-cli`.
 
 ## Persistence
-No document persistence. `regress.json`, `regress-diff.json` and `work/` under `DIR`; nothing in
-the repository. The previous night's file is passed in by the caller: the CI step that downloads
+No document persistence. `regress.json`, `regress-diff.json` and `work/` under `DIR` (and their
+`.tmp` names after a failed rename, item 10); nothing in the repository. The previous night's file is passed in by the caller: the CI step that downloads
 it is part 3 (#302) and needs the owner (`.github/` is protected).
 
 ## Undo
