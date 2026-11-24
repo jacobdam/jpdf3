@@ -143,7 +143,16 @@ days without a Planner run) and widens `records.txt` to 7 days.
        get the same pick (#295). The brief notes each held open agent PR
        (`PR #N is on the owner's /hold (no /release after it): step 3 doesn't pick it`), lowest
        number first. A held PR still links its issue (in flight), and step 1 treats it like a
-       PR that isn't failing: its owner issue or comment waits for the `/release` too;
+       PR that isn't failing: its owner issue or comment waits for the `/release` too. The
+       same goes for an open PR whose head branch starts with `owner/` (case and position
+       exact): AUTOMATION.md §6.1's branch for the owner's own protected change. The owner
+       signs its commits, posts its `ai-review` and merges it, so a session can't push to it
+       and has nothing to do; its body is tagged when the owner's interactive session wrote
+       it, so it is in `prs.json` (#298: PRs #290 and #291 link their issues with `Refs`, so
+       the linked-issue skip missed them). The brief notes each one (`PR #N is the owner's
+       own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it`, without
+       the branch name), lowest number first, after the held ones; a PR that is both gets
+       both notes;
      - an open issue labeled `bug` whose title starts with `next-session: `, with no skip
        label and not in flight.
   4. **Crash and security** (rule d): an open issue labeled `crash`, or `security` with
@@ -313,7 +322,10 @@ never 2 (no command ran).
   (ADR 0011 Consequences: the guard can't check labels). A hold counts only from an untagged
   owner-account comment, as the workflow applies it, so a stranger's `/hold` or `/release`
   changes nothing; an agent comment can't release a hold (it carries the tag). The owner's
-  commands only ever hold back step 3: a held PR is skipped, never picked.
+  commands only ever hold back step 3: a held PR is skipped, never picked. The `owner/`
+  branch skip only holds back step 3 too: any session can name a branch that way (the
+  account is shared), but that only stops its own PR from being picked, and the PR's linked
+  owner issue or comment then waits on it, as it would on a held PR.
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
@@ -395,6 +407,12 @@ of inputs where no step before 11 applies (→ `planner`):
   an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
   and two held PRs are noted lowest first; a malformed
   `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+- step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
+  picked, its linked issue stays in flight, and the brief notes it once without the branch
+  name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,
+  `x-owner/y` (all picked); a merged or closed owner PR is not noted and doesn't hold its
+  issue; a green owner PR is noted; a held owner PR gets both notes; step 1: an owner issue
+  the owner PR closes and an owner comment its body names are not picked;
 - step 7's slot in flight: an open PR linking an `audit` or `retro` issue holds that term only
   (failing: step 3 picks it; with `owner-todo` on its issue: nothing), with near misses (the
   other label, a longer label, a merged, closed or untagged PR, no `Closes` link, a closed

@@ -472,6 +472,130 @@ fn step3_skips_a_pr_on_the_owners_hold() {
     );
 }
 
+#[test]
+fn step3_skips_the_owners_own_pr_on_an_owner_branch() {
+    // #298: PR 300 fails (no ai-review) and is tagged (the owner's interactive session wrote
+    // it); its issue 301 is the base's ready issue.
+    // Only the main worktree, so a PR branch other than t/301-y leaves no leftover (rule f).
+    let wt = set(
+        "worktrees.txt",
+        "worktree /w/main\nHEAD a\nbranch refs/heads/main\n".to_owned(),
+    );
+    let on = |branch: &str| {
+        set(
+            "prs.json",
+            format!(
+                "[{},{}]",
+                pr(300, "OPEN", "Closes #301", branch, &[], "[]"),
+                pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+            ),
+        )
+    };
+    // The owner's branch: not picked; the linked issue stays in flight, so step 10 doesn't
+    // take #301 either.
+    assert_eq!(pick(&[wt.clone(), on("owner/hold-automerge")]), "planner");
+    assert_eq!(
+        pick(&[wt.clone(), on("owner/")]),
+        "planner",
+        "the bare prefix"
+    );
+    // Near misses: picked.
+    for branch in [
+        "t/301-y",
+        "owner",
+        "owners/x",
+        "Owner/x",
+        "t/owner/x",
+        " owner/x",
+        "x-owner/y",
+    ] {
+        assert_eq!(
+            pick(&[wt.clone(), on(branch)]),
+            "worker own-pr #300",
+            "{branch}"
+        );
+    }
+    // The brief notes it, once, without the branch name.
+    let o = run_with(&[wt.clone(), on("owner/hold-automerge")]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let note = "\n- PR #300 is the owner's own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it\n";
+    assert_eq!(out.matches(note).count(), 1, "{out}");
+    assert!(!out.contains("hold-automerge"), "{out}");
+    // A merged or closed owner PR is not noted, and doesn't hold the issue.
+    for state in ["MERGED", "CLOSED"] {
+        let gone = set(
+            "prs.json",
+            format!("[{}]", pr(300, state, "Closes #301", "owner/x", &[], "[]")),
+        );
+        let o = run_with(&[wt.clone(), gone]).unwrap();
+        let out = String::from_utf8(o.stdout).unwrap();
+        assert!(out.starts_with("worker ready #301\n"), "{state}: {out}");
+        assert!(!out.contains("PR #300"), "{state}: {out}");
+    }
+    // A green owner PR is noted too (it waits on the owner either way).
+    let green = set(
+        "prs.json",
+        format!(
+            "[{}]",
+            pr(300, "OPEN", "Closes #301", "owner/x", &[], GREEN)
+        ),
+    );
+    let o = run_with(&[wt.clone(), green]).unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    assert!(out.contains(note), "{out}");
+    // Held and on the owner's branch: both notes.
+    let o = run_with(&[
+        wt.clone(),
+        on("owner/x"),
+        holds(&[(300, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("planner\n"), "{out}");
+    assert!(out.contains(note), "{out}");
+    assert!(out.contains("- PR #300 is on the owner's /hold"), "{out}");
+    // Step 1: an owner issue the owner's PR closes, and an owner comment its body names, wait
+    // for that PR, as for a held one.
+    let url = format!("{ISSUES}777#issuecomment-1");
+    let linking = |branch: &str| {
+        set(
+            "prs.json",
+            format!(
+                "[{}]",
+                pr(
+                    300,
+                    "OPEN",
+                    &format!("Closes #260\nOwner instruction: {url}"),
+                    branch,
+                    &[],
+                    "[]"
+                )
+            ),
+        )
+    };
+    let feed = feed_plus(&[feed_issue(260)]);
+    assert_eq!(
+        pick(&[wt.clone(), linking("t/260-x"), feed.clone()]),
+        "worker owner-issue #260"
+    );
+    assert_eq!(
+        pick(&[wt.clone(), linking("owner/x"), feed]),
+        "worker ready #301",
+        "the base's ready issue #301 is no longer linked"
+    );
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[wt.clone(), linking("t/260-x"), comment.clone()]),
+        format!("worker owner-comment {url}")
+    );
+    assert_eq!(
+        pick(&[wt.clone(), linking("owner/x"), comment]),
+        "worker ready #301"
+    );
+}
+
 /// `records.txt` lines (`<path>\t<line>`).
 fn records(lines: &[(&str, &str)]) -> String {
     lines.iter().map(|(p, l)| format!("{p}\t{l}\n")).collect()

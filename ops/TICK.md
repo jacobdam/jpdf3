@@ -134,7 +134,8 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design` and `design-pending`), and issues that an
   open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head,
-  unless the owner's newest `/hold` or `/release` on it is a `/hold`: §5, #295).
+  unless the owner's newest `/hold` or `/release` on it is a `/hold` (§5, #295) or its head
+  branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298)).
 - **Before acting on a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`):** check
   precedence step 6 by hand (task #275 moves it into the scheduler, ahead of steps 7, 8, 10 and 11) with the scheduler's
   skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the

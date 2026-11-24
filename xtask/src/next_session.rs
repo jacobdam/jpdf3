@@ -14,6 +14,8 @@ const ISSUE_URL: &str = "https://github.com/jacobdam/jpdf3/issues/";
 const FEED_SCRIPT: &str = "ops/driver/owner-issues.sh";
 const ALARM_FILE: &str = "ops/state/judge-alarm-since";
 const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
+/// The head-branch prefix of the owner's own protected changes (AUTOMATION.md §6.1, #298).
+const OWNER_BRANCH: &str = "owner/";
 
 pub struct Options {
     pub from: Option<PathBuf>,
@@ -471,6 +473,20 @@ struct Pr {
     held: bool,
 }
 
+impl Pr {
+    /// The owner's own change: its head branch starts with `owner/` (AUTOMATION.md §6.1). The
+    /// owner signs its commits, posts its `ai-review` and merges it; a session can't push to it
+    /// (#298).
+    fn owner_branch(&self) -> bool {
+        self.branch.starts_with(OWNER_BRANCH)
+    }
+
+    /// Open, and not a session's to move: held (#295) or the owner's own change (#298).
+    fn parked(&self) -> bool {
+        self.open && (self.held || self.owner_branch())
+    }
+}
+
 fn failing(rollup: &Value, what: &str) -> Result<bool, String> {
     let entries = match rollup {
         Value::Null => &[][..],
@@ -896,7 +912,7 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     let closed = parse_owner(&inp.owner_closed, "owner-closed.json", true)?;
     let in_flight_issue = |n: u64| {
         prs.iter()
-            .any(|p| p.open && (!p.failing || p.held) && linked_issue(&p.body) == Some(n))
+            .any(|p| p.open && (!p.failing || p.parked()) && linked_issue(&p.body) == Some(n))
     };
     let mut issues: Vec<u64> = Vec::new();
     for item in &feed {
@@ -932,7 +948,7 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
             *at >= inp.floor.as_str()
                 && !prs
                     .iter()
-                    .any(|p| p.open && (!p.failing || p.held) && names_url(&p.body, url))
+                    .any(|p| p.open && (!p.failing || p.parked()) && names_url(&p.body, url))
         })
         .collect();
     comments.sort_unstable();
@@ -1161,7 +1177,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = prs
             .iter()
-            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.held)
+            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked())
             .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
             .map(|p| {
                 let mut load = vec![
@@ -1247,6 +1263,12 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     for p in prs.iter().filter(|p| p.held) {
         notes.push(format!(
             "PR #{} is on the owner's /hold (no /release after it): step 3 doesn't pick it",
+            p.number
+        ));
+    }
+    for p in prs.iter().filter(|p| p.open && p.owner_branch()) {
+        notes.push(format!(
+            "PR #{} is the owner's own change (an owner/ branch, AUTOMATION.md §6.1): step 3 doesn't pick it",
             p.number
         ));
     }
