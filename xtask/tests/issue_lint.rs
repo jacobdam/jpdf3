@@ -83,7 +83,10 @@ fn reports(extra: String, want: &[&str]) -> io::Result<()> {
         .collect();
     assert_eq!(problems, want, "{out}");
     assert_eq!(o.status.code(), Some(1), "{out}");
-    let summary = format!("issue-lint: {} problems in 1 of 3 open issues", want.len());
+    let summary = format!(
+        "issue-lint: {} problem(s) in 1 of 3 open issues",
+        want.len()
+    );
     assert!(out.ends_with(&format!("{summary}\n")), "{out}");
     Ok(())
 }
@@ -229,6 +232,15 @@ fn follow_up_line_on_another_origin() -> io::Result<()> {
         issue(2, &["area:engine", "origin:review"], "Follow-up of: #7"),
         &["#2: Follow-up of: line but origin is not follow-up"],
     )?;
+    // Two known origins: only the count is reported.
+    reports(
+        issue(
+            2,
+            &["area:engine", "origin:owner", "origin:review"],
+            "Follow-up of: #7",
+        ),
+        &["#2: 2 origin: labels"],
+    )?;
     // No known origin: only the origin problem is reported.
     reports(
         issue(2, &["area:engine"], "Follow-up of: #7"),
@@ -268,7 +280,7 @@ fn issues_are_reported_in_number_order() -> io::Result<()> {
     ])?;
     assert_eq!(
         stdout(&o),
-        "#4: no area: label\n#9: no origin: label\nissue-lint: 2 problems in 2 of 3 open issues\n"
+        "#4: no area: label\n#9: no origin: label\nissue-lint: 2 problem(s) in 2 of 3 open issues\n"
     );
     assert_eq!(o.status.code(), Some(1));
     Ok(())
@@ -281,7 +293,7 @@ fn area_paths_must_match_tracked_files() -> io::Result<()> {
     assert_eq!(
         stdout(&o),
         "ops/areas.toml: path tools/jpdf-cli/main.rs of area engine matches no tracked file\n\
-         issue-lint: 1 problems in 0 of 1 open issues\n"
+         issue-lint: 1 problem(s) in 0 of 1 open issues\n"
     );
     assert_eq!(o.status.code(), Some(1));
     // A directory path needs a file under it, not a sibling with the same prefix.

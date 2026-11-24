@@ -85,8 +85,9 @@ pub fn run(root: &Path, opts: &Options) -> Result<Report, String> {
         None => {
             let areas = read(&root.join(AREAS_FILE))?;
             let root_arg = root.to_string_lossy();
-            let tree = crate::macos::capture("git", &["-C", &root_arg, "ls-files"], None)
-                .map(|(out, _)| out)
+            // `-z`: paths unquoted (no `core.quotePath` C-quoting), NUL-separated.
+            let tree = crate::macos::capture("git", &["-C", &root_arg, "ls-files", "-z"], None)
+                .map(|(out, _)| out.split('\0').collect::<Vec<_>>().join("\n"))
                 .map_err(|e| format!("git ls-files: {e}"))?;
             let args = gh_args();
             let argv: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -151,7 +152,7 @@ pub fn lint(areas_text: &str, tree: &str, issues: &str) -> Result<Report, String
     } else {
         let _ = writeln!(
             text,
-            "issue-lint: {problems} problems in {bad_issues} of {} open issues",
+            "issue-lint: {problems} problem(s) in {bad_issues} of {} open issues",
             list.len()
         );
     }
@@ -590,6 +591,18 @@ mod tests {
                 b.clone() + &area("x", "product", r#"["x/" "y/"]"#),
                 "expected [\"path\"",
             ),
+            (
+                b.clone() + &area("x", "product", "[\n  # c\n  \"x/\",\n]"),
+                "expected [\"path\"",
+            ),
+            (
+                b.clone() + &area("x\ty", "product", r#"["x/"]"#),
+                "expected one",
+            ),
+            (
+                b.clone() + &area("x", "product", "[\"a\tb\"]"),
+                "expected [\"path\"",
+            ),
             (b.clone() + "[[area]]\nname = \"x\" # c\n", "expected one"),
             (b.clone() + "[[area]]\nname = 'x'\n", "expected one"),
             (
@@ -678,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn paths_may_nest_and_cover_checks() {
+    fn cover_checks() {
         let files: BTreeSet<&str> = ["a/b/c.rs", "ab.md", "z"].into_iter().collect();
         assert!(covers("a/", &files));
         assert!(covers("a/b/", &files));

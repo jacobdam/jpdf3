@@ -27,7 +27,13 @@ paths = ["crates/jpdf-engine/", "tools/jpdf-cli/"]
 - `name`: `[a-z][a-z0-9-]*`, at most 45 bytes (a GitHub label holds 50; `area:` takes 5). The
   label is `area:<name>`. Names are unique.
 - `kind`: `"product"` or `"process"`. Process areas are the autonomy system itself (ADR 0011
-  §3); a `process` and a `records` area, both `kind = "process"`, must exist.
+  §3); a `process` and a `records` area, both `kind = "process"`, must exist. The file adds a
+  third process area, `judge` (the judge, CI and the dependency policy, all protected), and
+  makes `tooling` (xtask, fuzz, bench, corpus and test-generation tools) a product area, like
+  `fuzz/` in the interim product-merge rule. So once part 2 and part 3 make product merges
+  area-based (replacing ADR 0011 §3's interim path list), a merge of an issue in `tooling`
+  counts and one in `judge` doesn't; part 3 (#247), which replaces the interim rule, checks
+  these kinds against its replays and changes them in its PR if they fail.
 - `paths`: one or more repository paths, each a tracked file or, ending in `/`, a directory. A
   path is relative (no leading `/`), has no empty, `.` or `..` segment, no `\`, no whitespace
   and no `*`; no path is listed twice in the file. Paths may nest (`ops/` and `ops/journal/`):
@@ -35,15 +41,15 @@ paths = ["crates/jpdf-engine/", "tools/jpdf-cli/"]
   consumers use; part 1 only lists paths). A file no path covers belongs to no area.
 - Accepted syntax: blank lines, full-line `#` comments (not inside an array), `[[area]]`
   headers, `key = "string"`, and `key = [ "a", "b" ]` arrays that may span lines and may end
-  with a comma. Strings hold
-  no `\`, `"`, or control characters. Anything else (another table, an inline comment, an
+  with a comma. Strings hold no `\`, `"`, or control characters, and strings inside an array
+  also no `,` or `]` (the parser splits arrays on them). Anything else (another table, an inline comment, an
   escape, a key outside a table, an unknown or repeated key, a missing key) is an error naming
   the line.
 
 ### `cargo xtask issue-lint [--from DIR]`
 Read-only: it runs `git ls-files` and `gh issue list --state open --limit 1000 --json
 number,labels,body` and writes nothing. `--from DIR` reads `DIR/areas.toml`, `DIR/tree.txt`
-(one tracked path per line, as `git ls-files` prints) and `DIR/issues.json` instead, for tests.
+(one tracked path per line; the live run reads `git ls-files -z`, so paths are not C-quoted) and `DIR/issues.json` instead, for tests.
 
 For each open issue, in number order, it reports one stdout line per problem,
 `#<n>: <problem>`:
@@ -61,12 +67,13 @@ For each open issue, in number order, it reports one stdout line per problem,
   without case, after leading whitespace) but isn't exactly `Follow-up of: #<N>` (trailing
   whitespace and `\r` allowed; `N` a decimal integer ≥ 1 with no leading zero that fits in
   `u64`);
-- `<k> Follow-up of: lines` when there are two or more (a follow-up has one parent);
+- `<k> Follow-up of: lines` when two or more well-formed lines are present (a follow-up has
+  one parent; malformed lines are reported on their own and not counted here);
 - `Follow-up of: itself` when `N` is the issue's own number.
 
 Then one area-file line per listed path that covers no tracked file, `ops/areas.toml: path
 <p> of area <a> matches no tracked file`, and a summary line on stdout:
-`issue-lint: <p> problems in <k> of <t> open issues` (area-file problems add to `<p>`; `<k>`
+`issue-lint: <p> problem(s) in <k> of <t> open issues` (area-file problems add to `<p>`; `<k>`
 counts issues only) or `issue-lint: <t> open issues, no problems`.
 
 Exit codes:
@@ -108,12 +115,15 @@ Self-check:
 - What broken implementation still passes? Each check has a should-report fixture and a
   near-miss should-pass fixture in `xtask/tests/issue_lint.rs`, each with every other problem
   absent: no area, two areas, unknown area (case, space, empty name, a name not in the file),
-  the same for origin; follow-up without its line, with a malformed line (`#0`, `#01`, no `#`,
+  the same for origin; follow-up without its line, with a malformed line (`#0`, `#07`, no `#`,
   trailing text, lowercase `follow-up of:`, a number past `u64`), a line on a non-follow-up,
   two lines, a self reference; the clean issue next to each (a `Follow-up of: #7` line with
   trailing whitespace passes). The area file has one rejected fixture per syntax and semantic
-  rule, plus the repository's own `ops/areas.toml` parsed by a test, which also checks that
-  every path matches a file of `git ls-files`.
+  rule (a comment inside an array and a tab inside a string included), plus the repository's
+  own `ops/areas.toml` parsed by a test (`repository_areas_parse_and_name_existing_paths`).
+  That test checks each path against the checkout's files, not `git ls-files` (it may run
+  without `.git`), so a directory holding only untracked files passes it; the live lint, run
+  against `git ls-files`, is what catches that case.
 - A run where nothing was checked fails: an empty issue list and an empty tree are exit 2.
 - The `gh` parser has one case per line shape the real tool prints: a list of objects with
   `number`, `labels` (`[{"id", "name", "description", "color"}]`) and `body`, the shape

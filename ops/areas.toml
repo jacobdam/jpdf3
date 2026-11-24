@@ -78,11 +78,19 @@ name = "ui-macos"
 kind = "product"
 paths = ["apps/macos/", "specs/ui-macos/"]
 
-# What the product is: scope, journeys and the shared UI architecture.
+# What the product is: scope, journeys, the shared UI architecture and the product ADRs (the
+# process ADRs are listed under `process`; longer paths win).
 [[area]]
 name = "product"
 kind = "product"
-paths = ["PLAN.md", "README.md", "specs/journeys/", "specs/ui/", "specs/TRACE.md"]
+paths = [
+  "PLAN.md",
+  "README.md",
+  "specs/journeys/",
+  "specs/ui/",
+  "specs/TRACE.md",
+  "docs/adr/",
+]
 
 # Build, test and measurement tools for the product.
 [[area]]
@@ -101,6 +109,7 @@ paths = [
   "Cargo.toml",
   "Cargo.lock",
   "rust-toolchain.toml",
+  ".gitignore",
 ]
 
 # The judge, CI and the dependency policy (protected, CONSTITUTION 12).
