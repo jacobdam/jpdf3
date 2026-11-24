@@ -4,9 +4,11 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **Planner 2026-11-24** (this records' PR): `ops/QUEUE.md` rewritten from the labels. Split #19 into #300–#302,
-  #16 into #303–#304, #15 into #305–#306; readied #25 (on #300), #277, #294; moved #14 → M9, #20 → M1, #22 → M2;
-  removed #21's dead `in-progress`.
+- PR #309 (#246, ADR 0011 task 4 part 1 of 3): `ops/areas.toml` (16 areas) and `cargo xtask issue-lint`; round 3
+  clean, auto-merge on. #246 was split: part 2 is #308 (labels on every open issue, the TICK filing rule, per-area
+  metrics; needs `ready` from the Planner), part 3 is #247 (renumbered 3/3, now depends on #308).
+- Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
+  #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
 - `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
   an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca, which also carried #296's commits).
 - PR #296 (#295): its change is on main through PR #299; it is still open with auto-merge on.
@@ -21,7 +23,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (`ops/QUEUE.md`: #246 first), else `idle` today (the Planner ran).
+   are closed (#246 is in PR #309; #308 waits for the next Planner's `ready`), else `idle` today (the Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -46,3 +48,5 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- Tooling: clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
+  → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
