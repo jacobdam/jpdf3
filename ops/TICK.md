@@ -463,8 +463,8 @@ session.
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
   session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
-  reply, an `owner-todo` update, a discovery issue closed by a comment, §9 step 6) opens a **records PR** holding nothing but record files; it is never a
-  product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
+  reply, an `owner-todo` update, a discovery issue closed by a comment, §9 step 6) opens a
+  **records PR** holding nothing but record files; it is never a product merge. An `idle` pick or a scheduler exit 2 writes no record at all.
 - **Journal:** one new file per session, `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` (UTC date and
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
   `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
@@ -709,10 +709,11 @@ plus `ready`, §8) are still filed ready by the sessions ADR 0011 §1 names.
    created in step 2, 3 or 4, unless an open PR already links it: then leave it and put the
    finding in the issue below), and file one `discovery` issue in the current milestone with
    those findings and the link. A pushed `mN` tag stays (deleting it is a delete push, which
-   the guard forbids, §0): if a finding names it, file a separate issue `Delete tag mN` with
-   `owner-todo`, closed by the owner, or by the next Planner once
-   `git ls-remote --tags origin mN` prints nothing; while it is open, step 4 doesn't tag `mN`
-   again, and the retro the tag triggers (§2 h) still runs (an undone gate is an incident). The
+   the guard forbids): if a finding names it, file a separate issue `Delete tag mN` with
+   `owner-todo` in the reopened milestone `Mn`, so step 4 waits for it; the owner closes it, or
+   the next Planner does once `git ls-remote --tags origin mN` prints nothing (the one exception
+   to step 2's "Close nothing"). The retro the tag triggers (§2 h) still runs (an undone gate is
+   an incident). The
    `discovery` issue is a Worker issue like any other: the next Planner gates it into `ready`
    through step 2, and a Worker closes it, by a PR's `Closes #N` when a finding needs a change
    on main, or with a comment saying so (and a records PR, §5) when every finding was about the
