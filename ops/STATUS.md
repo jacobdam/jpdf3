@@ -4,12 +4,13 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **Planner 2026-11-24** (this records' PR): `ops/QUEUE.md` rewritten from the labels. Split #19 into #300–#302,
+- **Planner 2026-11-24** (PR #307, merged fea1992): `ops/QUEUE.md` rewritten from the labels. Split #19 into #300–#302,
   #16 into #303–#304, #15 into #305–#306; readied #25 (on #300), #277, #294; moved #14 → M9, #20 → M1, #22 → M2;
   removed #21's dead `in-progress`.
 - `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
   an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca, which also carried #296's commits).
-- PR #296 (#295): its change is on main through PR #299; it is still open with auto-merge on.
+- PR #296 closed unmerged and #295 closed (2026-11-24): its change is on main through PR #299 (335d6ca).
+- PR #309 (#246, task 4 part 1: `ops/areas.toml`, `cargo xtask issue-lint`) is open.
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
