@@ -4,33 +4,19 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #316 (#277) merged (3e4e342): TICK §4 step 6's "after the last check" rule; `cargo xtask metrics` counts design
-  final checks.
-- PR #317 (#288, task 2 part 2): the work-mix budget in next-session (step 8's third term, step 10 product-first,
-  TICK §9 step 4a). Review round 2 clean; origin/main merged in (STATUS conflict only), `ai-review` re-posted,
-  auto-merge on. Step 10's order changes only once #308 adds `area:` labels.
-- PR #318 (#294): TICK §9 step 6, a Planner PR closed at the cap; open.
-- PR #321 (#300, `cargo xtask nightly` 1/3): the regress tier through `jpdf-cli` under the judge's time limits and
-  (Linux) 2 GiB `ulimit -v`, `DIR/regress.json` + `regress-diff.json` (`--previous`). Rounds 1–3 posted and
-  triaged; `ai-review` success, auto-merge on. Deferred: #322 (keep stderr's tail, before #302), #323 (exec-bit
-  check by class). Parts 2 (#301, bench and fuzz time) and 3 (#302, issue filing; the CI `--previous` step needs the
-  owner) wait for the Planner's `ready`. Codex timed out (2400 s) on all three round briefs (45–110 KB).
-- #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
-  Planner), part 3 is #247 (depends on #308).
-- PR #312 (#249, Design: product session 1/2) is an open draft.
-- Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
-  #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
-- PR #315 (#275) merged (f4d60f7): `cargo xtask next-session` step 6 (Design: technical); TICK §2's by-hand step 6
-  check is gone. Part 3 is #314 (step 3's design PR past its 24-hour window; needs `ready` from the Planner); until it
-  lands TICK §1 checks the window by hand.
-- Step 3 skips an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca).
-- The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
-  tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
-- PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
+- No open agent PR. Merged today: #316 (#277), #317 (#288 part 2; step 10's order changes only once #308 adds `area:`
+  labels), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312 (#249, Design: product 1/2).
+- `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
+  `ready`. Codex timed out (2400 s) on #321's three round briefs (45–110 KB).
+- #246 part 2 is #308 (needs `ready`), part 3 is #247 (depends on #308). #314 (step 3's design-window check) needs
+  `ready`; until it lands TICK §1 checks the window by hand.
+- The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
+  and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
+- #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
+  stays `deferred`.
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
-- #236 (memory ADR, `deferred`) is the first design queue item. #146 stays open, `deferred` (waits for #25 or #236).
-- #21 waits on #19 (#301–#302 after #300) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
+- #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
@@ -49,14 +35,14 @@ Phase: bootstrap (pilot)
 
 ## Blockers / owner-todo
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
-- #266: apply ops/proposals/hold-automerge.md and run T0–T4 (PR #290, on your `/hold`).
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
-- #196: apply ops/proposals/codex-homebrew-read/codex-review.diff, run T1–T6 (PR #291).
-- #179: run test step 3 of ops/proposals/owner-comment-tracking.md.
+- #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
+- #179: test step 3 of ops/proposals/owner-comment-tracking.md: the agent replied to both test comments on PR #318;
+  your check of the feed is left.
 - #176, #126: driver usage-limit pause; the Codex second-reviewer trial (live).
 - The security-gates proposal (AC.2, AS.56) needs an owner decision.
-- #208: owner fire-drill step left: the `/hold` re-run (after #266).
+- #208: owner fire-drill step left: the `/hold` re-run (#266's T1–T4 on PR #324 passed; check whether that covers it).
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console. macOS CI runs no Rust tests.
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
