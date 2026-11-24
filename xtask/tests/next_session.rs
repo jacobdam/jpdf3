@@ -1954,8 +1954,9 @@ fn queue_not_utf8_exit_1() {
             .output()
             .unwrap()
     };
-    // Control: the same fixture with a valid queue.md picks normally.
-    fs::write(dir.join("queue.md"), b"Milestone: M0\n").unwrap();
+    // Control: the same fixture with a valid queue.md (non-ASCII UTF-8 too, as the real file
+    // has) picks normally.
+    fs::write(dir.join("queue.md"), "Milestone: M0\n#1 → #2\n").unwrap();
     let o = run();
     assert_eq!(o.status.code(), Some(0));
     assert!(
