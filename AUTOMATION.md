@@ -57,6 +57,7 @@ GitHub (public repo jacobdam/jpdf3)
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
 | `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit; its `Pending lessons` list holds lessons found after a PR's last review round (ADR 0011 §3) | agent |
 | `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | one file per session (since retro 0002; earlier entries in `ops/journal/YYYY-MM-DD.md`), each with a `Session:` line; committed to the session's work PR, or a records PR when there is none (ADR 0011 §3) | agent |
+| `ops/areas.toml` | the areas behind the `area:` labels: name, product or process, the paths each owns (ADR 0011 §4; checked by `cargo xtask issue-lint`) | agent |
 | `ops/QUEUE.md` | the Planner's plan for the current milestone: `Milestone:` line (read by `cargo xtask next-session` step 8), ready list, waits, critical path, design ahead (ops/TICK.md §9) | agent (Planner sessions) |
 | `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
@@ -139,6 +140,14 @@ on main) or no `Session: planner` record is dated in the last 7 UTC days, at mos
 step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
 ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
 work PR when it changes. The work-mix budget comes with part 2 (#288).
+
+Task 4 part 1 (#246) adds the area list, `ops/areas.toml` (each area's name, `product` or
+`process` kind and the paths it owns), and `cargo xtask issue-lint` (specs/tooling/issue-lint.md),
+which reports open issues without exactly one `area:` and one `origin:` label, follow-ups
+without their `Follow-up of: #N` line, and listed paths that match no tracked file. Part 2
+(#308) creates the labels, labels every open issue, adds the filing rule to ops/TICK.md and the
+per-area metrics; part 3 (#247) adds the area threshold, the `design-pending` freeze and the
+Gardener.
 
 ## 5. Completeness: building the right thing
 
