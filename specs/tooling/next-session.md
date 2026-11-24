@@ -10,16 +10,18 @@ Status: implemented
 their own work from prose (ADR 0011 §2). Task 1a (#242) added precedence steps 1–5 (TICK rules
 a–f); task 1b part 1 (#273) added steps 7 (rules g, h) and 10 (rule i) and the interim
 product-merge counter (ADR 0011 §3); part 2 (#243) adds step 11 (Planner or idle), which
-replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 (#245)
-adds step 6. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
-days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#249) adds step
-8's Design: product terms (ops/TICK.md §10) after the Planner's.
+replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 part 2
+(#275) adds step 6 (Design: technical) and takes `needs-design` PRs out of step 3. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
+days without a Planner run) and widens `records.txt` to 7 days. Task 2 part 2 (#288) adds the
+work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first order. Task 6
+part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
     `planner` or `idle`.
-    Its first word is the session type: `worker`, `audit`, `retro`, `planner`, `design`
-    (Design: product, TICK §10), or `idle` (no session: exit at once). Steps and references:
+    Its first word is the session type: `worker`, `design-technical`, `audit`, `retro`,
+    `planner`, `design` (Design: product, TICK §10), or `idle` (no session: exit at once).
+    Steps and references:
 
     | Step | TICK rule | First line |
     |---|---|---|
@@ -28,18 +30,20 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
     | 3 | c | `worker own-pr #N`, `worker scheduler-bug #N` |
     | 4 | d | `worker crash-security #N` |
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
+    | 6 | (§2 step 6, TICK §8) | `design-technical needs-design #N` (a PR), `design-technical design-issue #N` |
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
     | 8 | j, k | `planner due` (the reason is on the `Rule:` line), then `design product v1`, `design product v1 #N`, `design product #N` |
     | 10 | i | `worker ready #N` |
     | 11 | j | `planner`, `idle` |
 
-  - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
-    picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
+  - then a blank line and the brief: a `Rule:` line (the TICK letter, or `step 6`, which has
+    none, and why this item was picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
     `Notes:` list when there is something to note (each open agent PR on the owner's `/hold`
     and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
     worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
     retro that step 7 didn't pick because its PR is open, and a due Design: product term that
-    step 8 didn't pick for the same reason).
+    step 8 didn't pick for the same reason; on a `planner` or `planner due` pick, last, the
+    work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -88,6 +92,12 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
       a missing file means no plan; a file that isn't UTF-8 is exit 1 (a broken fixture).
   17. `holds.json`: `gh pr list --author @me --state open --limit 200 --json number,comments`
       (the conversation comments of each open PR, for the owner's `/hold`, #295).
+  18. `pr-files.json`: `gh pr list --author @me --state all --limit 200 --json number,files`
+      (the changed files of each PR, for the work mix, #288; about 96 KB and 9 s on 2026-11-24);
+  19. `all-issues.json`: `gh issue list --state all --limit 1000 --json number,milestone` (the
+      milestone of every issue, closed ones included, for the work mix);
+  20. `areas.toml`: live, `ops/areas.toml` in the current directory (the main checkout), as
+      `cargo xtask issue-lint` reads it: which `area:` labels are product (step 10).
 
   `issues.json` (input 6) also reads `body` and `milestone`:
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
@@ -102,6 +112,38 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
   - *Linked issue* of a PR: the first `Closes #N` in its body with digits after the `#` (a
     quoted `Closes #<issue>` is skipped; TICK §3 step 4).
   - *In flight:* an issue is in flight when an open agent PR links it.
+  - *Needs design:* an open agent PR labeled `needs-design` (exact name): escalated to a
+    design session (TICK §4 step 6). It is a draft with `ai-review` failure on purpose, so it is
+    failing too; step 6 picks it, never step 3.
+  - *Work mix* (ADR 0011 §3, #288; the interim rule until task 4 adds `area:` labels): the
+    `records.txt` lines, ordered by path (a journal file's name starts with its UTC time; lines
+    of one file keep their order), each (path, text) pair once (the same file on two refs). The
+    words of the text after `- Session: ` (split on whitespace) classify each record:
+    - *left out:* a first word starting `design-` (a Design session; before task 4 neither
+      counted nor in the window), or `worker` with a second word starting `owner-` (an owner
+      instruction, rule a);
+    - *on an issue:* exactly three words, the first `worker` or `qc`, the last `#<digits>`; the
+      issue is that number, except for the step `own-pr`, where it is that PR;
+    - *other:* everything else (audit, retro, Planner, `main-red`, `leftover-worktree`, a
+      `fallback exit` line, any other text): in the window, never milestone work.
+
+    The *window* is the newest 20 records not left out. Fewer than 20 (in the 7 days that
+    `records.txt` covers), or no current milestone (step 10's): *not measured*, never below the
+    budget. Otherwise a record is *milestone work* when it is on issue N, N's milestone in
+    `all-issues.json` is the current milestone (exact title), and an agent PR in `prs.json` of
+    any state links N (*Linked issue*, its first `Closes #N` only) and changes a *product path* (a `pr-files.json` path
+    starting with one of step 7's prefixes, no unquoting: `gh` writes paths plain); for `own-pr
+    #N`, when PR N is an agent PR that changes a product path and links an issue in the current
+    milestone. A record names no PR, so on issue N it counts when *any* agent PR linking N
+    changes a product path, not only the one that session opened: a process-only follow-up
+    session on an issue whose earlier PR changed `crates/` counts (an approximation of ADR 0011
+    §3's "its PR"). The work mix is *below the budget* when fewer than 70% of the window
+    (`counted × 100 < 70 × 20`, so 13 or fewer of 20) is milestone work. The *reading* is a
+    `Notes:` line: `work mix: <c> of the last 20 sessions on milestone work (<c × 5>%; budget
+    70%)`, `work mix: not measured (<n> of the 20 session records it needs)` or `work mix: not
+    measured (no current milestone)`.
+  - *Product issue* (step 10): an issue with a label `area:<name>` (exact) where `<name>` is an
+    area of kind `product` in `areas.toml`.
   - *Failing* open PR: a head check run whose conclusion is `FAILURE`, `TIMED_OUT`,
     `STARTUP_FAILURE`, `ACTION_REQUIRED` or `CANCELLED`, or a status context in state `FAILURE`
     or `ERROR`, or no `ai-review` status context in state `SUCCESS` on the head (unreviewed, as a
@@ -115,14 +157,14 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
      - an owner issue (a feed line of kind `issue` with `is_pr` false; an owner PR is the
        owner's own work, and owner comments on it come as comment lines) that has no owner reply starting with
        `🤖 jpdf-agent done: <the issue's URL>` (exact URL, followed by whitespace or the end),
-       carries no skip label, and isn't linked by an open PR that isn't failing or is held
-       (step 3; that PR is already doing it, or waits for the owner's `/release`; a failing one
-       is picked here, so rule a outranks rule c for it).
+       carries no skip label, and isn't linked by an open PR that isn't failing, is held or
+       needs design (step 3; that PR is already doing it, or waits for the owner's `/release` or
+       a design session, step 6; a failing one is picked here, so rule a outranks rule c for it).
        Lowest number first. `owner-open.json` supplies the replies and labels; an issue missing
        from it counts as pending with no labels;
      - an owner comment (feed kinds `comment`, `review_comment`, `review`) created at or after
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
-       that isn't failing or is held. Oldest `created_at` first, then by URL;
+       that isn't failing, is held or needs design. Oldest `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
        `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
        (both exact, as above; a reply for a comment on the issue doesn't count)
@@ -134,7 +176,7 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
      raised; the session continues with other work); the brief notes the alarm instead.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
-       carries a skip label, and that is not *held*. Lowest number first. A PR is held when,
+       carries a skip label, that doesn't need design (step 6's), and that is not *held*. Lowest number first. A PR is held when,
        of its comments in `holds.json` that are an owner command, the newest (largest
        `createdAt`; on a tie, the later in the list) is a hold. A command is a comment that
        `.github/workflows/owner-commands.yml` acts on: author `jacobdam`, a body that starts
@@ -176,7 +218,24 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
 
      Ratchet regressions show up as a red judge on main (step 2). The nightly that files
      findings as issues (#19) doesn't exist yet, so step 5 has no nightly term.
-  6. Design: technical: not in this part (task 3, #245).
+  6. **Design: technical** (ADR 0011 §2 step 6, TICK §8; #275), in this order:
+     - a PR that needs design, where neither the PR nor its linked issue carries a skip label,
+       not held and not on an `owner/` branch (as in step 3: nothing moves until `/release`,
+       TICK §5). Lowest number first → `design-technical needs-design #N`. The brief loads the
+       PR's comments (its ledger), its linked issue and the search for earlier PRs closing it
+       (their ledgers, TICK §8 step 2), then the design files below; a PR without a `Closes`
+       link gets no issue lines;
+     - an open issue labeled `design` and `ready` (exact names) with no skip label and not in
+       flight. Any milestone, none included (design queue items are filed by audits, the owner or
+       other sessions, ADR 0011 §1), and `in-progress` doesn't stop it (TICK §8 step 1 resumes
+       a design session that died). Lowest number first → `design-technical design-issue #N`.
+       The brief loads the issue, then the design files.
+
+     The design files, in order: `ops/TICK.md §8`, `specs/tooling/design-technical.md`,
+     `docs/PRINCIPLES.md`, `docs/adr/_TEMPLATE-design.md`,
+     `docs/adr/0010-review-rounds-converge.md`, `docs/adr/0011-session-types-and-scheduler.md §5`.
+     Not in this part: the third term of ADR 0011 §2 step 6 (an area over its threshold, task 4,
+     #247), and step 3's own design PR past its 24-hour window (#314).
   7. **Audit, then retro** (rules g, h). From `main-log.txt` (newest first): a *record commit*
      adds (status `A`) a file `docs/audits/NNNN.md` or `docs/advocate/NNNN.md` (an *audit slot*,
      ADR 0011 §1), or `docs/retros/NNNN.md` (a retro), with exactly four digits and nothing else
@@ -223,7 +282,12 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
      - *no plan in 7 days:* no `records.txt` line whose first word after `- Session: ` is
        `planner` (so `planner due` counts) has a path day from today − 6 to today (UTC days of
        `now`; a later day doesn't count).
-     → `planner due`. The work-mix trigger comes with part 2 (#288).
+     - *the work mix is below the budget* (#288).
+
+     → `planner due`. The reasons, in this order, on the `Rule:` line: `ops/QUEUE.md is missing
+     on origin/main or unreadable` or `ops/QUEUE.md on origin/main doesn't plan the current
+     milestone <M>`, `no Session: planner record is dated in the last 7 UTC days`, `the work mix
+     is below 70%: <c> of the last 20 sessions on milestone work`.
 
      **Design: product** (rule k; ADR 0011 §1, TICK §10), when the Planner term didn't pick:
      - *v1:* `docs/PRODUCT.md` is not on origin/main. v1's issues are the open ones labeled
@@ -260,7 +324,12 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
       each optionally followed by one `(…)` note without nested parentheses; it ends at the
       first other text (a tab, a second or nested note included), so prose after the phrase
       names nothing (bold markers around the words allowed; case matters). Lowest
-      number first. The work-mix ordering of ADR 0011 §3 comes with task 2 (#244).
+      number first; while the work mix is below the budget, the lowest-numbered *product issue*
+      among them first, and the lowest-numbered one when none is a product issue (the budget
+      orders, it never blocks: ADR 0011 §3). Below the budget the `Rule:` line says so: `i (the
+      work mix is below 70%: the lowest-numbered ready product issue in the current milestone
+      with its dependencies closed, this one)`, or `…, none, so the lowest-numbered ready
+      issue)`.
   11. **Planner or idle** (rule j; ADR 0011 §1, the Planner's bound): nothing above applies.
       `idle` when `records.txt` has a line whose path is `ops/journal/<today>/<name>.md` (today:
       the UTC day of `now`; `<name>` without `/`) and whose text after `- Session: ` has
@@ -273,7 +342,8 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
   - **2**: unknown. A command could not start, failed or printed too much (gh or network
     error); the message goes to stderr and the session does no work.
   - **1**: the scheduler is broken: a usage error, an unreadable or missing `--from` file
-    (other than `judge-alarm-since` and `queue.md`), or an input that doesn't parse (not JSON, not the
+    (other than `judge-alarm-since` and `queue.md`; live, a missing `ops/areas.toml` too), or an
+    input that doesn't parse (not JSON, not the
     expected shape, no `FLOOR` line, a floor not in the form `YYYY-MM-DDTHH:MM:SSZ`). Every
     input is parsed in full whatever is picked, so a renamed field fails every run. A panic exits 101; any exit other than 0 and 2 sends the
     session to TICK's legacy fallback and the `next-session: <first line>` bug issue.
@@ -293,7 +363,11 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 6 part 1 (#
   objects with strings `event` and `created_at` (`YYYY-MM-DDTHH:MM:SSZ`); a `labeled` event also
   needs `label: {name}`. `records.txt`: every non-empty line is `<path>\t<text>` with `<path>`
   `ops/journal/YYYY-MM-DD/<name>.md` (a real date, `<name>` without `/`) and `<text>` starting
-  with `- Session: `; anything else is an error. `issues.json`: `body` a string, `milestone` null or an object with a
+  with `- Session: `; anything else is an error. `pr-files.json`: objects with a number
+  `number` and an array `files` of objects with a string `path`. `all-issues.json`: objects with
+  a number `number` and `milestone` null or an object with a string `title`. `areas.toml`:
+  `cargo xtask issue-lint`'s parser and rules (specs/tooling/issue-lint.md; its `process` and
+  `records` areas included). `issues.json`: `body` a string, `milestone` null or an object with a
   string `title`. Unix seconds (`now.txt`, the alarm file after trimming whitespace, the log,
   the tags) are digits only, within the years 1970–9999 (`cargo xtask metrics`' rule).
 
@@ -344,6 +418,13 @@ never 2 (no command ran).
   implies `--diff-merges=first-parent`).
 - `queue.md`: one `git ls-tree` and at most one `git cat-file`, capped like any command. A record is found only in a file under its own day's directory, so an entry filed
   under the wrong day counts for the day its path says.
+- The work mix: `pr-files.json` lists the 200 newest PRs of the account and at most 100 files
+  of each (gh's GraphQL page): a product path after a PR's 100th file is missed, and a record
+  naming a PR older than the 200 doesn't count (the window's records are at most 7 days old, and
+  about 40 PRs open a week). `all-issues.json`: the 1000 newest issues (about 200 today). The
+  window covers only `records.txt`'s 7 days: with fewer than 20 records in them the budget is
+  not measured, so a slow week can't breach it. Until #308 gives issues `area:` labels, no
+  issue is a product issue, so step 10's order doesn't change; step 8's term still applies.
 - No loop runs on a count from the input except over the parsed lists themselves.
 
 ## Security
@@ -383,14 +464,19 @@ never 2 (no command ran).
   day, and the 7-day term for 7 days. The cost is bounded: `idle` happens only when steps 1–10
   found nothing, the milestone term comes back the next UTC day, and the 7-day term after 7
   days (a forged record delays a Planner run by at most that long; step 11 still runs it
-  whenever nothing is ready). A branch name from `prs.json`
+  whenever nothing is ready). Forged records also move the work-mix reading: they can make the
+  Planner due once a day or reorder step 10 between ready issues, never block or hide one (the
+  budget only orders). An `area:` label is set by the agent account too (ADR 0011
+  Consequences), so a session can mark an issue product; the journal shows the pick. A branch name from `prs.json`
   goes to git only as `refs/remotes/origin/<name>`, so it can't be read as an option, and git's
   ref-name rules forbid `:` (no `<ref>:<path>` reads). Record lines are matched, never printed.
 - Self-check:
   - Arithmetic: the 14-day and 7-day subtractions from today and the records window's first
     day (`i64` days since 1970, checked), step 8's `today - day` (only when `day <= today`;
     both are days of the years 0000–9999, so it can't overflow), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
-    and `since + 1` (saturating).
+    and `since + 1` (saturating). The work mix: `counted × 100` and `70 × 20` (a count of at
+    most 20 records and constants), `counted × 100 / 20`, and the window's first index
+    `len − 20`, taken only when `len ≥ 20`.
   - What broken implementation still passes? The records window's day list is
     `record_dirs`, unit tested on a known day; only its use in the live command is not run. Every step has a fixture that selects it and a
     near miss for each filter (a done: reply for a longer URL, a pre-floor comment, a
@@ -410,6 +496,18 @@ never 2 (no command ran).
     hand on 2026-11-23: the `ls-tree` line run from `xtask/` lists main's three journal files of
     that day with root-relative paths, and the scheduler ran live with exit 0. A producer that
     read the wrong refs would pass every test.
+  - The work mix: what broken implementation still passes? Each filter has a fixture whose
+    removal changes the pick: the window's order by path (records written newest first), the
+    newest 20 (older milestone records that would lift the share), the (path, text) dedupe
+    (each line twice), each left-out kind (newer left-out records that would push milestone
+    ones out) and its near misses, each milestone-work condition (another milestone, none, not
+    listed; no product path, paths that only start like one; an untagged PR, a PR closing
+    another issue; `own-pr` on an issue number and the reverse), the 14/13-of-20 boundary, 19
+    records, no current milestone, and step 10's product label (process areas, near-miss
+    names, areas.toml's kind). Hand mutants of the sort, the dedupe, the left-out filter, the
+    `<` and the Planner-only note each fail a test. What the tests can't see: the two live `gh`
+    command lines (checked by hand on 2026-11-24: `files` holds `path`, the scheduler ran live
+    with exit 0).
   - Labels and `Depends on:` lines are written by the agent account, so a session can move work
     up or down the queue by editing them (ADR 0011 Consequences); the journal shows the pick.
 
@@ -420,7 +518,7 @@ Not applicable (CLI).
 macOS and Linux (`gh`, `git`, bash for the feed script).
 
 ## Performance
-Eight `gh` calls, one more per blocked issue updated in the last 7 days, three `git` commands
+Ten `gh` calls (`pr-files.json` takes about 9 s), one more per blocked issue updated in the last 7 days, three `git` commands
 plus one `git ls-tree` per open agent PR and one `git cat-file` per journal file of the last 7
 days, two more for `ops/QUEUE.md`, and the feed script (which makes its own); a few seconds.
 
@@ -451,6 +549,19 @@ of inputs where no step before 11 applies (→ `planner`):
   an owner issue linked by, or an owner comment named in, a held failing PR is not picked,
   and two held PRs are noted lowest first; a malformed
   `holds.json` (no `comments`, no `createdAt` on an owner command) exits 1;
+- step 6 (#275): a `needs-design` PR is picked and not step 3's, lowest number first, after a
+  failing PR without the label (step 3); near misses: `needs-designx`, `design`, `Needs-design`
+  (step 3 picks them), each skip label on the PR and on its issue, a merged or closed PR, an
+  `owner/` branch, an untagged PR, a held PR (none picked); a PR without a `Closes` link has no
+  issue lines; the whole brief. Step 1: an owner issue it closes and an owner comment its body
+  names are not picked, and are without the label. A `design` and `ready` issue in any
+  milestone, none, or claimed is picked, lowest first, after a `needs-design` PR; near misses:
+  `design` alone, `ready` alone, `design-pending`, each skip label, linked by an open PR (picked
+  when the PR is merged or closed); the whole brief. The precedence test has a step 6 entry
+  between steps 5 and 7 (its issue term), and a `needs-design` PR loses to main red, the
+  scheduler bug, a crash, a `sev:high` security issue, a flaky test and a leftover worktree and
+  wins over a due audit; step 10's `design` near miss is now step 6's pick (step 10's own
+  `design` skip is defensive only: step 6 takes any such issue first);
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,
@@ -488,6 +599,18 @@ of inputs where no step before 11 applies (→ `planner`):
   untagged, the label on the PR); `planner due` wins, and the note still shows; the
   precedence test's step 8 entry between `retro due` and step 10, and its second pass, where
   `planner due` wins over it;
+- the work mix (#288): 14 of 20 meets the budget, 13 of 20 is below it (`planner due`, its
+  reason and the note), 20/20, 0/20, 19 records (not measured), all three step 8 reasons
+  together, the note only on Planner picks, no current milestone, a Planner record dated today
+  (idle); the newest 20 by path whatever the line order; a duplicated line counted once and a
+  different line in the same file counted; each left-out kind and 13 near misses; each Worker
+  step and QC on an issue, `own-pr`, open and closed PRs, each milestone and file near miss,
+  each product prefix, an untagged PR, a PR closing another issue, a second PR for the issue,
+  the current milestone moving to M1; step 10 below the budget: the lowest product issue first,
+  the rule text with and without one, label near misses (`area:records`, `area:enginex`,
+  `area:Engine`, `engine`, `area: engine`, `area:`), a product issue each step 10 filter drops,
+  and areas.toml deciding the kind; malformed `pr-files.json`, `all-issues.json` and
+  `areas.toml` exit 1, also when step 1 picks;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form, the `Depends on:` parser, the journal listing over several days, the
-  `ops/QUEUE.md` listing line and the `Milestone:` line.
+  `ops/QUEUE.md` listing line, the `Milestone:` line and the record words of the work mix.

@@ -4,29 +4,39 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #309 (#246, task 4 part 1 of 3: `ops/areas.toml`, `cargo xtask issue-lint`) merged (65bbbb9). Part 2 is #308
-  (needs `ready` from the Planner), part 3 is #247 (depends on #308).
-- **PR #312** (#249, task 6 part 1/2, Design: product session): parked for the owner (#249 `blocked`, `owner-todo`).
-  After its design final check passed, #309 merged and it conflicted; origin/main merged in as bcee71c (AUTOMATION.md
-  keeps both paragraphs verbatim), auto-merge off. Not record-only at K = 6 with the design step spent, so the owner
-  says what review to run (#277 item 1 is this gap). Part 2/2, `docs/PRODUCT.md` v1, is #311.
-- PR #315 (#275, task 3 part 2: next-session step 6) is open.
+- PR #316 (#277) merged (3e4e342): TICK §4 step 6's "after the last check" rule; `cargo xtask metrics` counts design
+  final checks.
+- PR #317 (#288, task 2 part 2): the work-mix budget in next-session (step 8's third term, step 10 product-first,
+  TICK §9 step 4a). Review round 2 clean; origin/main merged in (STATUS conflict only), `ai-review` re-posted,
+  auto-merge on. Step 10's order changes only once #308 adds `area:` labels.
+- PR #318 (#294): TICK §9 step 6, a Planner PR closed at the cap; open.
+- PR #321 (#300, `cargo xtask nightly` 1/3): the regress tier through `jpdf-cli` under the judge's time limits and
+  (Linux) 2 GiB `ulimit -v`, `DIR/regress.json` + `regress-diff.json` (`--previous`). Rounds 1–3 posted and
+  triaged; `ai-review` success, auto-merge on. Deferred: #322 (keep stderr's tail, before #302), #323 (exec-bit
+  check by class). Parts 2 (#301, bench and fuzz time) and 3 (#302, issue filing; the CI `--previous` step needs the
+  owner) wait for the Planner's `ready`. Codex timed out (2400 s) on all three round briefs (45–110 KB).
+- #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
+  Planner), part 3 is #247 (depends on #308).
+- PR #312 (#249, Design: product session 1/2) is an open draft.
 - Planner 2026-11-24 merged (fea1992): `ops/QUEUE.md` from the labels; #19 → #300–#302, #16 → #303–#304,
   #15 → #305–#306; #14 → M9, #20 → M1, #22 → M2.
-- `cargo xtask next-session` decides steps 1–5, 7, 8, 10 and 11; step 6 is checked by hand until #275. Step 3 skips
-  an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca, which also carried #296's commits).
+- PR #315 (#275) merged (f4d60f7): `cargo xtask next-session` step 6 (Design: technical); TICK §2's by-hand step 6
+  check is gone. Part 3 is #314 (step 3's design PR past its 24-hour window; needs `ready` from the Planner); until it
+  lands TICK §1 checks the window by hand.
+- Step 3 skips an own PR on the owner's `/hold` and an `owner/` branch PR (PR #299, 335d6ca).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23: `gates.M0.pass`, `current_milestone` M1), but M0 is not
   tagged: its backlog isn't empty (rule j) and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - PR #232 (#187 part 1) merged (48f63d9). Part 2: #231 (sev:high, M2, `deferred`).
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
 - #236 (memory ADR, `deferred`) is the first design queue item. #146 stays open, `deferred` (waits for #25 or #236).
-- #21 waits on #19 (#300–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
+- #21 waits on #19 (#301–#302 after #300) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#275 is in PR #315; #308 waits for the next Planner's `ready`), else `idle` today (the Planner ran).
+   are closed (#308 and #314 wait for the next Planner's `ready`), else `idle` today (the Planner ran). Planner
+   picks now carry a `work mix:` note for QUEUE.md's Work mix section.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -38,7 +48,6 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #249: say on PR #312 what to run for its merge resolution bcee71c (`ai-review` with no review, or one delta review).
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
 - #266: apply ops/proposals/hold-automerge.md and run T0–T4 (PR #290, on your `/hold`).
 - #257: drop the Playwright cache step in ci.yml (protected).
@@ -52,5 +61,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- Tooling: clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
-  → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
+- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
+  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
+  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).

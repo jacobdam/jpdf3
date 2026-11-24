@@ -7,8 +7,9 @@
 # process that deliberately races the checks is out of scope: it can write files directly anyway.)
 # Codex reviews a plain export of HEAD (`git archive`, checked byte for byte, in its own fresh git
 # repo, no symlinks, sealed corpus manifest left out) under a permission profile that lets its
-# commands read only the export and the toolchain and write only the export, with the network,
-# ChatGPT apps and plugins off, strict config and a scrubbed environment.
+# commands read only the export and the toolchain (named Homebrew directories, never its etc/ or
+# var/) and write only the export, with the network, ChatGPT apps and plugins off, strict config
+# and a scrubbed environment.
 # Output: <out>.json (codex-review.schema.json plus status/reason) and <out>.log (Codex's log).
 # Exit codes: 2 = usage error (nothing written). Otherwise 0, always: on any failure the output
 # is {"status":"unavailable","reason":...}.
@@ -224,17 +225,26 @@ rc=$?
 
 # Codex's commands may read only the export (its workspace, writable), the platform paths of
 # `:minimal`, and the read-only toolchain: rustup toolchains, cargo's binaries and crate cache, and
-# Homebrew. Everything else is denied by `:root`, so the sealed manifest in the main checkout,
-# ~/.codex (auth), ~/.ssh, ~/.cargo/credentials.toml, ~/jpdf-corpus and ~/jpdf-research are
-# unreadable (AS.52, CX.1; CONSTITUTION 1.2, 13). `--sandbox workspace-write` limited writes and
-# network only. A permission profile replaces the legacy sandbox flags (Codex: "either
+# Homebrew's installed programs and libraries (HB_READ below). Everything else is denied by `:root`,
+# so the sealed manifest in the main checkout, ~/.codex (auth), ~/.ssh, ~/.cargo/credentials.toml,
+# ~/jpdf-corpus, ~/jpdf-research, and Homebrew's etc/ (configs) and var/ (logs, service data) are
+# unreadable (AS.52, CX.1, audit 0004 AS.2; CONSTITUTION 1.2, 13). `--sandbox workspace-write` limited
+# writes and network only. A permission profile replaces the legacy sandbox flags (Codex: "either
 # default_permissions and [permissions], or sandbox_mode / sandbox_workspace_write, but not both"),
 # so none of them may appear here. Profiles are Beta in Codex; --strict-config makes an unknown key a
 # failed run ("unavailable"), never a silently wider sandbox.
 q() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }   # TOML basic string
+# Homebrew, by name and never the prefix itself: bin/ (on PATH, BASE_ENV) links into Cellar/ and opt/;
+# programs load libraries from opt/, lib/ and Frameworks/ (Python); some read data from share/,
+# libexec/ or include/. Of Caskroom/ only Codex's own cask (its bundled rg). A directory left out
+# (etc/, var/, Library/, the prefix's dotfiles, any new one) stays denied, and so does a symlink
+# from a granted directory into it (expected: Seatbelt matches the resolved path; test plan T6).
+HB=/opt/homebrew
+HB_READ=("$HB/bin" "$HB/Cellar" "$HB/opt" "$HB/lib" "$HB/Frameworks" "$HB/share"
+         "$HB/libexec" "$HB/include" "$HB/Caskroom/codex")
 FS_POLICY="{ \":root\" = \"deny\", \":minimal\" = \"read\", \":slash_tmp\" = \"deny\""
 for r in "$HOME/.rustup/toolchains" "$HOME/.rustup/settings.toml" "$HOME/.cargo/bin" \
-         "$HOME/.cargo/registry" /opt/homebrew; do
+         "$HOME/.cargo/registry" "${HB_READ[@]}"; do
   FS_POLICY+=", $(q "$r") = \"read\""
 done
 FS_POLICY+=" }"

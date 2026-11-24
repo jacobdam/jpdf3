@@ -128,6 +128,12 @@ pub fn fetch(entries: &[Entry], dir: &Path, opts: &Options) -> Report {
     r
 }
 
+/// Whether `path` is a regular file with the size and git blob id of `e` (the check `fetch`
+/// makes before keeping a cached file). `cargo xtask nightly` runs only such files.
+pub fn is_verified(path: &Path, e: &Entry) -> bool {
+    verify(path, e).is_ok()
+}
+
 /// Why a file failed [`verify`].
 enum VerifyError {
     /// Opening or reading failed (not evidence about the bytes).

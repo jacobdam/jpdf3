@@ -7,7 +7,12 @@ on:
   issue_comment:
     types: [created]
 
+# #210: disablePullRequestAutoMerge fails with "Resource not accessible by integration" under
+# pull-requests: write alone (run 44976342149). GitHub's own `gh pr merge --auto` example
+# (Dependabot docs) grants contents: write as well. The job checks out nothing and runs only
+# fixed gh commands; the comment body is only pattern-matched, never run.
 permissions:
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -29,12 +34,44 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number }}
           BODY: ${{ github.event.comment.body }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # #210: the comment reports the PR's state read back from GitHub after the commands,
+          # never what the commands were meant to do. Anything unreadable counts as failed.
+          set -u
+          # readstate sets draft and auto to the words gh prints ("true"/"false"), or to unknown
+          # if gh fails. Every check below compares exact words, so any other output fails closed.
+          readstate() {
+            draft=unknown auto=unknown
+            local s
+            s=$(gh pr view "$PR" --json isDraft,autoMergeRequest --jq '"\(.isDraft) \(.autoMergeRequest != null)"') || return 0
+            read -r draft auto <<<"$s" || true
+          }
+          err=""
+          readstate
           if [[ "$BODY" == /hold* ]]; then
-            gh pr merge "$PR" --disable-auto || true
-            gh pr ready "$PR" --undo
-            gh pr comment "$PR" --body "🤖 jpdf-agent /hold applied: this PR is a draft again and auto-merge is off. Only the owner's /release undoes it."
+            if [[ "$auto" != false ]]; then
+              gh pr merge "$PR" --disable-auto || err="${err}disabling auto-merge failed. "
+            fi
+            if [[ "$draft" != true ]]; then
+              gh pr ready "$PR" --undo || err="${err}converting to draft failed. "
+            fi
+            readstate
+            if [[ "$draft" == true && "$auto" == false ]]; then
+              gh pr comment "$PR" --body "🤖 jpdf-agent /hold applied: this PR is a draft and auto-merge is off (read back from GitHub). Only the owner's /release undoes it."
+            else
+              gh pr comment "$PR" --body "🤖 jpdf-agent /hold FAILED: ${err}State read back: draft=$draft, auto-merge on=$auto. Turn auto-merge off and convert the PR to a draft by hand. Run: $RUN_URL"
+              exit 1
+            fi
           else
-            gh pr ready "$PR"
-            gh pr comment "$PR" --body "🤖 jpdf-agent /release applied: this PR is ready again. The next agent session re-enables auto-merge."
+            if [[ "$draft" != false ]]; then
+              gh pr ready "$PR" || err="${err}marking ready failed. "
+            fi
+            readstate
+            if [[ "$draft" == false ]]; then
+              gh pr comment "$PR" --body "🤖 jpdf-agent /release applied: this PR is ready again (read back from GitHub). The next agent session re-enables auto-merge."
+            else
+              gh pr comment "$PR" --body "🤖 jpdf-agent /release FAILED: ${err}State read back: draft=$draft. Mark the PR ready by hand. Run: $RUN_URL"
+              exit 1
+            fi
           fi

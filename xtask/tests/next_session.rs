@@ -260,6 +260,11 @@ fn base() -> Vec<(&'static str, String)> {
         ),
         ("records.txt", base_records()),
         ("queue.md", BASE_QUEUE.to_owned()),
+        // The work mix (#288): no PR changes files, no issue has a milestone, and the base's 5
+        // records are too few to measure.
+        ("pr-files.json", "[]".to_owned()),
+        ("all-issues.json", "[]".to_owned()),
+        ("areas.toml", AREAS.to_owned()),
         // PR 300 was held and released: not held.
         (
             "holds.json",
@@ -278,6 +283,11 @@ fn base() -> Vec<(&'static str, String)> {
         ),
     ]
 }
+
+/// `ops/areas.toml`: one product area and the two process areas issue-lint requires.
+const AREAS: &str = "[[area]]\nname = \"engine\"\nkind = \"product\"\npaths = [\"crates/\"]\n\n\
+                     [[area]]\nname = \"process\"\nkind = \"process\"\npaths = [\"ops/\"]\n\n\
+                     [[area]]\nname = \"records\"\nkind = \"process\"\npaths = [\"ops/journal/\"]\n";
 
 /// `ops/QUEUE.md` on origin/main: it plans the current milestone, M0 (step 8 near miss).
 const BASE_QUEUE: &str = "# QUEUE\n\nMilestone: M0\nPlanned: 2026-11-23\n";
@@ -741,7 +751,8 @@ fn base_is_planner_with_notes() {
         out,
         "planner\n\nRule: j (nothing applies and no Session: planner record is dated today): the Planner\n\
          Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
-         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n\
+         - work mix: not measured (5 of the 20 session records it needs)\n"
     );
 }
 
@@ -1607,6 +1618,12 @@ fn precedence_removes_each_step_in_turn() {
             )],
         ),
         (
+            "design-technical design-issue #650",
+            vec![],
+            vec![issue(650, "d", &["design", "ready"])],
+            vec![],
+        ),
+        (
             "audit due",
             vec![],
             vec![],
@@ -1782,6 +1799,9 @@ fn malformed_inputs_exit_1() {
         "milestones.json",
         "blocked.json",
         "records.txt",
+        "pr-files.json",
+        "all-issues.json",
+        "areas.toml",
     ] {
         let o = run_with(&[(name, None)]).unwrap();
         assert_eq!(o.status.code(), Some(1), "missing {name}");
@@ -2294,7 +2314,14 @@ fn step10_ready_issue() {
         "design",
         "design-pending",
     ] {
-        assert_eq!(with(&[ready(701, "M0", &[l], "")]), "planner", "{l}");
+        // Since #275 step 6 takes a `design` and `ready` issue before step 10 sees it, so step
+        // 10's own `design` skip is defensive only and no fixture reaches it (R1.2).
+        let want = if l == "design" {
+            "design-technical design-issue #701"
+        } else {
+            "planner"
+        };
+        assert_eq!(with(&[ready(701, "M0", &[l], "")]), want, "{l}");
     }
     // #301 (ready, M0) is linked by the open PR #300 in the base; without the PR it's picked.
     let merged = pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]");
@@ -2482,7 +2509,8 @@ fn step8_planner_due_on_an_unplanned_milestone() {
         String::from_utf8(o.stdout).unwrap(),
         "planner due\n\nRule: j (the Planner is due: ops/QUEUE.md on origin/main doesn't plan the current milestone M0)\n\
          Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
-         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n\
+         - work mix: not measured (5 of the 20 session records it needs)\n"
     );
     let o = run_with(&[("queue.md", None)]).unwrap();
     let out = String::from_utf8(o.stdout).unwrap();
@@ -2745,8 +2773,11 @@ fn step8_design_product() {
             changes.push(plus("prs.json", &prs));
         }
         let got = pick(&changes);
+        // A `design` and `ready` issue is step 6's since #275.
         assert!(
-            got == "planner" || got == "worker ready #901",
+            got == "planner"
+                || got == "worker ready #901"
+                || got == "design-technical design-issue #901",
             "{issues:?}: {got}"
         );
         assert_ne!(got, "design product #901");
@@ -2934,4 +2965,891 @@ fn step8_design_product() {
         out.contains("but PR #912 is open for it: not picked"),
         "{out}"
     );
+}
+
+/// Step 6 (#275): a Design: technical session on an open agent PR labeled `needs-design`, then
+/// on an open issue labeled `design` and `ready`.
+#[test]
+fn step6_needs_design_pr() {
+    // PR 320 is a draft with no ai-review success (failing, as an escalated PR is on purpose);
+    // it closes issue 321.
+    let nd = |n: u64, state: &str, branch: &str, l: &[&str]| {
+        pr(n, state, &format!("Closes #{}", n + 1), branch, l, "[]")
+    };
+    let issue321 = |l: &[&str]| plus("issues.json", &[issue(321, "x", l)]);
+    let with = |prs: &[String], l: &[&str]| pick(&[plus("prs.json", prs), issue321(l)]);
+    let picked = "design-technical needs-design #320";
+    assert_eq!(
+        with(&[nd(320, "OPEN", "t/321-a", &["needs-design"])], &[]),
+        picked,
+        "not step 3's own-pr"
+    );
+    // Lowest number first, whatever the list order.
+    assert_eq!(
+        with(
+            &[
+                nd(330, "OPEN", "t/331-a", &["needs-design"]),
+                nd(320, "OPEN", "t/321-a", &["needs-design"])
+            ],
+            &[]
+        ),
+        picked
+    );
+    // A failing PR without the label is step 3's, which comes first.
+    assert_eq!(
+        with(
+            &[
+                nd(320, "OPEN", "t/321-a", &["needs-design"]),
+                nd(330, "OPEN", "t/331-a", &[])
+            ],
+            &[]
+        ),
+        "worker own-pr #330"
+    );
+    // Near misses that a failing PR without the label would hit: step 3 picks them.
+    for label in ["needs-designx", "design", "Needs-design"] {
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &[label])], &[]),
+            "worker own-pr #320",
+            "{label}"
+        );
+    }
+    // Near misses: not picked by step 6 (nor by step 3).
+    for s in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &["needs-design", s])], &[]),
+            "planner",
+            "{s} on the PR"
+        );
+        assert_eq!(
+            with(&[nd(320, "OPEN", "t/321-a", &["needs-design"])], &[s]),
+            "planner",
+            "{s} on its issue"
+        );
+    }
+    for state in ["MERGED", "CLOSED"] {
+        assert_eq!(
+            with(&[nd(320, state, "t/321-a", &["needs-design"])], &[]),
+            "planner",
+            "{state}"
+        );
+    }
+    assert_eq!(
+        with(&[nd(320, "OPEN", "owner/x", &["needs-design"])], &[]),
+        "planner",
+        "the owner's own change"
+    );
+    assert_eq!(
+        pick(&[
+            plus(
+                "prs.json",
+                &[raw_pr(
+                    320,
+                    "OPEN",
+                    "Closes #321",
+                    "t/321-a",
+                    &["needs-design"],
+                    "[]"
+                )]
+            ),
+            issue321(&[]),
+        ]),
+        "planner",
+        "an untagged PR is the owner's"
+    );
+    assert_eq!(
+        pick(&[
+            plus("prs.json", &[nd(320, "OPEN", "t/321-a", &["needs-design"])]),
+            issue321(&[]),
+            holds(&[(320, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+        ]),
+        "planner",
+        "held"
+    );
+    // Without a Closes link: picked, and the brief has no issue lines.
+    let o = run_with(&[plus(
+        "prs.json",
+        &[pr(
+            320,
+            "OPEN",
+            "Refs #321",
+            "t/321-a",
+            &["needs-design"],
+            "[]",
+        )],
+    )])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with(&format!("{picked}\n")), "{out}");
+    assert!(!out.contains("#321"), "{out}");
+    // The brief.
+    let o = run_with(&[
+        plus("prs.json", &[nd(320, "OPEN", "t/321-a", &["needs-design"])]),
+        issue321(&[]),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let brief = "design-technical needs-design #320\n\n\
+        Rule: step 6 (a PR escalated to design, ops/TICK.md §4 step 6: one design output, §8)\n\
+        Load:\n- gh pr view 320 --comments\n- gh issue view 321 --comments\n\
+        - gh pr list --state all --search '\"Closes #321\" in:body'\n\
+        - ops/TICK.md §8\n- specs/tooling/design-technical.md\n- docs/PRINCIPLES.md\n\
+        - docs/adr/_TEMPLATE-design.md\n- docs/adr/0010-review-rounds-converge.md\n\
+        - docs/adr/0011-session-types-and-scheduler.md §5\nNotes:\n";
+    assert!(out.starts_with(brief), "{out}");
+}
+
+#[test]
+fn step6_needs_design_pr_holds_its_owner_instruction() {
+    // Step 1 counts an owner issue closed by, or an owner comment named in, a needs-design PR
+    // as in flight (the design session is doing it), as it does for a held PR.
+    let url = format!("{ISSUES}40#issuecomment-123");
+    let nd =
+        |body: &str, l: &[&str]| plus("prs.json", &[pr(320, "OPEN", body, "t/250-a", l, "[]")]);
+    let issue = feed_plus(&[feed_issue(250)]);
+    let comment = feed_plus(&[feed_comment("comment", &url, FLOOR)]);
+    assert_eq!(
+        pick(&[issue.clone(), nd("Closes #250", &["needs-design"])]),
+        "design-technical needs-design #320"
+    );
+    assert_eq!(
+        pick(&[
+            comment.clone(),
+            nd(&format!("Owner instruction: {url}"), &["needs-design"])
+        ]),
+        "design-technical needs-design #320"
+    );
+    // Near misses: without the label the failing PR doesn't hold them.
+    assert_eq!(
+        pick(&[issue, nd("Closes #250", &[])]),
+        "worker owner-issue #250"
+    );
+    assert_eq!(
+        pick(&[comment, nd(&format!("Owner instruction: {url}"), &[])]),
+        format!("worker owner-comment {url}")
+    );
+}
+
+#[test]
+fn step6_ready_design_issue() {
+    let d = |n: u64, l: &[&str], m: &str| {
+        full_issue(n, "d", l, "", &format!(r#"{{"title":{m:?},"number":5}}"#))
+    };
+    let one = |l: &[&str]| pick(&[plus("issues.json", &[d(650, l, "M5")])]);
+    let picked = "design-technical design-issue #650";
+    // Any milestone, and a claimed one (a design session that died) too.
+    assert_eq!(one(&["design", "ready"]), picked);
+    assert_eq!(one(&["ready", "design", "in-progress"]), picked);
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[full_issue(650, "d", &["design", "ready"], "", "null")]
+        )]),
+        picked,
+        "no milestone"
+    );
+    // Lowest number first.
+    assert_eq!(
+        pick(&[plus(
+            "issues.json",
+            &[
+                d(660, &["design", "ready"], "M0"),
+                d(650, &["design", "ready"], "M5")
+            ]
+        )]),
+        picked
+    );
+    // Near misses.
+    assert_eq!(one(&["design"]), "planner", "not ready");
+    assert_eq!(one(&["ready"]), "planner", "not design (and not M0)");
+    assert_eq!(
+        one(&["design-pending", "ready"]),
+        "planner",
+        "another label"
+    );
+    for s in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(one(&["design", "ready", s]), "planner", "{s}");
+    }
+    // In flight: an open agent PR links it, whatever its checks; a merged one doesn't.
+    let linked = |state: &str, rollup: &str| {
+        pick(&[
+            plus("issues.json", &[d(650, &["design", "ready"], "M5")]),
+            plus(
+                "prs.json",
+                &[pr(
+                    651,
+                    state,
+                    "Closes #650",
+                    "t/650-a",
+                    &["design"],
+                    rollup,
+                )],
+            ),
+        ])
+    };
+    assert_eq!(linked("OPEN", GREEN), "planner", "an open PR links it");
+    assert_eq!(linked("MERGED", "[]"), picked, "a merged PR");
+    assert_eq!(linked("CLOSED", "[]"), picked, "a closed PR");
+    // A needs-design PR comes first; the brief.
+    let o = run_with(&[
+        plus("issues.json", &[d(650, &["design", "ready"], "M5")]),
+        plus(
+            "prs.json",
+            &[pr(
+                670,
+                "OPEN",
+                "Closes #671",
+                "t/671-a",
+                &["needs-design"],
+                "[]",
+            )],
+        ),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.starts_with("design-technical needs-design #670\n"),
+        "{out}"
+    );
+    let o = run_with(&[plus("issues.json", &[d(650, &["design", "ready"], "M5")])]).unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    let brief = "design-technical design-issue #650\n\n\
+        Rule: step 6 (a ready design issue: an ADR or principle, or one owner question, ops/TICK.md §8)\n\
+        Load:\n- gh issue view 650 --comments\n\
+        - ops/TICK.md §8\n- specs/tooling/design-technical.md\n- docs/PRINCIPLES.md\n\
+        - docs/adr/_TEMPLATE-design.md\n- docs/adr/0010-review-rounds-converge.md\n\
+        - docs/adr/0011-session-types-and-scheduler.md §5\nNotes:\n";
+    assert!(out.starts_with(brief), "{out}");
+}
+
+#[test]
+fn step6_needs_design_pr_comes_after_steps_2_to_5() {
+    // R1.1: a needs-design PR (320, closing 321) loses to each of steps 2 to 5, and wins over
+    // step 7 once they are gone.
+    let nd = plus(
+        "prs.json",
+        &[pr(
+            320,
+            "OPEN",
+            "Closes #321",
+            "t/321-a",
+            &["needs-design"],
+            "[]",
+        )],
+    );
+    let wins = "design-technical needs-design #320";
+    assert_eq!(pick(std::slice::from_ref(&nd)), wins);
+    let cases: Vec<(&str, (&'static str, Option<String>))> = vec![
+        (
+            "worker main-red run 20",
+            set(
+                "runs.json",
+                format!("[{}]", run_entry(20, "completed", "failure", "push")),
+            ),
+        ),
+        (
+            "worker scheduler-bug #400",
+            plus("issues.json", &[issue(400, "next-session: x", &["bug"])]),
+        ),
+        (
+            "worker crash-security #500",
+            plus("issues.json", &[issue(500, "x", &["crash"])]),
+        ),
+        (
+            "worker crash-security #510",
+            plus("issues.json", &[issue(510, "x", &["security", "sev:high"])]),
+        ),
+        (
+            "worker flaky #600",
+            plus("issues.json", &[issue(600, "f", &["flaky"])]),
+        ),
+        (
+            "worker leftover-worktree t/9-z",
+            set(
+                "worktrees.txt",
+                "worktree /w/e\nHEAD f\nbranch refs/heads/t/9-z\n".to_owned(),
+            ),
+        ),
+    ];
+    for (want, change) in cases {
+        assert_eq!(pick(&[nd.clone(), change]), want);
+    }
+    // Step 7 comes after it.
+    let no_audit = set(
+        "main-log.txt",
+        [
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat(),
+    );
+    assert_eq!(pick(std::slice::from_ref(&no_audit)), "audit due");
+    assert_eq!(pick(&[nd, no_audit]), wins);
+}
+
+/// Work-mix fixtures (#288): issue #801 is in M0 (`all-issues.json`), and the merged agent PR
+/// #802 closes it and changes a product path (`pr-files.json`), so `worker ready #801` and
+/// `worker own-pr #802` are milestone work.
+fn mix_inputs() -> Vec<(&'static str, Option<String>)> {
+    vec![
+        plus(
+            "prs.json",
+            &[pr(802, "MERGED", "Closes #801", "t/801-m", &[], "[]")],
+        ),
+        set(
+            "pr-files.json",
+            r#"[{"number":802,"files":[{"path":"ops/TICK.md"},{"path":"crates/jpdf-cos/src/lib.rs"}]}]"#
+                .to_owned(),
+        ),
+        set(
+            "all-issues.json",
+            r#"[{"number":801,"milestone":{"title":"M0","number":1}},{"number":9,"milestone":null}]"#
+                .to_owned(),
+        ),
+    ]
+}
+
+/// Records, oldest first by path: a Planner record on `planner_day` (in the window, never
+/// milestone work), then `other` audit records and `milestone` Worker records on #801, all on
+/// 2026-11-24. They are written newest first, so the scheduler must order them by path.
+fn mix_records(milestone: usize, other: usize, planner_day: &str) -> String {
+    let mut lines = vec![(
+        format!("ops/journal/{planner_day}/0000-p.md"),
+        "- Session: planner".to_owned(),
+    )];
+    for i in 0..other {
+        lines.push((
+            format!("ops/journal/2026-11-24/01{i:02}-o.md"),
+            "- Session: audit due".to_owned(),
+        ));
+    }
+    for i in 0..milestone {
+        lines.push((
+            format!("ops/journal/2026-11-24/02{i:02}-m.md"),
+            "- Session: worker ready #801".to_owned(),
+        ));
+    }
+    lines.reverse();
+    lines.iter().map(|(p, l)| format!("{p}\t{l}\n")).collect()
+}
+
+/// `mix_inputs()` plus `changes` (later entries replace earlier ones of the same name).
+fn mix_pick(changes: &[(&'static str, Option<String>)]) -> String {
+    let mut all = mix_inputs();
+    all.extend_from_slice(changes);
+    pick(&all)
+}
+
+/// The whole output, or a description of the failure (so the caller's assertion shows it).
+fn mix_brief(changes: &[(&'static str, Option<String>)]) -> String {
+    let mut all = mix_inputs();
+    all.extend_from_slice(changes);
+    match run_with(&all) {
+        Err(e) => format!("io error: {e}"),
+        Ok(o) if o.status.code() != Some(0) => format!(
+            "exit {:?}: {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+    }
+}
+
+const BREACH_NOTE: &str =
+    "- work mix: 13 of the last 20 sessions on milestone work (65%; budget 70%)\n";
+
+#[test]
+fn work_mix_70_percent_of_the_last_20() {
+    let recs = |m: usize, o: usize| set("records.txt", mix_records(m, o, "2026-11-20"));
+    // 14 of 20 (70%) meets the budget; 13 of 20 (65%) is below it, and the Planner is due. With
+    // a window of 20, 13 is the nearest count under 70% (69% can't occur).
+    assert_eq!(mix_pick(&[recs(14, 5)]), "planner");
+    assert_eq!(mix_pick(&[recs(13, 6)]), "planner due");
+    assert_eq!(mix_pick(&[recs(20, 0)]), "planner");
+    assert_eq!(mix_pick(&[recs(0, 19)]), "planner due");
+    // Fewer than 20 records: not measured, never a breach.
+    assert_eq!(mix_pick(&[recs(0, 18)]), "planner");
+    assert_eq!(mix_pick(&[recs(13, 5)]), "planner");
+    // The briefs: the reading is a Planner pick's note, and the breach is a step 8 reason.
+    let out = mix_brief(&[recs(13, 6)]);
+    assert_eq!(
+        out,
+        format!(
+            "planner due\n\nRule: j (the Planner is due: the work mix is below 70%: 13 of the last 20 sessions on milestone work)\n\
+             Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
+             Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n{BREACH_NOTE}"
+        )
+    );
+    assert!(
+        mix_brief(&[recs(14, 5)]).ends_with(
+            "- work mix: 14 of the last 20 sessions on milestone work (70%; budget 70%)\n"
+        )
+    );
+    assert!(
+        mix_brief(&[recs(13, 5)])
+            .ends_with("- work mix: not measured (19 of the 20 session records it needs)\n")
+    );
+    // Every term together, in order.
+    let out = mix_brief(&[
+        set("records.txt", mix_records(13, 7, "2026-11-10")),
+        ("queue.md", None),
+    ]);
+    assert!(
+        out.starts_with(
+            "planner due\n\nRule: j (the Planner is due: ops/QUEUE.md is missing on origin/main or unreadable; \
+             no Session: planner record is dated in the last 7 UTC days; \
+             the work mix is below 70%: 13 of the last 20 sessions on milestone work)\n"
+        ),
+        "{out}"
+    );
+    // The reading is noted on Planner picks only.
+    let ready = plus("issues.json", &[ready(700, "M0", &[], "")]);
+    let out = mix_brief(&[recs(14, 5), ready]);
+    assert!(out.starts_with("worker ready #700\n"), "{out}");
+    assert!(!out.contains("work mix"), "{out}");
+    // No current milestone: not measured (and no milestone term).
+    let out = mix_brief(&[
+        recs(13, 6),
+        set("milestones.json", r#"[{"title":"Mx"}]"#.to_owned()),
+    ]);
+    assert!(
+        out.starts_with("planner\n")
+            && out.ends_with("- work mix: not measured (no current milestone)\n"),
+        "{out}"
+    );
+    // Once a day: a Planner record dated today turns the term off (idle, no note).
+    let out = mix_brief(&[set("records.txt", mix_records(13, 6, "2026-11-24"))]);
+    assert!(
+        out.starts_with("idle\n") && !out.contains("work mix"),
+        "{out}"
+    );
+}
+
+#[test]
+fn work_mix_window_is_the_newest_20_by_path() {
+    // The Planner record (2026-11-20), six older milestone records (2026-11-21), then 7 audits
+    // and 13 milestone records: the newest 20 hold 13 (below). The 27 together hold 19 milestone
+    // records (70%, not below); the oldest 20 would hold 12.
+    let older: String = (0..6)
+        .map(|i| format!("ops/journal/2026-11-21/03{i:02}-m.md\t- Session: worker ready #801\n"))
+        .collect();
+    let text = format!("{}{older}", mix_records(13, 7, "2026-11-20"));
+    assert_eq!(mix_pick(&[set("records.txt", text.clone())]), "planner due");
+    // Line order doesn't matter: the same records oldest first.
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines.sort_unstable();
+    let sorted: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    assert_eq!(mix_pick(&[set("records.txt", sorted)]), "planner due");
+    // A record on two refs (the same path and line twice) counts once. The Planner record,
+    // 14 milestone records, then 5 audits, each twice: counted once, 14 of 20; without it the
+    // newest 20 lines would be the last 10 records (5 milestone).
+    let mut once: Vec<String> =
+        vec!["ops/journal/2026-11-20/0000-p.md\t- Session: planner".to_owned()];
+    once.extend(
+        (0..14)
+            .map(|i| format!("ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801")),
+    );
+    once.extend(
+        (0..5).map(|i| format!("ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due")),
+    );
+    let text = |n: usize| -> String {
+        once.iter()
+            .flat_map(|l| std::iter::repeat_n(l, n))
+            .map(|l| format!("{l}\n"))
+            .collect()
+    };
+    assert_eq!(mix_pick(&[set("records.txt", text(1))]), "planner");
+    assert_eq!(mix_pick(&[set("records.txt", text(2))]), "planner");
+    // A different line in the same file is another record.
+    let extra: String = (0..5)
+        .map(|i| format!("ops/journal/2026-11-24/01{i:02}-o.md\t- Session: retro due\n"))
+        .collect();
+    assert_eq!(
+        mix_pick(&[set("records.txt", format!("{}{extra}", text(1)))]),
+        "planner due"
+    );
+}
+
+#[test]
+fn work_mix_leaves_out_owner_instructions_and_design_sessions() {
+    // The Planner record (oldest by path), 14 milestone records, 5 audits, then 5 newer ones of
+    // an excluded kind: left out, the window is 14 of 20; in the window, 10 of 20. The owner
+    // kinds name #9 (no milestone), so they'd not be milestone work if they were counted (R1.1).
+    for kind in [
+        "worker owner-issue #9",
+        "worker owner-comment https://github.com/jacobdam/jpdf3/issues/1#issuecomment-2",
+        "worker owner-done #9",
+        "design-technical needs-design #802",
+        "design-technical design-issue #801",
+        "design-product x #801",
+    ] {
+        let mut text = String::new();
+        for i in 0..14 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801\n"
+            ));
+        }
+        text.push_str("ops/journal/2026-11-20/0000-p.md\t- Session: planner\n");
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due\n"
+            ));
+        }
+        let base = text.clone();
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/02{i:02}-x.md\t- Session: {kind}\n"
+            ));
+        }
+        assert_eq!(mix_pick(&[set("records.txt", base)]), "planner", "{kind}");
+        assert_eq!(mix_pick(&[set("records.txt", text)]), "planner", "{kind}");
+    }
+    // Near misses: these kinds are in the window and not milestone work, so 5 of them push 4
+    // milestone records and the Planner record out (10 of 20).
+    for kind in [
+        "worker main-red run 801",
+        "worker leftover-worktree t/801-m",
+        "Worker ready #801",
+        "worker ready #801 x",
+        "worker ready 801",
+        "worker ready #801x",
+        "workers ready #801",
+        "worker",
+        "design technical #801",
+        "audit due",
+        "retro due",
+        "fallback exit 1",
+        "worker owner",
+    ] {
+        let mut text = String::new();
+        for i in 0..14 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/00{i:02}-m.md\t- Session: worker ready #801\n"
+            ));
+        }
+        text.push_str("ops/journal/2026-11-20/0000-p.md\t- Session: planner\n");
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/01{i:02}-o.md\t- Session: audit due\n"
+            ));
+        }
+        for i in 0..5 {
+            text.push_str(&format!(
+                "ops/journal/2026-11-24/02{i:02}-x.md\t- Session: {kind}\n"
+            ));
+        }
+        assert_eq!(
+            mix_pick(&[set("records.txt", text)]),
+            "planner due",
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn work_mix_counts_milestone_work_only() {
+    // 14 of 20 records name the same work; a change that makes it not milestone work drops the
+    // count to 0 (planner due).
+    let with = |work: &str, extra: &[(&'static str, Option<String>)]| {
+        let text = mix_records(14, 5, "2026-11-20").replace("worker ready #801", work);
+        let mut changes = vec![set("records.txt", text)];
+        changes.extend_from_slice(extra);
+        mix_pick(&changes)
+    };
+    let prs = |p: String| plus("prs.json", &[p]);
+    let files = |list: &str| set("pr-files.json", list.to_owned());
+    let issues = |list: &str| set("all-issues.json", list.to_owned());
+    assert_eq!(with("worker ready #801", &[]), "planner");
+    // Every Worker step on an issue counts, and a QC session on one.
+    for w in [
+        "worker crash-security #801",
+        "worker flaky #801",
+        "worker scheduler-bug #801",
+        "qc any #801",
+    ] {
+        assert_eq!(with(w, &[]), "planner", "{w}");
+    }
+    // `own-pr #802`: the PR changes a product path and links #801, which is in M0.
+    assert_eq!(with("worker own-pr #802", &[]), "planner");
+    // The PR may be open, merged or closed.
+    for state in ["OPEN", "CLOSED"] {
+        let p = set(
+            "prs.json",
+            format!(
+                "[{},{}]",
+                base_of("prs.json")
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']'),
+                pr(802, state, "Closes #801", "t/801-m", &[], GREEN)
+            ),
+        );
+        assert_eq!(
+            with("worker ready #801", std::slice::from_ref(&p)),
+            "planner",
+            "{state}"
+        );
+        assert_eq!(with("worker own-pr #802", &[p]), "planner", "{state}");
+    }
+    // Near misses on the issue: another milestone, no milestone, not listed.
+    for list in [
+        r#"[{"number":801,"milestone":{"title":"M1"}}]"#,
+        r#"[{"number":801,"milestone":{"title":"m0"}}]"#,
+        r#"[{"number":801,"milestone":null}]"#,
+        r#"[{"number":8010,"milestone":{"title":"M0"}}]"#,
+        "[]",
+    ] {
+        assert_eq!(
+            with("worker ready #801", &[issues(list)]),
+            "planner due",
+            "{list}"
+        );
+        assert_eq!(
+            with("worker own-pr #802", &[issues(list)]),
+            "planner due",
+            "{list}"
+        );
+    }
+    // Near misses on the PR's files: no product path (paths that only start like one), no
+    // entry, an entry for another PR.
+    for list in [
+        r#"[{"number":802,"files":[{"path":"ops/TICK.md"},{"path":"cratesx/a.rs"},{"path":"tools/jpdf-clix/a"},{"path":"xtask/crates/a.rs"},{"path":"/crates/a.rs"}]}]"#,
+        r#"[{"number":802,"files":[]}]"#,
+        r#"[{"number":803,"files":[{"path":"crates/a.rs"}]}]"#,
+        "[]",
+    ] {
+        assert_eq!(
+            with("worker ready #801", &[files(list)]),
+            "planner due",
+            "{list}"
+        );
+        assert_eq!(
+            with("worker own-pr #802", &[files(list)]),
+            "planner due",
+            "{list}"
+        );
+    }
+    // Every product path counts.
+    for path in [
+        "crates/a.rs",
+        "bindings/b",
+        "apps/web/c.ts",
+        "fuzz/d.rs",
+        "tools/jpdf-cli/e.rs",
+        "tools/fsio/f.rs",
+    ] {
+        let list = format!(r#"[{{"number":802,"files":[{{"path":{path:?}}}]}}]"#);
+        assert_eq!(
+            with("worker ready #801", &[files(&list)]),
+            "planner",
+            "{path}"
+        );
+    }
+    // Near misses on the link: an untagged PR (the owner's), a PR closing another issue, no PR.
+    let base_prs = base_of("prs.json");
+    let base_inner = base_prs
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
+    let only = |p: String| set("prs.json", format!("[{base_inner},{p}]"));
+    assert_eq!(
+        with(
+            "worker ready #801",
+            &[only(raw_pr(
+                802,
+                "MERGED",
+                "Closes #801",
+                "t/801-m",
+                &[],
+                "[]"
+            ))]
+        ),
+        "planner due"
+    );
+    assert_eq!(
+        with(
+            "worker own-pr #802",
+            &[only(raw_pr(
+                802,
+                "MERGED",
+                "Closes #801",
+                "t/801-m",
+                &[],
+                "[]"
+            ))]
+        ),
+        "planner due"
+    );
+    let other = only(pr(802, "MERGED", "Closes #9", "t/9-m", &[], "[]"));
+    assert_eq!(
+        with("worker ready #801", std::slice::from_ref(&other)),
+        "planner due"
+    );
+    assert_eq!(with("worker own-pr #802", &[other]), "planner due");
+    assert_eq!(
+        with("worker ready #801", &[set("prs.json", base_of("prs.json"))]),
+        "planner due"
+    );
+    // A second PR for the issue that changes a product path is enough.
+    assert_eq!(
+        with(
+            "worker ready #801",
+            &[
+                prs(pr(805, "CLOSED", "Closes #801", "t/801-n", &[], "[]")),
+                files(r#"[{"number":802,"files":[]},{"number":805,"files":[{"path":"apps/x"}]}]"#)
+            ]
+        ),
+        "planner"
+    );
+    // `own-pr` names a PR, not an issue: #801 as a PR and #802 as an issue are not work.
+    assert_eq!(with("worker own-pr #801", &[]), "planner due");
+    assert_eq!(with("worker ready #802", &[]), "planner due");
+    // The current milestone moves: M1 work is milestone work once M0 is closed (the plan
+    // follows, so step 8's milestone term stays off).
+    let m1 = [
+        set("milestones.json", r#"[{"title":"M1"}]"#.to_owned()),
+        set("queue.md", "Milestone: M1\n".to_owned()),
+    ];
+    assert_eq!(with("worker ready #801", &m1), "planner due");
+    let mut moved = m1.to_vec();
+    moved.push(issues(r#"[{"number":801,"milestone":{"title":"M1"}}]"#));
+    assert_eq!(with("worker ready #801", &moved), "planner");
+}
+
+#[test]
+fn step10_product_issues_first_below_the_budget() {
+    // A Planner record dated today: step 8 is off, so step 10 picks.
+    let below = set("records.txt", mix_records(13, 6, "2026-11-24"));
+    let meets = set("records.txt", mix_records(14, 5, "2026-11-24"));
+    let ready_list = |extra: &[String]| plus("issues.json", extra);
+    let both = ready_list(&[
+        ready(701, "M0", &[], ""),
+        ready(702, "M0", &["area:process"], ""),
+        ready(703, "M0", &["area:engine"], ""),
+    ]);
+    assert_eq!(
+        mix_pick(&[meets.clone(), both.clone()]),
+        "worker ready #701"
+    );
+    let out = mix_brief(&[below.clone(), both]);
+    assert_eq!(
+        out,
+        "worker ready #703\n\nRule: i (the work mix is below 70%: the lowest-numbered ready product issue in the \
+         current milestone with its dependencies closed, this one)\nLoad:\n- gh issue view 703 --comments\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // The lowest product issue among several.
+    assert_eq!(
+        mix_pick(&[
+            below.clone(),
+            ready_list(&[
+                ready(705, "M0", &["area:engine"], ""),
+                ready(701, "M0", &[], ""),
+                ready(704, "M0", &["area:engine"], "")
+            ])
+        ]),
+        "worker ready #704"
+    );
+    // No product issue ready: the lowest ready issue, and the rule says so.
+    let out = mix_brief(&[
+        below.clone(),
+        ready_list(&[
+            ready(702, "M0", &[], ""),
+            ready(701, "M0", &["area:process"], ""),
+        ]),
+    ]);
+    assert!(
+        out.starts_with(
+            "worker ready #701\n\nRule: i (the work mix is below 70%: the lowest-numbered ready product issue in the \
+             current milestone with its dependencies closed, none, so the lowest-numbered ready issue)\n"
+        ),
+        "{out}"
+    );
+    // Near misses: labels that aren't a product area's, and product issues step 10 can't take
+    // (each filter applies first).
+    for l in [
+        "area:records",
+        "area:enginex",
+        "area:Engine",
+        "engine",
+        "area: engine",
+        "area:",
+    ] {
+        assert_eq!(
+            mix_pick(&[
+                below.clone(),
+                ready_list(&[ready(701, "M0", &[], ""), ready(702, "M0", &[l], "")])
+            ]),
+            "worker ready #701",
+            "{l}"
+        );
+    }
+    for product in [
+        ready(702, "M1", &["area:engine"], ""),
+        full_issue(702, "r", &["area:engine"], "", r#"{"title":"M0"}"#),
+        ready(702, "M0", &["area:engine", "in-progress"], ""),
+        ready(702, "M0", &["area:engine", "deferred"], ""),
+        ready(702, "M0", &["area:engine"], "Depends on: #150"),
+    ] {
+        assert_eq!(
+            mix_pick(&[
+                below.clone(),
+                ready_list(&[ready(701, "M0", &[], ""), product.clone()])
+            ]),
+            "worker ready #701",
+            "{product}"
+        );
+    }
+    // Product areas come from areas.toml: with `engine` a process area and `web` a product
+    // one, `area:web` comes first.
+    let swapped = AREAS.replace("kind = \"product\"", "kind = \"process\"")
+        + "\n[[area]]\nname = \"web\"\nkind = \"product\"\npaths = [\"apps/\"]\n";
+    assert_eq!(
+        mix_pick(&[
+            below,
+            set("areas.toml", swapped),
+            ready_list(&[
+                ready(701, "M0", &["area:engine"], ""),
+                ready(702, "M0", &["area:web"], "")
+            ])
+        ]),
+        "worker ready #702"
+    );
+}
+
+#[test]
+fn work_mix_inputs_malformed_exit_1() {
+    for (name, text) in [
+        ("pr-files.json", "{}"),
+        ("pr-files.json", r#"[{"number":1}]"#),
+        ("pr-files.json", r#"[{"files":[]}]"#),
+        ("pr-files.json", r#"[{"number":1,"files":[{"name":"a"}]}]"#),
+        ("pr-files.json", r#"[{"number":1,"files":[{"path":1}]}]"#),
+        ("all-issues.json", r#"[{"number":1}]"#),
+        ("all-issues.json", r#"[{"milestone":null}]"#),
+        (
+            "all-issues.json",
+            r#"[{"number":1,"milestone":{"title":1}}]"#,
+        ),
+        ("all-issues.json", r#"[{"number":1,"milestone":"M0"}]"#),
+        ("areas.toml", ""),
+        ("areas.toml", "[[area]]\nname = \"engine\"\n"),
+        // issue-lint's rules: both process areas are required.
+        (
+            "areas.toml",
+            "[[area]]\nname = \"engine\"\nkind = \"product\"\npaths = [\"crates/\"]\n",
+        ),
+    ] {
+        // Parsed whatever is picked: here an owner issue (step 1) comes first.
+        for first in [None, Some(feed_plus(&[feed_issue(250)]))] {
+            let mut changes = vec![set(name, text.to_owned())];
+            changes.extend(first);
+            let o = run_with(&changes).unwrap();
+            assert_eq!(o.status.code(), Some(1), "{name}: {text}");
+            assert!(o.stdout.is_empty(), "{name}: {text}");
+        }
+    }
 }

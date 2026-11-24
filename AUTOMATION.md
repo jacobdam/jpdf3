@@ -134,7 +134,9 @@ tasks, a ruling followed by one final check, or one question for the owner. One 
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
 design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
 `ai-review` success, the owner's last `/release`, unless the owner `/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
-touches. Until #275 adds step 6 to the scheduler, sessions check it by hand before a step 7, 8, 10 or 11 pick (`planner due`, `planner`, `idle`).
+touches. Part 2 (#275) adds step 6 to the scheduler: after steps 1–5 it picks
+`design-technical needs-design #N` (an escalated PR, which step 3 no longer takes), else
+`design-technical design-issue #N` (a `design` and `ready` issue).
 
 Task 2 part 1 (#244) adds the **Planner** session (ops/TICK.md §9). It is the only gate into
 `ready` besides the owner: other sessions file Worker issues without it. The scheduler's step 8
@@ -142,7 +144,12 @@ makes it due when the current milestone has no plan (the `Milestone:` line of `o
 on main) or no `Session: planner` record is dated in the last 7 UTC days, at most once a day;
 step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
 ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
-work PR when it changes. The work-mix budget comes with part 2 (#288).
+work PR when it changes. Part 2 (#288) adds the **work-mix budget** (ADR 0011 §3): of the
+newest 20 `Session:` records of the last 7 days (owner-instruction and Design sessions left out),
+at least 70% should be Worker or QC sessions on a current-milestone issue whose agent PR changes
+a product path. Below that, step 8 makes the Planner due (once a day) to add product issues, and
+step 10 takes the lowest-numbered product issue (a product `area:` label) first. The budget
+orders, it never blocks; with fewer than 20 records it isn't measured.
 
 Task 4 part 1 (#246) adds the area list, `ops/areas.toml` (each area's name, `product` or
 `process` kind and the paths it owns), and `cargo xtask issue-lint` (specs/tooling/issue-lint.md),

@@ -1,5 +1,5 @@
-//! `cargo xtask next-session`: the session scheduler, precedence steps 1–5, 7, 10 and 11 (ADR 0011
-//! §2, tasks 1a and 1b; specs/tooling/next-session.md). Read-only: it runs read commands and writes
+//! `cargo xtask next-session`: the session scheduler, precedence steps 1–8, 10 and 11 (ADR 0011
+//! §2, tasks 1a, 1b, 2 and 3; specs/tooling/next-session.md), with the work-mix budget of §3. Read-only: it runs read commands and writes
 //! nothing.
 
 use std::fmt::Write as _;
@@ -16,6 +16,17 @@ const ALARM_FILE: &str = "ops/state/judge-alarm-since";
 const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
 /// The head-branch prefix of the owner's own protected changes (AUTOMATION.md §6.1, #298).
 const OWNER_BRANCH: &str = "owner/";
+/// The label of a PR escalated to a Design: technical session (ops/TICK.md §4 step 6, §8).
+const NEEDS_DESIGN: &str = "needs-design";
+/// What a Design: technical session loads besides the PR or issue (ops/TICK.md §8 step 2).
+const DESIGN_LOAD: [&str; 6] = [
+    "ops/TICK.md §8",
+    "specs/tooling/design-technical.md",
+    "docs/PRINCIPLES.md",
+    "docs/adr/_TEMPLATE-design.md",
+    "docs/adr/0010-review-rounds-converge.md",
+    "docs/adr/0011-session-types-and-scheduler.md §5",
+];
 
 pub struct Options {
     pub from: Option<PathBuf>,
@@ -61,6 +72,12 @@ struct Inputs {
     holds: String,
     /// `ops/QUEUE.md` on origin/main, if it is there and readable (step 8).
     queue: Option<String>,
+    /// The changed files of each agent-account PR (`number`, `files`), for the work mix (#288).
+    pr_files: String,
+    /// The milestone of every issue, open or closed (`number`, `milestone`), for the work mix.
+    all_issues: String,
+    /// `ops/areas.toml` in the current directory: which `area:` labels are product (step 10).
+    areas: String,
 }
 
 /// Paths of the interim product-merge rule (ADR 0011 §3): code that ships or is graded.
@@ -72,7 +89,8 @@ const PRODUCT_PATHS: [&str; 6] = [
     "tools/jpdf-cli/",
     "tools/fsio/",
 ];
-/// Labels step 10 skips besides `SKIP_LABELS`.
+/// Labels step 10 skips besides `SKIP_LABELS`. Since #275, `design` is defensive only: a
+/// `design` and `ready` issue step 10 could take (no skip label, not in flight) is step 6's first.
 const NOT_READY_LABELS: [&str; 4] = ["in-progress", "design", "design-pending", PRODUCT_LABEL];
 /// The label of a Design: product session's issues (step 8, ops/TICK.md §10).
 const PRODUCT_LABEL: &str = "design-product";
@@ -88,6 +106,11 @@ const MILESTONE_LINE: &str = "Milestone: ";
 /// Days of journal directories read for records: today and the 6 days before it (step 8's
 /// "7 days since the last plan").
 const RECORD_DAYS: i64 = 7;
+/// The work-mix window: the newest 20 counted session records (ADR 0011 §3, #288).
+const MIX_WINDOW: usize = 20;
+/// The work-mix budget: at least 70% of the window on milestone work.
+const MIX_PERCENT: usize = 70;
+const AREAS: &str = "ops/areas.toml";
 
 /// The value of the script's `FLOOR="…"` line.
 fn floor_of(script: &str) -> Option<&str> {
@@ -280,6 +303,9 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             records: read(dir, "records.txt")?,
             holds: read(dir, "holds.json")?,
             queue: optional(&dir.join("queue.md"))?,
+            pr_files: read(dir, "pr-files.json")?,
+            all_issues: read(dir, "all-issues.json")?,
+            areas: read(dir, "areas.toml")?,
         });
     }
     let now = std::time::SystemTime::now()
@@ -354,6 +380,9 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         records,
         holds: gh("pr list --author @me --state open --limit 200 --json number,comments")?,
         queue: queue_live()?,
+        pr_files: gh("pr list --author @me --state all --limit 200 --json number,files")?,
+        all_issues: gh("issue list --state all --limit 1000 --json number,milestone")?,
+        areas: read(root, AREAS)?,
     })
 }
 
@@ -488,6 +517,13 @@ impl Pr {
     /// Open, and not a session's to move: held (#295) or the owner's own change (#298).
     fn parked(&self) -> bool {
         self.open && (self.held || self.owner_branch())
+    }
+
+    /// Open and labeled `needs-design`: escalated to a design session (ops/TICK.md §4 step 6).
+    /// It is a draft with `ai-review` failure on purpose, so it reads as failing; step 6 picks
+    /// it, never step 3, and step 1 counts its issue in flight (#275).
+    fn needs_design(&self) -> bool {
+        self.open && has_label(&self.labels, NEEDS_DESIGN)
     }
 }
 
@@ -924,8 +960,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
     let open = parse_owner(&inp.owner_open, "owner-open.json", false)?;
     let closed = parse_owner(&inp.owner_closed, "owner-closed.json", true)?;
     let in_flight_issue = |n: u64| {
-        prs.iter()
-            .any(|p| p.open && (!p.failing || p.parked()) && linked_issue(&p.body) == Some(n))
+        prs.iter().any(|p| {
+            p.open
+                && (!p.failing || p.parked() || p.needs_design())
+                && linked_issue(&p.body) == Some(n)
+        })
     };
     let mut issues: Vec<u64> = Vec::new();
     for item in &feed {
@@ -959,9 +998,11 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
         })
         .filter(|(at, url)| {
             *at >= inp.floor.as_str()
-                && !prs
-                    .iter()
-                    .any(|p| p.open && (!p.failing || p.parked()) && names_url(&p.body, url))
+                && !prs.iter().any(|p| {
+                    p.open
+                        && (!p.failing || p.parked() || p.needs_design())
+                        && names_url(&p.body, url)
+                })
         })
         .collect();
     comments.sort_unstable();
@@ -1105,13 +1146,11 @@ fn step7(
     Ok((p, notes))
 }
 
-/// When the Planner last ran, from `records.txt`'s `- Session: planner` lines (the first word
-/// `planner`, so `planner due` counts too): `(today, week)`, whether one is in a journal file
-/// dated `today` (ADR 0011 §1, the Planner's bound) and whether one is dated from `today - 6`
-/// to `today` (step 8's 7-day trigger). Every line is checked, so a malformed one always fails.
-fn planner_ran(text_: &str, today: i64) -> Result<(bool, bool), String> {
+/// The lines of `records.txt` as (path, UTC day of the path, text after `- Session: `). Every
+/// line is checked, so a malformed one always fails, whatever is picked.
+fn parse_records(text_: &str) -> Result<Vec<(&str, i64, &str)>, String> {
     let what = "records.txt";
-    let (mut ran, mut week) = (false, false);
+    let mut out = Vec::new();
     for line in text_.lines().filter(|l| !l.is_empty()) {
         let (path, record) = line
             .split_once('\t')
@@ -1122,18 +1161,201 @@ fn planner_ran(text_: &str, today: i64) -> Result<(bool, bool), String> {
             .filter(|(_, n)| n.ends_with(".md") && !n.contains('/'))
             .and_then(|(d, _)| crate::metrics::parse_date(d))
             .ok_or_else(|| format!("{what}: {path:?} is not {JOURNAL}YYYY-MM-DD/<name>.md"))?;
-        let kind = record
+        let rest = record
             .strip_prefix(SESSION_LINE)
-            .ok_or_else(|| format!("{what}: {record:?} is not a {SESSION_LINE:?} line"))?
-            .split_whitespace()
-            .next();
-        if kind == Some("planner") {
-            ran |= day == today;
+            .ok_or_else(|| format!("{what}: {record:?} is not a {SESSION_LINE:?} line"))?;
+        out.push((path, day, rest));
+    }
+    Ok(out)
+}
+
+/// When the Planner last ran, from `records.txt`'s `- Session: planner` lines (the first word
+/// `planner`, so `planner due` counts too): `(today, week)`, whether one is in a journal file
+/// dated `today` (ADR 0011 §1, the Planner's bound) and whether one is dated from `today - 6`
+/// to `today` (step 8's 7-day trigger).
+fn planner_ran(records: &[(&str, i64, &str)], today: i64) -> (bool, bool) {
+    let (mut ran, mut week) = (false, false);
+    for (_, day, rest) in records {
+        if rest.split_whitespace().next() == Some("planner") {
+            ran |= *day == today;
             // `today - day` can't overflow: both are days of years 0000–9999 at most.
-            week |= day <= today && today - day < RECORD_DAYS;
+            week |= *day <= today && today - *day < RECORD_DAYS;
         }
     }
-    Ok((ran, week))
+    (ran, week)
+}
+
+/// What a session record says it worked on, for the work mix (ADR 0011 §3).
+#[derive(Debug, PartialEq, Eq)]
+enum Work {
+    /// Not in the window: an owner instruction (`worker owner-…`, rule a) or a Design session
+    /// (`design-…`; left out until task 4 adds `area:` labels).
+    Excluded,
+    /// In the window and never milestone work: an audit, retro or Planner session, a Worker
+    /// session on no issue (main red, a leftover worktree), anything else.
+    Other,
+    /// A Worker or QC session on this issue.
+    Issue(u64),
+    /// A Worker session on this PR (`worker own-pr #N`, rule c).
+    Pr(u64),
+}
+
+/// The work of the text after `- Session: `, by its words: the session type, the step, and for
+/// a Worker or QC session a last word `#<digits>`.
+fn record_work(rest: &str) -> Work {
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let (kind, step) = (words.first().copied(), words.get(1).copied());
+    if kind.is_some_and(|k| k.starts_with("design-"))
+        || (kind == Some("worker") && step.is_some_and(|s| s.starts_with("owner-")))
+    {
+        return Work::Excluded;
+    }
+    let n = words
+        .last()
+        .and_then(|w| w.strip_prefix('#'))
+        .filter(|d| !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()))
+        .and_then(|d| d.parse().ok());
+    match (kind, step, n) {
+        (Some("worker"), Some("own-pr"), Some(n)) if words.len() == 3 => Work::Pr(n),
+        (Some("worker" | "qc"), Some(_), Some(n)) if words.len() == 3 => Work::Issue(n),
+        _ => Work::Other,
+    }
+}
+
+/// The numbers of the PRs in `pr-files.json` that change a path of the interim product-merge
+/// rule (ADR 0011 §3). Every entry is parsed, so a renamed field always fails.
+fn product_prs(text_: &str) -> Result<std::collections::BTreeSet<u64>, String> {
+    let what = "pr-files.json";
+    let v = parse_list(text_, what)?;
+    let mut out = std::collections::BTreeSet::new();
+    for p in list(&v, what)? {
+        let n = number(p, "number", what)?;
+        let mut product = false;
+        for f in list(field(p, "files", what)?, what)? {
+            let path = text(f, "path", what)?;
+            product |= PRODUCT_PATHS.iter().any(|d| path.starts_with(d));
+        }
+        if product {
+            out.insert(n);
+        }
+    }
+    Ok(out)
+}
+
+/// The milestone title of every issue in `all-issues.json` (`None` without one).
+fn issue_milestones(
+    text_: &str,
+) -> Result<std::collections::BTreeMap<u64, Option<String>>, String> {
+    let what = "all-issues.json";
+    let v = parse_list(text_, what)?;
+    let mut out = std::collections::BTreeMap::new();
+    for i in list(&v, what)? {
+        let m = match field(i, "milestone", what)? {
+            Value::Null => None,
+            m => Some(text(m, "title", what)?.to_owned()),
+        };
+        out.insert(number(i, "number", what)?, m);
+    }
+    Ok(out)
+}
+
+/// The `area:<name>` labels of the product areas in `ops/areas.toml`.
+fn product_labels(areas: &str) -> Result<Vec<String>, String> {
+    Ok(crate::issue_lint::parse_areas(areas)
+        .map_err(|e| format!("{AREAS}: {e}"))?
+        .into_iter()
+        .filter(|a| a.kind == crate::issue_lint::Kind::Product)
+        .map(|a| format!("area:{}", a.name))
+        .collect())
+}
+
+/// The work-mix reading (ADR 0011 §3): how many of the newest `MIX_WINDOW` session records,
+/// not counting excluded ones, are milestone work.
+#[derive(Debug, PartialEq, Eq)]
+enum Mix {
+    /// Fewer than `MIX_WINDOW` records in the window (this many).
+    Few(usize),
+    /// No current milestone, so no milestone work.
+    NoMilestone,
+    /// This many of the `MIX_WINDOW` records are milestone work.
+    Measured(usize),
+}
+
+impl Mix {
+    /// Below the budget: `counted / MIX_WINDOW < MIX_PERCENT / 100`, in whole numbers.
+    fn below(&self) -> bool {
+        matches!(self, Mix::Measured(c) if c * 100 < MIX_PERCENT * MIX_WINDOW)
+    }
+
+    fn note(&self) -> String {
+        match self {
+            Mix::Few(n) => {
+                format!("work mix: not measured ({n} of the {MIX_WINDOW} session records it needs)")
+            }
+            Mix::NoMilestone => "work mix: not measured (no current milestone)".to_owned(),
+            Mix::Measured(c) => format!(
+                "work mix: {c} of the last {MIX_WINDOW} sessions on milestone work ({}%; budget {MIX_PERCENT}%)",
+                c * 100 / MIX_WINDOW
+            ),
+        }
+    }
+}
+
+/// The work mix of `records` (ADR 0011 §3, interim rule until task 4): the records are ordered
+/// by path (a journal file's name starts with its UTC time), each (path, text) pair once; the
+/// window is the newest `MIX_WINDOW` that aren't `Work::Excluded`. A record is milestone work
+/// when its issue is in `current` and an agent PR (any state) that links it changes a product
+/// path; for `own-pr #N`, when PR N changes a product path and links an issue in `current`.
+fn work_mix(
+    records: &[(&str, i64, &str)],
+    current: Option<&str>,
+    prs: &[Pr],
+    product: &std::collections::BTreeSet<u64>,
+    milestones: &std::collections::BTreeMap<u64, Option<String>>,
+) -> Mix {
+    let mut sorted: Vec<(&str, &str)> = records.iter().map(|(p, _, r)| (*p, *r)).collect();
+    // Stable, so lines of one file keep their order.
+    sorted.sort_by_key(|(p, _)| *p);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut window: Vec<Work> = sorted
+        .into_iter()
+        .filter(|pair| seen.insert(*pair))
+        .map(|(_, r)| record_work(r))
+        .filter(|w| *w != Work::Excluded)
+        .collect();
+    let Some(current) = current else {
+        return Mix::NoMilestone;
+    };
+    if window.len() < MIX_WINDOW {
+        return Mix::Few(window.len());
+    }
+    let window = window.split_off(window.len() - MIX_WINDOW);
+    let in_current = |n: u64| {
+        milestones
+            .get(&n)
+            .is_some_and(|m| m.as_deref() == Some(current))
+    };
+    let counted = window
+        .iter()
+        .filter(|w| match w {
+            Work::Issue(n) => {
+                in_current(*n)
+                    && prs
+                        .iter()
+                        .any(|p| linked_issue(&p.body) == Some(*n) && product.contains(&p.number))
+            }
+            Work::Pr(n) => {
+                product.contains(n)
+                    && prs
+                        .iter()
+                        .find(|p| p.number == *n)
+                        .and_then(|p| linked_issue(&p.body))
+                        .is_some_and(in_current)
+            }
+            Work::Excluded | Work::Other => false,
+        })
+        .count();
+    Mix::Measured(counted)
 }
 
 /// The milestone that `ops/QUEUE.md` plans: the text after `Milestone: ` on its first line
@@ -1160,7 +1382,17 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         .map(|t| unix(t.trim(), "judge-alarm-since"))
         .transpose()?;
     let milestone = current_milestone(&inp.milestones)?;
-    let (planned, planned_week) = planner_ran(&inp.records, now.div_euclid(86_400))?;
+    let records = parse_records(&inp.records)?;
+    let (planned, planned_week) = planner_ran(&records, now.div_euclid(86_400));
+    // The work mix (ADR 0011 §3, #288): parsed whatever is picked, so a broken input always fails.
+    let mix = work_mix(
+        &records,
+        milestone.as_deref(),
+        &prs,
+        &product_prs(&inp.pr_files)?,
+        &issue_milestones(&inp.all_issues)?,
+    );
+    let product_areas = product_labels(&inp.areas)?;
     let in_flight = |n: u64| {
         prs.iter()
             .any(|p| p.open && linked_issue(&p.body) == Some(n))
@@ -1190,7 +1422,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         chosen = prs
             .iter()
-            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked())
+            .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked() && !p.needs_design())
             .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
             .map(|p| {
                 let mut load = vec![
@@ -1319,6 +1551,46 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                 )
             });
     }
+    // Step 6 (#275; ADR 0011 §2, ops/TICK.md §8): a Design: technical session on an open agent PR
+    // labeled `needs-design`, then on an open issue labeled `design` and `ready`. Skip labels
+    // count on the PR and its linked issue, as in step 3; a held or `owner/` PR waits for the
+    // owner (TICK §5).
+    if chosen.is_none() {
+        chosen = prs
+            .iter()
+            .filter(|p| p.needs_design() && !skipped(&p.labels) && !p.parked())
+            .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
+            .map(|p| {
+                let mut load = vec![format!("gh pr view {} --comments", p.number)];
+                if let Some(n) = linked_issue(&p.body) {
+                    load.push(view_issue(n));
+                    load.push(format!(
+                        "gh pr list --state all --search '\"Closes #{n}\" in:body'"
+                    ));
+                }
+                load.extend(DESIGN_LOAD.iter().map(|l| (*l).to_owned()));
+                pick(
+                    format!("design-technical needs-design #{}", p.number),
+                    "step 6 (a PR escalated to design, ops/TICK.md §4 step 6: one design output, §8)",
+                    load,
+                )
+            });
+    }
+    if chosen.is_none() {
+        chosen = issues
+            .iter()
+            .filter(workable)
+            .find(|i| has_label(&i.labels, "design") && has_label(&i.labels, "ready"))
+            .map(|i| {
+                let mut load = vec![view_issue(i.number)];
+                load.extend(DESIGN_LOAD.iter().map(|l| (*l).to_owned()));
+                pick(
+                    format!("design-technical design-issue #{}", i.number),
+                    "step 6 (a ready design issue: an ADR or principle, or one owner question, ops/TICK.md §8)",
+                    load,
+                )
+            });
+    }
     // Step 7 runs whatever is picked and parses all its inputs before it returns, so a broken
     // input always fails.
     // An open agent PR whose linked issue is open and labeled `audit` or `retro` is doing that
@@ -1351,6 +1623,13 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         }
         if !planned_week {
             why.push("no Session: planner record is dated in the last 7 UTC days".to_owned());
+        }
+        if let Mix::Measured(c) = mix
+            && mix.below()
+        {
+            why.push(format!(
+                "the work mix is below {MIX_PERCENT}%: {c} of the last {MIX_WINDOW} sessions on milestone work"
+            ));
         }
         if !why.is_empty() {
             chosen = Some(pick(
@@ -1450,20 +1729,40 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         }
     }
     if chosen.is_none() {
-        chosen = issues
+        let ready: Vec<&Issue> = issues
             .iter()
             .filter(workable)
             .filter(|i| milestone.is_some() && i.milestone == milestone)
             .filter(|i| has_label(&i.labels, "ready"))
             .filter(|i| !NOT_READY_LABELS.iter().any(|l| has_label(&i.labels, l)))
-            .find(|i| !dependencies(&i.body).into_iter().any(open))
-            .map(|i| {
-                pick(
-                    format!("worker ready #{}", i.number),
-                    "i (the lowest-numbered ready issue in the current milestone with its dependencies closed)",
-                    vec![view_issue(i.number)],
+            .filter(|i| !dependencies(&i.body).into_iter().any(open))
+            .collect();
+        // Below the work-mix budget, a product issue (a product `area:` label) comes first; the
+        // budget orders, it never blocks (ADR 0011 §3).
+        let is_product = |i: &&Issue| product_areas.iter().any(|a| has_label(&i.labels, a));
+        let product_first = mix
+            .below()
+            .then(|| ready.iter().copied().find(is_product))
+            .flatten();
+        chosen = product_first.or(ready.first().copied()).map(|i| {
+            let rule = if mix.below() {
+                format!(
+                    "i (the work mix is below {MIX_PERCENT}%: the lowest-numbered ready product issue in the current milestone with its dependencies closed, {})",
+                    if product_first.is_some() {
+                        "this one"
+                    } else {
+                        "none, so the lowest-numbered ready issue"
+                    }
                 )
-            });
+            } else {
+                "i (the lowest-numbered ready issue in the current milestone with its dependencies closed)".to_owned()
+            };
+            pick(
+                format!("worker ready #{}", i.number),
+                &rule,
+                vec![view_issue(i.number)],
+            )
+        });
     }
     let p = chosen.unwrap_or_else(|| {
         if planned {
@@ -1484,6 +1783,10 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             )
         }
     });
+    // The Planner writes the reading into ops/QUEUE.md (ops/TICK.md §9).
+    if p.first.starts_with("planner") {
+        notes.push(mix.note());
+    }
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
     for l in &p.load {
         let _ = writeln!(out, "- {l}");
@@ -1649,6 +1952,46 @@ mod tests {
             None
         );
         assert_eq!(plan_milestone(None), None);
+    }
+
+    #[test]
+    fn record_work_words() {
+        assert_eq!(record_work("worker ready #801"), Work::Issue(801));
+        assert_eq!(record_work("worker  flaky\t#7 "), Work::Issue(7));
+        assert_eq!(record_work("qc any #8"), Work::Issue(8));
+        assert_eq!(record_work("worker own-pr #9"), Work::Pr(9));
+        for excluded in [
+            "worker owner-issue #1",
+            "worker owner-comment https://x/1#issuecomment-2",
+            "worker owner-done #1",
+            "worker owner-x",
+            "design-technical needs-design #3",
+            "design-product",
+        ] {
+            assert_eq!(record_work(excluded), Work::Excluded, "{excluded}");
+        }
+        for other in [
+            "",
+            "planner",
+            "planner due",
+            "audit due",
+            "worker main-red run 5",
+            "worker leftover-worktree t/5-x",
+            "worker ready #5 x",
+            "worker ready x #5",
+            "worker ready 5",
+            "worker ready #",
+            "worker ready #5x",
+            "worker ready #-5",
+            "worker #5",
+            "qc #5",
+            "Worker ready #5",
+            "design technical #5",
+            "worker owner",
+            "worker ready #99999999999999999999999",
+        ] {
+            assert_eq!(record_work(other), Work::Other, "{other}");
+        }
     }
 
     #[test]

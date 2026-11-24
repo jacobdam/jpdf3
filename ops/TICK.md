@@ -120,15 +120,17 @@ gh pr list --state open --label design --json number,isDraft,autoMergeRequest,ti
 ```
 For each such agent PR without auto-merge: if its window has passed (§8 step 5), enable
 auto-merge and remove `owner-todo` from its issue now, whatever §2 picks (one command each; the
-journal entry lists it). Task #275 moves this into the scheduler's step 3.
+journal entry lists it). Task #314 moves this into the scheduler's step 3.
 
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
 `cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
-- **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
+- **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 6 is a **Design:
+  technical** session (§8) on a PR labeled `needs-design` (`design-technical needs-design #N`)
+  or a `design` and `ready` issue (`design-technical design-issue #N`), step 7 is rules g and h
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
-  (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
-  `Rule:` line), then rule k (`design product v1 [#N]`, `design product #N`: a Design: product
+  (`planner due`: the milestone has no plan, no Planner ran in 7 days, or the work mix is below
+  70%; the reason is on the `Rule:` line), then rule k (`design product v1 [#N]`, `design product #N`: a Design: product
   session, §10), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
   `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
@@ -136,24 +138,9 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design`, `design-pending` and `design-product`), and issues that an
   open agent PR links (`Closes #N`; that PR is worked under rule c
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head,
-  unless the owner's newest `/hold` or `/release` on it is a `/hold` (§5, #295) or its head
-  branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298)).
-- **Before acting on a step 7, 8, 10 or 11 pick (`planner due`, `design product …`, `planner`, `idle`):** check
-  precedence step 6 by hand (task #275 moves it into the scheduler, ahead of steps 7, 8, 10 and 11) with the scheduler's
-  skips: the lowest-numbered open agent PR labeled `needs-design` where neither the PR nor the
-  issue it closes carries `owner-todo`, `blocked` or `deferred`; else the lowest-numbered open
-  issue labeled both `design` and `ready`, without those labels, that no open agent PR links
-  (`Closes #N`) → a **Design: technical** session (§8) on it instead. Candidates:
-  `gh pr list --state open --label needs-design --json number,body,labels --jq '.[] | select(.body | test("^\\s*🤖 jpdf-agent")) | [.number, ([.labels[].name] | join(","))] | @tsv'`,
-  then `gh issue view <n> --json labels` for the issue each one closes;
-  `gh issue list --state open --label design --label ready --json number,labels --jq '.[] | select([.labels[].name] | any(. == "owner-todo" or . == "blocked" or . == "deferred") | not) | .number'`,
-  then `gh pr list --state open --search '"Closes #<n>" in:body'` for each. If nothing is left,
-  do the scheduler's pick.
-- **A `worker` rule c pick of a PR labeled `needs-design`** (until #275: the PR is a draft with
-  `ai-review` failure on purpose, so the scheduler reads it as failing, at step 3 instead of
-  ADR 0011's step 6) → first check rules d and e by hand (`gh issue list --state open --label
-  crash`, `--label security`, `--label flaky`, without the skip labels above); if one applies,
-  work it instead. Otherwise a Design: technical session (§8) on the PR, not a rule c fix.
+  unless the owner's newest `/hold` or `/release` on it is a `/hold` (§5, #295), its head
+  branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298), or it is
+  labeled `needs-design` (step 6's, #275)).
 - **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner`
   or `- Session: planner due` record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
   no PR), exit at once (ADR 0011 §3).
@@ -211,10 +198,13 @@ h. **RETRO session due** (7 days since the last one, or an incident since it: a 
    > 2 sessions ends in a revert) → §7.
 i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with every issue on its
    `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
-   (lowest number first). An issue whose remaining work is in other issues (an umbrella that
+   (lowest number first; while the work mix is below 70%, the lowest-numbered product issue, one
+   with a product `area:` label of `ops/areas.toml`, first, ADR 0011 §3). An issue whose remaining work is in other issues (an umbrella that
    closes after them) loses `ready`, or names them on a `Depends on:` line.
 j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone has no plan in
-   `ops/QUEUE.md` on main, or no Planner record is dated in the last 7 UTC days) or step 11
+   `ops/QUEUE.md` on main, no Planner record is dated in the last 7 UTC days, or the work mix is
+   below 70%: fewer than 14 of the newest 20 counted `Session:` records of the last 7 days are
+   milestone work, ADR 0011 §3; with fewer than 20 there, it isn't measured) or step 11
    (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
    `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
 k. **Design: product** → §10. Picked at step 8 after the Planner's terms: `design product v1`
@@ -400,6 +390,21 @@ Each round K runs in this order:
      ledgers on it (this PR's and the design PR's or ruling), add `owner-todo` (§0) and leave the
      decision to the owner (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
+   - **after the last check** (a clean final check, or a §8 design final check or split check
+     that passed): no review round runs again, so a change before the merge lands can't be
+     reviewed (#277). When rule c picks the PR (it conflicts with its base, fails CI, or has no
+     `ai-review` success on its head), merge origin/main into it if it conflicts; an infra
+     failure gets `gh run rerun --failed` and nothing else. If every commit since the checked
+     commit is a record commit or a merge whose remerge-diff is empty or touches only record
+     paths (the post-cap terms above), re-post `ai-review` success on the new head
+     (`target_url`: the check's triage comment) and re-enable auto-merge (for a PR labeled
+     `design`, §8 step 5's new window first). Anything else (a resolution that edits another
+     file, a fix for a CI failure) goes to the owner, not to design, since a design session has
+     no finding to rule on and may not write code: push it, turn the PR back into a draft
+     (`gh pr ready N --undo`), post `ai-review` with `state=failure` on the new head, comment on the
+     issue the ledger and the commits since the checked one (if that comment is missing), then
+     label it `blocked` and `owner-todo` (§0; last, so a session that dies midway leaves the PR
+     to rule c). As at K ≥ 6, no review round runs until an owner comment says what to run.
 
    The states after round 4 (ADR 0011 §5):
 
@@ -414,6 +419,8 @@ Each round K runs in this order:
    | §8 output 3: the diff since the last reviewed commit is over 100 lines or adds a file (output 1 has no size rule) | §8 output 4, no check runs |
    | §8 output 2 (ADR or principle) | the PR is closed unmerged; tasks filed with `Designed in:` |
    | §8 output 4 (owner question) | `owner-todo`; no review round until an owner comment |
+   | after the last check, rule c picks the PR: every commit since the checked one is a record commit or a merge whose remerge-diff is empty or records only | `ai-review` success re-posted on the new head, merge |
+   | after the last check, any other change (a conflict resolution in another file, a CI fix) | pushed, draft, `ai-review` failure, `blocked`, `owner-todo`, ledger → the owner |
    | a `/hold` at any point | nothing moves until `/release` (§5) |
 
 Mechanics (the guard wants one simple command with the text inline, no files):
@@ -703,11 +710,18 @@ gate them.
    the scheduler's current milestone moves on), and create the next milestone's issues from
    PLAN.md §8 and the journeys if it has none (then step 3 for that milestone). Otherwise create
    issues for every failing criterion.
-5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4: the `Milestone: <Mn>` line
+4a. **Work mix below 70%** (the brief's `work mix:` note; `planner due` names it, ADR 0011 §3):
+   the budget orders, it never blocks. Add product issues to the milestone from PLAN.md §8 (its
+   row) and the journeys, each sized by §0 and given its product `area:` label from
+   `ops/areas.toml` (until #308 creates the labels there are none, and step 10 doesn't reorder),
+   and ready the ones step 2 allows. You may move process issues to a later milestone or label them `deferred`,
+   with a comment saying why; never close one for the budget.
+5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4a: the `Milestone: <Mn>` line
    (the scheduler's step 8 reads it from main), a `Planned:` line with the date, the ready list
-   in step 10's order (lowest number first, dependencies closed), the issues waiting on a
-   dependency, the ones not workable and why, the critical path to the milestone's gate, the
-   design-ahead list and the work mix (#288). The labels stay the source of truth, and step 10
+   in step 10's order (lowest number first, dependencies closed; product issues first while the
+   work mix is below 70%), the issues waiting on a dependency, the ones not workable and why, the
+   critical path to the milestone's gate, the design-ahead list and the work mix (the brief's
+   `work mix:` note, as printed, in a `## Work mix` section). The labels stay the source of truth, and step 10
    picks from them. Change the file (and its `Planned:` date) only when its content changes.
 6. **Record:** the journal entry (`- Session: <first line>`, which makes later picks that day
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
