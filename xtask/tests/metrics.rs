@@ -60,9 +60,9 @@ fn report_from_saved_inputs() {
         "| Session time, median | 20 min |\n",
         "| Session time per merged PR | 15.0 min |\n",
         "| Malformed index.tsv rows (skipped) | 1 |\n",
-        "PRs reviewed: 1; median rounds: 2; at 4+ rounds: 0/1 (0%); with a final check: 0/1 (0%).\n",
+        "PRs reviewed: 1; median rounds: 2; at 4+ rounds: 0/1 (0%); with a final check: 0/1 (0%); with a design final check: 0/1 (0%).\n",
         "subagent 0/1/1/0, second reviewer 0/0/0/0; regrades: 1.\n",
-        "| #7 | 2 | no | 0/1/1/0 | 0/0/0/0 | 1 |\n",
+        "| #7 | 2 | no | no | 0/1/1/0 | 0/0/0/0 | 1 |\n",
         "`blocked`: 1\n- #3 (12 days): stuck / here\n",
         "`flaky`: 0\n",
         "- docs/audits/0001.md: 2026-11-15 (first)\n",
@@ -83,6 +83,8 @@ fn report_from_saved_inputs() {
         "\"since\":\"2026-11-15\",\"until\":\"2026-11-22\"",
         "\"merges\":2,\"lines_added\":13,\"lines_deleted\":3,\"merged_prs\":2,\"closed_issues\":2",
         "\"ci\":{\"runs\":4,\"by_conclusion\":{\"failure\":3,\"success\":1},\"failed_main\":1,\"failed_other\":2,\"reruns\":2,\"reruns_success\":1,\"jobs_read\":2,\"jobs_unknown\":1,\"jobs_capped\":false,\"failing_jobs\":{\"judge-verdict\":1,\"policy\":2}}",
+        "\"final_checks\":0,\"design_final_checks\":0,",
+        "\"rounds\":2,\"final_check\":false,\"design_final_check\":false,",
         "\"blocked\":[{\"number\":3,\"title\":\"stuck | here\",\"age_days\":12}]",
     ] {
         assert!(json.contains(want), "missing {want:?} in\n{json}");
