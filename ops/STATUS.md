@@ -4,12 +4,17 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #316 (#277) merged (3e4e342): TICK §4 step 6 after the last check; `cargo xtask metrics` counts design final
-  checks.
-- PR #318 (#294): TICK §9 step 6 wording for a Planner PR closed at the cap (created issues, a `Delete tag mN` owner
-  issue, who closes the discovery issue, `owner-todo` off after `/release`); 4 rounds, `ai-review` success, auto-merge
-  on. R4.1 deferred to #319 (no `ready`).
-- PR #317 (#288, the work-mix budget in next-session) is open.
+- PR #316 (#277) merged (3e4e342): TICK §4 step 6's "after the last check" rule; `cargo xtask metrics` counts design
+  final checks.
+- PR #317 (#288, task 2 part 2): the work-mix budget in next-session (step 8's third term, step 10 product-first,
+  TICK §9 step 4a). Review round 2 clean; origin/main merged in (STATUS conflict only), `ai-review` re-posted,
+  auto-merge on. Step 10's order changes only once #308 adds `area:` labels.
+- PR #318 (#294): TICK §9 step 6, a Planner PR closed at the cap; open.
+- PR #321 (#300, `cargo xtask nightly` 1/3): the regress tier through `jpdf-cli` under the judge's time limits and
+  (Linux) 2 GiB `ulimit -v`, `DIR/regress.json` + `regress-diff.json` (`--previous`). Rounds 1–3 posted and
+  triaged; `ai-review` success, auto-merge on. Deferred: #322 (keep stderr's tail, before #302), #323 (exec-bit
+  check by class). Parts 2 (#301, bench and fuzz time) and 3 (#302, issue filing; the CI `--previous` step needs the
+  owner) wait for the Planner's `ready`. Codex timed out (2400 s) on all three round briefs (45–110 KB).
 - #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
   Planner), part 3 is #247 (depends on #308).
 - PR #312 (#249, Design: product session 1/2) is an open draft.
@@ -25,13 +30,13 @@ Phase: bootstrap (pilot)
 - **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
   on it (ADR 0011 §7).
 - #236 (memory ADR, `deferred`) is the first design queue item. #146 stays open, `deferred` (waits for #25 or #236).
-- #21 waits on #19 (#300–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
+- #21 waits on #19 (#301–#302 after #300) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#308, #314, #319 wait for the next Planner's `ready`), else `idle` today (the
-   Planner ran).
+   are closed (#308 and #314 wait for the next Planner's `ready`), else `idle` today (the Planner ran). Planner
+   picks now carry a `work mix:` note for QUEUE.md's Work mix section.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -40,7 +45,7 @@ Phase: bootstrap (pilot)
    still say "proposed" (audit 0006); audit 0004 AC.3/AC.4; Codex timeouts and brief-only reviews (PR #268, audits
    0005–0006).
 - Security issues waiting in M10: medium #114, #116, #117, #141, #156, #163, #164, #165, #182, #217, #223, #252,
-  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262, #320 (guard: colon-refspec delete push).
+  #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
 - #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
@@ -56,6 +61,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- Orient: STATUS and LESSONS read from the main checkout before `git pull` can be stale (PR #318 re-added two lessons
-  #316 had already moved, R1.1) → read them from the worktree on origin/main, or `git pull` first
-  ([journal](journal/2026-11-24/0535-294-planner-cap.md)).
+- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
+  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
+  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).

@@ -8,13 +8,15 @@ mod issue_lint;
 mod macos;
 mod metrics;
 mod next_session;
+mod nightly;
 mod specs;
 mod web;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR | nightly --out DIR | arlington | check-specs [--root DIR] \
+const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
+     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
@@ -76,7 +78,24 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
-        (Some("nightly"), _) => ExitCode::SUCCESS,
+        // specs/tooling/nightly.md: exit 1 = a tool failure, 75 = corpus fetch infra failure;
+        // what jpdf-cli did never changes the exit code.
+        (Some("nightly"), _) => {
+            let opts = match nightly::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: nightly: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match nightly::run(Path::new("."), &opts) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("xtask: nightly: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         // specs/tooling/fuzz.md. Needs the pinned nightly + cargo-fuzz; `ci linux` runs the
         // short variant through `fuzz::ci`.
         (Some("fuzz"), _) => {
