@@ -106,6 +106,9 @@ GitHub (public repo jacobdam/jpdf3)
 ```
 
 ### 4.1 Session types (ADR 0011; being implemented, tasks listed in its §9)
+ADR 0012 amends it: QC (task 5) and the `area:` labels (task 4 part 2) are M1 work, Design: UI
+(task 7) M3, the user advocate (task 8) M4, and the area threshold and Gardener (task 4 part 3)
+wait in `Ops` while the Planner names issue groups by judgement (ops/TICK.md §9 step 2a).
 The protocol above is the current one. ADR 0011 replaces step 2's self-selection with
 **session types** chosen by a read-only scheduler, `cargo xtask next-session`: Worker, Design
 (technical, product, UI), Audit, QC, User advocate, Retro, Planner and Gardener, each with a
@@ -356,6 +359,13 @@ A fresh subagent receives the diff, the spec, CONSTITUTION and the `docs/PRINCIP
 For PRs touching `crates/` or `tools/`, a Codex second reviewer (`ops/driver/codex-review.sh`, a
 trial) reviews the same brief. Every review and its triage is posted on the PR (ops/TICK.md §4).
 
+**Lanes (ADR 0012 §1).** A PR that changes only process-area files (`ops/areas.toml`'s
+`process` and `records` areas) and nothing on the strict list (security, owner-instruction,
+guard, protected-path and review rules) is in the light lane: ≤ 3000 lines, one test that
+selects and one that doesn't per pick or rule, at most 2 review rounds, minors dropped instead
+of filed. Everything else, the product and the apps included, keeps the full rules
+(ops/TICK.md §4).
+
 This check is softer than the judge: it runs locally and could in principle be faked.
 The judge is the hard backstop.
 
@@ -363,7 +373,7 @@ The judge is the hard backstop.
 
 | Situation | Rule |
 |---|---|
-| Extra work needed | new `discovery` issue in the right milestone |
+| Extra work needed | new `discovery` issue in the right milestone; process-area work goes in `Ops` unless it blocks a gate, is a live scheduler wrong pick, or is `crash`/`security` (ADR 0012 §2) |
 | Spec ambiguity | ① ISO 32000-2 text → ② errata / PDF Association notes → ③ reference-engine consensus → ④ the safer behavior. Record an ADR. |
 | Broken real-world files | **read leniently** (as the consensus engines do), **write strictly** (per spec) |
 | Reference engines disagree | page goes on the disputed list (excluded from ratchet); if ours matches neither, file a bug |
