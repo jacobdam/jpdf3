@@ -98,7 +98,7 @@ journey assigned to it to pass (PLAN §8).
 **Phase 2** (after v1.0; scoped at its start, PLAN §8 row P2, so no journeys yet)
 | Feature | PLAN §4 |
 |---|---|
-| OCR (F-P2-1), PDF → Office then Office → PDF (F-P2-2), AI chat and summary with no backend (F-P2-3), batch, compare and PDF/A (F-P2-4), iOS then Android (F-P2-5), read aloud with on-device voices only (F-P2-6), publishing (the Mac App Store, notarized downloads, other channels) | Phase 2 |
+| OCR (F-P2-1), PDF → Office then Office → PDF (F-P2-2), AI chat and summary with no backend (F-P2-3), batch, compare and PDF/A (F-P2-4), iOS then Android (F-P2-5), read aloud with on-device voices only (F-P2-6), publishing (Mac App Store, notarized direct downloads, other channels) | Phase 2 |
 
 ## 3. Non-goals
 
@@ -146,9 +146,9 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 | iOS, then Android | Phase 2 | PLAN R3, §4 Phase 2 |
 
 **How users get it.** For v1.0, users download the source and build it themselves: they build
-the macOS app, and they build and host the web app on their own static hosting. The project
-hosts a demo of the web app on GitHub. Publishing (the Mac App Store, notarized downloads and
-other channels) is Phase 2 (owner decisions on
+the macOS app, and they build and host the web app on their own static hosting. The project's
+demo of the web app is the GitHub Pages site CI deploys on every merge. Publishing (the Mac App
+Store, notarized direct downloads, other channels) is Phase 2 (owner decisions on
 [PR #332](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945) and [#335](https://github.com/jacobdam/jpdf3/issues/335); PLAN
 §1 assumptions, §4 Phase 2); the macOS app is built for the sandbox now, so it can ship through
 them then.
