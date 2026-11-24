@@ -26,11 +26,11 @@ Their jobs, in the order the milestones deliver them:
 | **Review** | highlight, comment, draw, stamp; reply to and resolve comments; exchange comments with other tools | M5 |
 | **Assemble** | insert, delete, extract, reorder and rotate pages; merge and split files; save in place or as a new file | M6 |
 | **Protect** | set passwords and permissions | M6 (certificate encryption: M9) |
+| **Convert** | images to PDF, pages to images | M6 |
 | **Fill and build forms** | fill every AcroForm field type, create and edit fields, flatten | M7 |
 | **Change content** | edit text and images, add text, images and links, watermark, headers and footers, Bates numbers, crop, compress | M8 |
 | **Redact** | remove content for real, not just cover it, and remove hidden information | M8 |
 | **Sign and verify** | verify signatures and what changed after signing; sign and certify (PAdES), with timestamps and long-term validation | M9 |
-| **Convert** | images to PDF, pages to images | M6 |
 
 M10 (Hardening & 1.0) releases v1.0. Phase 2 (§2, last table) comes after it.
 
@@ -48,7 +48,7 @@ journey assigned to it to pass (PLAN §8).
 | Sidebar: thumbnails, outline, annotations, attachments (listed, never opened), layers (F-RD-3) | J-RD-10 … J-RD-14 |
 | Search, select and copy text, internal links, external links after a confirmation; scripts never run (F-RD-4) | J-RD-15 … J-RD-18, J-RD-28, J-RD-31 |
 | Read and presentation modes, dark or sepia page tint, print, document properties (F-RD-5) | J-RD-19 … J-RD-22, J-PC-04 |
-| The keyboard shortcuts list (platform conventions) | J-PC-06 |
+| The keyboard shortcuts list (PLAN R8; TRACE lists it under R8, not a feature group) | J-PC-06 |
 
 **Review** (M5)
 | Feature | Journeys |
@@ -64,7 +64,7 @@ journey assigned to it to pass (PLAN §8).
 |---|---|
 | Insert (blank, from a file, from images), delete, extract, reorder, rotate, duplicate pages (F-PG-1) | J-PG-01 … J-PG-08, J-PG-13, J-PG-15, J-PG-16 |
 | Merge, split (by range, size or bookmarks), page labels, bookmark editing (F-PG-2) | J-PG-09 … J-PG-12, J-PG-14 |
-| Save: incremental (keeps signatures valid), full rewrite, Save As, unsaved changes, crash recovery; compress is M8 (F-OS-1) | J-OS-01, J-OS-02, J-OS-03, J-OS-06, J-PC-01, J-PC-03, J-PC-07 |
+| Save: incremental (keeps signatures valid), full rewrite, Save As, unsaved changes, crash recovery (F-OS-1; its compress half is under Change content, M8) | J-OS-01, J-OS-02, J-OS-06, J-PC-01, J-PC-03, J-PC-07 |
 | Convert images to a PDF, export pages as images (F-OS-2) | J-OS-04, J-OS-05 |
 
 **Protect** (M6; certificate encryption M9)
@@ -84,6 +84,7 @@ journey assigned to it to pass (PLAN §8).
 | Add text, images and links; move, resize and delete images (F-ED-2) | J-ED-02 … J-ED-05 |
 | Watermark, header and footer, Bates numbers, page background (F-ED-3) | J-ED-06 … J-ED-09 |
 | Crop; true redaction and removing hidden information (F-ED-4) | J-ED-10, J-SC-06 … J-SC-10 |
+| Compress: object streams, image downsampling, font subsetting, removing unused objects (F-OS-1) | J-OS-03 |
 
 **Sign and verify** (M9)
 | Feature | Journeys |
@@ -122,15 +123,15 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 |---|---|
 | **A hostile file can't take over the app.** Every PDF and every value from the native layer is treated as hostile and checked under hard resource limits; no `unsafe` code in the engine, and none in its dependencies except a short audited list of cryptographic primitives; the native layers hold no PDF logic | CONSTITUTION 3–6 and 8; PLAN R1, R4, §2.1, §2.2; the judge's crash grading and fuzzing (PLAN §6) |
 | **Scripts and automatic actions never run.** | CONSTITUTION 7; J-RD-28, J-FM-05 … J-FM-07 |
-| **Security problems block a release.** No open `sev:critical` or `sev:high` issue at the M4 owner preview, no open `sev:medium` or worse at v1.0 | ADR 0009; PLAN §8 rows M4 and M10 |
+| **Security problems block the owner preview and the release.** No open `sev:critical` or `sev:high` issue at the M4 owner preview, no open `sev:medium` or worse at the v1.0 release (M10) | ADR 0009; PLAN §8 rows M4 and M10 |
 | **Files stay on the device.** The web app is static with no backend; timestamps and OCSP/CRL requests are off until the user turns them on | PLAN R11, §4 (Security & signatures); the web network rule in [specs/journeys/reader.md](../specs/journeys/reader.md) |
 | **Pages look right.** Rendering is compared against other engines on public corpora; damaged real-world files open the way consensus engines open them | PLAN R5, R6, §6; CONSTITUTION 17; PLAN §8 exit criteria for M1–M3 |
 | **What jpdf writes is valid PDF.** Strict writing; outputs pass `qpdf --check` and re-render the same; annotations render in other viewers | CONSTITUTION 17; PLAN §8 rows M5 and M6 |
 | **Redaction removes the content.** It is not just covered | PLAN §4 (Edit); PLAN §8 row M8; J-SC-07, J-SC-08 |
-| **Signatures stay valid when you save.** Incremental save appends changes | PLAN §4 (Optimize & save); J-OS-01, J-SG-03 |
+| **Saving never breaks a signature silently.** Saves append to the signed revision, which stays a byte prefix, so its signature stays intact; a page change that verifiers will report as a change after signing, and a Save As that drops earlier revisions, warn first | PLAN §4 (Optimize & save); J-PG-15, J-OS-02 |
 | **Accessible.** WCAG 2.2 AA on the web; VoiceOver, Full Keyboard Access and the other Apple HIG accessibility settings on macOS | [specs/ui/accessibility.md](../specs/ui/accessibility.md); PLAN §8 row M10 |
 | **Fast, without trading away safety.** A first page in under 200 ms for a typical 10 MB file, 60 fps scrolling | PLAN R2, §5; PLAN §8 rows M4 and M10 |
-| **Works offline.** The macOS app needs no network; the web app is to work offline as a PWA | PLAN R11; PLAN §8 row M10 (no journey yet: #331) |
+| **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10 (no journey yet: #331) |
 | **Open source.** MIT, with only permissively licensed dependencies | PLAN R10; CONSTITUTION 10 |
 
 ## 5. Platforms
