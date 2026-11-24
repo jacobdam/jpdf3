@@ -318,7 +318,17 @@ fn records_keep_stderr_only_for_crashes_and_timeouts() {
         (None, Some(6), Some(2), Some("a\u{fffd}b"))
     );
     let r = record(Op::Info, None);
-    assert_eq!((r.status, r.exit, r.signal), ("crash", None, None));
+    assert_eq!(
+        (r.status, r.exit, r.signal, r.ms),
+        ("crash", None, None, None)
+    );
+    // Only a run that never started counts as unstarted (a tool failure, spec item 10).
+    let mut files = sample_files();
+    assert_eq!(unstarted(&files), 0, "crash with an exit, timeout, not_run");
+    if let Some(runs) = files[0].runs.as_mut() {
+        runs.push(r);
+    }
+    assert_eq!(unstarted(&files), 1);
 }
 
 /// A fake `jpdf-cli` that acts on its first argument (the command) and page.
@@ -744,12 +754,12 @@ fn the_diff_lists_changes_and_counts_failures_and_fixes() {
 #[test]
 fn no_previous_file_means_no_diff_said_so() {
     let d = scratch("diff");
-    let (text, line) = diff_for(None, &[]).unwrap();
+    let (text, line) = diff_for(&load_previous(None).unwrap(), &[]);
     let v = json::parse(&text).unwrap();
     assert_eq!(v.get("previous"), Some(&Value::Null));
     assert!(line.contains("no diff"), "{line}");
     let gone = d.join("gone.json");
-    let (text, line) = diff_for(Some(&gone), &[]).unwrap();
+    let (text, line) = diff_for(&load_previous(Some(&gone)).unwrap(), &[]);
     assert!(
         json::parse(&text)
             .unwrap()
@@ -762,7 +772,7 @@ fn no_previous_file_means_no_diff_said_so() {
     // A previous file that exists but is invalid fails the diff.
     let bad = d.join("bad.json");
     std::fs::write(&bad, "{\"schema\":2}").unwrap();
-    let e = diff_for(Some(&bad), &[]).unwrap_err();
+    let e = load_previous(Some(&bad)).unwrap_err();
     assert!(
         e.starts_with("previous results ") && e.contains("schema"),
         "{e}"
@@ -770,7 +780,7 @@ fn no_previous_file_means_no_diff_said_so() {
     // A valid one gives a diff against this night.
     let good = d.join("good.json");
     std::fs::write(&good, results_json(&sample_files(), true, 120, true)).unwrap();
-    let (text, line) = diff_for(Some(&good), &sample_files()[..1]).unwrap();
+    let (text, line) = diff_for(&load_previous(Some(&good)).unwrap(), &sample_files()[..1]);
     assert_eq!(
         line,
         "nightly: regress diff: 5 changes, 0 new crash/timeout, 0 fixed"
@@ -859,6 +869,23 @@ fn the_wrapper_passes_the_program_and_its_arguments_unchanged() {
     assert_eq!(
         std::fs::read_to_string(&out).unwrap(),
         "zero|a|b c|-d|$HOME|*|"
+    );
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// R1.1: the previous night is read before this night's `regress.json` replaces it, so a
+/// `--previous` naming that same file still diffs against the old night.
+#[test]
+fn the_previous_night_is_held_before_the_new_results_are_written() {
+    let d = scratch("same");
+    let f = d.join("regress.json");
+    std::fs::write(&f, results_json(&sample_files()[1..], true, 120, true)).unwrap();
+    let previous = load_previous(Some(&f)).unwrap();
+    std::fs::write(&f, results_json(&sample_files(), true, 120, true)).unwrap();
+    let (_, line) = diff_for(&previous, &sample_files());
+    assert_eq!(
+        line,
+        "nightly: regress diff: 5 changes, 2 new crash/timeout, 0 fixed"
     );
     std::fs::remove_dir_all(&d).unwrap();
 }

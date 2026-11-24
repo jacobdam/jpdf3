@@ -33,7 +33,10 @@ filing issues is #302)
    `<cache>/regress/<blob>.pdf` is checked again with `jpdf_corpus::fetch::is_verified` (a
    regular file with the manifest's size and git blob id; a FIFO doesn't block it). A row that
    fails the check is **missing**: it is listed in the results and never run, so a stale or
-   planted file under that name is never given to `jpdf-cli`.
+   planted file found under that name at check time is never given to `jpdf-cli`. The check
+   runs once, before all runs; a process that changes the cache during the runs (a concurrent
+   `jpdf-corpus fetch` or cleanup of the same cache) is out of scope: the CI job has a fresh
+   cache and nothing else writing to it.
 4. **Runs.** For each verified file, in blob-id order, one at a time, these five runs (the
    items the judge grades: `info` and pages 1 and 2 at 72 dpi, ops/judge/lib/common.py
    `PAGES_PER_FILE = 2`), each with the CONTRACT §1 time limit:
@@ -58,8 +61,9 @@ filing issues is #302)
    the time limit `timeout`, any other code, a signal or a spawn failure `crash`. Each run
    records `exit` (the code, or `null`), `signal` (the signal number on unix when the child
    was ended by one that was not our time-limit kill, else `null`) and `ms` (wall time from
-   spawn to exit or kill, rounded down). Only `crash` and `timeout` runs keep `stderr` (lossy
-   UTF-8, at most 4 KiB).
+   spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
+   UTF-8, the **first** 4 KiB; the judge keeps the last 8 KiB, so a long log can push the panic
+   message out: #322 keeps the tail instead).
 6. **Memory limit.** Before the runs, `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
    exactly `2097152` (2 GiB in KiB, the judge's `RLIMIT_AS`). If it does, every run is
    `/bin/sh -c 'ulimit -v 2097152 || exit 125; exec "$0" "$@"' <jpdf-cli> <arguments>`: the
@@ -77,9 +81,9 @@ filing issues is #302)
 8. **Results** `DIR/regress.json` (written to `regress.json.tmp`, then renamed; keys in this
    order):
    ```json
-   {"schema":1,"tier":"regress","rows":5264,"memory_limit_kib":2097152,"max_minutes":120,
+   {"schema":1,"tier":"regress","rows":5250,"memory_limit_kib":2097152,"max_minutes":120,
     "complete":true,
-    "counts":{"ok":5260,"error":4,"not_implemented":21048,"timeout":0,"crash":0,"not_run":0,"missing":0},
+    "counts":{"ok":3815,"error":238,"not_implemented":22197,"timeout":0,"crash":0,"not_run":0,"missing":0},
     "files":[{"blob":"<40 hex>","url":"https://…","missing":false,
               "runs":[{"op":"info","status":"ok","exit":0,"signal":null,"ms":12}, …]}, …]}
    ```
@@ -87,13 +91,17 @@ filing issues is #302)
    counts files. A missing file has `"missing":true` and `"runs":[]`; any other file has all
    five runs in the item 4 order.
 9. **Diff** `DIR/regress-diff.json` (same tmp-and-rename write):
+   - The previous file is read and checked **before the build and the runs**, and held in
+     memory, so a `--previous` that names this night's own `DIR/regress.json` still diffs
+     against the earlier night, and an invalid file fails before hours of runs.
    - No `--previous`, or no file at that path: `{"schema":1,"previous":null,"note":"…"}`,
      and stderr says there is no diff.
    - Otherwise the previous file is read (item "Limits") and checked: an object with
      `"schema":1` and a `files` array; each file an object with a `blob` of 40 lowercase hex
      digits (each blob once), a `url` string, a boolean `missing`, and either `"missing":true` with no runs or a `runs` array whose
      items have a known `op` (each op at most once per file) and a known status (item 5 plus
-     `not_run`). Anything else fails the diff (item 10). Other members are ignored.
+     `not_run`). Anything else is a tool failure before any run (item 10). Other members are
+     ignored.
    - Each (blob, op) pair present on either side gets a status per side: the run's status, or
      `missing` for every op of a missing file, or `absent` when that side doesn't list the
      blob (or the op). Pairs whose two statuses differ are the changes, sorted by blob, then
@@ -109,16 +117,22 @@ filing issues is #302)
 10. **Exit codes.** The nightly exits non-zero only for a tool failure, never for what
     `jpdf-cli` did (part 3, #302, files issues for crashes):
     - 2: usage (item 1);
-    - 1: a tool failure: the build, the manifest, the cache, the watchdog, the memory probe on
-      Linux, writing the results, an integrity failure in the fetch, an unreadable or invalid
-      previous file, or no file to run at all (every selected row missing: a run that checked
-      nothing must not pass);
+    - 1: a tool failure: an unreadable or invalid previous file, the build (or no `jpdf-cli`
+      file where the build should have put it), the manifest, the cache, the watchdog, the
+      memory probe on Linux, removing or writing the results, an integrity failure in the
+      fetch, a run that could not start (`jpdf-cli` missing or not executable: never counted
+      as a `jpdf-cli` crash only), or no file to run at all when the fetch was not an
+      infrastructure failure (every selected row missing: a run that checked nothing must not
+      pass);
     - 75 with `JUDGE-INFRA-FAILURE` on stderr: more than `max(1, ⌊N/100⌋)` of the N rows could
-      not be downloaded (the corpus tool's and the judge's rule), and no tool failure;
+      not be downloaded (the corpus tool's and the judge's rule) and no other tool failure.
+      This includes the case where every row is missing because of it (no network): that
+      stops before the runs with 75, not 1, since the cause is infrastructure;
     - 0 otherwise, whatever the runs' statuses and `complete`.
-    Once the runs started, `regress.json` (and the diff, when it can be computed) is written
-    before the nightly exits 1 or 75, so nothing measured is lost. A failure before the runs
-    writes nothing.
+    Before the runs, `regress.json` and `regress-diff.json` from an earlier run in `DIR` are
+    removed, so a stale file never sits next to this night's. Once the runs started,
+    `regress.json` and the diff are written before the nightly exits 1 or 75, so nothing
+    measured is lost. A failure before the runs writes nothing.
 
 ## Persistence
 No document persistence. `regress.json`, `regress-diff.json` and `work/` under `DIR`; nothing in
@@ -133,7 +147,8 @@ Each tool failure prints `xtask: nightly: <problem>` on stderr: `release build f
 the corpus tool's manifest or cache error, `cannot start the engine watchdog (/bin/sh)`,
 `ulimit -v 2097152 is not enforced here (the judge's Linux limit)`, `cannot write <path>: <io error>`,
 `fetch: <url>: <problem>` lines then `fetch: <summary>`, `previous results <path>: <problem>`,
-`no regress file to run (<N> rows missing)`. A usage error prints the problem and the usage line.
+`no regress file to run (<N> rows missing)`, `no jpdf-cli at <path> after the build`,
+`cannot remove <path>: <io error>`, `<N> runs could not start <path>`. A usage error prints the problem and the usage line.
 
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
@@ -199,8 +214,8 @@ Linux (the judge's CI) and macOS. On macOS the address-space limit is not applie
 like the judge's own helper.
 
 ## Performance
-Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5264-file tier takes a few
-minutes. The budget (item 7) bounds the run once commands are implemented; part 2 (#301) adds
+Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5250-file tier takes a few
+minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are implemented; part 2 (#301) adds
 bench and fuzz time to the same CI job (240 min).
 
 ## Tests

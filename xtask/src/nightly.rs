@@ -181,7 +181,7 @@ fn record(op: Op, o: Option<Outcome>) -> Run {
             status: Status::Crash.id(),
             exit: None,
             signal: None,
-            ms: Some(0),
+            ms: None,
             stderr: Some("cannot start jpdf-cli".into()),
         };
     };
@@ -497,26 +497,52 @@ fn read_bounded(path: &Path, cap: u64) -> Result<Option<String>, String> {
         .map_err(|_| "not UTF-8".to_string())
 }
 
-/// The diff file's text and stderr line, or the problem with the previous file.
-fn diff_for(previous: Option<&Path>, files: &[FileResult]) -> Result<(String, String), String> {
-    let none = |note: String| {
-        let mut s = String::from("{\"schema\":1,\"previous\":null,\"note\":");
-        jpdf_bench::json::string(&mut s, &note);
-        s.push_str("}\n");
-        (s, format!("nightly: {note}: no diff"))
-    };
+/// The previous night, loaded and checked before any run (spec item 9), so an invalid file
+/// fails at once and a `--previous` that is this night's own `regress.json` is read before
+/// it is replaced.
+#[derive(Debug, PartialEq, Eq)]
+enum Previous {
+    /// No diff: why.
+    Nothing(String),
+    /// The path as given, and its statuses.
+    Loaded(String, Statuses),
+}
+
+fn load_previous(previous: Option<&Path>) -> Result<Previous, String> {
     let Some(p) = previous else {
-        return Ok(none("no --previous results given".into()));
+        return Ok(Previous::Nothing("no --previous results given".into()));
     };
     let shown = p.display().to_string();
     let bad = |e: String| format!("previous results {shown}: {e}");
     match read_bounded(p, MAX_PREVIOUS).map_err(bad)? {
-        None => Ok(none(format!("no previous results at {shown}"))),
+        None => Ok(Previous::Nothing(format!("no previous results at {shown}"))),
         Some(text) => {
             let before = parse_previous(&text, MAX_ROWS).map_err(bad)?;
-            Ok(diff_json(&shown, &before, &current_statuses(files)))
+            Ok(Previous::Loaded(shown, before))
         }
     }
+}
+
+/// The diff file's text and stderr line.
+fn diff_for(previous: &Previous, files: &[FileResult]) -> (String, String) {
+    match previous {
+        Previous::Nothing(note) => {
+            let mut s = String::from("{\"schema\":1,\"previous\":null,\"note\":");
+            jpdf_bench::json::string(&mut s, note);
+            s.push_str("}\n");
+            (s, format!("nightly: {note}: no diff"))
+        }
+        Previous::Loaded(shown, before) => diff_json(shown, before, &current_statuses(files)),
+    }
+}
+
+/// Runs that never started (spec item 10: a tool failure, not a crash of `jpdf-cli`).
+fn unstarted(files: &[FileResult]) -> usize {
+    files
+        .iter()
+        .flat_map(|f| f.runs.iter().flatten())
+        .filter(|r| r.status == "crash" && r.exit.is_none() && r.signal.is_none() && r.ms.is_none())
+        .count()
 }
 
 fn write(path: &Path, text: &str) -> Result<(), String> {
@@ -546,7 +572,11 @@ fn build_cli(root: &Path) -> Result<PathBuf, String> {
 /// The whole nightly (spec items 2–10). `Ok(code)` is the exit code; `Err` is a tool failure
 /// before the runs (exit 1).
 pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
+    let previous = load_previous(opts.previous.as_deref())?;
     let cli = std::path::absolute(build_cli(root)?).map_err(|e| e.to_string())?;
+    if !cli.is_file() {
+        return Err(format!("no jpdf-cli at {} after the build", cli.display()));
+    }
     let cache = jpdf_corpus::resolve_cache(
         opts.cache.clone(),
         std::env::var_os("JPDF_CORPUS_CACHE").map(PathBuf::from),
@@ -577,6 +607,18 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     }
     let mem = memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))?;
     engine::start_watchdog()?;
+    // Earlier results in DIR must not survive next to this night's (spec item 10).
+    for name in ["regress.json", "regress-diff.json"] {
+        match std::fs::remove_file(opts.out.join(name)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "cannot remove {}: {e}",
+                    opts.out.join(name).display()
+                ));
+            }
+            _ => {}
+        }
+    }
     let work = opts.out.join("work");
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot write {}: {e}", work.display()))?;
     let png = std::path::absolute(work.join("render.png")).map_err(|e| e.to_string())?;
@@ -602,18 +644,16 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         }
     );
     let mut failed = false;
-    match diff_for(opts.previous.as_deref(), &files) {
-        Ok((text, line)) => {
-            eprintln!("{line}");
-            if let Err(e) = write(&opts.out.join("regress-diff.json"), &text) {
-                eprintln!("xtask: nightly: {e}");
-                failed = true;
-            }
-        }
-        Err(e) => {
-            eprintln!("xtask: nightly: {e}");
-            failed = true;
-        }
+    let (text, line) = diff_for(&previous, &files);
+    eprintln!("{line}");
+    if let Err(e) = write(&opts.out.join("regress-diff.json"), &text) {
+        eprintln!("xtask: nightly: {e}");
+        failed = true;
+    }
+    let n = unstarted(&files);
+    if n > 0 {
+        eprintln!("xtask: nightly: {n} runs could not start {}", cli.display());
+        failed = true;
     }
     let code = exit_code(failed, report.exit_code());
     if code == 75 {
