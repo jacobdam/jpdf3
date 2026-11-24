@@ -41,6 +41,27 @@ pub fn gh_args() -> Vec<String> {
     .collect()
 }
 
+/// The live tracked-file command: `-z` prints paths unquoted (no `core.quotePath`
+/// C-quoting), NUL-separated (test `live_command_flags`).
+pub fn git_args(root: &str) -> Vec<String> {
+    ["-C", root, "ls-files", "-z"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
+}
+
+/// `git ls-files -z` output as the one-path-per-line text `lint` reads. A path holding `\n` or
+/// `\r` can't be written that way, so it is an error (exit 2), not a silent split.
+pub fn tree_from_z(out: &str) -> Result<String, String> {
+    let paths: Vec<&str> = out.split('\0').filter(|p| !p.is_empty()).collect();
+    if let Some(bad) = paths.iter().find(|p| p.contains(['\n', '\r'])) {
+        return Err(format!(
+            "git ls-files: tracked path {bad:?} holds a line break"
+        ));
+    }
+    Ok(paths.join("\n"))
+}
+
 pub struct Options {
     pub from: Option<PathBuf>,
 }
@@ -84,11 +105,11 @@ pub fn run(root: &Path, opts: &Options) -> Result<Report, String> {
         ),
         None => {
             let areas = read(&root.join(AREAS_FILE))?;
-            let root_arg = root.to_string_lossy();
-            // `-z`: paths unquoted (no `core.quotePath` C-quoting), NUL-separated.
-            let tree = crate::macos::capture("git", &["-C", &root_arg, "ls-files", "-z"], None)
-                .map(|(out, _)| out.split('\0').collect::<Vec<_>>().join("\n"))
-                .map_err(|e| format!("git ls-files: {e}"))?;
+            let git = git_args(&root.to_string_lossy());
+            let gitv: Vec<&str> = git.iter().map(String::as_str).collect();
+            let tree = crate::macos::capture("git", &gitv, None)
+                .map_err(|e| format!("git ls-files: {e}"))
+                .and_then(|(out, _)| tree_from_z(&out))?;
             let args = gh_args();
             let argv: Vec<&str> = args.iter().map(String::as_str).collect();
             let issues = crate::macos::capture("gh", &argv, None)
@@ -464,6 +485,16 @@ mod tests {
             gh_args().join(" "),
             "issue list --state open --limit 1000 --json number,labels,body"
         );
+        assert_eq!(git_args("r").join(" "), "-C r ls-files -z");
+    }
+
+    #[test]
+    fn tree_from_nul_separated_paths() {
+        assert_eq!(tree_from_z("a b\0c/d\0"), Ok("a b\nc/d".to_owned()));
+        assert_eq!(tree_from_z(""), Ok(String::new()));
+        for bad in ["a\nops/x.md\0", "foo\r\0"] {
+            assert!(tree_from_z(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

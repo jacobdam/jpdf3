@@ -49,7 +49,8 @@ paths = ["crates/jpdf-engine/", "tools/jpdf-cli/"]
 ### `cargo xtask issue-lint [--from DIR]`
 Read-only: it runs `git ls-files` and `gh issue list --state open --limit 1000 --json
 number,labels,body` and writes nothing. `--from DIR` reads `DIR/areas.toml`, `DIR/tree.txt`
-(one tracked path per line; the live run reads `git ls-files -z`, so paths are not C-quoted) and `DIR/issues.json` instead, for tests.
+(one tracked path per line; the live run reads `git ls-files -z`, so paths are not C-quoted,
+and a tracked path holding a line break is exit 2) and `DIR/issues.json` instead, for tests.
 
 For each open issue, in number order, it reports one stdout line per problem,
 `#<n>: <problem>`:
