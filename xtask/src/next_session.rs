@@ -1372,36 +1372,61 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     let product_pr = slot_pr(PRODUCT_LABEL);
     let has_doc = on_main(&parse_log(&inp.main_log)?, PRODUCT_DOC);
     let open = |n: u64| issues.iter().any(|i| i.number == n);
+    // An open `design-product` issue is workable without a skip label and with its
+    // dependencies closed (step 10's test); in flight is the slot rule's.
+    let product_issues: Vec<&Issue> = issues
+        .iter()
+        .filter(|i| has_label(&i.labels, PRODUCT_LABEL))
+        .collect();
+    let workable_product =
+        |i: &&&Issue| !skipped(&i.labels) && !dependencies(&i.body).into_iter().any(open);
+    let issue_load = |n: u64, doc: bool| {
+        let mut l = vec![view_issue(n), "ops/TICK.md §10".to_owned()];
+        if doc {
+            l.push(PRODUCT_DOC.to_owned());
+        }
+        l.extend(["PLAN.md §1, §4".to_owned(), "specs/journeys/".to_owned()]);
+        l
+    };
     let product = if has_doc {
-        issues
+        product_issues
             .iter()
-            .filter(|i| !skipped(&i.labels))
-            .filter(|i| has_label(&i.labels, PRODUCT_LABEL) && has_label(&i.labels, "ready"))
-            .find(|i| !dependencies(&i.body).into_iter().any(open))
+            .filter(workable_product)
+            .find(|i| has_label(&i.labels, "ready"))
             .map(|i| {
                 (
                     format!("#{}", i.number),
                     format!("a ready {PRODUCT_LABEL} issue"),
-                    vec![
-                        view_issue(i.number),
-                        "ops/TICK.md §10".to_owned(),
-                        PRODUCT_DOC.to_owned(),
-                        "PLAN.md §1, §4".to_owned(),
-                        "specs/journeys/".to_owned(),
-                    ],
+                    issue_load(i.number, true),
                 )
             })
     } else {
-        Some((
-            "v1".to_owned(),
-            format!("{PRODUCT_DOC} is not on origin/main"),
-            vec![
-                "ops/TICK.md §10".to_owned(),
-                format!("gh issue list --state open --label {PRODUCT_LABEL}"),
-                "PLAN.md §1, §4".to_owned(),
-                "specs/journeys/".to_owned(),
-            ],
-        ))
+        let why = format!("{PRODUCT_DOC} is not on origin/main");
+        // v1 works the lowest workable open `design-product` issue (no `ready` needed), or
+        // files one when there is none; while every one waits, nothing is picked.
+        match product_issues.iter().find(workable_product) {
+            Some(i) => Some((
+                format!("v1 #{}", i.number),
+                why,
+                issue_load(i.number, false),
+            )),
+            // With a product PR open, the slot rule's note says why instead.
+            None if product_issues.is_empty() || product_pr.is_some() => Some((
+                "v1".to_owned(),
+                why,
+                vec![
+                    "ops/TICK.md §10".to_owned(),
+                    "PLAN.md §1, §4".to_owned(),
+                    "specs/journeys/".to_owned(),
+                ],
+            )),
+            None => {
+                notes.push(format!(
+                    "Design: product due ({why}) but every open {PRODUCT_LABEL} issue has a skip label or an open dependency: not picked"
+                ));
+                None
+            }
+        }
     };
     if let Some((reference, why, load)) = product {
         match product_pr {

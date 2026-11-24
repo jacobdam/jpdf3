@@ -2617,8 +2617,7 @@ fn step8_design_product() {
     assert_eq!(
         String::from_utf8(o.stdout).unwrap(),
         "design product v1\n\nRule: k (Design: product is due: docs/PRODUCT.md is not on origin/main)\n\
-         Load:\n- ops/TICK.md §10\n- gh issue list --state open --label design-product\n\
-         - PLAN.md §1, §4\n- specs/journeys/\n\
+         Load:\n- ops/TICK.md §10\n- PLAN.md §1, §4\n- specs/journeys/\n\
          Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
     );
     // The newest commit touching the path decides: deleted → missing, re-added or changed →
@@ -2752,8 +2751,81 @@ fn step8_design_product() {
         );
         assert_ne!(got, "design product #901");
     }
+    // While the file is missing, v1 works the lowest workable open design-product issue,
+    // `ready` or not, and a ready product issue is not picked as `#N`.
     assert_eq!(
         pick(&[missing.clone(), plus("issues.json", &[product(901, &[])])]),
+        "design product v1 #901"
+    );
+    let v1_issue = |n: u64, l: &[&str], body: &str| {
+        let mut all = vec!["design-product"];
+        all.extend_from_slice(l);
+        full_issue(n, "v1", &all, body, "null")
+    };
+    let o = run_with(&[
+        missing.clone(),
+        plus(
+            "issues.json",
+            &[v1_issue(922, &[], ""), v1_issue(921, &[], "")],
+        ),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.starts_with(
+            "design product v1 #921\n\nRule: k (Design: product is due: docs/PRODUCT.md is not on origin/main)\n\
+             Load:\n- gh issue view 921 --comments\n- ops/TICK.md §10\n- PLAN.md §1, §4\n- specs/journeys/\n"
+        ),
+        "{out}"
+    );
+    // A waiting one is passed over for the next; when every one waits, nothing is picked and
+    // the brief says why (R3.1: an escalated v1 issue waiting on its design ADR).
+    assert_eq!(
+        pick(&[
+            missing.clone(),
+            plus(
+                "issues.json",
+                &[
+                    v1_issue(921, &["owner-todo"], ""),
+                    v1_issue(922, &[], "Depends on: #5"),
+                    v1_issue(923, &[], ""),
+                    issue(5, "design", &["design"]),
+                ],
+            ),
+        ]),
+        "design product v1 #923"
+    );
+    for waiting in [
+        v1_issue(921, &["owner-todo"], ""),
+        v1_issue(921, &["blocked"], ""),
+        v1_issue(921, &["deferred"], ""),
+        v1_issue(921, &[], "Depends on: #5"),
+    ] {
+        let changes = vec![
+            missing.clone(),
+            plus(
+                "issues.json",
+                &[waiting.clone(), issue(5, "design", &["design"])],
+            ),
+        ];
+        assert_eq!(pick(&changes), "planner", "{waiting}");
+        let out = String::from_utf8(run_with(&changes).unwrap().stdout).unwrap();
+        assert!(
+            out.contains(
+                "- Design: product due (docs/PRODUCT.md is not on origin/main) but every open design-product issue has a skip label or an open dependency: not picked\n"
+            ),
+            "{out}"
+        );
+    }
+    // Only the label counts: other issues don't stop the plain v1 pick.
+    assert_eq!(
+        pick(&[
+            missing.clone(),
+            plus(
+                "issues.json",
+                &[issue(921, "PRODUCT.md v1", &["design", "owner-todo"])]
+            ),
+        ]),
         "design product v1"
     );
 
@@ -2830,7 +2902,12 @@ fn step8_design_product() {
             ),
         ),
     ] {
-        assert_eq!(pick(&slot(&l, p.clone())), "design product v1", "{l:?} {p}");
+        let want = if l.contains(&"design-product") {
+            "design product v1 #911"
+        } else {
+            "design product v1"
+        };
+        assert_eq!(pick(&slot(&l, p.clone())), want, "{l:?} {p}");
     }
     // Steps 7 and the Planner come first; the product note still shows when they win.
     let planner_due = ("queue.md", None);

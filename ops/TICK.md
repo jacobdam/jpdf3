@@ -128,7 +128,7 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
 - **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
   (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
-  `Rule:` line), then rule k (`design product v1`, `design product #N`: a Design: product
+  `Rule:` line), then rule k (`design product v1 [#N]`, `design product #N`: a Design: product
   session, §10), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
   `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
@@ -218,7 +218,7 @@ j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone h
    (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
    `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
 k. **Design: product** → §10. Picked at step 8 after the Planner's terms: `design product v1`
-   (`docs/PRODUCT.md` is not on main) or `design product #N` (the lowest open issue labeled
+   or `design product v1 #N` (`docs/PRODUCT.md` is not on main) or `design product #N` (the lowest open issue labeled
    `design-product` and `ready`, once the file is on main); neither while an open agent PR
    links an open `design-product` issue.
 
@@ -587,7 +587,9 @@ specs/tooling/design-technical.md.
       diff at its last reviewed commit, unchanged. File one issue for that part and one per
       remaining part, each with `Designed in: #<escalated issue>`; open the split PR from
       origin/main with those lines only (`Closes #<split issue>`; label it `design` if the
-      original PR had that label, so step 6 gives it the 24-hour window), close the original PR
+      original PR had that label, so step 6 gives it the 24-hour window; label every split
+      issue `design-product` if the escalated issue had it, so step 6 and the scheduler's
+      one-product-PR rule see it), close the original PR
       unmerged with a comment linking both, and close the escalated issue as split into the new
       ones. If the split needs any new line, it is not a split: take output 2 or 4. When the
       original PR was a `design` PR, the split issue is the design issue from then on (step 5's
@@ -599,9 +601,11 @@ specs/tooling/design-technical.md.
       no `ready`, body line `Designed in: #<escalated issue>`) so the ADR PR's review rounds
       count for it, not for the escalated issue's spent cap. Then open the ADR PR; only then, for
       a `needs-design` PR, close that PR unmerged and close the escalated issue as folded into
-      the design issue, linking both; an escalated `design-product` issue stays open instead
-      (its product question is not the ADR's, §10 step 5) and gets `Depends on: #<design
-      issue>`. The tasks are filed in step 5, after the review.
+      the design issue, linking both. When the escalated issue is labeled `design-product`, its
+      product part is not the ADR's (ADR 0011 §7): step 5's tasks include one new issue for it,
+      labeled `design-product` and `ready` (§10 step 3), with the usual `Designed in:` and
+      `Depends on:` lines, so it waits for the ADR and starts its own review count. The tasks
+      are filed in step 5, after the review.
    3. **ruling:** post `🤖 jpdf-agent **Design ruling**` on the PR, one line per open finding,
       `<ID>: out of scope by <PRINCIPLES.md entry or ADR §>: <why>`, and a last line
       `Next review: one design final check (ops/TICK.md §8)`. No ruling may cover a blocker, a
@@ -727,8 +731,10 @@ gate them.
 Picked by §2 at step 8 (rule k). It decides what jpdf is for (`docs/PRODUCT.md`) and what users
 do with it (`specs/journeys/`); Workers build it, and Design: technical decides how. Specs:
 specs/tooling/next-session.md step 8.
-1. **Issue first.** `design product v1`: the open issue labeled `design-product` for v1 (#311),
-   else file `Product: docs/PRODUCT.md v1` with that label and no `ready`. `design product #N`:
+1. **Issue first.** `design product v1 #N`: that issue (the lowest open `design-product` issue
+   without a skip label and with its `Depends on:` issues closed; #311 for the first v1).
+   `design product v1` with no number (no open `design-product` issue): file
+   `Product: docs/PRODUCT.md v1` with that label and no `ready`. `design product #N`:
    that issue. Claim it (§3 step 1; an owner issue gets the §0 replies) and draft its PR with
    `Closes #<issue>` early: while that PR is open, the scheduler picks no Design: product work.
 2. **Load:** the issue and the record it came from (an audit or user-advocate finding, an
@@ -756,9 +762,10 @@ specs/tooling/next-session.md step 8.
    every claim against them (no invented scope, no feature without a journey, no false
    present tense) and every journey change against CONSTITUTION 15. Over the cap, §4 step 6
    applies as to any PR (Design: technical, §8, ADR 0011 §5); a finding there that is a scope or
-   taste call is §8 output 4, the owner's question (ADR 0011 §7). The product issue stays open
-   through it (§8 output 2 doesn't fold it into the design issue), and §8 finishes the PR here,
-   at step 6, so it never merges without the owner's approval or window.
+   taste call is §8 output 4, the owner's question (ADR 0011 §7). §8 finishes a product PR here,
+   at step 6, so it never merges without the owner's approval or window; a split keeps the
+   `design-product` label on its issues; an ADR (output 2) files the product part again as a
+   new `design-product` issue that depends on the design issue.
 6. **Merge.**
    - **v1 merges only on the owner's explicit approval, with no timeout** (ADR 0011 §7). Never
      label it `design` or enable auto-merge. After `ai-review` success, mark the PR ready, add
