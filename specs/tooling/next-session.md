@@ -13,13 +13,15 @@ product-merge counter (ADR 0011 §3); part 2 (#243) adds step 11 (Planner or idl
 replaces the `legacy` exit, and reads the `Session:` records of ADR 0011 §3. Task 3 part 2
 (#275) adds step 6 (Design: technical) and takes `needs-design` PRs out of step 3. Task 2 part 1 (#244) adds step 8's Planner triggers (a milestone with no plan, 7
 days without a Planner run) and widens `records.txt` to 7 days. Task 2 part 2 (#288) adds the
-work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first order.
+work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first order. Task 6
+part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
     `planner` or `idle`.
     Its first word is the session type: `worker`, `design-technical`, `audit`, `retro`,
-    `planner`, or `idle` (no session: exit at once). Steps and references:
+    `planner`, `design` (Design: product, TICK §10), or `idle` (no session: exit at once).
+    Steps and references:
 
     | Step | TICK rule | First line |
     |---|---|---|
@@ -30,7 +32,7 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
     | 5 | e, f | `worker flaky #N`, `worker leftover-worktree <branch>` |
     | 6 | (§2 step 6, TICK §8) | `design-technical needs-design #N` (a PR), `design-technical design-issue #N` |
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
-    | 8 | j | `planner due` (the reason is on the `Rule:` line) |
+    | 8 | j, k | `planner due` (the reason is on the `Rule:` line), then `design product v1`, `design product v1 #N`, `design product #N` |
     | 10 | i | `worker ready #N` |
     | 11 | j | `planner`, `idle` |
 
@@ -39,8 +41,9 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
     `Notes:` list when there is something to note (each open agent PR on the owner's `/hold`
     and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
     worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
-    retro that step 7 didn't pick because its PR is open; on a `planner` or `planner due` pick,
-    last, the work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
+    retro that step 7 didn't pick because its PR is open, and a due Design: product term that
+    step 8 didn't pick for the same reason; on a `planner` or `planner due` pick, last, the
+    work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -203,8 +206,9 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
      `security` with no `sev:*`, then the rest; lowest number first within each.
 
      Not in this part: ADR 0011 §2 step 3's own design or `PRODUCT.md` PR past its 24-hour
-     window (task 3, #245, and task 6, #249) and step 4's `design-pending` containment rule
-     (task 4, #246/#247).
+     window (task 3's #275; a `PRODUCT.md` PR after v1 carries the `design` PR label, TICK
+     §10, so TICK §1's by-hand check covers it until then) and step 4's `design-pending`
+     containment rule (task 4, #246/#247).
   5. **Flaky and leftovers** (rules e, f): an open issue labeled `flaky` (same filters, lowest
      number first); then a worktree in `worktrees.txt` on a branch `t/…` (by name; the line
      `branch refs/heads/t/…`) for which `prs.json` has no PR of any state with that
@@ -283,11 +287,38 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
      → `planner due`. The reasons, in this order, on the `Rule:` line: `ops/QUEUE.md is missing
      on origin/main or unreadable` or `ops/QUEUE.md on origin/main doesn't plan the current
      milestone <M>`, `no Session: planner record is dated in the last 7 UTC days`, `the work mix
-     is below 70%: <c> of the last 20 sessions on milestone work`. QC, Design: product or UI
-     (step 8) and 9. Gardener: not in this part (tasks 4–8).
+     is below 70%: <c> of the last 20 sessions on milestone work`.
+
+     **Design: product** (rule k; ADR 0011 §1, TICK §10), when the Planner term didn't pick:
+     - *v1:* `docs/PRODUCT.md` is not on origin/main. v1's issues are the open ones labeled
+       `design-product` and not `ready` (ready ones are gap issues for after v1, TICK §10 step
+       3). None → `design product v1` (the session files one). Else, when any of them has a
+       skip label or an open dependency (step 10's `Depends on:` test; an escalated v1 waiting
+       on its design ADR, TICK §8 output 2) → nothing, and the brief notes `Design: product due
+       (<why>) but an open design-product issue without ready has a skip label or an open
+       dependency: not picked` (unless a product PR is open: then the slot rule's note below);
+       else `design product v1 #N`, the lowest. Whether the file is there comes from `main-log.txt`
+       (newest first): the newest commit with a file line whose path is exactly
+       `docs/PRODUCT.md` decides; status `D` means deleted, `A`, `M` or `T` present, and no
+       such line means never added. `--no-renames` turns a rename into `D` plus `A`, so a
+       rename away from the path reads as a delete. The file's text is never read;
+     - *a product issue:* the file is on origin/main, and an open issue is labeled
+       `design-product` and `ready`, with no skip label and its dependencies closed (step 10's
+       `Depends on:` test), in any milestone or none (product decisions aren't milestone work;
+       such issues are filed `ready`, TICK §9's opening, so no Planner run is needed) →
+       `design product #N`, lowest number first. An in-flight one needs no filter of its own:
+       the PR linking it trips the slot rule below. While the file is missing, only v1 is
+       picked;
+     - *one product PR at a time:* neither is picked while an open agent PR links an open issue
+       labeled `design-product` (step 7's slot rule, #282: any checks, any other labels; a
+       failing one is step 3's). The brief notes the term instead (`Design: product due (<why>)
+       but PR #N is open for it: not picked`, lowest PR number), also when an earlier step
+       won, as step 7's notes do. So the v1 PR, which waits for the owner's approval with no
+       timeout (ADR 0011 §7), holds both terms until it merges or closes.
+     QC and Design: UI (step 8) and 9. Gardener: not in this part (tasks 4, 5, 7, 8).
   10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
       open milestone whose title is `M<digits>` with the smallest number), with no skip label
-      and none of `in-progress` (claimed), `design`, `design-pending`, not in flight, and with its
+      and none of `in-progress` (claimed), `design`, `design-pending`, `design-product` (step 8's), not in flight, and with its
       dependencies closed: every `#N` of the list right after a `Depends on:` in its body is not an
       open issue in `issues.json`. The list is `#N` items separated by commas, spaces or `and`,
       each optionally followed by one `(…)` note without nested parentheses; it ends at the
@@ -381,6 +412,10 @@ never 2 (no command ran).
   full week: about 15 a day, so about 100; at 48f63d9 main had 8, since per-day directories
   started on 2026-11-23), each capped like any command. A Planner record older than 6 days is not
   read, which is what step 8's 7-day term wants.
+- `docs/PRODUCT.md`: no command of its own; step 8 reads `main-log.txt`, so a log cut off by
+  the cap is exit 2 as before. A history that reached the file only through a non-first-parent
+  merge would show the merge's first-parent diff, which names it (git's `--first-parent`
+  implies `--diff-merges=first-parent`).
 - `queue.md`: one `git ls-tree` and at most one `git cat-file`, capped like any command. A record is found only in a file under its own day's directory, so an entry filed
   under the wrong day counts for the day its path says.
 - The work mix: `pr-files.json` lists the 200 newest PRs of the account and at most 100 files
@@ -409,6 +444,13 @@ never 2 (no command ran).
   links then waits on it, as it would on a held PR: an owner issue or comment it names (step
   1), and any other issue it closes, a `crash` or `security` one included (in flight, steps 4
   to 10). An open PR with a skip label already does the same, so nothing new is exposed.
+- **Design: product.** Its terms read the agent account's labels and main's history, so a
+  session can hold them off (an open PR linking a `design-product` issue) or call one up (the
+  label): the same exposure as step 7's slot rule. Nothing here is a mechanical merge gate:
+  under TICK §10 step 6, v1 merges only after an untagged owner comment approves it, and a
+  later `docs/PRODUCT.md` change merges after a 24-hour window unless the owner `/hold`s it,
+  so a forged `design product #N` pick can lead to a merged change the owner didn't stop in
+  time, as a design ADR PR can (ADR 0011 §7).
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree
@@ -540,6 +582,23 @@ of inputs where no step before 11 applies (→ `planner`):
   bound (a `planner due` record today turns both terms off and step 11 into `idle`, and step
   10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
   test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
+- step 8's Design: product (#249): `design product v1` with the base log minus its
+  `docs/PRODUCT.md` line, and its full brief; the newest commit decides (`D` on top is v1;
+  `M`, `T`, `A` on top are present, also over an older `D`; `D` over an older `A` is v1); near
+  misses of the path (`docs/PRODUCT.md.bak`, `docs/product.md`, `PRODUCT.md`,
+  `x/docs/PRODUCT.md`, a quoted path) are v1; v1 with open `design-product` issues: the lowest
+  one without `ready` with its brief, a ready one alone → plain v1, any waiting one (each skip
+  label, an open dependency, also beside a workable one or a ready gap issue) → nothing with
+  the note, an issue with another label → plain v1; with the file present, the lowest ready
+  `design-product` issue in any milestone or none, its brief, and that it wins over a ready
+  Worker issue; a closed dependency; near misses (not `ready`, each skip label, an open
+  dependency, `design`, `design-products`); a ready `design-product` issue in M0 is never step 10's; while the file
+  is missing a ready product issue is never picked; the slot rule (an open PR linking a
+  `design-product` issue with `owner-todo` holds both terms with the note; a failing one is
+  step 3's; near misses: the `design` label, another issue, no `Closes`, merged, closed,
+  untagged, the label on the PR); `planner due` wins, and the note still shows; the
+  precedence test's step 8 entry between `retro due` and step 10, and its second pass, where
+  `planner due` wins over it;
 - the work mix (#288): 14 of 20 meets the budget, 13 of 20 is below it (`planner due`, its
   reason and the note), 20/20, 0/20, 19 records (not measured), all three step 8 reasons
   together, the note only on Planner picks, no current milestone, a Planner record dated today

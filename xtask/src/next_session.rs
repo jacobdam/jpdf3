@@ -91,7 +91,11 @@ const PRODUCT_PATHS: [&str; 6] = [
 ];
 /// Labels step 10 skips besides `SKIP_LABELS`. Since #275, `design` is defensive only: a
 /// `design` and `ready` issue step 10 could take (no skip label, not in flight) is step 6's first.
-const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
+const NOT_READY_LABELS: [&str; 4] = ["in-progress", "design", "design-pending", PRODUCT_LABEL];
+/// The label of a Design: product session's issues (step 8, ops/TICK.md §10).
+const PRODUCT_LABEL: &str = "design-product";
+/// What a Design: product session writes first (ADR 0011 §1: its v1 trigger).
+const PRODUCT_DOC: &str = "docs/PRODUCT.md";
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
 const BLOCKED_INCIDENT: usize = 3;
@@ -788,6 +792,15 @@ fn last_record(log: &[Commit], dirs: &[&str]) -> Option<usize> {
             .iter()
             .any(|(s, p)| s == "A" && dirs.iter().any(|d| is_record(p, d)))
     })
+}
+
+/// Whether `path` is on origin/main, from the newest first-parent commit that touches it: `D`
+/// means deleted, any other status means present, no such commit means it was never added.
+/// `--no-renames` turns a rename into `D` plus `A`, so both ends are seen.
+fn on_main(log: &[Commit], path: &str) -> bool {
+    log.iter()
+        .find_map(|c| c.files.iter().find(|(_, p)| p == path))
+        .is_some_and(|(s, _)| s != "D")
 }
 
 fn product_merge(c: &Commit) -> bool {
@@ -1630,8 +1643,92 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             ));
         }
     }
+    // Step 8, after the Planner: Design: product (ADR 0011 §1, ops/TICK.md §10). Off while an
+    // open agent PR links an open `design-product` issue (one product PR at a time, as #282
+    // does for audits); `docs/PRODUCT.md` missing on origin/main → v1, else the lowest
+    // `design-product` issue labeled `ready`, without a skip label, with its dependencies
+    // closed (step 10's test). An in-flight one is already covered by the slot rule.
+    let product_pr = slot_pr(PRODUCT_LABEL);
+    let has_doc = on_main(&parse_log(&inp.main_log)?, PRODUCT_DOC);
+    let open = |n: u64| issues.iter().any(|i| i.number == n);
+    // An open `design-product` issue is workable without a skip label and with its
+    // dependencies closed (step 10's test); in flight is the slot rule's.
+    let product_issues: Vec<&Issue> = issues
+        .iter()
+        .filter(|i| has_label(&i.labels, PRODUCT_LABEL))
+        .collect();
+    let workable_product =
+        |i: &&&Issue| !skipped(&i.labels) && !dependencies(&i.body).into_iter().any(open);
+    let issue_load = |n: u64, doc: bool| {
+        let mut l = vec![view_issue(n), "ops/TICK.md §10".to_owned()];
+        if doc {
+            l.push(PRODUCT_DOC.to_owned());
+        }
+        l.extend(["PLAN.md §1, §4".to_owned(), "specs/journeys/".to_owned()]);
+        l
+    };
+    let product = if has_doc {
+        product_issues
+            .iter()
+            .filter(workable_product)
+            .find(|i| has_label(&i.labels, "ready"))
+            .map(|i| {
+                (
+                    format!("#{}", i.number),
+                    format!("a ready {PRODUCT_LABEL} issue"),
+                    issue_load(i.number, true),
+                )
+            })
+    } else {
+        let why = format!("{PRODUCT_DOC} is not on origin/main");
+        // v1's issues are the `design-product` ones without `ready` (ready ones are gap
+        // issues for after v1, R4.2): the lowest is worked, one is filed when there is none,
+        // and nothing is picked while any of them waits.
+        let v1: Vec<&&Issue> = product_issues
+            .iter()
+            .filter(|i| !has_label(&i.labels, "ready"))
+            .collect();
+        let waiting = v1.iter().any(|i| !workable_product(i));
+        match v1.first() {
+            Some(i) if !waiting => Some((
+                format!("v1 #{}", i.number),
+                why,
+                issue_load(i.number, false),
+            )),
+            // With a product PR open, the slot rule's note says why instead.
+            _ if v1.is_empty() || product_pr.is_some() => Some((
+                "v1".to_owned(),
+                why,
+                vec![
+                    "ops/TICK.md §10".to_owned(),
+                    "PLAN.md §1, §4".to_owned(),
+                    "specs/journeys/".to_owned(),
+                ],
+            )),
+            _ => {
+                notes.push(format!(
+                    "Design: product due ({why}) but an open {PRODUCT_LABEL} issue without ready has a skip label or an open dependency: not picked"
+                ));
+                None
+            }
+        }
+    };
+    if let Some((reference, why, load)) = product {
+        match product_pr {
+            Some(n) => notes.push(format!(
+                "Design: product due ({why}) but PR #{n} is open for it: not picked"
+            )),
+            None if chosen.is_none() => {
+                chosen = Some(pick(
+                    format!("design product {reference}"),
+                    &format!("k (Design: product is due: {why})"),
+                    load,
+                ));
+            }
+            None => {}
+        }
+    }
     if chosen.is_none() {
-        let open = |n: u64| issues.iter().any(|i| i.number == n);
         let ready: Vec<&Issue> = issues
             .iter()
             .filter(workable)
