@@ -36,10 +36,10 @@ lines stay the source of truth, and step 10 picks from them, not from this list.
 - #195: changes a proposal script that the owner is applying (#196, PR #291); whether the test
   outlives the applied proposal is open, so it has no scope yet.
 - Owner's turn: #208 (drill steps; its `/hold` re-run waits for #266), #260 (an untagged owner
-  comment would make it an instruction); `owner-todo`: #179, #196, #266. Set aside
+  comment would make it an instruction; its close condition, #245 merged, is met, so it only needs closing); `owner-todo`: #179, #196, #266. Set aside
   (`deferred`): #146.
-- Moved out of M0 on 2026-11-24 (their remaining work is in later milestones): #14 → M9 (#70,
-  #55), #20 → M1 (#61), #22 → M2 (#64).
+- Moved out of M0 on 2026-11-24 (their remaining work is in later milestones): #14 → M9 (#66,
+  #70, #55), #20 → M1 (#61), #22 → M2 (#64).
 
 ## Critical path
 The judge's M0 gate passes (nightly 45179218903, 2026-11-23). The `m0` tag waits for an empty

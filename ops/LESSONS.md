@@ -295,9 +295,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
   Claiming a workflow or rule fired (drills) → cite the run log or the resulting state (timeline event, draft flag),
   never the bot's "applied" message: a `|| true` hid a permission error ([journal](journal/2026-11-22.md), PR #209 R1.1).
-- A PR that adds a session type whose PR closes no issue (Planner) → before round 1, walk its PR through every TICK
-  section keyed to an issue (§4 K and cap, §4 step 6 escalation, §5 `/hold` and `owner-todo`, §8) and write each
-  mapping down; PR #289 drew one such gap per round (R1.1, R2.2, R3.1, R4.1, R4.2, R5.1–R5.3) and reached design
+  Writing a rule or session type whose PR closes no issue (Planner) → before round 1, walk that PR through every
+  TICK section keyed to an issue (§4 K and cap, §4 step 6 escalation, §5 `/hold` and `owner-todo`, §8) and write each
+  mapping down; PR #289 drew one such gap per round (R1.1 to R5.3) and reached design
   ([journal](journal/2026-11-24/0004-244-planner.md)).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
