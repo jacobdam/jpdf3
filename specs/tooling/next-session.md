@@ -34,9 +34,10 @@ days without a Planner run) and widens `records.txt` to 7 days.
 
   - then a blank line and the brief: a `Rule:` line (the TICK letter and why this item was
     picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
-    `Notes:` list when there is something to note (an active judge alarm; worktrees whose
-    branch's PR is merged or closed, which can be removed; a due audit or retro that step 7
-    didn't pick because its PR is open).
+    `Notes:` list when there is something to note (each open agent PR on the owner's `/hold`
+    and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
+    worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
+    retro that step 7 didn't pick because its PR is open).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -324,8 +325,10 @@ never 2 (no command ran).
   changes nothing; an agent comment can't release a hold (it carries the tag). The owner's
   commands only ever hold back step 3: a held PR is skipped, never picked. The `owner/`
   branch skip only holds back step 3 too: any session can name a branch that way (the
-  account is shared), but that only stops its own PR from being picked, and the PR's linked
-  owner issue or comment then waits on it, as it would on a held PR.
+  account is shared), but that only stops its own PR from being picked, and whatever the PR
+  links then waits on it, as it would on a held PR: an owner issue or comment it names (step
+  1), and any other issue it closes, a `crash` or `security` one included (in flight, steps 4
+  to 10). An open PR with a skip label already does the same, so nothing new is exposed.
 - **What it outputs.** Issue and PR numbers, run ids, branch names and owner-comment URLs from
   the feed. No titles or bodies are printed, so issue text (data, CONSTITUTION 1) never appears
   in the pick or brief as if it were an instruction. Branch names come from the local worktree

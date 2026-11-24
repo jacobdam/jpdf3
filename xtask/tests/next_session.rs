@@ -556,6 +556,32 @@ fn step3_skips_the_owners_own_pr_on_an_owner_branch() {
     assert!(out.starts_with("planner\n"), "{out}");
     assert!(out.contains(note), "{out}");
     assert!(out.contains("- PR #300 is on the owner's /hold"), "{out}");
+    // R1.1: owner-branch notes come lowest number first, after the held ones, whatever the
+    // list order.
+    let mixed = set(
+        "prs.json",
+        format!(
+            "[{},{},{}]",
+            pr(302, "OPEN", "", "owner/b", &[], "[]"),
+            pr(300, "OPEN", "", "t/301-y", &[], "[]"),
+            pr(301, "OPEN", "", "owner/a", &[], "[]")
+        ),
+    );
+    let o = run_with(&[
+        wt.clone(),
+        mixed,
+        holds(&[(300, &[cmd("jacobdam", "/hold", "2026-11-24T01:00:00Z")])]),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(out.starts_with("worker ready #301\n"), "none links #301: {out}");
+    let at = |s: &str| out.find(s).unwrap_or_else(|| panic!("{s}: {out}"));
+    let (h, a, b) = (
+        at("- PR #300 is on the owner's /hold"),
+        at("- PR #301 is the owner's own change"),
+        at("- PR #302 is the owner's own change"),
+    );
+    assert!(h < a && a < b, "{out}");
     // Step 1: an owner issue the owner's PR closes, and an owner comment its body names, wait
     // for that PR, as for a held one.
     let url = format!("{ISSUES}777#issuecomment-1");
