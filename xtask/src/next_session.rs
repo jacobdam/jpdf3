@@ -18,6 +18,13 @@ const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
 const OWNER_BRANCH: &str = "owner/";
 /// The label of a PR escalated to a Design: technical session (ops/TICK.md §4 step 6, §8).
 const NEEDS_DESIGN: &str = "needs-design";
+/// The PR label of a design ADR PR and of a later `docs/PRODUCT.md` change (TICK §8 step 5,
+/// §10 step 6): it merges after a 24-hour window unless the owner holds it (ADR 0011 §7).
+const DESIGN_LABEL: &str = "design";
+/// The 24-hour window (ADR 0011 §7), in seconds.
+const DESIGN_WINDOW: i64 = 86_400;
+/// The timeline event of a draft PR marked ready.
+const READY_EVENT: &str = "ready_for_review";
 /// What a Design: technical session loads besides the PR or issue (ops/TICK.md §8 step 2).
 const DESIGN_LOAD: [&str; 6] = [
     "ops/TICK.md §8",
@@ -70,6 +77,9 @@ struct Inputs {
     records: String,
     /// The comments of each open PR (`number`, `comments`), for the owner's `/hold` (step 3).
     holds: String,
+    /// The `ready_for_review` events of each open agent PR labeled `design` (`number`,
+    /// `events`), for its 24-hour window (step 3, #314).
+    design_ready: String,
     /// `ops/QUEUE.md` on origin/main, if it is there and readable (step 8).
     queue: Option<String>,
     /// The changed files of each agent-account PR (`number`, `files`), for the work mix (#288).
@@ -149,6 +159,46 @@ fn blocked_live(since: &str) -> Result<String, Error> {
             "api repos/jacobdam/jpdf3/issues/{n}/events?per_page=100"
         ))?;
         parts.push(format!("{{\"number\":{n},\"events\":{events}}}"));
+    }
+    Ok(format!("[{}]", parts.join(",")))
+}
+
+/// Live `design-ready.json`: for each open agent PR labeled `design` in `prs`, the
+/// `ready_for_review` events of its timeline (every page), as `[{"number":N,"events":[…]}]`.
+/// Only `created_at` is kept, checked to be GitHub's fixed form, so the text is plain JSON.
+fn design_ready_live(prs: &str) -> Result<String, Error> {
+    let what = "gh api …/timeline";
+    let mut parts = Vec::new();
+    for p in parse_prs(prs).map_err(Error::Broken)? {
+        if !p.design_label() {
+            continue;
+        }
+        let n = p.number;
+        let pages = gh(&format!(
+            "api --paginate --slurp repos/jacobdam/jpdf3/issues/{n}/timeline?per_page=100"
+        ))?;
+        let v = parse_list(&pages, what).map_err(Error::Broken)?;
+        let mut events = Vec::new();
+        for page in list_of(&v) {
+            for e in list(page, what).map_err(Error::Broken)? {
+                if e.get("event").and_then(Value::as_str) != Some(READY_EVENT) {
+                    continue;
+                }
+                let at = text(e, "created_at", what).map_err(Error::Broken)?;
+                if !valid_floor(at) {
+                    return Err(Error::Broken(format!(
+                        "{what}: created_at {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                    )));
+                }
+                events.push(format!(
+                    r#"{{"event":"{READY_EVENT}","created_at":"{at}"}}"#
+                ));
+            }
+        }
+        parts.push(format!(
+            r#"{{"number":{n},"events":[{}]}}"#,
+            events.join(",")
+        ));
     }
     Ok(format!("[{}]", parts.join(",")))
 }
@@ -302,6 +352,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             blocked: read(dir, "blocked.json")?,
             records: read(dir, "records.txt")?,
             holds: read(dir, "holds.json")?,
+            design_ready: read(dir, "design-ready.json")?,
             queue: optional(&dir.join("queue.md"))?,
             pr_files: read(dir, "pr-files.json")?,
             all_issues: read(dir, "all-issues.json")?,
@@ -331,12 +382,13 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
             .ok_or_else(|| Error::Broken("system clock out of range".to_owned()))?,
     );
     let prs = gh(
-        "pr list --author @me --state all --limit 200 --json number,state,isDraft,body,headRefName,labels,statusCheckRollup,mergeable",
+        "pr list --author @me --state all --limit 200 --json number,state,isDraft,autoMergeRequest,createdAt,body,headRefName,labels,statusCheckRollup,mergeable",
     )?;
     // The same day as `now.txt`, so a run at midnight reads the day step 11 compares with.
     let day = i64::try_from(now / 86_400)
         .map_err(|_| Error::Broken("system clock out of range".to_owned()))?;
     let records = records_live(&prs, day)?;
+    let design_ready = design_ready_live(&prs)?;
     Ok(Inputs {
         feed,
         floor,
@@ -379,6 +431,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         blocked: blocked_live(&week_ago)?,
         records,
         holds: gh("pr list --author @me --state open --limit 200 --json number,comments")?,
+        design_ready,
         queue: queue_live()?,
         pr_files: gh("pr list --author @me --state all --limit 200 --json number,files")?,
         all_issues: gh("issue list --state all --limit 1000 --json number,milestone")?,
@@ -502,6 +555,15 @@ struct Pr {
     branch: String,
     labels: Vec<String>,
     failing: bool,
+    /// `isDraft`.
+    draft: bool,
+    /// `autoMergeRequest` is not null: auto-merge is on.
+    auto_merge: bool,
+    /// `createdAt`, GitHub's `YYYY-MM-DDTHH:MM:SSZ`.
+    created: String,
+    /// The newest `startedAt` of an `ai-review` status context in state `SUCCESS` on the head
+    /// (read for an open PR labeled `design` only).
+    review: Option<String>,
     /// Open and on the owner's `/hold` (`held_prs`), set by `decide`.
     held: bool,
 }
@@ -525,6 +587,39 @@ impl Pr {
     fn needs_design(&self) -> bool {
         self.open && has_label(&self.labels, NEEDS_DESIGN)
     }
+
+    /// Open and labeled `design` (exact): a PR whose merge waits out the owner's 24-hour
+    /// window (ADR 0011 §7, #314).
+    fn design_label(&self) -> bool {
+        self.open && has_label(&self.labels, DESIGN_LABEL)
+    }
+}
+
+/// The newest `startedAt` of an `ai-review` status context in state `SUCCESS` (#314).
+fn review_time(rollup: &Value, what: &str) -> Result<Option<String>, String> {
+    let entries = match rollup {
+        Value::Null => &[][..],
+        v => list(v, what)?,
+    };
+    let mut newest: Option<&str> = None;
+    for e in entries {
+        if e.get("__typename").and_then(Value::as_str) != Some("StatusContext")
+            || text(e, "context", what)? != "ai-review"
+            || text(e, "state", what)? != "SUCCESS"
+        {
+            continue;
+        }
+        let at = text(e, "startedAt", what)?;
+        if !valid_floor(at) {
+            return Err(format!(
+                "{what}: startedAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+            ));
+        }
+        if newest.is_none_or(|t| at > t) {
+            newest = Some(at);
+        }
+    }
+    Ok(newest.map(str::to_owned))
 }
 
 fn failing(rollup: &Value, what: &str) -> Result<bool, String> {
@@ -575,13 +670,42 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
         let conflict = conflicting(p, what)?;
         // Read before combining with `conflict`, so a conflicting PR's rollup is checked too.
         let rollup_bad = open && failing(field(p, "statusCheckRollup", what)?, what)?;
+        let draft = match field(p, "isDraft", what)? {
+            Value::Bool(b) => *b,
+            _ => return Err(format!("{what}: field \"isDraft\" is not a boolean")),
+        };
+        let auto_merge = match field(p, "autoMergeRequest", what)? {
+            Value::Null => false,
+            Value::Object(_) => true,
+            _ => {
+                return Err(format!(
+                    "{what}: field \"autoMergeRequest\" is not null or an object"
+                ));
+            }
+        };
+        let created = text(p, "createdAt", what)?;
+        if !valid_floor(created) {
+            return Err(format!(
+                "{what}: createdAt {created:?} is not YYYY-MM-DDTHH:MM:SSZ"
+            ));
+        }
+        let labels = labels(p, what)?;
+        let review = if open && has_label(&labels, DESIGN_LABEL) {
+            review_time(field(p, "statusCheckRollup", what)?, what)?
+        } else {
+            None
+        };
         let pr = Pr {
             number: number(p, "number", what)?,
             open,
             body: body.to_owned(),
             branch: text(p, "headRefName", what)?.to_owned(),
-            labels: labels(p, what)?,
+            labels,
             failing: open && (conflict || rollup_bad),
+            draft,
+            auto_merge,
+            created: created.to_owned(),
+            review,
             held: false,
         };
         // The account is shared with the owner: only tagged PRs are the agent's own.
@@ -601,6 +725,17 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
 /// the largest `createdAt` (GitHub's `YYYY-MM-DDTHH:MM:SSZ`, so text order is time order); on a
 /// tie, the later in the list.
 fn held_prs(text_: &str) -> Result<Vec<u64>, String> {
+    Ok(newest_commands(text_)?
+        .into_iter()
+        .filter(|(_, _, hold)| *hold)
+        .map(|(n, _, _)| n)
+        .collect())
+}
+
+/// For each PR in `holds.json` with an owner command (`held_prs`' rule), its number, the
+/// newest command's `createdAt` and whether it is a hold. A release's time starts the
+/// 24-hour window again (ADR 0011 §7, #314).
+fn newest_commands(text_: &str) -> Result<Vec<(u64, String, bool)>, String> {
     let what = "holds.json";
     let v = parse_list(text_, what)?;
     let mut out = Vec::new();
@@ -624,8 +759,38 @@ fn held_prs(text_: &str) -> Result<Vec<u64>, String> {
                 newest = Some((at, hold));
             }
         }
-        if newest.is_some_and(|(_, hold)| hold) {
-            out.push(n);
+        if let Some((at, hold)) = newest {
+            out.push((n, at.to_owned(), hold));
+        }
+    }
+    Ok(out)
+}
+
+/// The latest `created_at` of a `ready_for_review` event of each PR in `design-ready.json`
+/// (`None`: never marked ready, so it was created ready). Events of other kinds are ignored.
+fn ready_times(text_: &str) -> Result<std::collections::BTreeMap<u64, Option<String>>, String> {
+    let what = "design-ready.json";
+    let v = parse_list(text_, what)?;
+    let mut out = std::collections::BTreeMap::new();
+    for i in list(&v, what)? {
+        let n = number(i, "number", what)?;
+        let mut newest: Option<String> = None;
+        for e in list(field(i, "events", what)?, what)? {
+            if text(e, "event", what)? != READY_EVENT {
+                continue;
+            }
+            let at = text(e, "created_at", what)?;
+            if !valid_floor(at) {
+                return Err(format!(
+                    "{what}: created_at {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                ));
+            }
+            if newest.as_deref().is_none_or(|t| at > t) {
+                newest = Some(at.to_owned());
+            }
+        }
+        if out.insert(n, newest).is_some() {
+            return Err(format!("{what}: PR {n} listed twice"));
         }
     }
     Ok(out)
@@ -1196,7 +1361,7 @@ enum Work {
     Other,
     /// A Worker or QC session on this issue.
     Issue(u64),
-    /// A Worker session on this PR (`worker own-pr #N`, rule c).
+    /// A Worker session on this PR (`worker own-pr #N` or `worker design-window #N`, rule c).
     Pr(u64),
 }
 
@@ -1216,7 +1381,9 @@ fn record_work(rest: &str) -> Work {
         .filter(|d| !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()))
         .and_then(|d| d.parse().ok());
     match (kind, step, n) {
-        (Some("worker"), Some("own-pr"), Some(n)) if words.len() == 3 => Work::Pr(n),
+        (Some("worker"), Some("own-pr" | "design-window"), Some(n)) if words.len() == 3 => {
+            Work::Pr(n)
+        }
         (Some("worker" | "qc"), Some(_), Some(n)) if words.len() == 3 => Work::Issue(n),
         _ => Work::Other,
     }
@@ -1373,6 +1540,8 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     for p in &mut prs {
         p.held = p.open && held.contains(&p.number);
     }
+    let commands = newest_commands(&inp.holds)?;
+    let ready_at = ready_times(&inp.design_ready)?;
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
     let now = unix(&inp.now, "now.txt")?;
@@ -1451,6 +1620,53 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                         "specs/tooling/next-session.md".to_owned(),
                         "xtask/src/next_session.rs".to_owned(),
                     ],
+                )
+            });
+    }
+    if chosen.is_none() {
+        // ADR 0011 §7: the window starts at the latest of the PR marked ready, its last
+        // `ai-review` success and the owner's last `/release`; at exactly 24 hours it has passed.
+        // `now` is in the years 1970–9999 (`unix`), so this can't overflow; before 1970-01-02
+        // the cutoff is the epoch, which no GitHub time precedes.
+        let cutoff = iso(now.saturating_sub(DESIGN_WINDOW).max(0));
+        chosen = prs
+            .iter()
+            .filter(|p| {
+                p.design_label()
+                    && !p.draft
+                    && !p.auto_merge
+                    && !p.failing
+                    && !p.parked()
+                    && !skipped(&p.labels)
+            })
+            .find(|p| {
+                // No entry: its ready time is unknown, so it is never picked (the safe side;
+                // live, every open agent design PR gets one).
+                let Some(ready) = ready_at.get(&p.number) else {
+                    return false;
+                };
+                let ready = ready.clone().unwrap_or_else(|| p.created.clone());
+                let release = commands
+                    .iter()
+                    .find(|(n, _, hold)| *n == p.number && !hold)
+                    .map(|(_, at, _)| at.clone());
+                // Not failing implies an `ai-review` success on the head; `review` is checked
+                // anyway, so a PR without its time is never picked.
+                p.review.as_ref().is_some_and(|review| {
+                    [Some(ready), Some(review.clone()), release]
+                        .into_iter()
+                        .flatten()
+                        .all(|t| t <= cutoff)
+                })
+            })
+            .map(|p| {
+                let mut load = vec![format!("gh pr view {} --comments", p.number)];
+                load.extend(linked_issue(&p.body).map(view_issue));
+                load.push("ops/TICK.md §8 step 5".to_owned());
+                pick(
+                    format!("worker design-window #{}", p.number),
+                    "c (own design PR past its 24-hour window, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)",
+                    load,
                 )
             });
     }
@@ -1960,6 +2176,9 @@ mod tests {
         assert_eq!(record_work("worker  flaky\t#7 "), Work::Issue(7));
         assert_eq!(record_work("qc any #8"), Work::Issue(8));
         assert_eq!(record_work("worker own-pr #9"), Work::Pr(9));
+        // #314: a design-window session works a PR, as own-pr does.
+        assert_eq!(record_work("worker design-window #9"), Work::Pr(9));
+        assert_eq!(record_work("worker design-windows #9"), Work::Issue(9));
         for excluded in [
             "worker owner-issue #1",
             "worker owner-comment https://x/1#issuecomment-2",

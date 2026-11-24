@@ -126,7 +126,7 @@ fn blocked_issue(n: u64, events: &[String]) -> String {
 
 const GREEN: &str = r#"[{"__typename":"CheckRun","name":"policy","conclusion":"SUCCESS"},
  {"__typename":"CheckRun","name":"project-linux","conclusion":""},
- {"__typename":"StatusContext","context":"ai-review","state":"SUCCESS"}]"#;
+ {"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":"2026-11-23T00:00:00Z"}]"#;
 
 /// An agent PR: its body starts with the tag.
 fn pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &str) -> String {
@@ -142,7 +142,7 @@ fn raw_pr(n: u64, state: &str, body: &str, branch: &str, l: &[&str], rollup: &st
         "UNKNOWN"
     };
     format!(
-        r#"{{"number":{n},"state":{state:?},"isDraft":false,"body":{body:?},"headRefName":{branch:?},"labels":{},"statusCheckRollup":{rollup},"mergeable":"{m}"}}"#,
+        r#"{{"number":{n},"state":{state:?},"isDraft":false,"autoMergeRequest":null,"createdAt":"2026-11-20T00:00:00Z","body":{body:?},"headRefName":{branch:?},"labels":{},"statusCheckRollup":{rollup},"mergeable":"{m}"}}"#,
         labels(l)
     )
 }
@@ -264,6 +264,8 @@ fn base() -> Vec<(&'static str, String)> {
         // records are too few to measure.
         ("pr-files.json", "[]".to_owned()),
         ("all-issues.json", "[]".to_owned()),
+        // No open design PR, so no ready events (#314).
+        ("design-ready.json", "[]".to_owned()),
         ("areas.toml", AREAS.to_owned()),
         // PR 300 was held and released: not held.
         (
@@ -1802,6 +1804,7 @@ fn malformed_inputs_exit_1() {
         "pr-files.json",
         "all-issues.json",
         "areas.toml",
+        "design-ready.json",
     ] {
         let o = run_with(&[(name, None)]).unwrap();
         assert_eq!(o.status.code(), Some(1), "missing {name}");
@@ -3875,5 +3878,439 @@ fn work_mix_inputs_malformed_exit_1() {
             assert_eq!(o.status.code(), Some(1), "{name}: {text}");
             assert!(o.stdout.is_empty(), "{name}: {text}");
         }
+    }
+}
+
+// Step 3's third term (#314, ADR 0011 §7): an agent PR labeled `design` whose 24-hour window has
+// passed. NOW is 2026-11-24T06:00:00Z, so the window has passed for a start at or before
+// 2026-11-23T06:00:00Z (`AT_24H`) and not for one second later (`AFTER_24H`).
+const AT_24H: &str = "2026-11-23T06:00:00Z";
+const AFTER_24H: &str = "2026-11-23T06:00:01Z";
+const EARLY: &str = "2026-11-21T00:00:00Z";
+
+/// An `ai-review` success rollup whose status started at `at`.
+fn reviewed(at: &str) -> String {
+    format!(
+        r#"[{{"__typename":"CheckRun","name":"policy","conclusion":"SUCCESS"}},{{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":{at:?}}}]"#
+    )
+}
+
+/// An open agent design PR 320 (closes #321) created at `created`, reviewed at `review`, with
+/// `extra` labels; `draft` and `auto` (the `autoMergeRequest` JSON) as given.
+fn design_pr(n: u64, created: &str, rollup: &str, l: &[&str]) -> String {
+    let mut all = vec!["design"];
+    all.extend_from_slice(l);
+    pr(n, "OPEN", "Closes #321", "t/321-adr", &all, rollup).replace(
+        r#""createdAt":"2026-11-20T00:00:00Z""#,
+        &format!(r#""createdAt":{created:?}"#),
+    )
+}
+
+/// `design-ready.json` with one entry per (PR, ready times).
+fn design_ready(entries: &[(u64, &[&str])]) -> (&'static str, Option<String>) {
+    let e: Vec<String> = entries
+        .iter()
+        .map(|(n, times)| {
+            let ev: Vec<String> = times
+                .iter()
+                .map(|t| format!(r#"{{"event":"ready_for_review","created_at":{t:?}}}"#))
+                .collect();
+            format!(r#"{{"number":{n},"events":[{}]}}"#, ev.join(","))
+        })
+        .collect();
+    ("design-ready.json", Some(format!("[{}]", e.join(","))))
+}
+
+/// The design PR (and the base PRs) in `prs.json`.
+fn with_pr(p: &str) -> (&'static str, Option<String>) {
+    plus("prs.json", &[p.to_owned()])
+}
+
+#[test]
+fn step3_design_window() {
+    let base_pr = design_pr(320, EARLY, &reviewed(EARLY), &[]);
+    let ready_none = design_ready(&[(320, &[])]);
+    // Its issue carries `owner-todo` while the window runs (TICK §8 step 5): that doesn't stop it.
+    let issue_todo = plus(
+        "issues.json",
+        &[issue(321, "adr", &["design", "owner-todo"])],
+    );
+    let go = |p: &str,
+              ready: (&'static str, Option<String>),
+              more: &[(&'static str, Option<String>)]| {
+        let mut c = vec![with_pr(p), ready, issue_todo.clone()];
+        c.extend(more.iter().cloned());
+        pick(&c)
+    };
+    assert_eq!(
+        go(&base_pr, ready_none.clone(), &[]),
+        "worker design-window #320"
+    );
+    let o = run_with(&[with_pr(&base_pr), ready_none.clone(), issue_todo.clone()]).unwrap();
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        "worker design-window #320\n\nRule: c (own design PR past its 24-hour window, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)\n\
+         Load:\n- gh pr view 320 --comments\n- gh issue view 321 --comments\n- ops/TICK.md §8 step 5\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // Without a `Closes` link the brief has no issue line.
+    let unlinked = base_pr.replace("Closes #321", "ADR");
+    let o = run_with(&[with_pr(&unlinked), ready_none.clone()]).unwrap();
+    assert!(
+        String::from_utf8(o.stdout)
+            .unwrap()
+            .contains("Load:\n- gh pr view 320 --comments\n- ops/TICK.md §8 step 5\n")
+    );
+
+    // Each start time, the latest, at exactly 24 hours (picked) and one second less (not).
+    for (at, want) in [
+        (AT_24H, "worker design-window #320"),
+        (AFTER_24H, "planner"),
+    ] {
+        // The PR marked ready: its newest `ready_for_review` event, in any list order.
+        assert_eq!(
+            go(&base_pr, design_ready(&[(320, &[at, EARLY])]), &[]),
+            want,
+            "ready {at}"
+        );
+        assert_eq!(
+            go(&base_pr, design_ready(&[(320, &[EARLY, at])]), &[]),
+            want,
+            "ready {at}"
+        );
+        // Never marked ready: created ready, so `createdAt`.
+        let created = design_pr(320, at, &reviewed(EARLY), &[]);
+        assert_eq!(go(&created, ready_none.clone(), &[]), want, "created {at}");
+        // The last `ai-review` success.
+        let review = design_pr(320, EARLY, &reviewed(at), &[]);
+        assert_eq!(go(&review, ready_none.clone(), &[]), want, "review {at}");
+        // The owner's last `/release` (the newest owner command, a release).
+        let released = holds(&[(
+            320,
+            &[
+                cmd("jacobdam", "/hold", EARLY),
+                cmd("jacobdam", "/release", at),
+            ],
+        )]);
+        assert_eq!(
+            go(&base_pr, ready_none.clone(), &[released]),
+            want,
+            "release {at}"
+        );
+        // `/Hold` is a release under the workflow's rule (step 3's hold), so it restarts too.
+        let upper = holds(&[(320, &[cmd("jacobdam", "/Hold", at)])]);
+        assert_eq!(
+            go(&base_pr, ready_none.clone(), &[upper]),
+            want,
+            "/Hold {at}"
+        );
+    }
+    // A ready event before `createdAt` can't be: the event wins when there is one (so a
+    // later `createdAt` doesn't count).
+    let late_created = design_pr(320, AFTER_24H, &reviewed(EARLY), &[]);
+    assert_eq!(
+        go(&late_created, design_ready(&[(320, &[EARLY])]), &[]),
+        "worker design-window #320"
+    );
+    // Commands that aren't the owner's don't restart the window: another author, a tagged one,
+    // text before `/release`.
+    for c in [
+        cmd("someone", "/release", AFTER_24H),
+        cmd("jacobdam", &format!("/release {TAG}"), AFTER_24H),
+        cmd("jacobdam", "ok /release", AFTER_24H),
+    ] {
+        assert_eq!(
+            go(
+                &base_pr,
+                ready_none.clone(),
+                &[holds(&[(320, std::slice::from_ref(&c))])]
+            ),
+            "worker design-window #320",
+            "{c}"
+        );
+    }
+    // A release on another PR doesn't count.
+    assert_eq!(
+        go(
+            &base_pr,
+            ready_none.clone(),
+            &[holds(&[(321, &[cmd("jacobdam", "/release", AFTER_24H)])])]
+        ),
+        "worker design-window #320"
+    );
+    // Only `ai-review` successes count, and the newest of them (rollups list one status per
+    // context today; two are read safely).
+    let two = |second: &str| {
+        format!(
+            r#"[{{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":{EARLY:?}}},{second}]"#
+        )
+    };
+    for (second, want) in [
+        (
+            format!(
+                r#"{{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":{AFTER_24H:?}}}"#
+            ),
+            "planner",
+        ),
+        (
+            format!(
+                r#"{{"__typename":"StatusContext","context":"ai-review","state":"PENDING","startedAt":{AFTER_24H:?}}}"#
+            ),
+            "worker design-window #320",
+        ),
+        (
+            format!(
+                r#"{{"__typename":"StatusContext","context":"judge","state":"SUCCESS","startedAt":{AFTER_24H:?}}}"#
+            ),
+            "worker design-window #320",
+        ),
+    ] {
+        let p = design_pr(320, EARLY, &two(&second), &[]);
+        assert_eq!(go(&p, ready_none.clone(), &[]), want, "{second}");
+    }
+    // Events of other kinds are ignored.
+    assert_eq!(
+        go(
+            &base_pr,
+            (
+                "design-ready.json",
+                Some(format!(
+                    r#"[{{"number":320,"events":[{{"event":"convert_to_draft","created_at":{AFTER_24H:?}}},{{"event":"committed"}}]}}]"#
+                ))
+            ),
+            &[]
+        ),
+        "worker design-window #320"
+    );
+
+    // Near misses, each with the window passed.
+    let not_picked = |p: &str, more: &[(&'static str, Option<String>)]| {
+        let got = go(p, ready_none.clone(), more);
+        assert_ne!(got, "worker design-window #320", "{p}");
+        got
+    };
+    // A draft; auto-merge already on.
+    assert_eq!(
+        not_picked(
+            &base_pr.replace(r#""isDraft":false"#, r#""isDraft":true"#),
+            &[]
+        ),
+        "planner"
+    );
+    assert_eq!(
+        not_picked(
+            &base_pr.replace(
+                r#""autoMergeRequest":null"#,
+                r#""autoMergeRequest":{"enabledAt":"2026-11-23T00:00:00Z"}"#
+            ),
+            &[]
+        ),
+        "planner"
+    );
+    // Held: the newest owner command is a `/hold` (noted, as step 3 notes every held PR).
+    let held = holds(&[(
+        320,
+        &[
+            cmd("jacobdam", "/release", EARLY),
+            cmd("jacobdam", "/hold", AT_24H),
+        ],
+    )]);
+    assert_eq!(not_picked(&base_pr, std::slice::from_ref(&held)), "planner");
+    let o = run_with(&[
+        with_pr(&base_pr),
+        ready_none.clone(),
+        issue_todo.clone(),
+        held,
+    ])
+    .unwrap();
+    assert!(
+        String::from_utf8(o.stdout)
+            .unwrap()
+            .contains("PR #320 is on the owner's /hold")
+    );
+    // Failing: no `ai-review` success, an `ai-review` failure, a failed check, a conflict. Its
+    // issue has `owner-todo`, so the first term skips it too.
+    for rollup in [
+        "[]".to_owned(),
+        r#"[{"__typename":"StatusContext","context":"ai-review","state":"FAILURE","startedAt":"2026-11-21T00:00:00Z"}]"#.to_owned(),
+        r#"[{"__typename":"CheckRun","name":"policy","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":"2026-11-21T00:00:00Z"}]"#.to_owned(),
+    ] {
+        assert_eq!(not_picked(&design_pr(320, EARLY, &rollup, &[]), &[]), "planner", "{rollup}");
+    }
+    assert_eq!(
+        not_picked(&set_mergeable(&base_pr, r#""CONFLICTING""#), &[]),
+        "planner"
+    );
+    // Without `owner-todo` on its issue, a failing design PR is the first term's.
+    assert_eq!(
+        pick(&[
+            with_pr(&design_pr(320, EARLY, "[]", &[])),
+            ready_none.clone()
+        ]),
+        "worker own-pr #320"
+    );
+    // The label: missing, longer, another case, `needs-design` alone.
+    for l in [&[][..], &["designx"], &["Design"], &["needs-design"]] {
+        let p = pr(320, "OPEN", "Closes #321", "t/321-adr", l, &reviewed(EARLY));
+        assert_eq!(not_picked(&p, &[]), "planner", "{l:?}");
+    }
+    // A skip label on the PR itself.
+    for l in ["owner-todo", "blocked", "deferred"] {
+        assert_eq!(
+            not_picked(&design_pr(320, EARLY, &reviewed(EARLY), &[l]), &[]),
+            "planner",
+            "{l}"
+        );
+    }
+    // Untagged (the owner's), merged, closed, an `owner/` branch.
+    let untagged = base_pr.replacen(&format!("{TAG} "), "", 1);
+    assert!(!untagged.contains(TAG));
+    assert_eq!(not_picked(&untagged, &[]), "planner");
+    for state in ["MERGED", "CLOSED"] {
+        let p = base_pr.replace(r#""state":"OPEN""#, &format!(r#""state":{state:?}"#));
+        assert_eq!(
+            not_picked(&set_mergeable(&p, r#""UNKNOWN""#), &[]),
+            "planner",
+            "{state}"
+        );
+    }
+    assert_eq!(
+        not_picked(&base_pr.replace("t/321-adr", "owner/adr"), &[]),
+        "planner"
+    );
+    // No `design-ready.json` entry for it: its ready time is unknown, so never picked.
+    assert_eq!(
+        pick(&[with_pr(&base_pr), design_ready(&[]), issue_todo.clone()]),
+        "planner"
+    );
+    assert_eq!(
+        pick(&[
+            with_pr(&base_pr),
+            design_ready(&[(322, &[])]),
+            issue_todo.clone()
+        ]),
+        "planner"
+    );
+
+    // Lowest number first, whatever the list order; a waiting lower PR doesn't hide a higher one.
+    let other = design_pr(318, EARLY, &reviewed(EARLY), &[]);
+    let both = plus("prs.json", &[base_pr.clone(), other.clone()]);
+    let ready_both = design_ready(&[(320, &[]), (318, &[])]);
+    assert_eq!(
+        pick(&[both.clone(), ready_both.clone(), issue_todo.clone()]),
+        "worker design-window #318"
+    );
+    let waiting = design_pr(318, EARLY, &reviewed(AFTER_24H), &[]);
+    assert_eq!(
+        pick(&[
+            plus("prs.json", &[waiting, base_pr.clone()]),
+            ready_both,
+            issue_todo.clone()
+        ]),
+        "worker design-window #320"
+    );
+
+    // Step 3's order: a failing PR and the scheduler's bug issue come first; main red (step 2)
+    // outranks it; it outranks a crash (step 4).
+    let failing = pr(341, "OPEN", "", "t/1-a", &[], "[]");
+    assert_eq!(
+        pick(&[
+            plus("prs.json", &[base_pr.clone(), failing]),
+            ready_none.clone(),
+            issue_todo.clone()
+        ]),
+        "worker own-pr #341"
+    );
+    let with_issues = |extra: &str| {
+        plus(
+            "issues.json",
+            &[
+                issue(321, "adr", &["design", "owner-todo"]),
+                extra.to_owned(),
+            ],
+        )
+    };
+    assert_eq!(
+        pick(&[
+            with_pr(&base_pr),
+            ready_none.clone(),
+            with_issues(&issue(400, "next-session: x", &["bug"]))
+        ]),
+        "worker scheduler-bug #400"
+    );
+    assert_eq!(
+        pick(&[
+            with_pr(&base_pr),
+            ready_none.clone(),
+            with_issues(&issue(500, "x", &["crash"]))
+        ]),
+        "worker design-window #320"
+    );
+    assert_eq!(
+        pick(&[
+            with_pr(&base_pr),
+            ready_none.clone(),
+            issue_todo.clone(),
+            set(
+                "runs.json",
+                format!("[{}]", run_entry(20, "completed", "failure", "push"))
+            )
+        ]),
+        "worker main-red run 20"
+    );
+}
+
+#[test]
+fn step3_design_window_malformed_inputs_exit_1() {
+    let base_pr = design_pr(320, EARLY, &reviewed(EARLY), &[]);
+    let ready_none = design_ready(&[(320, &[])]);
+    let exit1 = |changes: &[(&'static str, Option<String>)], what: &str| {
+        let o = run_with(changes).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{what}");
+        assert!(o.stdout.is_empty(), "{what}");
+    };
+    // design-ready.json: not an array, no `events`, a ready event without or with a malformed
+    // `created_at`, a PR listed twice, a number that isn't one.
+    for text in [
+        "{}".to_owned(),
+        r#"[{"number":320}]"#.to_owned(),
+        r#"[{"number":320,"events":[{"event":"ready_for_review"}]}]"#.to_owned(),
+        r#"[{"number":320,"events":[{"event":"ready_for_review","created_at":"2026-11-23 06:00:00"}]}]"#.to_owned(),
+        r#"[{"number":320,"events":[{"created_at":"2026-11-23T06:00:00Z"}]}]"#.to_owned(),
+        r#"[{"number":320,"events":[]},{"number":320,"events":[]}]"#.to_owned(),
+        r#"[{"number":"320","events":[]}]"#.to_owned(),
+    ] {
+        exit1(&[with_pr(&base_pr), set("design-ready.json", text.clone())], &text);
+        // Parsed in full whatever is picked, also with no design PR open.
+        exit1(&[set("design-ready.json", text.clone())], &text);
+    }
+    // prs.json, on any PR (here the base's): `isDraft` not a boolean, `autoMergeRequest` not
+    // null or an object, `createdAt` missing or not GitHub's form.
+    let open = pr(300, "OPEN", "Closes #301", "t/301-y", &[], GREEN);
+    for bad in [
+        open.replace(r#""isDraft":false"#, r#""isDraft":"false""#),
+        open.replace(r#""isDraft":false,"#, ""),
+        open.replace(r#""autoMergeRequest":null"#, r#""autoMergeRequest":true"#),
+        open.replace(r#""autoMergeRequest":null,"#, ""),
+        open.replace(r#""createdAt":"2026-11-20T00:00:00Z","#, ""),
+        open.replace("2026-11-20T00:00:00Z", "2026-11-20"),
+    ] {
+        exit1(&[set("prs.json", format!("[{bad}]"))], &bad);
+    }
+    // An open design PR's `ai-review` success needs a `startedAt` in GitHub's form.
+    for rollup in [
+        r#"[{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS"}]"#,
+        r#"[{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":"yesterday"}]"#,
+    ] {
+        exit1(
+            &[
+                with_pr(&design_pr(320, EARLY, rollup, &[])),
+                ready_none.clone(),
+            ],
+            rollup,
+        );
+        // Not on a PR without the label (it isn't read there).
+        let plain = pr(320, "OPEN", "Closes #321", "t/321-adr", &[], rollup);
+        assert_eq!(pick(&[with_pr(&plain)]), "planner", "{rollup}");
     }
 }

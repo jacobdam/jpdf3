@@ -136,7 +136,9 @@ reviewed part, an ADR or principle (`docs/adr/_TEMPLATE-design.md`, `docs/PRINCI
 tasks, a ruling followed by one final check, or one question for the owner. One escalation per
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
 design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
-`ai-review` success, the owner's last `/release`, unless the owner `/hold`s them. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
+`ai-review` success, the owner's last `/release`, unless the owner `/hold`s them; part 3
+(#314) makes that a scheduler pick, step 3's `worker design-window #N`, which enables
+auto-merge. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
 touches. Part 2 (#275) adds step 6 to the scheduler: after steps 1–5 it picks
 `design-technical needs-design #N` (an escalated PR, which step 3 no longer takes), else
 `design-technical design-issue #N` (a `design` and `ready` issue).
