@@ -401,6 +401,8 @@ struct Review {
     pr: u64,
     rounds: u64,
     final_check: bool,
+    /// A design final check ran (ops/TICK.md §8 output 3), counted apart from `final_check`.
+    design_final_check: bool,
     /// Findings by severity (index into SEVERITIES) for the subagent (R) and second reviewer (S).
     r: [u64; 4],
     s: [u64; 4],
@@ -408,7 +410,11 @@ struct Review {
 }
 
 enum Header {
-    Review { k: u64, final_check: bool },
+    Review {
+        k: u64,
+        final_check: bool,
+        design_final_check: bool,
+    },
     Second,
     Triage,
 }
@@ -425,12 +431,17 @@ fn header(body: &str) -> Option<Header> {
     let rest = first.split_once("**AI review, round ")?.1;
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
     let k = digits.parse().ok()?;
+    let after = rest.get(digits.len()..).unwrap_or_default();
     // TICK §4 step 6: the final check is round 5.
-    let final_check = k == 5
-        && rest
-            .get(digits.len()..)
-            .is_some_and(|r| r.starts_with(" (final check)"));
-    Some(Header::Review { k, final_check })
+    let final_check = k == 5 && after.starts_with(" (final check)");
+    // TICK §8 output 3: `round K (design final check)`, K as §4 counts. A design session runs
+    // only after round 4 (§4 step 6), so its check is round 5 or later.
+    let design_final_check = k >= 5 && after.starts_with(" (design final check)");
+    Some(Header::Review {
+        k,
+        final_check,
+        design_final_check,
+    })
 }
 
 /// `<R|S><K>.<n>` at the start of `line`; returns (ID, rest of the line).
@@ -469,10 +480,15 @@ fn review_of(pr: u64, comments: &[Value]) -> Option<Review> {
         .filter_map(|c| c.get("body").and_then(Value::as_str))
     {
         let scan_findings = match header(body) {
-            Some(Header::Review { k, final_check }) => {
+            Some(Header::Review {
+                k,
+                final_check,
+                design_final_check,
+            }) => {
                 seen_review = true;
                 rev.rounds = rev.rounds.max(k);
                 rev.final_check |= final_check;
+                rev.design_final_check |= design_final_check;
                 true
             }
             Some(Header::Second) => {
@@ -843,6 +859,7 @@ struct ReviewSummary {
     median_rounds: Option<u64>,
     at_cap: u64,
     final_checks: u64,
+    design_final_checks: u64,
     r: [u64; 4],
     s: [u64; 4],
     regrades: u64,
@@ -856,6 +873,7 @@ fn review_summary(reviews: &[Review]) -> ReviewSummary {
         median_rounds: median(&mut rounds),
         at_cap: count(reviews.iter().filter(|r| r.rounds >= 4).count()),
         final_checks: count(reviews.iter().filter(|r| r.final_check).count()),
+        design_final_checks: count(reviews.iter().filter(|r| r.design_final_check).count()),
         r: [0; 4],
         s: [0; 4],
         regrades: 0,
@@ -1016,10 +1034,11 @@ fn render_json(rep: &Report) -> String {
         .iter()
         .map(|r| {
             format!(
-                "{{\"pr\":{},\"rounds\":{},\"final_check\":{},\"subagent\":{},\"second\":{},\"regrades\":{}}}",
+                "{{\"pr\":{},\"rounds\":{},\"final_check\":{},\"design_final_check\":{},\"subagent\":{},\"second\":{},\"regrades\":{}}}",
                 r.pr,
                 r.rounds,
                 r.final_check,
+                r.design_final_check,
                 json_sev(&r.r),
                 json_sev(&r.s),
                 r.regrades
@@ -1046,11 +1065,12 @@ fn render_json(rep: &Report) -> String {
     );
     let _ = write!(
         o,
-        "\"review\":{{\"prs\":{},\"median_rounds\":{},\"at_cap\":{},\"final_checks\":{},\"regrades\":{},\"subagent\":{},\"second\":{},\"per_pr\":[{}]}},",
+        "\"review\":{{\"prs\":{},\"median_rounds\":{},\"at_cap\":{},\"final_checks\":{},\"design_final_checks\":{},\"regrades\":{},\"subagent\":{},\"second\":{},\"per_pr\":[{}]}},",
         sum.prs,
         json_opt(sum.median_rounds),
         sum.at_cap,
         sum.final_checks,
+        sum.design_final_checks,
         sum.regrades,
         json_sev(&sum.r),
         json_sev(&sum.s),
@@ -1166,10 +1186,11 @@ fn render_md(rep: &Report) -> String {
         .map_or_else(|| "n/a".to_owned(), |m| m.to_string());
     let _ = writeln!(
         o,
-        "PRs reviewed: {}; median rounds: {median}; at 4+ rounds: {}; with a final check: {}.",
+        "PRs reviewed: {}; median rounds: {median}; at 4+ rounds: {}; with a final check: {}; with a design final check: {}.",
         sum.prs,
         share(sum.at_cap, sum.prs),
-        share(sum.final_checks, sum.prs)
+        share(sum.final_checks, sum.prs),
+        share(sum.design_final_checks, sum.prs)
     );
     let _ = writeln!(
         o,
@@ -1179,14 +1200,15 @@ fn render_md(rep: &Report) -> String {
         sum.regrades
     );
     if !rep.reviews.is_empty() {
-        o.push_str("| PR | Rounds | Final check | Subagent B/M/m/n | Second B/M/m/n | Regrades |\n|---|---|---|---|---|---|\n");
+        o.push_str("| PR | Rounds | Final check | Design final check | Subagent B/M/m/n | Second B/M/m/n | Regrades |\n|---|---|---|---|---|---|---|\n");
         for rev in &rep.reviews {
             let _ = writeln!(
                 o,
-                "| #{} | {} | {} | {} | {} | {} |",
+                "| #{} | {} | {} | {} | {} | {} | {} |",
                 rev.pr,
                 rev.rounds,
                 if rev.final_check { "yes" } else { "no" },
+                if rev.design_final_check { "yes" } else { "no" },
                 sev_counts(&rev.r),
                 sev_counts(&rev.s),
                 rev.regrades
@@ -2194,6 +2216,99 @@ mod tests {
         assert_eq!(
             v.get("review").and_then(|t| t.get("median_rounds")),
             Some(&Value::Null)
+        );
+    }
+
+    #[test]
+    fn design_final_checks_count_apart_from_final_checks() {
+        let one = |body: &str| review_of(1, &[comment(body)]).unwrap();
+        // TICK §8 output 3's header, at round 5 (escalated without a final check) and later.
+        for k in [5, 6, 12] {
+            let r = one(&format!(
+                "🤖 jpdf-agent **AI review, round {k} (design final check)** of x\nR{k}.1 [nit] n"
+            ));
+            assert!(r.design_final_check && !r.final_check, "round {k}: {r:?}");
+            assert_eq!(r.rounds, k);
+            assert_eq!(r.r, [0, 0, 0, 1]);
+        }
+        // Near misses: a design session runs only after round 4, other wordings, no space.
+        for body in [
+            "🤖 jpdf-agent **AI review, round 4 (design final check)** x",
+            "🤖 jpdf-agent **AI review, round 6 (design check)** x",
+            "🤖 jpdf-agent **AI review, round 6 (Design final check)** x",
+            "🤖 jpdf-agent **AI review, round 6(design final check)** x",
+            "🤖 jpdf-agent **AI review, round 6** (design final check) x",
+            "🤖 jpdf-agent **AI review (second reviewer), round 6 (design final check)** x",
+            "🤖 jpdf-agent **AI review, round 5 (final check)** x",
+        ] {
+            assert!(!one(body).design_final_check, "{body}");
+        }
+        // On a line other than the first, or untagged: not a header.
+        assert!(
+            review_of(
+                1,
+                &[
+                    comment("🤖 jpdf-agent **AI review, round 1** x"),
+                    comment("🤖 jpdf-agent note\n**AI review, round 6 (design final check)** x"),
+                    comment("**AI review, round 6 (design final check)** x"),
+                ]
+            )
+            .is_some_and(|r| !r.design_final_check && r.rounds == 1)
+        );
+        // Both kinds on one PR are reported separately in the summary, the table and the JSON.
+        let both = review_of(
+            3,
+            &[
+                comment("🤖 jpdf-agent **AI review, round 5 (final check)** x"),
+                comment("🤖 jpdf-agent **AI review, round 6 (design final check)** x"),
+            ],
+        )
+        .unwrap();
+        assert!(both.final_check && both.design_final_check && both.rounds == 6);
+        let rep = Report {
+            reviews: vec![
+                both,
+                one("🤖 jpdf-agent **AI review, round 6 (design final check)** x"),
+                one("🤖 jpdf-agent **AI review, round 2** x"),
+            ],
+            ..Report::default()
+        };
+        let sum = review_summary(&rep.reviews);
+        assert_eq!((sum.final_checks, sum.design_final_checks), (1, 2));
+        let md = render_md(&rep);
+        assert!(
+            md.contains("with a final check: 1/3 (33%); with a design final check: 2/3 (66%).\n"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| #3 | 6 | yes | yes | 0/0/0/0 | 0/0/0/0 | 0 |\n"),
+            "{md}"
+        );
+        assert!(md.contains("| #1 | 6 | no | yes |"), "{md}");
+        assert!(md.contains("| #1 | 2 | no | no |"), "{md}");
+        let v = json::parse(&render_json(&rep)).unwrap();
+        let review = v.get("review").unwrap();
+        let n = |key: &str| match review.get(key) {
+            Some(Value::Number(s)) => s.clone(),
+            other => panic!("{key}: {other:?}"),
+        };
+        assert_eq!(
+            (n("final_checks"), n("design_final_checks")),
+            ("1".into(), "2".into())
+        );
+        let per_pr = review.get("per_pr").and_then(Value::as_array).unwrap();
+        let flags: Vec<(Option<&Value>, Option<&Value>)> = per_pr
+            .iter()
+            .map(|p| (p.get("final_check"), p.get("design_final_check")))
+            .collect();
+        let (t, f) = (Value::Bool(true), Value::Bool(false));
+        assert_eq!(
+            flags,
+            [
+                (Some(&t), Some(&t)),
+                (Some(&f), Some(&t)),
+                (Some(&f), Some(&f))
+            ]
         );
     }
 

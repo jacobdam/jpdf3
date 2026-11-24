@@ -384,6 +384,21 @@ Each round K runs in this order:
      ledgers on it (this PR's and the design PR's or ruling), add `owner-todo` (§0) and leave the
      decision to the owner (see K ≥ 6 above);
    - a clean final check: post its triage, then `ai-review` with `state=success`.
+   - **after the last check** (a clean final check, or a §8 design final check or split check
+     that passed): no review round runs again, so a change before the merge lands can't be
+     reviewed (#277). When rule c picks the PR (it conflicts with its base, fails CI, or has no
+     `ai-review` success on its head), merge origin/main into it if it conflicts; an infra
+     failure gets `gh run rerun --failed` and nothing else. If every commit since the checked
+     commit is a record commit or a merge whose remerge-diff is empty or touches only record
+     paths (the post-cap terms above), re-post `ai-review` success on the new head
+     (`target_url`: the check's triage comment) and re-enable auto-merge (for a PR labeled
+     `design`, §8 step 5's new window first). Anything else (a resolution that edits another
+     file, a fix for a CI failure) goes to the owner, not to design, since a design session has
+     no finding to rule on and may not write code: push it, turn the PR back into a draft
+     (`gh pr ready N --undo`), post `ai-review` with `state=failure` on the new head, comment on the
+     issue the ledger and the commits since the checked one (if that comment is missing), then
+     label it `blocked` and `owner-todo` (§0; last, so a session that dies midway leaves the PR
+     to rule c). As at K ≥ 6, no review round runs until an owner comment says what to run.
 
    The states after round 4 (ADR 0011 §5):
 
@@ -398,6 +413,8 @@ Each round K runs in this order:
    | §8 output 3: the diff since the last reviewed commit is over 100 lines or adds a file (output 1 has no size rule) | §8 output 4, no check runs |
    | §8 output 2 (ADR or principle) | the PR is closed unmerged; tasks filed with `Designed in:` |
    | §8 output 4 (owner question) | `owner-todo`; no review round until an owner comment |
+   | after the last check, rule c picks the PR: every commit since the checked one is a record commit or a merge whose remerge-diff is empty or records only | `ai-review` success re-posted on the new head, merge |
+   | after the last check, any other change (a conflict resolution in another file, a CI fix) | pushed, draft, `ai-review` failure, `blocked`, `owner-todo`, ledger → the owner |
    | a `/hold` at any point | nothing moves until `/release` (§5) |
 
 Mechanics (the guard wants one simple command with the text inline, no files):
