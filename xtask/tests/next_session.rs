@@ -2254,7 +2254,8 @@ fn step10_ready_issue() {
         "design",
         "design-pending",
     ] {
-        // Step 10 never takes a `design` issue; since #275 step 6 does (a ready design issue).
+        // Since #275 step 6 takes a `design` and `ready` issue before step 10 sees it, so step
+        // 10's own `design` skip is defensive only and no fixture reaches it (R1.2).
         let want = if l == "design" {
             "design-technical design-issue #701"
         } else {
@@ -2814,4 +2815,69 @@ fn step6_ready_design_issue() {
         - docs/adr/_TEMPLATE-design.md\n- docs/adr/0010-review-rounds-converge.md\n\
         - docs/adr/0011-session-types-and-scheduler.md §5\nNotes:\n";
     assert!(out.starts_with(brief), "{out}");
+}
+
+#[test]
+fn step6_needs_design_pr_comes_after_steps_2_to_5() {
+    // R1.1: a needs-design PR (320, closing 321) loses to each of steps 2 to 5, and wins over
+    // step 7 once they are gone.
+    let nd = plus(
+        "prs.json",
+        &[pr(
+            320,
+            "OPEN",
+            "Closes #321",
+            "t/321-a",
+            &["needs-design"],
+            "[]",
+        )],
+    );
+    let wins = "design-technical needs-design #320";
+    assert_eq!(pick(std::slice::from_ref(&nd)), wins);
+    let cases: Vec<(&str, (&'static str, Option<String>))> = vec![
+        (
+            "worker main-red run 20",
+            set(
+                "runs.json",
+                format!("[{}]", run_entry(20, "completed", "failure", "push")),
+            ),
+        ),
+        (
+            "worker scheduler-bug #400",
+            plus("issues.json", &[issue(400, "next-session: x", &["bug"])]),
+        ),
+        (
+            "worker crash-security #500",
+            plus("issues.json", &[issue(500, "x", &["crash"])]),
+        ),
+        (
+            "worker crash-security #510",
+            plus("issues.json", &[issue(510, "x", &["security", "sev:high"])]),
+        ),
+        (
+            "worker flaky #600",
+            plus("issues.json", &[issue(600, "f", &["flaky"])]),
+        ),
+        (
+            "worker leftover-worktree t/9-z",
+            set(
+                "worktrees.txt",
+                "worktree /w/e\nHEAD f\nbranch refs/heads/t/9-z\n".to_owned(),
+            ),
+        ),
+    ];
+    for (want, change) in cases {
+        assert_eq!(pick(&[nd.clone(), change]), want);
+    }
+    // Step 7 comes after it.
+    let no_audit = set(
+        "main-log.txt",
+        [
+            commit(103, RETRO_T, "Retro", &[("A", "docs/retros/0001.md")]),
+            commit(101, ROOT_T, "Add plan", &[("A", "PLAN.md")]),
+        ]
+        .concat(),
+    );
+    assert_eq!(pick(std::slice::from_ref(&no_audit)), "audit due");
+    assert_eq!(pick(&[nd, no_audit]), wins);
 }

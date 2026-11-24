@@ -440,7 +440,10 @@ of inputs where no step before 11 applies (→ `planner`):
   milestone, none, or claimed is picked, lowest first, after a `needs-design` PR; near misses:
   `design` alone, `ready` alone, `design-pending`, each skip label, linked by an open PR (picked
   when the PR is merged or closed); the whole brief. The precedence test has a step 6 entry
-  between steps 5 and 7, and step 10's `design` near miss is now step 6's pick;
+  between steps 5 and 7 (its issue term), and a `needs-design` PR loses to main red, the
+  scheduler bug, a crash, a `sev:high` security issue, a flaky test and a leftover worktree and
+  wins over a due audit; step 10's `design` near miss is now step 6's pick (step 10's own
+  `design` skip is defensive only: step 6 takes any such issue first);
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,

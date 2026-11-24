@@ -124,12 +124,12 @@ journal entry lists it). Task #314 moves this into the scheduler's step 3.
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
 `cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
-- **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 7 is rules g and h
+- **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 6 is a **Design:
+  technical** session (§8) on a PR labeled `needs-design` (`design-technical needs-design #N`)
+  or a `design` and `ready` issue (`design-technical design-issue #N`), step 7 is rules g and h
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
   (`planner due`: the milestone has no plan or no Planner ran in 7 days; the reason is on the
-  `Rule:` line), step 6 is a **Design: technical** session (§8) on a PR labeled `needs-design`
-  (`design-technical needs-design #N`) or a `design` and `ready` issue
-  (`design-technical design-issue #N`), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
+  `Rule:` line), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
   `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
   `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The

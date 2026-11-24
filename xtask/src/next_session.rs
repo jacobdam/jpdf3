@@ -83,7 +83,8 @@ const PRODUCT_PATHS: [&str; 6] = [
     "tools/jpdf-cli/",
     "tools/fsio/",
 ];
-/// Labels step 10 skips besides `SKIP_LABELS`.
+/// Labels step 10 skips besides `SKIP_LABELS`. Since #275, `design` is defensive only: a
+/// `design` and `ready` issue step 10 could take (no skip label, not in flight) is step 6's first.
 const NOT_READY_LABELS: [&str; 3] = ["in-progress", "design", "design-pending"];
 const WEEK: i64 = 7 * 86_400;
 const AUDIT_MERGES: usize = 10;
