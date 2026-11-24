@@ -4,6 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- PR #296 (#295): `next-session` skips an own PR on the owner's `/hold` (step 3; step 1 waits for its items too).
+  Until it merges, a session picked for #290 (held) does nothing on it. After it, step 3 picks #291 (owner-apply PR, no
+  `ai-review`) unless the owner merges or holds it.
 - PR #276 (#245, ADR 0011 task 3 part 1) merged (139ea44). Part 2: #275 (next-session step 6). Follow-ups: #277.
 - `cargo xtask next-session` decides steps 1–5, 7, 10 and 11 (PRs #269, #272, #274, #284, #285); step 6 is checked by
   hand until #275. Task 2 (#244, the Planner session, `ops/QUEUE.md`, work-mix budget) and #275 are next.
@@ -51,3 +54,7 @@ Phase: bootstrap (pilot)
   put the filtering in a pure function over the command text with a fake reader, and decide per failure (bad bytes,
   oversize) whether it skips, exits 1 or exits 2, before round 1 (PR #285 R1.1:
   [journal](journal/2026-11-23/2225-243-step11.md)).
+- Tooling: a Rust check that mirrors a GitHub Actions `if:` expression → fold case: `startsWith`/`contains` there
+  ignore case (PR #296 R1.1: [journal](journal/2026-11-24/0150-295-hold-skip.md)).
+- Tooling: a mutant made with `sed -i.bak` and undone with `mv` keeps the old mtime, so cargo reuses the mutated
+  binary → `touch` the restored file before any live run ([journal](journal/2026-11-24/0150-295-hold-skip.md)).
