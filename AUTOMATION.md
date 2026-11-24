@@ -141,7 +141,12 @@ makes it due when the current milestone has no plan (the `Milestone:` line of `o
 on main) or no `Session: planner` record is dated in the last 7 UTC days, at most once a day;
 step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
 ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
-work PR when it changes. The work-mix budget comes with part 2 (#288).
+work PR when it changes. Part 2 (#288) adds the **work-mix budget** (ADR 0011 §3): of the
+newest 20 `Session:` records of the last 7 days (owner-instruction and Design sessions left out),
+at least 70% should be Worker or QC sessions on a current-milestone issue whose agent PR changes
+a product path. Below that, step 8 makes the Planner due (once a day) to add product issues, and
+step 10 takes the lowest-numbered product issue (a product `area:` label) first. The budget
+orders, it never blocks; with fewer than 20 records it isn't measured.
 
 Task 4 part 1 (#246) adds the area list, `ops/areas.toml` (each area's name, `product` or
 `process` kind and the paths it owns), and `cargo xtask issue-lint` (specs/tooling/issue-lint.md),

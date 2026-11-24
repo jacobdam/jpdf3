@@ -4,9 +4,12 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- PR #316 (#277): TICK §4 step 6 says what happens after the last check (record-only merges re-post `ai-review`,
-  any other change goes to the owner) and `cargo xtask metrics` counts design final checks; round 3 clean,
-  auto-merge on.
+- PR #316 (#277) merged (3e4e342): TICK §4 step 6's "after the last check" rule; `cargo xtask metrics` counts design
+  final checks.
+- PR #317 (#288, task 2 part 2): the work-mix budget in next-session (step 8's third term, step 10 product-first,
+  TICK §9 step 4a). Review round 2 clean; origin/main merged in (STATUS conflict only), `ai-review` re-posted,
+  auto-merge on. Step 10's order changes only once #308 adds `area:` labels.
+- PR #318 (#294): TICK §9 step 6, a Planner PR closed at the cap; open.
 - #246 part 1 merged (65bbbb9, `ops/areas.toml`, `cargo xtask issue-lint`). Part 2 is #308 (needs `ready` from the
   Planner), part 3 is #247 (depends on #308).
 - PR #312 (#249, Design: product session 1/2) is an open draft.
@@ -27,8 +30,8 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed (#277 is in PR #316; #308 and #314 wait for the next Planner's `ready`), else `idle` today (the
-   Planner ran).
+   are closed (#308 and #314 wait for the next Planner's `ready`), else `idle` today (the Planner ran). Planner
+   picks now carry a `work mix:` note for QUEUE.md's Work mix section.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -53,4 +56,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none: PR #316 moved both into ops/LESSONS.md)
+- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
+  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
+  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
