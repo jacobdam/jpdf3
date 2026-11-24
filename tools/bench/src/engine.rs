@@ -189,7 +189,33 @@ pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Dura
 
 /// Runs `bin args` like [`run_once`] and also returns the first `stderr_cap` bytes of its
 /// stderr (0 = stderr to the null device). `None` when the program could not be started at
-/// all, so callers can tell "absent" from "exited with an error".
+/// all, so callers can tell "absent" from "exited with an error". [`run_child`] has the
+/// details.
+pub fn probe(
+    bin: &Path,
+    args: &[OsString],
+    limit: Duration,
+    stderr_cap: u64,
+) -> Option<(Status, Duration, Vec<u8>)> {
+    run_child(bin, args, limit, stderr_cap).map(|o| (o.status, o.took, o.stderr))
+}
+
+/// How one [`run_child`] ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub status: Status,
+    /// The exit code, when the child exited by itself.
+    pub code: Option<i32>,
+    /// The signal that ended the child (unix), when it was not our time-limit kill.
+    pub signal: Option<i32>,
+    /// Wall time from spawn to exit (or to the kill).
+    pub took: Duration,
+    /// The first `stderr_cap` bytes of stderr.
+    pub stderr: Vec<u8>,
+}
+
+/// Runs `bin args` with stdin and stdout on the null device and returns how it ended
+/// (`None` when it could not be started). At a timeout, `code` and `signal` are `None`.
 ///
 /// The child runs in its own process group. When it exits, and at a timeout, the whole
 /// group is killed, so a wrapper script's children can't outlive it and skew later runs.
@@ -198,12 +224,12 @@ pub fn run_once(bin: &Path, args: &[OsString], limit: Duration) -> (Status, Dura
 /// overlap (the bench runs them one at a time). Captured stderr goes
 /// through a pipe read on a helper thread that stops reading at the cap (later writes get
 /// EPIPE), so a flooding program costs neither memory nor disk.
-pub fn probe(
+pub fn run_child(
     bin: &Path,
     args: &[OsString],
     limit: Duration,
     stderr_cap: u64,
-) -> Option<(Status, Duration, Vec<u8>)> {
+) -> Option<Outcome> {
     let mut cmd = Command::new(bin);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -236,7 +262,7 @@ pub fn probe(
     } else {
         drop(tx);
     }
-    let (status, took) = loop {
+    let (status, exit, took) = loop {
         match child.try_wait() {
             Ok(Some(st)) => {
                 let took = start.elapsed();
@@ -249,23 +275,40 @@ pub fn probe(
                 // kill finds no group (ESRCH), unless the id was reused within the few
                 // milliseconds the `/bin/sh` kill takes to start.
                 kill_group(group);
-                break (classify_exit(st), took);
+                break (classify_exit(st), Some(st), took);
             }
             Ok(None) if start.elapsed() >= limit => {
                 let took = start.elapsed();
                 kill_tree(&mut child);
-                break (Status::Timeout, took);
+                break (Status::Timeout, None, took);
             }
             Ok(None) => thread::sleep(POLL),
             Err(_) => {
                 kill_tree(&mut child);
-                break (Status::Crash, start.elapsed());
+                break (Status::Crash, None, start.elapsed());
             }
         }
     };
     // A grandchild may hold the pipe open; don't wait for it longer than a moment.
-    let captured = rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
-    Some((status, took, captured))
+    let stderr = rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
+    Some(Outcome {
+        status,
+        code: exit.and_then(|st| st.code()),
+        signal: exit.and_then(signal_of),
+        took,
+        stderr,
+    })
+}
+
+#[cfg(unix)]
+fn signal_of(st: ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    st.signal()
+}
+
+#[cfg(not(unix))]
+fn signal_of(_: ExitStatus) -> Option<i32> {
+    None
 }
 
 /// Kills the child's process group (unix) and the child itself, unregisters the group
@@ -467,6 +510,33 @@ mod tests {
             ),
             "{ev:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_child_reports_the_exit_code_or_the_signal() {
+        // `cargo xtask nightly` records these (specs/tooling/nightly.md item 5).
+        let sh = Path::new("/bin/sh");
+        let limit = Duration::from_secs(20);
+        let run =
+            |script: &str, limit| run_child(sh, &["-c".into(), script.into()], limit, 64).unwrap();
+        let o = run("exit 0", limit);
+        assert_eq!((o.status, o.code, o.signal), (Status::Ok, Some(0), None));
+        let o = run("echo oops >&2; exit 7", limit);
+        assert_eq!((o.status, o.code, o.signal), (Status::Crash, Some(7), None));
+        assert_eq!(o.stderr, b"oops\n");
+        let o = run("exit 3", limit);
+        assert_eq!(
+            (o.status, o.code, o.signal),
+            (Status::NotImplemented, Some(3), None)
+        );
+        // SIGABRT (6), what a Rust abort or a failed allocation ends in.
+        let o = run("kill -s ABRT $$", limit);
+        assert_eq!((o.status, o.code, o.signal), (Status::Crash, None, Some(6)));
+        // Our own kill at the limit is a timeout, not a signal.
+        let o = run("exec sleep 10", Duration::from_millis(100));
+        assert_eq!((o.status, o.code, o.signal), (Status::Timeout, None, None));
+        assert!(run_child(Path::new("/nonexistent/x"), &[], limit, 0).is_none());
     }
 
     #[cfg(unix)]
