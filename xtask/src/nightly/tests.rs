@@ -838,3 +838,27 @@ fn exit_codes_follow_the_spec() {
         [0, 1, 75, 1, 1]
     );
 }
+
+/// The wrapper's `exec "$0" "$@"` half on every OS (where `ulimit -v` fails, as on macOS,
+/// the wrapper never runs, so this is tested with the limit step swapped for `true`).
+#[cfg(unix)]
+#[test]
+fn the_wrapper_passes_the_program_and_its_arguments_unchanged() {
+    let d = scratch("argv");
+    let step = format!("ulimit -v {MEM_KIB}");
+    assert_eq!(MEM_WRAPPER.matches(&step).count(), 1);
+    let script = MEM_WRAPPER.replacen(&step, "true", 1);
+    let out = d.join("argv");
+    let st = Command::new("/bin/sh")
+        .args(["-c", &script, "/bin/sh", "-c"])
+        .arg(format!("printf '%s|' \"$0\" \"$@\" > '{}'", out.display()))
+        .args(["zero", "a", "b c", "-d", "$HOME", "*"])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "zero|a|b c|-d|$HOME|*|"
+    );
+    std::fs::remove_dir_all(&d).unwrap();
+}
