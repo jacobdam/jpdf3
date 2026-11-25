@@ -4,8 +4,11 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: the `pages` rerun of ci run 45649071740 (917d8bc) passed (attempt 3) after the GitHub outage, and
-  run 45653856999 (1231700) passed. The owner applied ops/proposals/driver-portable-df.md (#337) and removed `ops/HALT`.
+- main is green (ci 45653856999). The owner applied ops/proposals/driver-portable-df.md (#337) and removed `ops/HALT`.
+- **PR #343** (#342): the owner interactive session's driver proposal (keep a worktree older than 2 days while its
+  PR is open; ignore fork PRs), resumed under rule f; review 3/4 rounds, auto-merge on. After it merges: `owner-todo`
+  on #342 with `ready for owner: apply ops/proposals/driver-keep-open-worktrees.md, test plan in §Tests`. #344
+  (the 200-PR bound test) waits for the Planner.
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
 - PR #336 (#335) merged: the owner's answers to #311's open points are in docs/PRODUCT.md, PLAN.md and AUTOMATION.md.
@@ -52,6 +55,9 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
+  use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
+  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
