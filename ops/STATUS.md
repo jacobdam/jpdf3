@@ -47,4 +47,8 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none: PR #351 moved the four into ops/LESSONS.md)
+- Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
+  `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
+- Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check
+  → choose a state that fails only X, or have the function say which step failed
+  ([journal](journal/2026-11-25/1750-301-nightly-bench.md), PR #351 R2.1).
