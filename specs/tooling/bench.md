@@ -137,7 +137,7 @@ Status: implemented
     supported, matching the judge's plain build; default
     `DIR` = `target/xtask-out`). It forwards the other flags. Exit: the bench's exit code.
     `cargo xtask nightly` runs the same build and then the bench on a sample of the regress
-    tier (specs/tooling/nightly.md item 11, #301). Keeping the trend and the 5% regression
+    tier (specs/tooling/nightly.md item 12, #301). Keeping the trend and the 5% regression
     check of PLAN §5 (two reports with the same machine id) are not built yet (#19).
 
 ## Persistence

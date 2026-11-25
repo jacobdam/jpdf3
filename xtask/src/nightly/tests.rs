@@ -60,7 +60,7 @@ fn parses_flags_and_defaults() {
             fuzz_seconds: 3600,
         }
     );
-    // 0 skips the bench or the fuzz pass (spec items 11 and 12).
+    // 0 skips the bench or the fuzz pass (spec items 12 and 13).
     let o = p(&["--bench-minutes", "0", "--fuzz-seconds", "0"]).unwrap();
     assert_eq!((o.bench_minutes, o.fuzz_seconds), (0, 0));
     assert_eq!(
