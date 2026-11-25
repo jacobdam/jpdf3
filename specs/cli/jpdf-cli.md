@@ -83,6 +83,10 @@ No other exit code is ever produced; panics are bugs (no `catch_unwind` that wou
 from the judge).
 
 ## Limits
+The nightly checks these at scale: `cargo xtask limits` (specs/tooling/limits.md, #25) builds seven
+hostile files of about 500 MiB and runs `info` on each under the judge's 2 GiB `RLIMIT_AS` and 20 s
+limit.
+
 `jpdf_syntax::Limits` (re-exported by `jpdf-engine`), defaults. `Document::open` clamps the limits it
 is given to these defaults, so a caller can only tighten them (specs/core/limits-ceiling.md):
 - `max_file_size` 512 MiB (checked by the CLI from `stat` before opening, again on the

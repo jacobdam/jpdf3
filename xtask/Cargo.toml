@@ -16,3 +16,6 @@ jpdf-bench = { path = "../tools/bench" }
 jpdf-corpus = { path = "../tools/corpus" }
 jpdf-fsio = { path = "../tools/fsio" }
 jpdf-testgen = { path = "../tools/jpdf-testgen" }
+
+[dev-dependencies]
+jpdf-engine = { path = "../crates/jpdf-engine" }
