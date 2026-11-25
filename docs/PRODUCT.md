@@ -133,7 +133,7 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 | **Saving never breaks a signature silently.** An incremental save appends to the signed revision, which stays a byte prefix, so its signature stays intact; any change that would break a signature (a full rewrite, Encrypt, Compress, a Save As that drops earlier revisions) or that verifiers will report as a change after signing warns first | PLAN §4 (Optimize & save); the signed-files rule in [specs/journeys/forms-security.md](../specs/journeys/forms-security.md); J-PG-15, J-OS-02, J-OS-03, J-SC-01 |
 | **Accessible.** WCAG 2.2 AA on the web; VoiceOver, Full Keyboard Access and the other Apple HIG accessibility settings on macOS | [specs/ui/accessibility.md](../specs/ui/accessibility.md); PLAN §8 row M10 |
 | **Fast, without trading away safety.** A first page in under 200 ms for a typical 10 MB file, 60 fps scrolling | PLAN R2, §5; PLAN §8 rows M4 and M10 |
-| **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10 (no journey yet: #331) |
+| **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10; J-PC-08 |
 | **Open source.** MIT, with only permissively licensed dependencies | PLAN R10; CONSTITUTION 10 |
 | **In four languages.** The apps' text in English, Vietnamese, Japanese and Simplified Chinese at v1.0 | owner decisions ([languages](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945), [Simplified](https://github.com/jacobdam/jpdf3/issues/335)); PLAN §8 row M10; no journey yet: #334 |
 

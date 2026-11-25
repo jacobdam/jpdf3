@@ -2,13 +2,14 @@
 
 Areas `SG` (digital signatures: verify, sign, certify, digital IDs, trust, timestamps and
 long-term validation) and `PC` (platform conventions: unsaved changes, file changed on disk,
-crash recovery, Save As, print preference, multiple windows, the shortcuts list). PLAN §4
-(Security & signatures; Optimize & save), PLAN §1 R12, feature groups F-SC-2 … F-SC-4 and the
+crash recovery, Save As, print preference, multiple windows, the shortcuts list, offline use
+on the web). PLAN §4
+(Security & signatures; Optimize & save), PLAN §1 R12 and R11 (offline use), feature groups F-SC-2 … F-SC-4 and the
 platform rows of F-RD-1, F-RD-5 and F-OS-1 in [specs/TRACE.md](../TRACE.md). Inventory and
 coverage: [RESEARCH.md](RESEARCH.md). Format: ops/judge/CONTRACT.md §4.
 Milestones (PLAN §8): signatures are M9; conventions that need saving (unsaved changes, file
 changed on disk, crash recovery, Save As, several windows) are M6 (writer); the print
-preference and the shortcuts list are M4.
+preference and the shortcuts list are M4; offline use on the web is M10 (PWA offline).
 
 Shared rules for every journey in this file. The reader rules at the top of
 [reader.md](reader.md), the annotate rules in [annotate.md](annotate.md), the pages-edit rules
@@ -718,3 +719,23 @@ from disk, not edited, the edits gone.
 Error branch: Save As onto a file that is open in another tab → a typed error asks to close it
 first; Save As into a folder the harness made read-only (macOS) / the adapter failing with
 `NoModificationAllowedError` (web) → an error names the cause and nothing is written.
+
+## J-PC-08: Use the web app offline
+- milestone: M10
+- platform: web
+- test: e2e.web.pc_offline
+
+Steps: load the app once with the network on → its service worker installs and caches the
+whole app shell (code, the engine's WebAssembly, fonts, CMaps, strings), and the app has a web
+app manifest so the browser offers to install it (the test checks the manifest and that the
+service worker is active, not the browser's own install prompt) → turn the network off
+(Playwright `setOffline`) → reload → the app starts from the cache with no error and no offline
+warning → open fixture `report.pdf` (test handles per the
+[reader.md](reader.md) shared rules) → pages, thumbnails and search work → add a highlight
+and a sticky note → Save → the file is written through its handle, as online → close the
+document → reopen it from the recent files list → the highlight and the note are there, and
+MuPDF and Poppler render them → throughout, no request reaches the network: every request is
+answered by the service worker (Playwright `response.fromServiceWorker()`), none fails, none is
+cross-origin, and the service worker's own fetches make none (the reader.md network rule) →
+Cache Storage holds only the app's static assets, never the document's bytes or anything
+derived from them.
