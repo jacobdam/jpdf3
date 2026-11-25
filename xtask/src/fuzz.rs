@@ -191,7 +191,7 @@ fn output_of(root: &Path, program: &str, args: &[&str]) -> Option<String> {
 /// Installs only what is missing, so a tool CI already provides (a prebuilt cargo-fuzz, a
 /// cached toolchain) is not built or downloaded again. The nightly is looked up in the
 /// `rustup toolchain list`, not by running it, which could make rustup install it itself.
-fn install_missing_tools(root: &Path) -> Result<(), String> {
+pub fn install_missing_tools(root: &Path) -> Result<(), String> {
     if needs_nightly(output_of(root, "rustup", &["toolchain", "list"]).as_deref()) {
         install(&NIGHTLY_INSTALL)?;
     }
@@ -217,7 +217,7 @@ fn install(step: &[&str]) -> Result<(), String> {
     }
 }
 
-fn require_project(root: &Path) -> Result<(), String> {
+pub fn require_project(root: &Path) -> Result<(), String> {
     let manifest = root.join("fuzz").join("Cargo.toml");
     if manifest.is_file() {
         Ok(())
@@ -230,6 +230,27 @@ fn require_project(root: &Path) -> Result<(), String> {
 }
 
 pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
+    let r = run_report(root, opts)?;
+    run_result(match r.error {
+        None => Ok(r.failed),
+        Some(e) => Err((e, r.failed)),
+    })
+}
+
+/// What one fuzz pass did, for `cargo xtask nightly` (specs/tooling/nightly.md item 12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Report {
+    /// The targets run, in `cargo fuzz list` order.
+    pub targets: Vec<String>,
+    /// The targets that crashed, hung or ran out of memory.
+    pub failed: Vec<String>,
+    /// A target that could not start, or a log that could not be created ([`run_all`]).
+    pub error: Option<String>,
+}
+
+/// [`run`] without the summary: `Err` is a failure before any target ran (no project, `cargo
+/// fuzz list` or the build failed, an unknown `--target`, a seed that can't be written).
+pub fn run_report(root: &Path, opts: &Options) -> Result<Report, String> {
     require_project(root)?;
     let fuzz_dir = root.join("fuzz");
     let list = Command::new("cargo")
@@ -281,7 +302,15 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
         runs.push((t.clone(), cmd));
     }
     let log_dir = root.join("target").join("fuzz-logs");
-    run_result(run_all(runs, jobs, &log_dir, &mut std::io::stderr()))
+    let (failed, error) = match run_all(runs, jobs, &log_dir, &mut std::io::stderr()) {
+        Ok(failed) => (failed, None),
+        Err((e, failed)) => (failed, Some(e)),
+    };
+    Ok(Report {
+        targets,
+        failed,
+        error,
+    })
 }
 
 /// Maps [`run_all`]'s outcome to `run`'s result: any failed target or start error fails it,

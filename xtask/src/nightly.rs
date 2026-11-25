@@ -1,6 +1,7 @@
-//! `cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]`,
-//! part 1: the regress tier through `jpdf-cli` under the judge's limits, per-file results and a
-//! diff against the previous night. Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
+//! `cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]
+//! [--bench-minutes B] [--fuzz-seconds S]`: the regress tier through `jpdf-cli` under the judge's
+//! limits, per-file results and a diff against the previous night (part 1), then the bench and
+//! extra fuzz time (part 2, `extra`). Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -104,6 +105,10 @@ pub struct Options {
     pub limit: Option<usize>,
     pub previous: Option<PathBuf>,
     pub max_minutes: u64,
+    /// The bench's time limit in minutes; 0 skips it (spec item 11).
+    pub bench_minutes: u64,
+    /// The fuzz time per target in seconds; 0 skips it (spec item 12).
+    pub fuzz_seconds: u64,
 }
 
 /// A plain decimal number in `lo..=hi` (no sign, no leading `+`).
@@ -119,6 +124,7 @@ fn number(flag: &str, v: &str, lo: u64, hi: u64) -> Result<u64, String> {
 /// Parses the arguments after `nightly` (spec item 1).
 pub fn parse(args: &[String]) -> Result<Options, String> {
     let (mut out, mut cache, mut limit, mut previous, mut minutes) = (None, None, None, None, None);
+    let (mut bench, mut fuzz) = (None, None);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -133,6 +139,12 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
                 limit.replace(n).is_some()
             }
             "--max-minutes" => minutes.replace(number(flag, v, 1, MAX_MINUTES)?).is_some(),
+            "--bench-minutes" => bench
+                .replace(number(flag, v, 0, extra::MAX_BENCH_MINUTES)?)
+                .is_some(),
+            "--fuzz-seconds" => fuzz
+                .replace(number(flag, v, 0, extra::MAX_FUZZ_SECONDS)?)
+                .is_some(),
             other => return Err(format!("unknown argument {other:?}")),
         };
         if dup {
@@ -145,6 +157,8 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         limit,
         previous,
         max_minutes: minutes.unwrap_or(DEFAULT_MINUTES),
+        bench_minutes: bench.unwrap_or(extra::DEFAULT_BENCH_MINUTES),
+        fuzz_seconds: fuzz.unwrap_or(extra::DEFAULT_FUZZ_SECONDS),
     })
 }
 
@@ -653,6 +667,16 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         eprintln!("xtask: nightly: {n} runs could not start {}", cli.display());
         failed = true;
     }
+    // The bench and the fuzz pass run after the regress results are on disk (spec item 11).
+    failed |= extra::run(
+        root,
+        &opts.out,
+        &jobs,
+        opts.bench_minutes,
+        opts.fuzz_seconds,
+        &mut || crate::bench::build(root),
+        &mut |bin, args, limit| exec(bin, mem, args, limit),
+    );
     let code = exit_code(failed, report.exit_code());
     if code == 75 {
         infra();
@@ -726,6 +750,8 @@ fn is_executable_file(p: &Path) -> bool {
 fn exit_code(failed: bool, fetch_code: u8) -> u8 {
     if failed { 1 } else { fetch_code }
 }
+
+mod extra;
 
 #[cfg(test)]
 mod tests;

@@ -136,8 +136,9 @@ Status: implemented
     `$CARGO_TARGET_DIR` or `target`; `CARGO_BUILD_TARGET_DIR`/`CARGO_BUILD_TARGET` are not
     supported, matching the judge's plain build; default
     `DIR` = `target/xtask-out`). It forwards the other flags. Exit: the bench's exit code.
-    `cargo xtask nightly` (#19) will call it and keep the trend; the 5% regression check of
-    PLAN §5 compares two reports with the same machine id and lands with #19.
+    `cargo xtask nightly` runs the same build and then the bench on a sample of the regress
+    tier (specs/tooling/nightly.md item 11, #301). Keeping the trend and the 5% regression
+    check of PLAN §5 (two reports with the same machine id) are not built yet (#19).
 
 ## Persistence
 The report is the only output. The dashboard (#15) and the nightly (#19) read it.

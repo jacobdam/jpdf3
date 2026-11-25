@@ -4,6 +4,7 @@
 //! Builds `jpdf-cli` and `jpdf-bench` the way the judge builds `jpdf-cli`, then runs the bench
 //! with the report at `DIR/bench.json`. jpdf-bench validates the forwarded values itself.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -36,6 +37,34 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 
 /// Builds and runs the bench. `Ok(code)` is jpdf-bench's exit code.
 pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
+    let release = build(root)?;
+    let report = opts.out.join("bench.json");
+    let status = Command::new(release.join("jpdf-bench"))
+        .current_dir(root)
+        .args(bench_args(
+            &release.join("jpdf-cli"),
+            &report,
+            &opts.forwarded,
+        ))
+        .status()
+        .map_err(|e| format!("cannot run jpdf-bench: {e}"))?;
+    // A signal (no code) is a failure like any other non-zero exit.
+    Ok(status
+        .code()
+        .and_then(|c| u8::try_from(c).ok())
+        .unwrap_or(1))
+}
+
+/// jpdf-bench's arguments: `--cli CLI --out REPORT` then the forwarded flags.
+pub fn bench_args(cli: &Path, report: &Path, forwarded: &[String]) -> Vec<OsString> {
+    let mut a: Vec<OsString> = vec!["--cli".into(), cli.into(), "--out".into(), report.into()];
+    a.extend(forwarded.iter().map(OsString::from));
+    a
+}
+
+/// Builds `jpdf-cli` and `jpdf-bench` (release, locked); returns the release directory that
+/// holds both.
+pub fn build(root: &Path) -> Result<PathBuf, String> {
     // The cargo that runs xtask, and its target dir (CARGO_TARGET_DIR may move it).
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)
@@ -57,22 +86,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target"));
-    let release = root.join(target).join("release");
-    let report = opts.out.join("bench.json");
-    let status = Command::new(release.join("jpdf-bench"))
-        .current_dir(root)
-        .arg("--cli")
-        .arg(release.join("jpdf-cli"))
-        .arg("--out")
-        .arg(&report)
-        .args(&opts.forwarded)
-        .status()
-        .map_err(|e| format!("cannot run jpdf-bench: {e}"))?;
-    // A signal (no code) is a failure like any other non-zero exit.
-    Ok(status
-        .code()
-        .and_then(|c| u8::try_from(c).ok())
-        .unwrap_or(1))
+    Ok(root.join(target).join("release"))
 }
 
 #[cfg(test)]
