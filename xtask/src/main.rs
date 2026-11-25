@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
-     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
+     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
@@ -135,7 +135,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        // specs/tooling/bench.md. `cargo xtask nightly` (#19) will call this.
+        // specs/tooling/bench.md. `cargo xtask nightly` runs the same build (`bench::build`).
         (Some("bench"), _) => {
             let opts = match bench::parse(args.get(1..).unwrap_or_default()) {
                 Ok(o) => o,
