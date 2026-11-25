@@ -726,30 +726,32 @@ first; Save As into a folder the harness made read-only (macOS) / the adapter fa
 - test: e2e.web.pc_offline
 
 Fixture `offline.pdf`: 12 pages; the word "harbor" appears exactly 3 times, on pages 2, 7 and
-11; page 5 holds Japanese text in a non-embedded CIDFont with `/Encoding /90ms-RKSJ-H`, a
-predefined CMap the app ships; page 9 holds a random text sentinel.
+11; page 5 holds Japanese text in a Type0 font with `/Encoding /90ms-RKSJ-H` (a predefined
+CMap, loaded from the CMaps the app ships) and an embedded subset of a permissively licensed
+font as its CIDFont descendant; page 9 holds a random text sentinel.
 
 Steps: load the app once with the network on → on this load the reader.md network rule holds
 (only same-origin GETs for static app assets, none cross-origin) → its service worker installs
 and becomes active, and the page links a same-origin web app manifest (`<link rel="manifest">`)
 with a `name`, a `start_url` in the app's scope, `display` `standalone` and icons (the test
 checks these, not the browser's own install prompt) → Cache Storage now holds exactly the
-build's list of static assets, which gives each entry's cache URL (the start URL included)
-(code, the engine's WebAssembly, fonts, CMaps and the strings of every language the build
-ships): the same keys, no extra entries, and each body byte for byte the built file → turn the
-network off (Playwright `setOffline`) and stop the test's static server → reload → the app
-starts from the cache with no error and no offline warning → open `offline.pdf` (test handles
-per the [reader.md](reader.md) shared rules) → all 12 thumbnails render, page 5's Japanese text
-renders and matches the MuPDF and Poppler renders within the render-ratchet tolerance → search
-"harbor" → 3 hits, on pages 2, 7 and 11 → add a highlight and a sticky note → Save → the file
-is written through its handle, as online → close the document → reopen it from the recent files
-list (J-RD-03) → the highlight and the note are there, and MuPDF and Poppler render them → from
-the offline reload on, every page request is answered by the service worker (Playwright
+build's list of static assets (code, the engine's WebAssembly, fonts, CMaps and the strings of
+every language the build ships; the list gives each entry's cache URL, the start URL included):
+the same keys, no extra entries, and each body byte for byte the built file → turn the network
+off (Playwright `setOffline`) and stop the test's static server → reload → the app starts from
+the cache with no error and no offline warning → open `offline.pdf` (test handles per the
+[reader.md](reader.md) shared rules) → all 12 thumbnails render, page 5's Japanese text renders
+and matches the MuPDF and Poppler renders within the render-ratchet tolerance → search "harbor"
+→ 3 hits, on pages 2, 7 and 11 → add a highlight and a sticky note → Save → the file is written
+through its handle, as online → close the document → reopen it from the recent files list
+(J-RD-03) → the highlight and the note are there, and MuPDF and Poppler render them → from the
+offline reload on, every page request is answered by the service worker (Playwright
 `response.fromServiceWorker()`) and none fails; with the server stopped, any fetch that reached
 the network would fail, and the browser context's service-worker network events record none
-except the browser's own update check for the service worker script, which may fail offline and
-changes nothing → Cache Storage still holds exactly the asset list above, and searching it for
-page 9's sentinel and the fixture's bytes finds nothing.
+except the browser's own update check, which refetches the registered service worker script and
+the scripts it imports (matched by those URLs only), may fail offline and changes nothing →
+Cache Storage still holds exactly the asset list above, and searching it for page 9's sentinel
+and the fixture's bytes finds nothing.
 Offline does not make every feature work: features that need the network and that the user
 turns on (timestamps, online revocation checks, J-SG-09 and J-SG-10) can't reach their
 servers; this journey uses none of them.
