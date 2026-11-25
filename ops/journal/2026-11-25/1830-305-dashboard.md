@@ -1,0 +1,9 @@
+## 18:30 UTC #305 Dashboard 1/2: the metrics snapshot (`cargo xtask dashboard`)
+- Session: worker ready #305
+- Picked: rule i because #305 was the lowest-numbered ready M0 issue with its dependencies closed (work mix below 70%, no ready product issue)
+- Did: PR #354: `cargo xtask dashboard` (xtask/src/dashboard.rs, specs/tooling/dashboard.md) writes `ops/metrics/dashboard.json` (12 ISO weeks of merged PRs, median review rounds, sessions; journal entries per merged PR; blocked issues; per-milestone forecast at the trailing 4-week rate), committed because the `project-linux` CI job has no GitHub token and a shallow checkout; retro refreshes it (TICK §7 step 1). The full work (with the Vite page, the `ci linux` copy, the license-check extension and 15 Playwright tests) was 2091 added lines, so it was split: the page is #353, its code on branch `t/353-dashboard-page` (75d990f). Moved STATUS's 3 pending lessons into LESSONS and added 3. Removed the merged worktree of #25 (scheduler note).
+- Result: `ai-review` success posted on this commit, auto-merge on. Local: workspace nextest 609 passed (xtask 237 after merging origin/main), clippy and check-specs clean; the page branch passed 36 Playwright tests and `npm run licenses` (41) locally.
+- Cost: about 55% of the context; review rounds 3/4; regraded 0, overturned by the next reviewer 0 (one fix, R1.4, judged incomplete in round 2 and finished as R2.1); deferred: none
+- Codex: skipped (no `crates/` or `tools/` path)
+- Lesson: sized the issue after writing it, not before: the Rust tests doubled the module and the web page added ~850 lines (LESSONS, Tooling). The Linux host has no Node, Chromium libraries or fonts; a checksummed Node tarball plus `apt-get download` + `dpkg-deb -x` into `target/scratch/` made Playwright run (LESSONS).
+- Ignored: none

@@ -5,9 +5,12 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
-- #301 (nightly 2/3: bench and extra fuzz time, `DIR/nightly.json`): PR #351, 3 review rounds (round 3 on the merge
-  with #349's limits part), `ai-review` success, auto-merge on. Its R2.1 is #352 (no `ready`). Then #302 (part 3,
-  files issues; depends on #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
+- #301 (nightly 2/3) merged (PR #351); its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on
+  #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
+- #305 (dashboard 1/2): PR #354, `cargo xtask dashboard` writes the committed snapshot `ops/metrics/dashboard.json`
+  (the site's CI job has no token or history); 3 review rounds, `ai-review` success, auto-merge on. The page split
+  off as #353 (no `ready`; Depends on #305): finished work on branch `t/353-dashboard-page` (75d990f), merge
+  origin/main into it once #354 merges. #306 (judge metrics) follows #353.
 - Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
@@ -49,11 +52,4 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
-  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
-  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
-- Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
-  `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
-- Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check
-  → choose a state that fails only X, or have the function say which step failed
-  ([journal](journal/2026-11-25/1750-301-nightly-bench.md), PR #351 R2.1).
+(none)
