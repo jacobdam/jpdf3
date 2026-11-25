@@ -52,26 +52,47 @@ would stop it even with a working `df`.
 -    (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
 +    free=$(free_gb)
 +    [[ -n "$free" ]] && (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
+@@ (main loop)
+-  if ! disk_ok; then sleep 3600; continue; fi
++  if ! disk_ok; then [[ "$MODE" == "once" ]] && exit 1; sleep 3600; continue; fi
 ```
 
 - `df -P -k` (POSIX output, 1024-byte blocks) is the same on macOS and Linux; column 4 is the
   available space. Whole GB are rounded down, so 5 GB minus 1 KB reads 4 and is low.
 - An unreadable `df` (an error, or no number in column 4) logs, cleans nothing and starts no
   session; the loop retries in an hour as it does for low disk.
+- `--pilot` (one session) exits 1 when the disk check fails, as it already does when the halt
+  check fails, instead of sleeping an hour and looping.
 - The default minimum is 5 GB (the owner's choice on 2026-11-25). `JPDF_MIN_FREE_GB` still
   overrides it; the Mac mini can set it back to 30.
 
 ## Tests
 
-`bash ops/proposals/driver-portable-df/test.sh` from the repo root:
+`bash ops/proposals/driver-portable-df/test.sh [driver.sh]` from the repo root (default: the
+proposed driver). It loads the driver's functions with `REPO_DIR` set to a temp dir, stubs
+`find`, `git` and `cargo` (recording calls, so nothing is cleaned), and uses a fake `df` that,
+like GNU df, rejects `-g` and anything but `-P -k <dir>`; a case passes only with the wanted
+status, cleaning and an empty stderr.
 
 | Case | Proposed driver | Current driver |
 |---|---|---|
-| 9 GB free, minimum 5 | ok (passes, no cleaning) | ok |
-| exactly 5 GB | ok (passes) | ok |
-| 1 KB under 5 GB | ok (low, cleans) | FAIL (passes) |
-| `df` fails | ok (no cleaning, no session) | FAIL (cleans) |
-| `df` prints no number | ok (no cleaning, no session) | FAIL (bash arithmetic error, passes) |
+| 9 GB free, minimum 5 | ok (passes, no cleaning) | FAIL (cleans) |
+| exactly 5 GB, minimum 5 | ok | FAIL |
+| 1 KB under 5 GB (rounded down to 4) | ok (low, cleans) | FAIL (df error on stderr) |
+| `JPDF_MIN_FREE_GB` unset, exactly 5 GB | ok (default 5) | FAIL |
+| `JPDF_MIN_FREE_GB` unset, 1 KB under 5 GB | ok (low) | FAIL |
+| 4 GB, then 6 GB after cleaning | ok (cleans, passes) | FAIL |
+| `df` fails | ok (no cleaning) | FAIL (cleans) |
+| `df` prints no number | ok (no cleaning) | FAIL (cleans) |
+| a number, then `df` fails after cleaning | ok (low) | FAIL |
+
+The current driver fails every case for one reason: its `df -g` is rejected, and the empty value
+reads as 0 GB, so it always cleans. That is the 2026-11-25 run.
+
+Hand mutants of the proposed driver: `df -g` back, `df -k` without `-P`, the old 30 GB default,
+and the first empty-value guard removed each fail a case. Removing the guard after cleaning
+passes: bash reads an empty `free` as 0 in `(( ))`, so it still returns low with no error; the
+guard stays for clarity.
 
 After applying, on the VM: `ops/driver/driver.sh --pilot` runs one session; the log must not show
 `low disk` or `disk check failed`.
