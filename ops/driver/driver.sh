@@ -13,7 +13,7 @@ SESSION_MAX="${JPDF_SESSION_MAX:-10800}" # hard cap per session (3 h)
 SETTLE_GRACE="${JPDF_SETTLE_GRACE:-120}" # idle seconds allowed after a session's final result
 POLL="${JPDF_POLL:-10}"                  # seconds between checks of a running session
 BG_QUIET_MAX="${JPDF_BG_QUIET_MAX:-5400}" # quiet seconds after a result while background tasks are listed
-MIN_FREE_GB="${JPDF_MIN_FREE_GB:-30}"
+MIN_FREE_GB="${JPDF_MIN_FREE_GB:-5}"
 MODE="loop"; [[ "${1:-}" == "--pilot" || "${1:-}" == "--once" ]] && MODE="once"
 
 cd "$REPO_DIR" || exit 1
@@ -34,16 +34,25 @@ halted() {
   return 1
 }
 
+# Free space in whole GB. `df -P -k` is POSIX, so it works on macOS and Linux (`df -g` is
+# BSD-only: on Linux it fails, and the empty result read as 0 GB, which cleaned every hour).
+free_gb() {
+  df -P -k "$REPO_DIR" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print int($4 / 1048576)}'
+}
+
 disk_ok() {
   local free
-  free=$(df -g "$REPO_DIR" | awk 'NR==2 {print $4}')
+  free=$(free_gb)
+  # Unknown is not "low": clean nothing (cleaning deletes worktrees and the build cache) and
+  # start nothing.
+  [[ -n "$free" ]] || { log "disk check failed (df gave no number); not starting a session"; return 1; }
   if (( free < MIN_FREE_GB )); then
     log "low disk (${free} GB < ${MIN_FREE_GB} GB): cleaning"
     find "$REPO_DIR/.claude/worktrees" -maxdepth 1 -mindepth 1 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null
     git worktree prune
     cargo clean -q 2>/dev/null
-    free=$(df -g "$REPO_DIR" | awk 'NR==2 {print $4}')
-    (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
+    free=$(free_gb)
+    [[ -n "$free" ]] && (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
   fi
   return 0
 }
