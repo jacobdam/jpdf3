@@ -4,7 +4,7 @@ Areas `SG` (digital signatures: verify, sign, certify, digital IDs, trust, times
 long-term validation) and `PC` (platform conventions: unsaved changes, file changed on disk,
 crash recovery, Save As, print preference, multiple windows, the shortcuts list, offline use
 on the web). PLAN §4
-(Security & signatures; Optimize & save), PLAN §1 R12 and R11 (offline use), feature groups F-SC-2 … F-SC-4 and the
+(Security & signatures; Optimize & save), PLAN §1 R12 and R11 (files never leave the device), feature groups F-SC-2 … F-SC-4 and the
 platform rows of F-RD-1, F-RD-5 and F-OS-1 in [specs/TRACE.md](../TRACE.md). Inventory and
 coverage: [RESEARCH.md](RESEARCH.md). Format: ops/judge/CONTRACT.md §4.
 Milestones (PLAN §8): signatures are M9; conventions that need saving (unsaved changes, file
@@ -725,17 +725,30 @@ first; Save As into a folder the harness made read-only (macOS) / the adapter fa
 - platform: web
 - test: e2e.web.pc_offline
 
-Steps: load the app once with the network on → its service worker installs and caches the
-whole app shell (code, the engine's WebAssembly, fonts, CMaps, strings), and the app has a web
-app manifest so the browser offers to install it (the test checks the manifest and that the
-service worker is active, not the browser's own install prompt) → turn the network off
-(Playwright `setOffline`) → reload → the app starts from the cache with no error and no offline
-warning → open fixture `report.pdf` (test handles per the
-[reader.md](reader.md) shared rules) → pages, thumbnails and search work → add a highlight
-and a sticky note → Save → the file is written through its handle, as online → close the
-document → reopen it from the recent files list → the highlight and the note are there, and
-MuPDF and Poppler render them → throughout, no request reaches the network: every request is
-answered by the service worker (Playwright `response.fromServiceWorker()`), none fails, none is
-cross-origin, and the service worker's own fetches make none (the reader.md network rule) →
-Cache Storage holds only the app's static assets, never the document's bytes or anything
-derived from them.
+Fixture `offline.pdf`: 12 pages; the word "harbor" appears exactly 3 times, on pages 2, 7 and
+11; page 5 holds Japanese text in a font that needs a predefined CMap (as in J-RD-31); page 9
+holds a random text sentinel.
+
+Steps: load the app once with the network on → on this load the reader.md network rule holds
+(only same-origin GETs for static app assets, none cross-origin) → its service worker
+installs and becomes active, and the page links a same-origin web app manifest
+(`<link rel="manifest">`) with a `name`, a `start_url` in the app's scope, `display`
+`standalone` and icons (the test checks these, not the browser's own install prompt) → Cache
+Storage now holds exactly the build's list of static assets (code, the engine's WebAssembly,
+fonts, CMaps and the strings of every language the build ships): the same keys, no extra
+entries, and each body byte for byte the built file → turn the network off (Playwright
+`setOffline`) and stop the test's static server → reload → the app starts from the cache with
+no error and no offline warning → open `offline.pdf` (test handles per the
+[reader.md](reader.md) shared rules) → all 12 thumbnails render, page 5's Japanese text
+renders and matches the MuPDF and Poppler renders → search "harbor" → 3 hits, on pages 2, 7
+and 11 → add a highlight and a sticky note → Save → the file is written through its handle,
+as online → close the document → reopen it from the recent files list (J-RD-03) → the
+highlight and the note are there, and MuPDF and Poppler render them → from the offline reload
+on, every page request is answered by the service worker (Playwright
+`response.fromServiceWorker()`) and none fails; with the server stopped, any fetch that
+reached the network would fail, and the browser context's service-worker network events
+record none → Cache Storage still holds exactly the asset list above, and searching it for
+page 9's sentinel and the fixture's bytes finds nothing.
+Offline does not make every feature work: features that need the network and that the user
+turns on (timestamps, online revocation checks, J-SG-09 and J-SG-10) can't reach their
+servers; this journey uses none of them.
