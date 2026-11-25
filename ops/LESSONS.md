@@ -115,7 +115,7 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   fails ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 - Sizing a Rust tool before claiming → its in-module tests come out about as long as the code after rustfmt (a
   540-line module grew to 1028), and a React page adds a validator and a Playwright suite: estimate code × 2 plus
-  the web part, and split before writing, not after (PR #354 was split at 2091 lines into #305 and #353)
+  the web part, and split before writing, not after (#305's work reached 2091 lines and was split into PR #354 and #353)
   ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 
 ## Judge & CI

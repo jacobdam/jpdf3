@@ -626,6 +626,7 @@ mod tests {
                         pr(2, "2026-11-22", Some(4)),
                         pr(3, "2026-11-22", None),
                         pr(4, "2026-11-23", Some(9)),
+                        pr(7, "2026-11-15", Some(9)), // the Sunday before: the week before's
                     ],
                 ),
                 // The last week: --until is in, the day after is out.
@@ -682,7 +683,7 @@ mod tests {
         let log = "@@1795651200\tthree sessions (#30)\n\nops/journal/2026-11-25/0100-30-a.md\nops/journal/2026-11-25/0200-30-b.md\nops/journal/2026-11-26/0300-30-c.md\n\
 @@1795564800\tday file only (#29)\n\nops/journal/2026-11-24.md\n\
 @@1795564800\tnot a squash subject (#28) more\n\nops/journal/2026-11-24/x.md\n\
-@@1795564800\tone (#27)\n\nops/journal/2026-11-24/x.md\nops/journal/2026-11-24/sub/y.md\n\
+@@1795564800\tone (#27)\n\nops/journal/2026-11-24/x.md\nops/journal/2026-11-24/sub/y.md\nops/journal/notes/z.md\n\
 @@1788739200\tbefore the first week (#26)\n\nops/journal/2026-09-07/x.md\n\
 @@1788652800\ttoo old (#25)\n\nops/journal/2026-09-06/x.md\n";
         // 1795651200 = 2026-11-26 (after --until), 1795564800 = 2026-11-25, 1788739200 = 2026-09-07.
@@ -692,7 +693,7 @@ mod tests {
         assert_eq!(
             got,
             vec![1, 1],
-            "#27 (sub/ is no entry) and #26 (first Monday) count"
+            "#27 (sub/ and a non-date directory are no entries) and #26 (first Monday) count"
         );
         let later = journal_entries(log, first, d("2026-11-26")).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(later, vec![3, 1, 1]);
@@ -764,6 +765,7 @@ mod tests {
             ), // after --until
             issue(9, "OPEN", "2026-11-01", None, &[], Some("M2")),
             issue(10, "OPEN", "2026-11-01", None, &[], Some("M2")),
+            issue(12, "OPEN", "2026-11-20", None, &["blocked"], None), // same age as #1: by number
         ];
         let snap = compute(
             &inputs_with(prs_for(until, &[]), &issues, "", None),
@@ -774,7 +776,7 @@ mod tests {
         let blocked: Vec<(u64, i64)> = snap.blocked.iter().map(|b| (b.0, b.2)).collect();
         assert_eq!(
             blocked,
-            vec![(5, 15), (1, 5), (6, 0)],
+            vec![(5, 15), (1, 5), (12, 5), (6, 0)],
             "oldest first; closed and blocked-x left out"
         );
         let ms: Vec<(&str, u64, u64, u64, Option<i64>)> = snap
