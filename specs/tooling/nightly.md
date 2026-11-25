@@ -183,7 +183,9 @@ can't be removed). A usage error prints the problem and the usage line.
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
   enforces it (item 6); stderr kept ≤ 4 KiB per run, stdout never read.
-- Whole run: `--max-minutes` (≤ 1440) plus at most one run's limit; `--limit` ≤ 200 000 rows
+- Whole run: the limits part (item 11: seven generated files of ≤ 512 MiB, each run ≤ 20 s, so
+  at most 140 s of runs plus the writes; about 15 s locally), then `--max-minutes` (≤ 1440) plus
+  at most one run's limit for the regress part, whose clock starts after the limits part; `--limit` ≤ 200 000 rows
   (the corpus manifest's own row cap).
 - The previous file: at most 64 MiB, read bounded at 64 MiB + 1 byte (more is an error), at
   most 200 000 files; JSON nesting is capped by `jpdf_testgen::json` (128); each file has at most
@@ -250,7 +252,7 @@ like the judge's own helper.
 ## Performance
 Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5250-file tier takes a few
 minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are implemented; part 2 (#301) adds
-bench and fuzz time to the same CI job (240 min).
+bench and fuzz time to the same CI job (240 min). The limits part (item 11) adds about 15 s before the regress runs.
 
 ## Tests
 `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier

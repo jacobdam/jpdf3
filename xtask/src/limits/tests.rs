@@ -114,17 +114,38 @@ fn default_size_parameters_sit_where_the_spec_says() {
     let mut o = Out::new(&mut sink);
     dense_kids(&mut o, t).unwrap();
     assert!(o.pos <= t && o.pos >= t / 2, "{}", o.pos);
-    assert_eq!((t / 128).clamp(1, 1_000_000), 1_000_000);
+    assert_eq!(dense_pages(t), 1_000_000);
     // nested-strings: the first kid's string (every later header and close) under 32 MiB.
-    let pages = (t / 256).clamp(2, 600_000);
-    assert_eq!(pages, 600_000);
+    assert_eq!(nested_pages(t), 600_000);
     let header = len(format!("{:07} 0 obj << /Type /Page /S (", 3).as_bytes());
-    assert!(pages * (header + len(b") >> endobj ")) < 32 * MIB);
+    assert!(nested_pages(t) * (header + len(b") >> endobj ")) < 32 * MIB);
+    assert_eq!(shared_kids(t), 100_000);
+    assert_eq!(STACKED_SECTIONS, 1000);
+    // max-per-object: just under the string and per-parse object limits, 13 pairs.
+    assert_eq!(
+        (MAX_STRING, MAX_ENTRIES),
+        (32 * MIB - 4096, (1 << 19) - 1024)
+    );
+    const { assert!(2 * MAX_ENTRIES + 8 < 1 << 20) };
+    assert_eq!(max_pairs(t), 13);
+}
+
+/// R1.1 (PR #349): the max-per-object pair count reaches half the target and stays under
+/// 512 MiB at every `--mib` (the payloads plus at most 4 KiB per pair of headers and xref).
+#[test]
+fn max_per_object_fits_at_every_size() {
+    let pair = pair_bytes();
+    for mib in MIN_MIB..=MAX_MIB {
+        let t = mib * MIB;
+        let pairs = max_pairs(t);
+        assert!(pairs * pair >= t / 2, "{mib} MiB");
+        assert!(pairs * (pair + 4096) <= 512 * MIB - 4096, "{mib} MiB");
+    }
 }
 
 #[test]
 fn every_case_reaches_its_size_at_the_bounds() {
-    for mib in [MIN_MIB, DEFAULT_MIB, MAX_MIB] {
+    for mib in [MIN_MIB, 75, 76, 79, DEFAULT_MIB, MAX_MIB] {
         let t = mib * MIB;
         for c in CASES {
             let mut sink = io::sink();

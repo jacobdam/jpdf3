@@ -127,7 +127,7 @@ impl<'a> Out<'a> {
             self.text(&format!("{o:010} 00000 n\r\n"))?;
         }
         self.text(&format!(
-            "trailer\n<< /Size {size} /Root 1 0 R{trailer_extra} >>\nstartxref\n{at}\n%%EOF\n"
+            "trailer\n<< /Size {size} /Root 1 0 R{trailer_extra} >>\nstartxref\n{at:010}\n%%EOF\n"
         ))
     }
 }
@@ -185,7 +185,7 @@ fn push_xref(v: &mut Vec<u8>, base: u64, offsets: &[u64]) {
 /// keeps the first kid's string under the 32 MiB string limit, so the overlap check is what
 /// fires, not that limit.
 fn nested_strings(o: &mut Out, target: u64) -> io::Result<()> {
-    let pages: u64 = (target / 256).clamp(2, 600_000);
+    let pages = nested_pages(target);
     with_padding(o, target, |base| {
         let mut v = Vec::new();
         let mut offsets = vec![push(
@@ -222,7 +222,7 @@ fn nested_strings(o: &mut Out, target: u64) -> io::Result<()> {
 /// body that follows it (open.rs `overlapping_objects_sharing_one_body_are_rejected`). The
 /// body holds a string just under the 32 MiB string limit.
 fn shared_body(o: &mut Out, target: u64) -> io::Result<()> {
-    let kids: u64 = (target / 1024).clamp(2, 100_000);
+    let kids = shared_kids(target);
     let string = (target / 2).min(32 * MIB - 4096);
     with_padding(o, target, |base| {
         let mut v = Vec::new();
@@ -263,7 +263,7 @@ fn shared_body(o: &mut Out, target: u64) -> io::Result<()> {
 /// (under the 1024-section limit). The innermost string carries filler up to 30 MiB, below
 /// the 32 MiB string limit.
 fn stacked_prev(o: &mut Out, target: u64) -> io::Result<()> {
-    let sections: u64 = 1000;
+    let sections = STACKED_SECTIONS;
     let filler = (target / 2).min(30 * MIB);
     with_padding(o, target, |base| {
         let opening =
@@ -320,15 +320,52 @@ fn xref_entries(o: &mut Out, target: u64) -> io::Result<()> {
     ))
 }
 
+/// The string of a `max-per-object` string page: just under the 32 MiB string limit.
+const MAX_STRING: u64 = 32 * MIB - 4096;
+/// The entries of a `max-per-object` dictionary page: 2 objects each, just under 2^20.
+const MAX_ENTRIES: u64 = (1 << 19) - 1024;
+
+/// The bytes of one `max-per-object` page pair's two payloads (the string and the dictionary
+/// entries), a lower bound on the pair's size.
+fn pair_bytes() -> u64 {
+    let entries: u64 = (0..MAX_ENTRIES)
+        .map(|k| len(format!(" /k{k} 0").as_bytes()))
+        .sum();
+    MAX_STRING + entries
+}
+
+/// `max-per-object` page pairs for `target`: as many whole pairs as fit, at least one. Each
+/// pair is at least [`pair_bytes`], so the file reaches half the target (one pair when the
+/// target is under two pairs, else ⌊T / pair⌋ pairs ≥ T − pair ≥ T/2).
+fn max_pairs(target: u64) -> u64 {
+    (target / pair_bytes()).max(1)
+}
+
+/// `nested-strings` pages: the first kid's string holds every later header and close (45
+/// bytes a page), so 600 000 keeps it at 27 MB, under the 32 MiB string limit.
+fn nested_pages(target: u64) -> u64 {
+    (target / 256).clamp(2, 600_000)
+}
+
+/// `shared-body` kids.
+fn shared_kids(target: u64) -> u64 {
+    (target / 1024).clamp(2, 100_000)
+}
+
+/// `stacked-prev` sections: under the 1024-section limit.
+const STACKED_SECTIONS: u64 = 1000;
+
+/// `dense-kids` pages: the 1 000 000-page limit from 128 MiB up.
+fn dense_pages(target: u64) -> u64 {
+    (target / 128).clamp(1, 1_000_000)
+}
+
 /// Class 5: pages that each hold one per-parse maximum: a string just under the 32 MiB
 /// string limit, or a dictionary of just under 2^19 entries (2^20 objects, the
 /// objects-per-parse limit). A valid file: it must open, with every page resolved.
 fn max_per_object(o: &mut Out, target: u64) -> io::Result<()> {
-    let string = 32 * MIB - 4096;
-    let entries: u64 = (1 << 19) - 1024;
-    // A string page plus a dictionary page is about 32 MiB + 7.5 MiB.
-    let pairs = (target / (40 * MIB)).max(1);
-    let pages = pairs * 2;
+    let (string, entries) = (MAX_STRING, MAX_ENTRIES);
+    let pages = max_pairs(target) * 2;
     o.text("%PDF-1.7\n")?;
     let mut offsets = vec![o.pos];
     o.text("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")?;
@@ -360,7 +397,7 @@ fn max_per_object(o: &mut Out, target: u64) -> io::Result<()> {
 /// Class 6: dense, non-overlapping kids: 1 000 000 pages (the page limit), each padded with
 /// a string so the file reaches the target size. A valid file: it must open.
 fn dense_kids(o: &mut Out, target: u64) -> io::Result<()> {
-    let pages: u64 = (target / 128).clamp(1, 1_000_000);
+    let pages = dense_pages(target);
     // Per page: the kid reference, the object and its xref entry, at most 100 bytes.
     let pad = (target / pages).saturating_sub(100).max(1);
     o.text("%PDF-1.7\n")?;

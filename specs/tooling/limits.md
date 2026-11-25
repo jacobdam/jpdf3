@@ -13,7 +13,7 @@ Status: implemented
    - `--out DIR`: where `limits.json` and the work file go (default `target/xtask-out`).
    - `--mib N` (64 ≤ N ≤ 511, default 500): the target size of each attack file in MiB. 511 is
      the largest size under `jpdf-cli`'s 512 MiB `max_file_size`, so no file is refused by its
-     size alone; at 64 every class still reaches half its target (item 3).
+     size alone; at every value from 64 up every class reaches half its target (item 3).
    - Each flag at most once; an unknown flag, a missing value, a value out of range or not a
      plain decimal number is a usage error (exit 2) before anything runs.
    `cargo xtask nightly` runs the same cases at the default size (specs/tooling/nightly.md
@@ -23,7 +23,7 @@ Status: implemented
    memory probe and wrapper are the nightly's (its item 6): on Linux every run is under
    `ulimit -v 2097152` (the judge's 2 GiB `RLIMIT_AS`), and a probe that fails there is a tool
    failure; elsewhere the runs go without it and `limits.json` says `"memory_limit_kib":null`.
-   The bench watchdog is started first (specs/tooling/bench.md item 7).
+   The bench watchdog is started before the runs (specs/tooling/bench.md item 7).
 3. **Files.** For each case in item 4's order the generator streams one file to
    `DIR/work/limits.pdf` (through a 1 MiB buffer; the largest piece held in xtask's memory is
    one class's structural body, under 70 MiB). Its size must be at least half the target and at
@@ -40,7 +40,7 @@ Status: implemented
    | `shared-body` | min(T/1024, 100 000) kid headers on one comment line, all sharing one body with a string of min(T/2, 32 MiB − 4096) bytes (open.rs `overlapping_objects_sharing_one_body_are_rejected`) | exit 2, `malformed PDF: indirect objects overlap` |
    | `stacked-prev` | 1000 xref sections (under the 1024-section limit), each trailer's `/Prev` pointing at the next section hidden inside its own string; min(T/2, 30 MiB) filler bytes in the innermost string (open.rs `overlapping_prev_sections_are_rejected`) | exit 2, `malformed PDF: cross-reference sections overlap` |
    | `xref-entries` | one xref subsection of about T/20 entries (26 M at 500 MiB, 3.3 M at 64 MiB), all over the 2^21-entry limit | exit 2, `limit exceeded: cross-reference entries` |
-   | `max-per-object` | max(1, ⌊T/40 MiB⌋) page pairs: one page holding a string of 32 MiB − 4096 bytes, one holding a dictionary of 2^19 − 1024 entries (just under 2^20 objects in one parse); 12 pairs at 500 MiB | exit 0 |
+   | `max-per-object` | max(1, ⌊T/P⌋) page pairs, P being one pair's two payloads (about 37.4 MiB): one page holding a string of 32 MiB − 4096 bytes, one holding a dictionary of 2^19 − 1024 entries (just under 2^20 objects in one parse); 13 pairs (486 MiB) at 500 MiB | exit 0 |
    | `dense-kids` | min(T/128, 1 000 000) distinct, non-overlapping pages (the page limit at 500 MiB), each padded with a string to about T/pages bytes | exit 0 |
    | `long-comment` | a one-page file whose catalog dictionary holds one comment line of about T bytes before `/Pages` | exit 0 |
 
@@ -63,7 +63,7 @@ Status: implemented
    order):
    ```json
    {"schema":1,"target_bytes":524288000,"memory_limit_kib":2097152,"time_limit_ms":20000,"failed":0,
-    "cases":[{"id":"nested-strings","bytes":524288001,"status":"pass","exit":2,"signal":null,"ms":491}, …]}
+    "cases":[{"id":"nested-strings","bytes":524288000,"status":"pass","exit":2,"signal":null,"ms":248}, …]}
    ```
    `failed` counts cases whose status isn't `pass`; those cases also carry `stderr` (lossy
    UTF-8, or `cannot start jpdf-cli`). stderr gets one line per case and a summary line.
@@ -85,7 +85,9 @@ As item 7. Messages start with `xtask: limits:` (from the nightly, `xtask: night
   `usage_errors`).
 - The size check: exactly T/2 and exactly 512 MiB pass, one byte past either fails
   (`the_size_check_is_exact_at_both_ends`); every class meets it at 64, 500 and 511 MiB
-  (`every_case_reaches_its_size_at_the_bounds`).
+  (`every_case_reaches_its_size_at_the_bounds`, which also covers 75 to 79 MiB, where a
+  `max-per-object` count of ⌊T/40 MiB⌋ fell short: PR #349 R1.1); `max_per_object_fits_at_every_size`
+  checks that class's count at every `--mib` from 64 to 511.
 - The engine limits each class sits under or over are the defaults in specs/cli/jpdf-cli.md
   §Limits; `default_size_parameters_sit_where_the_spec_says` pins the counts item 4 derives
   from them at 500 MiB. If a default changes, a class may hit a different limit first: its
@@ -133,7 +135,8 @@ About 12 s at 500 MiB (item "Limits"). Disk: one file of ≤ 512 MiB at a time.
 ## Tests
 `xtask/src/limits/tests.rs`: `parses_flags_and_defaults`, `usage_errors`,
 `every_case_ends_as_expected_on_the_engine`, `the_valid_classes_have_their_page_counts`,
-`default_size_parameters_sit_where_the_spec_says`, `every_case_reaches_its_size_at_the_bounds`,
+`default_size_parameters_sit_where_the_spec_says`, `max_per_object_fits_at_every_size`,
+`every_case_reaches_its_size_at_the_bounds`,
 `the_size_check_is_exact_at_both_ends`, `verdicts_follow_the_spec`,
 `each_file_is_fresh_and_removed_after_its_run`, `an_unwritable_file_is_a_tool_failure`,
 `results_json_has_the_spec_shape`, `nightly_exit_codes_with_the_limits_cases`,
