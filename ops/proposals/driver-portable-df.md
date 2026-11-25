@@ -52,17 +52,12 @@ would stop it even with a working `df`.
 -    (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
 +    free=$(free_gb)
 +    [[ -n "$free" ]] && (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
-@@ (main loop)
--  if ! disk_ok; then sleep 3600; continue; fi
-+  if ! disk_ok; then [[ "$MODE" == "once" ]] && exit 1; sleep 3600; continue; fi
 ```
 
 - `df -P -k` (POSIX output, 1024-byte blocks) is the same on macOS and Linux; column 4 is the
   available space. Whole GB are rounded down, so 5 GB minus 1 KB reads 4 and is low.
 - An unreadable `df` (an error, or no number in column 4) logs, cleans nothing and starts no
   session; the loop retries in an hour as it does for low disk.
-- `--pilot` (one session) exits 1 when the disk check fails, as it already does when the halt
-  check fails, instead of sleeping an hour and looping.
 - The default minimum is 5 GB (the owner's choice on 2026-11-25). `JPDF_MIN_FREE_GB` still
   overrides it; the Mac mini can set it back to 30.
 
@@ -82,6 +77,7 @@ status, cleaning and an empty stderr.
 | `JPDF_MIN_FREE_GB` unset, exactly 5 GB | ok (default 5) | FAIL |
 | `JPDF_MIN_FREE_GB` unset, 1 KB under 5 GB | ok (low) | FAIL |
 | 4 GB, then 6 GB after cleaning | ok (cleans, passes) | FAIL |
+| 4 GB, then exactly 5 GB after cleaning | ok (cleans, passes) | FAIL |
 | `df` fails | ok (no cleaning) | FAIL (cleans) |
 | `df` prints no number | ok (no cleaning) | FAIL (cleans) |
 | a number, then `df` fails after cleaning | ok (low) | FAIL |
@@ -95,9 +91,13 @@ passes: bash reads an empty `free` as 0 in `(( ))`, so it still returns low with
 guard stays for clarity.
 
 After applying, on the VM: `ops/driver/driver.sh --pilot` runs one session; the log must not show
-`low disk` or `disk check failed`.
+`low disk` or `disk check failed`. If it shows `disk check failed`, stop it (see below).
 
 ## Not in this proposal
+
+In `--pilot` mode a failing disk check sleeps an hour and loops, as it does today, instead of
+exiting like a failing halt check; stop it with Ctrl-C. (Round 2 of PR #338: a fix needs a test
+of the main loop, which this harness doesn't run.)
 
 The cleanup deletes any worktree directory older than 2 days, including ones whose PRs are
 still open (a PR waiting on the owner for days). That is a separate question for the owner.

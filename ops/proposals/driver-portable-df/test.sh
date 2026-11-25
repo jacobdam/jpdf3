@@ -42,6 +42,7 @@ check "1 KB under 5 GB is low, cleans"      5     $((5*G-1))   $((5*G-1)) 1 yes
 check "default minimum is 5 GB (unset)"     unset $((5*G))     -  0 no
 check "default: 1 KB under 5 GB is low"     unset $((5*G-1))   $((5*G-1)) 1 yes
 check "cleaning frees enough"               5     $((4*G))     $((6*G)) 0 yes
+check "cleaning frees exactly 5 GB"         5     $((4*G))     $((5*G)) 0 yes
 check "df fails: no cleaning"               5     fail         -  1 no
 check "df prints no number: no cleaning"    5     -            -  1 no
 check "df fails after cleaning"             5     $((4*G))     fail 1 yes
