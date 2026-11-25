@@ -42,10 +42,12 @@ free_gb() {
 
 # Remove worktree directories older than 2 days, except one whose branch has an open PR
 # (a PR waiting on the owner or a review can sit for days; its worktree holds the session's
-# scratch briefs and an unpushed fix). If the open-PR list can't be read, remove nothing.
+# scratch briefs and an unpushed fix). Only PRs from this repo count: anyone can open a fork PR
+# with any head branch name. If the open-PR list can't be read, remove nothing.
 prune_worktrees() {
   local open d b
-  open=$(gh pr list -R "$GH_REPO" --state open --limit 200 --json headRefName -q '.[].headRefName' 2>/dev/null) \
+  open=$(gh pr list -R "$GH_REPO" --state open --limit 200 --json headRefName,isCrossRepository \
+    -q '.[] | select(.isCrossRepository | not) | .headRefName' 2>/dev/null) \
     || { log "worktree cleanup skipped (gh error)"; return 0; }
   for d in "$REPO_DIR"/.claude/worktrees/*/; do
     d="${d%/}"

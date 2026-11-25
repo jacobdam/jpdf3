@@ -22,8 +22,8 @@ A directory's mtime changes only when an entry directly in it is added, removed 
 deeper down (the code, `target/`) don't touch it. So a worktree created more than 2 days ago is
 deleted at the next session start even while its PR is open: a PR waiting on the owner
 (`owner-todo`, a design PR's window, a `/hold`), or one in review. What is lost:
-- `target/scratch/`: the reviewer briefs (`review-<PR>.md`) and Codex logs a resumed session or
-  an audit reads (TICK §4 writes the brief there; journals cite `codex-321*.log` paths);
+- `target/scratch/`: the reviewer briefs (`review-<PR>.md`) and Codex output
+  (`codex-<PR>.json`) that a resumed session or an audit reads (TICK §4 writes both there);
 - any fix committed but not pushed, and the build cache (a full rebuild).
 
 The pushed branch survives on GitHub, so no merged work is lost, but rule c's session on that PR
@@ -34,10 +34,12 @@ starts without its scratch files.
 ```diff
 +# Remove worktree directories older than 2 days, except one whose branch has an open PR
 +# (a PR waiting on the owner or a review can sit for days; its worktree holds the session's
-+# scratch briefs and an unpushed fix). If the open-PR list can't be read, remove nothing.
++# scratch briefs and an unpushed fix). Only PRs from this repo count: anyone can open a fork PR
++# with any head branch name. If the open-PR list can't be read, remove nothing.
 +prune_worktrees() {
 +  local open d b
-+  open=$(gh pr list -R "$GH_REPO" --state open --limit 200 --json headRefName -q '.[].headRefName' 2>/dev/null) \
++  open=$(gh pr list -R "$GH_REPO" --state open --limit 200 --json headRefName,isCrossRepository \
++    -q '.[] | select(.isCrossRepository | not) | .headRefName' 2>/dev/null) \
 +    || { log "worktree cleanup skipped (gh error)"; return 0; }
 +  for d in "$REPO_DIR"/.claude/worktrees/*/; do
 +    d="${d%/}"
@@ -61,32 +63,40 @@ starts without its scratch files.
 
 - The age rule is unchanged (the directory's own mtime, over 2 days).
 - An old worktree is kept when its checked-out branch is the head branch of an open PR in this
-  repo (exact name: `t/1` doesn't match `t/12-x`). A detached HEAD or a branch with no open PR is
+  repo (exact name: `t/1` doesn't match `t/12-x`). A PR from a fork doesn't count (`isCrossRepository`):
+  anyone can open one, with any head branch name. A detached HEAD or a branch with no open PR is
   removed as before, so a dead session's worktree still goes after 2 days, as today.
 - If `gh` fails, nothing is removed that run (logged); the next session start tries again.
 - Directories whose name starts with `.` are no longer removed (the shell glob skips them); the
   sessions never create such worktrees.
-- One `gh pr list` call per session start (the driver already calls `gh` for the halt check).
+- One `gh pr list` call per session start, two when the disk is low (`disk_ok` and `sync_main`
+  both prune); the driver already calls `gh` for the halt check.
+- At most 200 open PRs are read; a worktree whose PR is past that is removed, as today.
 
 ## Tests
 
 `bash ops/proposals/driver-keep-open-worktrees/test.sh [driver.sh]` (default: the proposed
-driver). It builds a temp repo with six worktrees (`t/12-open`, `t/13-nopr`, `t/1`,
-`t/12-open-x`, a detached HEAD, all dated 3 days back, and a fresh `t/14-fresh`) and a fake
-`gh`:
+driver). It builds a temp repo with seven worktrees (`t/12-open`, `t/13-nopr`, `t/1`,
+`t/12-open-x`, a detached HEAD, all dated 3 days back; `t/15-edge`, dated 2 days 23 hours back,
+just inside the age limit; and a fresh `t/14-fresh`) and a fake `gh` (needs `jq`) that acts like
+`gh pr list`: it keeps only the `--json` fields asked for, applies the `-q` filter, marks fork PRs
+`isCrossRepository: true`, and fails unless asked for `--state open`:
 
 | Case | Proposed driver | Current driver |
 |---|---|---|
-| open PRs `t/12-open`, `t/99-other`: only `open` and `fresh` stay | ok | FAIL (`open` deleted) |
+| open PRs `t/12-open`, `t/99-other`: only `open`, `edge` and `fresh` stay | ok | FAIL (`open` deleted) |
 | the kept worktree is logged | ok | FAIL |
 | `gh` fails: nothing removed | ok | FAIL (all old ones deleted) |
 | no open PRs: every old one removed | ok | ok |
 | open PRs `t/1`, `t/13-nopr`, `t/12-open-x`: those stay, `t/12-open` goes | ok | FAIL |
+| open PR `t/12-open` and a fork's PR on `t/13-nopr`: `t/13-nopr` goes | ok | FAIL (`open` deleted) |
 | `git worktree prune` ran (no prunable entries) | ok | ok |
 
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
 `-x`), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
-detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`.
+detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
+`--state all`, dropping the fork filter or its `isCrossRepository` field, and `-mtime +0`, `+1` or
+`+3` for `+2`.
 
 After applying: `ops/driver/driver.sh --pilot`, then `grep 'keeping worktree' ops/logs/driver.log`
 lists the open PRs' worktrees older than 2 days, if any.
