@@ -4,12 +4,12 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- The driver's disk check is portable (#337, applied by the owner in PR #339, 5 GB minimum); `ops/HALT` is gone.
+- main is green: the `pages` rerun of ci run 45649071740 (917d8bc) passed (attempt 3) after the GitHub outage, and
+  run 45653856999 (1231700) passed. The owner applied ops/proposals/driver-portable-df.md (#337) and removed `ops/HALT`.
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
-- **PR #336** (#335): the owner's answers to #311's open points (Simplified Chinese; users build and host v1.0 from
-  source, the GitHub Pages site is the demo; publishing is Phase 2) in docs/PRODUCT.md, PLAN.md §1/§4/§8 and
-  AUTOMATION.md §15; merges on the owner's approval. Journey gaps: #331 (web offline), #334 (four languages), both M10.
+- PR #336 (#335) merged: the owner's answers to #311's open points are in docs/PRODUCT.md, PLAN.md and AUTOMATION.md.
+  Journey gaps: #331 (web offline), #334 (four languages), both M10.
 - Merged today: #316 (#277), #317 (#288 part 2), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312
   (#249, Design: product 1/2), #327 (#326), #329 (#319), #330 (#313), #332 (#311, docs/PRODUCT.md v1), #333 (#314: step 3 picks `worker design-window #N`; TICK §1's by-hand
   check is gone).
@@ -52,9 +52,12 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
+  retry in one loop that first checks whether the comment already exists, so nothing is posted twice
+  ([journal](journal/2026-11-25/1600-311-done-reply.md)).
 - Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
   hand-mutate each filter before round 1 and give the filtered records a value that changes the result
   ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
 - Infra: a pages-only main failure where deploy-pages gets HTTP 500 and main's head has no newer push → `gh run rerun
-  --failed` worked (run 45649071740 attempt 2); refine LESSONS' "Don't rerun" pages entry to this case
+  --failed` worked (run 45649071740); refine LESSONS' "Don't rerun" pages entry to this case
   ([journal](journal/2026-11-25/1620-main-red-pages.md)).
