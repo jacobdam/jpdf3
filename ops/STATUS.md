@@ -9,6 +9,9 @@ Phase: bootstrap (pilot)
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
+- **PR #347** (#331, Design: product): journey J-PC-08 (web app offline), TRACE R11 row, docs/PRODUCT.md §4. Review 4/4,
+  `ai-review` success; in its 24-hour `/hold` window (`owner-todo` on #331), then `worker design-window #347` enables
+  auto-merge. Deferred R4.1/R4.2 → #348 (`design-product`, `ready`, M10).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
@@ -44,6 +47,9 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- Journeys: a fixture that names a non-embedded CJK font can't render (PLAN §3 bundles only CMaps and standard-14
+  substitutes) → embed a subset, and read PLAN §3 "Bundled data" before specifying a fixture's fonts
+  ([journal](journal/2026-11-25/1704-331-offline-journey.md), PR #347 R3.1).
 - Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
   use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
   ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
