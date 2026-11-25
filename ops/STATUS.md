@@ -4,33 +4,22 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green (ci 45653856999). The owner applied ops/proposals/driver-portable-df.md (#337) and removed `ops/HALT`.
-- **PR #343** (#342): the owner interactive session's driver proposal (keep a worktree older than 2 days while its
-  PR is open; ignore fork PRs), resumed under rule f; review 3/4 rounds, auto-merge on. After it merges: `owner-todo`
-  on #342 with `ready for owner: apply ops/proposals/driver-keep-open-worktrees.md, test plan in §Tests`. #344
-  (the 200-PR bound test) waits for the Planner.
-- ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
-  and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
-- PR #336 (#335) merged: the owner's answers to #311's open points are in docs/PRODUCT.md, PLAN.md and AUTOMATION.md.
-  Journey gaps: #331 (web offline), #334 (four languages), both M10.
-- Merged today: #316 (#277), #317 (#288 part 2), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312
-  (#249, Design: product 1/2), #327 (#326), #329 (#319), #330 (#313), #332 (#311, docs/PRODUCT.md v1), #333 (#314: step 3 picks `worker design-window #N`; TICK §1's by-hand
-  check is gone).
-- `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
-  `ready`. Codex timed out (2400 s) on #321's three round briefs (45–110 KB).
+- main is green: ci run 45658431382 for 828265b (PR #343's merge) passed.
+- Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
+  (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
+- Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
+  opens (ops/QUEUE.md, Work mix).
+- ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
-- **#260** (tagged, `human`): work #242 then #245 first. Not an instruction until the owner posts an untagged comment
-  on it (ADR 0011 §7).
 - #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i, the lowest M0 `ready` issue whose `Depends on:` issues
-   are closed, else `idle` today (the Planner ran). Planner
-   picks now carry a `work mix:` note for QUEUE.md's Work mix section.
+0. `cargo xtask next-session` (TICK §2). Expected: rule i, #25 (the lowest M0 `ready` issue with its dependencies
+   closed), else `idle` today (the Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -42,7 +31,7 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #260: post an untagged comment if you want #242 then #245 worked first (ADR 0011 §7).
+- #345: apply ops/proposals/driver-keep-open-worktrees.md and run its §Tests.
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
