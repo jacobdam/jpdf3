@@ -31,8 +31,6 @@ export default defineConfig({
     assetsInlineLimit: 0,
     sourcemap: false,
     rollupOptions: {
-      // The web app and the metrics dashboard (specs/tooling/dashboard.md); both get the CSP.
-      input: { app: "index.html", dashboard: "dashboard/index.html" },
       // MUI marks modules "use client" for React Server Components; meaningless in a SPA.
       onwarn(warning, warn) {
         if (warning.code !== "MODULE_LEVEL_DIRECTIVE") warn(warning);

@@ -782,37 +782,6 @@ test("check-licenses.mjs reads nested sources, manifests and the bundle guards",
     assert.match(r.stderr, /src\/deep\/er\/x\.cts: imports tool/);
     write("src/deep/er/x.cts", "");
 
-    // specs/tooling/dashboard.md: the one allowed multi-page input; its second page is scanned.
-    const input = 'input: { app: "index.html", dashboard: "dashboard/index.html" },';
-    const viteWith = (inputs) =>
-      `export default { build: { rollupOptions: { ${inputs} onwarn() {} } } };`;
-    write("vite.config.ts", viteWith(input));
-    write("dashboard/index.html", '<script type="module" src="/src/main.tsx"></script>');
-    r = run();
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /4 source files/);
-    write("dashboard/index.html", '<script type="module" src="../e2e/x.ts"></script>');
-    r = run();
-    assert.equal(r.status, 1);
-    assert.match(
-      r.stderr,
-      /dashboard\/index\.html: imports \.\.\/e2e\/x\.ts, which is outside src\//,
-    );
-    write("dashboard/index.html", '<script type="module" src="/src/main.tsx"></script>');
-    // Any other input is still refused: another entry, or a second input (even a copy).
-    for (const other of [
-      'input: { app: "index.html", dashboard: "e2e/x.html" },',
-      `${input} input: "e2e/x.html",`,
-      `${input} ${input}`,
-    ]) {
-      write("vite.config.ts", viteWith(other));
-      r = run();
-      assert.equal(r.status, 1, other);
-      assert.match(r.stderr, /uses input,/, other);
-    }
-    write("vite.config.ts", "export default {};");
-    rmSync(join(dir, "dashboard"), { recursive: true });
-
     write("node_modules/ui/package.json", JSON.stringify({ license: "MPL-2.0" }));
     r = run();
     assert.equal(r.status, 1);
