@@ -3,6 +3,7 @@
 
 mod arlington;
 mod bench;
+mod dashboard;
 mod fuzz;
 mod issue_lint;
 mod limits;
@@ -20,6 +21,7 @@ const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
      | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
+     | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
      | next-session [--from DIR] | issue-lint [--from DIR]";
 
@@ -169,6 +171,26 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("xtask: metrics: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/dashboard.md: the snapshot the Pages dashboard renders (read-only gh/git).
+        (Some("dashboard"), _) => {
+            let opts = match dashboard::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: dashboard: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match dashboard::run(Path::new("."), &opts) {
+                Ok(path) => {
+                    eprintln!("xtask: dashboard: wrote {}", path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: dashboard: {e}");
                     ExitCode::from(1)
                 }
             }

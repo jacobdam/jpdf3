@@ -106,6 +106,17 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
+- Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
+  `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
+- Running apps/web checks on the Linux host (no Node, Chromium exits 127, text boxes "hidden") → fetch the Node 24
+  tarball and its SHASUMS256.txt from nodejs.org into `target/scratch/` and check the sum; `apt-get download` the
+  libraries `ldd` reports missing plus `fonts-dejavu-core`, `dpkg-deb -x` them there, and run Playwright with
+  `LD_LIBRARY_PATH` and a `FONTCONFIG_FILE` naming that font directory; without fonts every visibility assertion
+  fails ([journal](journal/2026-11-25/1830-305-dashboard.md)).
+- Sizing a Rust tool before claiming → its in-module tests come out about as long as the code after rustfmt (a
+  540-line module grew to 1028), and a React page adds a validator and a Playwright suite: estimate code × 2 plus
+  the web part, and split before writing, not after (#305's work reached 2091 lines and was split into PR #354 and #353)
+  ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
@@ -281,6 +292,15 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
+  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
+  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
+- Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check
+  → choose a state that fails only X, or have the function say which step failed
+  ([journal](journal/2026-11-25/1750-301-nightly-bench.md), PR #351 R2.1).
+- Building something for the Pages site from CI data → the `project-linux` job that runs `cargo xtask ci linux` has
+  no GitHub token and a shallow checkout (no `persist-credentials`, no `fetch-depth`): compute GitHub or git numbers
+  in a session and commit them, as `ops/metrics/dashboard.json` does ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 - Filtering GitHub lists by "the agent's own" (`--author @me`, comment authors) → the account is shared with the
   owner, so the author proves nothing: filter by the tag at the start of the body, and treat owner PRs in the owner
   feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269 R1.2, R1.3).
