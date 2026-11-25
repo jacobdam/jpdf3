@@ -1,4 +1,4 @@
-//! specs/tooling/nightly.md "Tests" (items 11–14).
+//! specs/tooling/nightly.md "Tests" (items 12–15).
 
 use super::*;
 

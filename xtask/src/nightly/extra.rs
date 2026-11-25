@@ -1,5 +1,5 @@
 //! The bench and the extra fuzz time after the regress runs, and `nightly.json`
-//! (specs/tooling/nightly.md items 11–14).
+//! (specs/tooling/nightly.md items 12–15).
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -17,12 +17,12 @@ pub const DEFAULT_BENCH_MINUTES: u64 = 20;
 /// `--fuzz-seconds` range (the cap of `cargo xtask fuzz --seconds`) and default; 0 skips it.
 pub const MAX_FUZZ_SECONDS: u64 = 3600;
 pub const DEFAULT_FUZZ_SECONDS: u64 = 1200;
-/// The bench sample: the first verified regress files in blob order (spec item 11).
+/// The bench sample: the first verified regress files in blob order (spec item 12).
 pub const BENCH_FILES: usize = 20;
-/// Artifacts copied per fuzz target (spec item 12).
+/// Artifacts copied per fuzz target (spec item 13).
 pub const MAX_ARTIFACTS: usize = 100;
 
-/// How the bench ended (spec item 11).
+/// How the bench ended (spec item 12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchResult {
     pub status: &'static str,
@@ -71,7 +71,7 @@ pub struct TargetResult {
     pub artifacts: Vec<String>,
 }
 
-/// How the fuzz pass ended (spec item 12).
+/// How the fuzz pass ended (spec item 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuzzResult {
     pub status: &'static str,
@@ -86,7 +86,7 @@ impl FuzzResult {
     }
 }
 
-/// The first `n` verified files, in the jobs' (blob-id) order (spec item 11).
+/// The first `n` verified files, in the jobs' (blob-id) order (spec item 12).
 pub fn bench_inputs(jobs: &[Job], n: usize) -> Vec<&Path> {
     jobs.iter()
         .filter_map(|j| j.path.as_deref())
@@ -138,7 +138,7 @@ pub fn stage_bench_corpus(inputs: &[&Path], dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// jpdf-bench's arguments for the staged sample (spec item 11).
+/// jpdf-bench's arguments for the staged sample (spec item 12).
 pub fn bench_argv(cli: &Path, report: &Path, corpus: &Path, files: usize) -> Vec<OsString> {
     let mut a = bench::bench_args(cli, report, &[]);
     a.extend([
@@ -155,7 +155,7 @@ pub type Build<'a> = &'a mut dyn FnMut() -> Result<PathBuf, String>;
 /// Runs a program with arguments under a time limit ([`super::exec`], with the memory wrapper).
 pub type Exec<'a> = &'a mut dyn FnMut(&Path, &[OsString], Duration) -> Option<Outcome>;
 
-/// Runs the bench on the staged sample under `minutes` (spec item 11).
+/// Runs the bench on the staged sample under `minutes` (spec item 12).
 pub fn run_bench(out: &Path, jobs: &[Job], minutes: u64, build: Build, exec: Exec) -> BenchResult {
     if minutes == 0 {
         return BenchResult::skipped();
@@ -251,7 +251,7 @@ pub fn copy_new_artifacts(
     (names, None)
 }
 
-/// The fuzz pass's status (spec item 12): a tool error is `failed`, else any failed target
+/// The fuzz pass's status (spec item 13): a tool error is `failed`, else any failed target
 /// is `crash`, else `ok`.
 pub fn fuzz_status(error: bool, any_failed: bool) -> &'static str {
     match (error, any_failed) {
@@ -286,7 +286,7 @@ pub struct Hooks<'a> {
     pub pass: Pass<'a>,
 }
 
-/// Runs every fuzz target for `seconds` each and copies what they found (spec item 12).
+/// Runs every fuzz target for `seconds` each and copies what they found (spec item 13).
 pub fn run_fuzz(root: &Path, out: &Path, seconds: u64, pass: Pass) -> FuzzResult {
     let mut r = FuzzResult {
         status: "skipped",
@@ -323,7 +323,7 @@ pub fn run_fuzz(root: &Path, out: &Path, seconds: u64, pass: Pass) -> FuzzResult
         }
     };
     let mut error = report.error.clone();
-    // Only the targets that started: `run_all` can stop before the rest (spec item 12).
+    // Only the targets that started: `run_all` can stop before the rest (spec item 13).
     for t in &report.started {
         let old = snapshot
             .iter()
@@ -356,7 +356,7 @@ fn text(s: &mut String, v: Option<&str>) {
     }
 }
 
-/// `DIR/nightly.json` (spec item 13).
+/// `DIR/nightly.json` (spec item 14).
 pub fn nightly_json(b: &BenchResult, f: &FuzzResult, bench_minutes: u64) -> String {
     let mut s = String::from("{\"schema\":1,\"regress\":\"regress.json\",\"bench\":{");
     s.push_str(&format!(
@@ -397,7 +397,7 @@ pub fn nightly_json(b: &BenchResult, f: &FuzzResult, bench_minutes: u64) -> Stri
     s
 }
 
-/// The bench, the fuzz pass and `nightly.json` (spec items 11–13). Returns whether any of
+/// The bench, the fuzz pass and `nightly.json` (spec items 12–14). Returns whether any of
 /// them was a tool failure (spec item 10).
 pub fn run(
     root: &Path,

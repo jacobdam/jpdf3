@@ -4,10 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45669593183 for 6daac8e passed.
-- #301 (nightly 2/3: bench and extra fuzz time, `DIR/nightly.json`): PR #351, 2 review rounds, `ai-review` success,
-  auto-merge on. Its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on #322) reads
-  `nightly.json` as well as `regress.json`.
+- main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
+- #301 (nightly 2/3: bench and extra fuzz time, `DIR/nightly.json`): PR #351, 3 review rounds (round 3 on the merge
+  with #349's limits part), auto-merge on once `ai-review` passes. Its R2.1 is #352 (no `ready`). Then #302 (part 3,
+  files issues; depends on #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
@@ -17,12 +17,14 @@ Phase: bootstrap (pilot)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
+- #25 (PR #349, merged): `cargo xtask limits`, run by the nightly (exit 4 on a failed case). Its deferral #350 (order
+  test) waits for the Planner.
 - #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i, #303 (the lowest M0 `ready` issue with its dependencies
-   closed and no open PR) once #351 merges.
+0. `cargo xtask next-session` (TICK §2). Expected: rule i, the next lowest M0 `ready` issue with its dependencies
+   closed (#322 or #323), else `idle` today (the Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -47,6 +49,9 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
+  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
+  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
 - Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
   `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
 - Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check

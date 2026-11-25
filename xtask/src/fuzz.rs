@@ -237,7 +237,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
     })
 }
 
-/// What one fuzz pass did, for `cargo xtask nightly` (specs/tooling/nightly.md item 12).
+/// What one fuzz pass did, for `cargo xtask nightly` (specs/tooling/nightly.md item 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
     /// The targets selected, in `cargo fuzz list` order.

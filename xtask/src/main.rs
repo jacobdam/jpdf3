@@ -5,6 +5,7 @@ mod arlington;
 mod bench;
 mod fuzz;
 mod issue_lint;
+mod limits;
 mod macos;
 mod metrics;
 mod next_session;
@@ -16,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
-     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | arlington | check-specs [--root DIR] \
+     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
@@ -92,6 +93,23 @@ fn main() -> ExitCode {
                 Ok(code) => ExitCode::from(code),
                 Err(e) => {
                     eprintln!("xtask: nightly: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/limits.md: exit 4 = a case failed, 1 = a tool failure.
+        (Some("limits"), _) => {
+            let opts = match limits::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: limits: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match limits::run(Path::new("."), &opts) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("xtask: limits: {e}");
                     ExitCode::from(1)
                 }
             }
