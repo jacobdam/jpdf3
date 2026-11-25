@@ -4,9 +4,8 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- **main is red from a GitHub outage** (2026-11-25 16:00Z): the `pages` deploy of ci run 45649071740 (917d8bc) failed
-  with status 502/500 twice; rerun it (`gh run rerun --failed 45649071740`, rule b, infra). The loop runs again: the
-  owner applied ops/proposals/driver-portable-df.md (917d8bc, #337) and removed `ops/HALT`.
+- main is green: the `pages` rerun of ci run 45649071740 (917d8bc) passed (attempt 3) after the GitHub outage, and
+  run 45653856999 (1231700) passed. The owner applied ops/proposals/driver-portable-df.md (#337) and removed `ops/HALT`.
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
 - PR #336 (#335) merged: the owner's answers to #311's open points are in docs/PRODUCT.md, PLAN.md and AUTOMATION.md.
@@ -59,3 +58,6 @@ Phase: bootstrap (pilot)
 - Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
   hand-mutate each filter before round 1 and give the filtered records a value that changes the result
   ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
+- Infra: a pages-only main failure where deploy-pages gets HTTP 500 and main's head has no newer push → `gh run rerun
+  --failed` worked (run 45649071740); refine LESSONS' "Don't rerun" pages entry to this case
+  ([journal](journal/2026-11-25/1620-main-red-pages.md)).
