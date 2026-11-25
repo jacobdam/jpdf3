@@ -4,7 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45658431382 for 828265b (PR #343's merge) passed.
+- main is green: ci run 45669593183 for 6daac8e passed.
+- #301 (nightly 2/3: bench and extra fuzz time, `DIR/nightly.json`): PR #351, 2 review rounds, `ai-review` success,
+  auto-merge on. Its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on #322) reads
+  `nightly.json` as well as `regress.json`.
 - Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
@@ -18,8 +21,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i, #25 (the lowest M0 `ready` issue with its dependencies
-   closed), else `idle` today (the Planner ran).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i, #303 (the lowest M0 `ready` issue with its dependencies
+   closed and no open PR) once #351 merges.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -44,15 +47,4 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
-  use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
-  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
-- GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
-  retry in one loop that first checks whether the comment already exists, so nothing is posted twice
-  ([journal](journal/2026-11-25/1600-311-done-reply.md)).
-- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
-  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
-  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
-- Infra: a pages-only main failure where deploy-pages gets HTTP 500 and main's head has no newer push → `gh run rerun
-  --failed` worked (run 45649071740); refine LESSONS' "Don't rerun" pages entry to this case
-  ([journal](journal/2026-11-25/1620-main-red-pages.md)).
+(none: PR #351 moved the four into ops/LESSONS.md)
