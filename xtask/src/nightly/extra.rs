@@ -219,13 +219,14 @@ pub fn files_in(dir: &Path) -> BTreeSet<OsString> {
 }
 
 /// Copies the artifacts in `from` that are not in `before` into `to`, at most
-/// [`MAX_ARTIFACTS`] by name order; returns their names relative to `DIR` (`fuzz/<target>/…`).
+/// [`MAX_ARTIFACTS`] by name order; returns their names relative to `DIR` (`fuzz/<target>/…`)
+/// and, if a copy failed, the error (the copies made before it stay listed).
 pub fn copy_new_artifacts(
     from: &Path,
     before: &BTreeSet<OsString>,
     to: &Path,
     target: &str,
-) -> Result<Vec<String>, String> {
+) -> (Vec<String>, Option<String>) {
     let new: Vec<OsString> = files_in(from)
         .into_iter()
         .filter(|n| !before.contains(n))
@@ -238,13 +239,16 @@ pub fn copy_new_artifacts(
     }
     let mut names = Vec::new();
     for n in new.into_iter().take(MAX_ARTIFACTS) {
-        std::fs::create_dir_all(to).map_err(|e| format!("cannot create {}: {e}", to.display()))?;
+        if let Err(e) = std::fs::create_dir_all(to) {
+            return (names, Some(format!("cannot create {}: {e}", to.display())));
+        }
         let src = from.join(&n);
-        std::fs::copy(&src, to.join(&n))
-            .map_err(|e| format!("cannot copy {}: {e}", src.display()))?;
+        if let Err(e) = std::fs::copy(&src, to.join(&n)) {
+            return (names, Some(format!("cannot copy {}: {e}", src.display())));
+        }
         names.push(format!("fuzz/{target}/{}", n.to_string_lossy()));
     }
-    Ok(names)
+    (names, None)
 }
 
 /// The fuzz pass's status (spec item 12): a tool error is `failed`, else any failed target
@@ -257,8 +261,33 @@ pub fn fuzz_status(error: bool, any_failed: bool) -> &'static str {
     }
 }
 
+/// The fuzz pass for `seconds` per target: the tool install on CI, then
+/// [`fuzz::run_report`] (in `run`; a fake in the tests).
+pub type Pass<'a> = &'a mut dyn FnMut(u32) -> Result<fuzz::Report, String>;
+
+/// The real [`Pass`]: on CI the missing tools are installed first, as `cargo xtask fuzz` does.
+pub fn real_pass(root: &Path, seconds: u32) -> Result<fuzz::Report, String> {
+    if std::env::var_os("CI").is_some() {
+        fuzz::install_missing_tools(root)?;
+    }
+    fuzz::run_report(
+        root,
+        &fuzz::Options {
+            seconds,
+            target: None,
+        },
+    )
+}
+
+/// What `run` calls out to: the bench build, a limited run, the fuzz pass.
+pub struct Hooks<'a> {
+    pub build: Build<'a>,
+    pub exec: Exec<'a>,
+    pub pass: Pass<'a>,
+}
+
 /// Runs every fuzz target for `seconds` each and copies what they found (spec item 12).
-pub fn run_fuzz(root: &Path, out: &Path, seconds: u64) -> FuzzResult {
+pub fn run_fuzz(root: &Path, out: &Path, seconds: u64, pass: Pass) -> FuzzResult {
     let mut r = FuzzResult {
         status: "skipped",
         seconds,
@@ -282,17 +311,8 @@ pub fn run_fuzz(root: &Path, out: &Path, seconds: u64) -> FuzzResult {
         fresh_dir(&dest)?;
         // Checked before anything is installed (a tree without fuzz/ installs nothing).
         fuzz::require_project(root)?;
-        if std::env::var_os("CI").is_some() {
-            fuzz::install_missing_tools(root)?;
-        }
         let secs = u32::try_from(seconds).map_err(|_| format!("bad fuzz time {seconds}"))?;
-        fuzz::run_report(
-            root,
-            &fuzz::Options {
-                seconds: secs,
-                target: None,
-            },
-        )
+        pass(secs)
     })();
     let report = match pass {
         Ok(rep) => rep,
@@ -303,17 +323,17 @@ pub fn run_fuzz(root: &Path, out: &Path, seconds: u64) -> FuzzResult {
         }
     };
     let mut error = report.error.clone();
-    for t in &report.targets {
+    // Only the targets that started: `run_all` can stop before the rest (spec item 12).
+    for t in &report.started {
         let old = snapshot
             .iter()
             .find(|(n, _)| n.to_string_lossy() == t.as_str())
             .map(|(_, s)| s.clone())
             .unwrap_or_default();
-        let copied = copy_new_artifacts(&artifacts.join(t), &old, &dest.join(t), t);
-        let names = copied.unwrap_or_else(|e| {
+        let (names, copy_error) = copy_new_artifacts(&artifacts.join(t), &old, &dest.join(t), t);
+        if let Some(e) = copy_error {
             error.get_or_insert(e);
-            Vec::new()
-        });
+        }
         r.targets.push(TargetResult {
             name: t.clone(),
             ok: !report.failed.contains(t),
@@ -385,9 +405,9 @@ pub fn run(
     jobs: &[Job],
     bench_minutes: u64,
     fuzz_seconds: u64,
-    build: Build,
-    exec: Exec,
+    hooks: Hooks,
 ) -> bool {
+    let Hooks { build, exec, pass } = hooks;
     let path = out.join("nightly.json");
     // An earlier night's summary must not stand next to this night's regress results.
     let mut failed = remove_file(&path)
@@ -403,7 +423,7 @@ pub fn run(
             .map(|e| format!(": {e}"))
             .unwrap_or_default()
     );
-    let f = run_fuzz(root, out, fuzz_seconds);
+    let f = run_fuzz(root, out, fuzz_seconds, pass);
     let found: usize = f.targets.iter().map(|t| t.artifacts.len()).sum();
     eprintln!(
         "xtask: nightly: fuzz: {} ({} targets, {fuzz_seconds} s each, {found} artifacts){}",

@@ -239,25 +239,31 @@ fn only_new_regular_artifacts_are_copied_up_to_the_cap() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(from.join("crash-new"), from.join("link")).unwrap();
     let to = d.join("out/fuzz/t");
-    let got = copy_new_artifacts(&from, &before, &to, "t").unwrap();
+    let (got, err) = copy_new_artifacts(&from, &before, &to, "t");
+    assert_eq!(err, None);
     assert_eq!(got, ["fuzz/t/crash-new"]);
     assert_eq!(std::fs::read(to.join("crash-new")).unwrap(), b"n");
     assert!(!to.join("crash-old").exists());
     // Nothing new: nothing copied, no directory made.
     let to2 = d.join("out/fuzz/u");
     let all = files_in(&from);
-    assert!(
-        copy_new_artifacts(&from, &all, &to2, "u")
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(copy_new_artifacts(&from, &all, &to2, "u"), (vec![], None));
     assert!(!to2.exists());
     // An absent target directory has no artifacts.
-    assert!(
-        copy_new_artifacts(&d.join("none"), &before, &to2, "u")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        copy_new_artifacts(&d.join("none"), &before, &to2, "u"),
+        (vec![], None)
     );
+    // A copy that fails keeps the ones made before it listed, with the error.
+    let from3 = d.join("a3");
+    std::fs::create_dir_all(&from3).unwrap();
+    std::fs::write(from3.join("crash-a"), b"a").unwrap();
+    std::fs::write(from3.join("crash-b"), b"b").unwrap();
+    let to3 = d.join("out/fuzz/v");
+    std::fs::create_dir_all(to3.join("crash-b")).unwrap();
+    let (names, err) = copy_new_artifacts(&from3, &BTreeSet::new(), &to3, "v");
+    assert_eq!(names, ["fuzz/v/crash-a"]);
+    assert!(err.unwrap().contains("cannot copy"));
 }
 
 #[test]
@@ -269,10 +275,10 @@ fn the_artifact_cap_is_exact() {
         std::fs::write(from.join(format!("crash-{i:03}")), b"x").unwrap();
     }
     let none = BTreeSet::new();
-    let at = copy_new_artifacts(&from, &none, &d.join("at"), "t").unwrap();
+    let (at, _) = copy_new_artifacts(&from, &none, &d.join("at"), "t");
     assert_eq!(at.len(), MAX_ARTIFACTS);
     std::fs::write(from.join("crash-999"), b"x").unwrap();
-    let over = copy_new_artifacts(&from, &none, &d.join("over"), "t").unwrap();
+    let (over, _) = copy_new_artifacts(&from, &none, &d.join("over"), "t");
     assert_eq!(over.len(), MAX_ARTIFACTS);
     assert_eq!(over.last().map(String::as_str), Some("fuzz/t/crash-099"));
     assert!(!d.join("over/crash-999").exists());
@@ -302,13 +308,13 @@ fn the_fuzz_pass_needs_the_fuzz_project_and_zero_skips_it() {
     let d = scratch("fuzz");
     let out = d.join("out");
     std::fs::create_dir_all(out.join("fuzz/old")).unwrap();
-    let r = run_fuzz(&d, &out, 0);
+    let r = run_fuzz(&d, &out, 0, &mut |_| panic!("no pass"));
     assert_eq!((r.status, r.seconds, r.error), ("skipped", 0, None));
     // Skipped: nothing touched.
     assert!(out.join("fuzz/old").exists());
     // No fuzz/Cargo.toml: a tool failure before anything is installed or run, with the
     // artifact directory emptied.
-    let r = run_fuzz(&d, &out, 1);
+    let r = run_fuzz(&d, &out, 1, &mut |_| panic!("no pass without fuzz/"));
     assert_eq!(r.status, "failed");
     assert!(r.targets.is_empty());
     assert!(r.error.unwrap().contains("Cargo.toml not found"));
@@ -369,6 +375,14 @@ fn nightly_json_has_the_spec_shape() {
     assert!(jpdf_testgen::json::parse(&s).is_ok());
 }
 
+fn no_pass(_: u32) -> Result<fuzz::Report, String> {
+    panic!("no fuzz pass")
+}
+
+fn no_build() -> Result<PathBuf, String> {
+    panic!("no build")
+}
+
 #[test]
 fn run_writes_the_summary_and_reports_tool_failures() {
     let d = scratch("run");
@@ -376,39 +390,166 @@ fn run_writes_the_summary_and_reports_tool_failures() {
     let out = d.join("out");
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("nightly.json"), b"an earlier night").unwrap();
-    let mut ok = |_: &Path, _: &[OsString], _| Some(outcome(Status::Ok, Some(0)));
-    let failed = run(&d, &out, &js, 1, 0, &mut || Ok(d.clone()), &mut ok);
+    let with = |bench: u64, fuzz_s: u64, st: Option<(Status, Option<i32>)>| {
+        let mut exec = |_: &Path, _: &[OsString], _| st.map(|(s, c)| outcome(s, c));
+        let mut build = || Ok(d.clone());
+        let failed = run(
+            &d,
+            &out,
+            &js,
+            bench,
+            fuzz_s,
+            Hooks {
+                build: &mut build,
+                exec: &mut exec,
+                pass: &mut no_pass,
+            },
+        );
+        (
+            failed,
+            std::fs::read_to_string(out.join("nightly.json")).unwrap(),
+        )
+    };
+    let (failed, s) = with(1, 0, Some((Status::Ok, Some(0))));
     assert!(!failed);
-    let s = std::fs::read_to_string(out.join("nightly.json")).unwrap();
     assert!(s.contains("\"bench\":{\"status\":\"ok\",\"minutes\":1,\"files\":2,"));
     assert!(s.contains("\"fuzz\":{\"status\":\"skipped\""));
     // A bench that ends with exit 1 is a tool failure, recorded too.
-    let mut bad = |_: &Path, _: &[OsString], _| Some(outcome(Status::Crash, Some(1)));
-    assert!(run(&d, &out, &js, 1, 0, &mut || Ok(d.clone()), &mut bad));
-    let s = std::fs::read_to_string(out.join("nightly.json")).unwrap();
+    let (failed, s) = with(1, 0, Some((Status::Crash, Some(1))));
+    assert!(failed);
     assert!(s.contains("\"bench\":{\"status\":\"failed\""));
-    // A timeout is recorded and is not a tool failure; so is a skipped bench.
-    let mut slow = |_: &Path, _: &[OsString], _| Some(outcome(Status::Timeout, None));
-    assert!(!run(&d, &out, &js, 1, 0, &mut || Ok(d.clone()), &mut slow));
-    assert!(!run(
-        &d,
-        &out,
-        &js,
-        0,
-        0,
-        &mut || panic!("no build"),
-        &mut |_, _, _| panic!("no run")
-    ));
+    // A timeout is recorded and is not a tool failure.
+    let (failed, s) = with(1, 0, Some((Status::Timeout, None)));
+    assert!(!failed);
+    assert!(s.contains("\"bench\":{\"status\":\"timeout\""));
+    // Nothing to do: no failure.
+    let mut never = |_: &Path, _: &[OsString], _| -> Option<Outcome> { panic!("no run") };
+    let hooks = Hooks {
+        build: &mut no_build,
+        exec: &mut never,
+        pass: &mut no_pass,
+    };
+    assert!(!run(&d, &out, &js, 0, 0, hooks));
     // A fuzz pass that can't run (no fuzz/ here) is a tool failure.
-    assert!(run(
-        &d,
-        &out,
-        &js,
-        0,
-        1,
-        &mut || panic!("no build"),
-        &mut ok
-    ));
+    let hooks = Hooks {
+        build: &mut no_build,
+        exec: &mut never,
+        pass: &mut no_pass,
+    };
+    assert!(run(&d, &out, &js, 0, 1, hooks));
     let s = std::fs::read_to_string(out.join("nightly.json")).unwrap();
     assert!(s.contains("\"fuzz\":{\"status\":\"failed\",\"seconds_per_target\":1,"));
+}
+
+#[test]
+fn the_fuzz_pass_copies_only_this_nights_artifacts_of_started_targets() {
+    let d = scratch("fuzz-pass");
+    std::fs::create_dir_all(d.join("fuzz")).unwrap();
+    std::fs::write(d.join("fuzz/Cargo.toml"), b"").unwrap();
+    let art = d.join("fuzz/artifacts");
+    std::fs::create_dir_all(art.join("a")).unwrap();
+    std::fs::write(art.join("a/crash-old"), b"old").unwrap();
+    let out = d.join("out");
+    let mut seen = None;
+    let r = run_fuzz(&d, &out, 7, &mut |secs| {
+        seen = Some(secs);
+        // This night's finds, written during the pass (after the snapshot).
+        std::fs::write(art.join("a/crash-new"), b"new").unwrap();
+        std::fs::create_dir_all(art.join("b")).unwrap();
+        std::fs::write(art.join("b/timeout-1"), b"t").unwrap();
+        std::fs::create_dir_all(art.join("c")).unwrap();
+        std::fs::write(art.join("c/crash-c"), b"c").unwrap();
+        Ok(fuzz::Report {
+            targets: vec!["a".into(), "b".into(), "c".into()],
+            // `c` never started (run_all stopped): it is not listed.
+            started: vec!["a".into(), "b".into()],
+            failed: vec!["a".into()],
+            error: Some("cannot run c: no such file".into()),
+        })
+    });
+    assert_eq!(seen, Some(7));
+    assert_eq!(
+        r,
+        FuzzResult {
+            status: "failed",
+            seconds: 7,
+            targets: vec![
+                TargetResult {
+                    name: "a".into(),
+                    ok: false,
+                    artifacts: vec!["fuzz/a/crash-new".into()],
+                },
+                TargetResult {
+                    name: "b".into(),
+                    ok: true,
+                    artifacts: vec!["fuzz/b/timeout-1".into()],
+                },
+            ],
+            error: Some("cannot run c: no such file".into()),
+        }
+    );
+    assert!(!out.join("fuzz/a/crash-old").exists());
+    assert_eq!(std::fs::read(out.join("fuzz/a/crash-new")).unwrap(), b"new");
+    assert!(!out.join("fuzz/c").exists());
+    // No tool error: a failed target makes it `crash`, none makes it `ok`.
+    for (failed, want) in [(vec!["b".to_owned()], "crash"), (vec![], "ok")] {
+        let r = run_fuzz(&d, &out, 1, &mut |_| {
+            Ok(fuzz::Report {
+                targets: vec!["a".into(), "b".into()],
+                started: vec!["a".into(), "b".into()],
+                failed: failed.clone(),
+                error: None,
+            })
+        });
+        assert_eq!((r.status, r.error), (want, None));
+        assert_eq!(
+            r.targets.iter().map(|t| t.ok).collect::<Vec<_>>(),
+            [true, want == "ok"]
+        );
+    }
+    // A pass that fails before any target ran is `failed`, with its message.
+    let r = run_fuzz(
+        &d,
+        &out,
+        1,
+        &mut |_| Err("fuzz targets do not build".into()),
+    );
+    assert_eq!(
+        (r.status, r.targets.len(), r.error.as_deref()),
+        ("failed", 0, Some("fuzz targets do not build"))
+    );
+}
+
+#[test]
+fn a_bench_sample_that_cannot_be_copied_is_a_failure() {
+    let d = scratch("bench-copy");
+    let out = d.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let js = vec![Job {
+        blob: "0".repeat(40),
+        url: "https://example.test/0".into(),
+        path: Some(d.join("vanished.pdf")),
+    }];
+    let r = run_bench(&out, &js, 1, &mut no_build, &mut |_, _, _| panic!("no run"));
+    assert_eq!(r.status, "failed");
+    assert!(r.error.unwrap().contains("cannot copy"));
+}
+
+#[test]
+fn a_stale_summary_that_cannot_be_removed_is_a_tool_failure() {
+    let d = scratch("remove");
+    assert_eq!(remove_file(&d.join("absent.json")), Ok(()));
+    std::fs::write(d.join("f.json"), b"x").unwrap();
+    assert_eq!(remove_file(&d.join("f.json")), Ok(()));
+    assert!(!d.join("f.json").exists());
+    // A directory in the file's place can't be removed as a file.
+    std::fs::create_dir_all(d.join("nightly.json/x")).unwrap();
+    assert!(remove_file(&d.join("nightly.json")).is_err());
+    let mut never = |_: &Path, _: &[OsString], _| -> Option<Outcome> { panic!("no run") };
+    let hooks = Hooks {
+        build: &mut no_build,
+        exec: &mut never,
+        pass: &mut no_pass,
+    };
+    assert!(run(&d, &d, &[], 0, 0, hooks));
 }

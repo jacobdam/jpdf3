@@ -240,8 +240,10 @@ pub fn run(root: &Path, opts: &Options) -> Result<(), String> {
 /// What one fuzz pass did, for `cargo xtask nightly` (specs/tooling/nightly.md item 12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
-    /// The targets run, in `cargo fuzz list` order.
+    /// The targets selected, in `cargo fuzz list` order.
     pub targets: Vec<String>,
+    /// The targets whose run started, in the same order ([`run_all`] can stop before the rest).
+    pub started: Vec<String>,
     /// The targets that crashed, hung or ran out of memory.
     pub failed: Vec<String>,
     /// A target that could not start, or a log that could not be created ([`run_all`]).
@@ -302,12 +304,15 @@ pub fn run_report(root: &Path, opts: &Options) -> Result<Report, String> {
         runs.push((t.clone(), cmd));
     }
     let log_dir = root.join("target").join("fuzz-logs");
-    let (failed, error) = match run_all(runs, jobs, &log_dir, &mut std::io::stderr()) {
+    let mut started = Vec::new();
+    let outcome = run_all(runs, jobs, &log_dir, &mut std::io::stderr(), &mut started);
+    let (failed, error) = match outcome {
         Ok(failed) => (failed, None),
         Err((e, failed)) => (failed, Some(e)),
     };
     Ok(Report {
         targets,
+        started,
         failed,
         error,
     })
@@ -360,12 +365,14 @@ pub fn jobs(cores: usize, targets: usize) -> usize {
 /// [`log_header`] once the command ends, so parallel runs do not interleave their output.
 /// Returns the names whose command exited non-zero or was killed by a signal. A command that
 /// cannot start, or a log that cannot be created, is an error, returned with the names that
-/// failed so far, only after every started command ended; no later batch starts.
+/// failed so far, only after every started command ended; no later batch starts. `started`
+/// gets each name whose command was spawned, in order.
 pub fn run_all(
     runs: Vec<(String, Command)>,
     jobs: usize,
     log_dir: &Path,
     out: &mut dyn std::io::Write,
+    started_names: &mut Vec<String>,
 ) -> Result<Vec<String>, (String, Vec<String>)> {
     std::fs::create_dir_all(log_dir).map_err(|e| {
         (
@@ -392,7 +399,10 @@ pub fn run_all(
                         .map_err(|e| format!("cannot run {name}: {e}"))
                 });
             match spawned {
-                Ok(child) => started.push((name, log, child)),
+                Ok(child) => {
+                    started_names.push(name.clone());
+                    started.push((name, log, child));
+                }
                 Err(e) => {
                     error.get_or_insert(e);
                     break;
@@ -563,7 +573,7 @@ mod tests {
             ("b".to_owned(), rendezvous(&dir, "b", "a", 200)),
         ];
         assert_eq!(
-            run_all(runs, 2, &dir.join("logs"), &mut Vec::new()),
+            run_all(runs, 2, &dir.join("logs"), &mut Vec::new(), &mut Vec::new()),
             Ok(vec![])
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -579,7 +589,7 @@ mod tests {
             ("b".to_owned(), rendezvous(&dir, "b", "a", 10)),
         ];
         assert_eq!(
-            run_all(runs, 1, &dir.join("logs"), &mut Vec::new()),
+            run_all(runs, 1, &dir.join("logs"), &mut Vec::new(), &mut Vec::new()),
             Ok(vec!["a".to_owned()])
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -596,14 +606,16 @@ mod tests {
             ("later".to_owned(), sh("exit 1")),
         ];
         let mut out = Vec::new();
+        let mut started = Vec::new();
         assert_eq!(
-            run_all(runs, 3, &logs, &mut out),
+            run_all(runs, 3, &logs, &mut out, &mut started),
             Ok(vec![
                 "exit".to_owned(),
                 "signal".to_owned(),
                 "later".to_owned()
             ])
         );
+        assert_eq!(started, ["ok", "exit", "signal", "later"]);
         let read = |n: &str| std::fs::read_to_string(logs.join(format!("{n}.log")));
         assert_eq!(read("ok").ok().as_deref(), Some("out-ok\nerr-ok\n"));
         assert_eq!(read("exit").ok().as_deref(), Some("out-exit\n"));
@@ -628,7 +640,10 @@ mod tests {
             sh(&format!("echo lost; rm '{}'", log.display())),
         )];
         let mut out = Vec::new();
-        assert_eq!(run_all(runs, 1, &logs, &mut out), Ok(vec![]));
+        assert_eq!(
+            run_all(runs, 1, &logs, &mut out, &mut Vec::new()),
+            Ok(vec![])
+        );
         let text = String::from_utf8_lossy(&out);
         assert!(
             text.starts_with(&format!(
@@ -655,7 +670,8 @@ mod tests {
             ),
             ("never".to_owned(), sh("exit 0")),
         ];
-        let got = run_all(runs, 3, &dir.join("logs"), &mut Vec::new());
+        let mut started = Vec::new();
+        let got = run_all(runs, 3, &dir.join("logs"), &mut Vec::new(), &mut started);
         // The spawn error keeps the failure found before it.
         let Err((e, failed)) = &got else {
             panic!("{got:?}")
@@ -665,6 +681,7 @@ mod tests {
         // `first` was waited for, not left running; `never` was not started.
         assert!(marker.is_file());
         assert!(!dir.join("logs/never.log").exists());
+        assert_eq!(started, ["first"]);
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -674,8 +674,11 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         &jobs,
         opts.bench_minutes,
         opts.fuzz_seconds,
-        &mut || crate::bench::build(root),
-        &mut |bin, args, limit| exec(bin, mem, args, limit),
+        extra::Hooks {
+            build: &mut || crate::bench::build(root),
+            exec: &mut |bin, args, limit| exec(bin, mem, args, limit),
+            pass: &mut |secs| extra::real_pass(root, secs),
+        },
     );
     let code = exit_code(failed, report.exit_code());
     if code == 75 {
