@@ -170,9 +170,10 @@ extra fuzz time (#301); filing issues is #302)
     group is killed (jpdf-bench's own watchdog then kills the groups of its children,
     specs/tooling/bench.md item 7). Status: exit 0 `ok`; the kill at the limit `timeout`;
     anything else (exit 1 or 2, a signal, no start, a build or copy failure) `failed`. Only an
-    `ok` bench that left `DIR/bench.json` has a report. `timeout` is what `jpdf-cli` (or a
-    reference engine) did and is recorded, not a tool failure; `failed` is a tool failure
-    (item 10).
+    `ok` bench that left `DIR/bench.json` has a report. `timeout` is recorded, not a tool
+    failure: it is usually what `jpdf-cli` (or a reference engine) did, but a jpdf-bench that
+    hangs on its own bug ends the same way, so a `timeout` every night may also be a broken
+    bench. `failed` is a tool failure (item 10).
 12. **Extra fuzz time** (after the bench; skipped when `--fuzz-seconds` is 0). This is fuzz
     time on top of the judge's own fuzz step (CONTRACT §3, 300 s per target). `DIR/fuzz/` is
     emptied first, then `fuzz/Cargo.toml` must exist (checked before anything is installed),
@@ -182,7 +183,11 @@ extra fuzz time (#301); filing issues is #302)
     10 s per input, one target per core at a time). The file names in each
     `fuzz/artifacts/<target>/` are noted before the pass; after it, the regular files (no
     symlinks, no directories) that are new there are copied to `DIR/fuzz/<target>/`, at most
-    100 per target by name order (more are counted on stderr and left in `fuzz/artifacts/`).
+    100 per target by name order (more are counted on stderr and left in `fuzz/artifacts/`),
+    for each target whose run started (the fuzz pass can stop before later targets start: a
+    target that can't start ends it, after the started ones end; those not started are not
+    listed). A copy that fails stops that target's copies; the ones made before it stay
+    listed.
     Status: a failure before any target ran (no project, a failed install, list or build, a
     seed that can't be written), a target that couldn't start, a log that couldn't be
     created, or an artifact that couldn't be copied is `failed`, a tool failure; else any
@@ -202,7 +207,7 @@ extra fuzz time (#301); filing issues is #302)
     `bench.status` is `ok`, `timeout`, `failed` or `skipped`; `files` the sample size; `exit`,
     `signal` and `ms` as in item 5 (`null` when it didn't start or was skipped); `report` is
     `"bench.json"` or `null`; `error` says why it `failed`. `fuzz.status` is `ok`, `crash`,
-    `failed` or `skipped`; `targets` lists the targets run, in `cargo fuzz list` order, each
+    `failed` or `skipped`; `targets` lists the targets whose run started, in `cargo fuzz list` order, each
     with `ok` and the copied artifacts (paths relative to `DIR`); `error` the tool failure.
     Strings are JSON-escaped (artifact names are read lossily as UTF-8).
 14. **Order.** Regress runs, `regress.json`, the diff, then the bench, the fuzz pass and
@@ -329,14 +334,20 @@ Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5250-file tier 
 minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are
 implemented. The CI job has 240 min (`timeout-minutes`). With the defaults the worst case is
 120 + 1 (one run past the budget) + 20 (bench) + ⌈3 targets × 1200 s / 60⌉ = 60 (fuzz on one
-core; 20 on the 4-core runner) = 201 min, which leaves 39 min for the builds and the fetch; a
-test checks this sum against the number of fuzz targets in `fuzz/fuzz_targets/`. A local run
+core; 20 on the 4-core runner) = 201 min. A test checks that this sum, for the number of fuzz
+targets in `fuzz/fuzz_targets/`, leaves at least 30 min of the 240 for the rest: the fetch, the
+release builds, the cargo-fuzz install (built from source on CI: this job has no cache for it)
+and the fuzz targets' build. That 30 min is an estimate; none of those steps has been timed in
+the CI job yet (the first nightly run will show it). A local run
 with `--limit 30 --bench-minutes 5 --fuzz-seconds 10` took 58 s.
 
 ## Tests
 `xtask/src/nightly/extra/tests.rs` (the budget sum, the bench sample and its staging, the bench
 statuses with a fake exec and build, the stale `bench.json` and `nightly.json` removal, the
-artifact copy and its cap, the fuzz statuses, a tree without `fuzz/`, `nightly.json`'s shape,
+artifact copy and its cap (and a copy that fails midway), the fuzz pass with a fake
+`fuzz::run_report` (the snapshot before the pass, only started targets, each target's `ok`),
+a bench sample that can't be copied, a stale `nightly.json` that can't be removed, the fuzz
+statuses, a tree without `fuzz/`, `nightly.json`'s shape,
 the exit decision), `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
 and memory wrapper with fake `jpdf-cli` scripts, missing files, the results JSON, the previous-file
 validator, the diff), `tools/bench/src/engine.rs`
