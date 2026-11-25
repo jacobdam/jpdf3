@@ -6,7 +6,7 @@ Phase: bootstrap (pilot)
 ## In flight
 - main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
 - #301 (nightly 2/3: bench and extra fuzz time, `DIR/nightly.json`): PR #351, 3 review rounds (round 3 on the merge
-  with #349's limits part), auto-merge on once `ai-review` passes. Its R2.1 is #352 (no `ready`). Then #302 (part 3,
+  with #349's limits part), `ai-review` success, auto-merge on. Its R2.1 is #352 (no `ready`). Then #302 (part 3,
   files issues; depends on #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
