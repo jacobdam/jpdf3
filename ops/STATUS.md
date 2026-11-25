@@ -4,6 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **The loop is halted** (`ops/HALT`, 2026-11-25): on this Linux VM the driver's `df -g` fails and reads 0 GB, so it
+  cleans and sleeps hourly without a session (#337). Fix: PR #338's ops/proposals/driver-portable-df.md (5 GB
+  minimum, the owner's choice); the owner applies it to the protected driver, then removes `ops/HALT`.
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
 - **PR #336** (#335): the owner's answers to #311's open points (Simplified Chinese; users build and host v1.0 from
