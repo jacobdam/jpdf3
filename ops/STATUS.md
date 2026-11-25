@@ -4,8 +4,8 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green (run 45653856999 for 1231700 passed; PR #343 merged at 16:51 UTC).
-- Planner 2026-11-25 (its QUEUE.md PR is in review): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
+- main is green: ci run 45658431382 for 828265b (PR #343's merge) passed.
+- Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).

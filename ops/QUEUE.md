@@ -49,9 +49,10 @@ milestone's backlog.
 work mix: 0 of the last 20 sessions on milestone work (0%; budget 70%)
 
 The budget counts a session as milestone work only if a PR for its issue changes `crates/`,
-`bindings/`, `apps/`, `fuzz/`, `tools/jpdf-cli/` or `tools/fsio/`. Every open M0 issue is
-`xtask/`, `ops/` or owner work, and PLAN §8's M0 row has no product deliverable left without an
+`bindings/`, `apps/`, `fuzz/`, `tools/jpdf-cli/` or `tools/fsio/`. No open M0 issue is
+expected to change one (they are `xtask/`, new `tools/`, `docs/`, `ops/` or owner work; a #25 PR
+that extends the generators in `crates/jpdf-engine/tests/` would count), and PLAN §8's M0 row has no product deliverable left without an
 issue (the backend adapters come from #304). So step 4a added no product issues to M0, and
 nothing was moved out: none of the open M0 issues is a process issue that §5's Discoveries terms
-would move to `Ops`. The mix can only rise once M0 closes and M1 (syntax and security) opens.
+would move to `Ops`. So the mix is expected to rise only once M0 closes and M1 (syntax and security) opens.
 Closing M0 is the way to get there: the critical path above, then #303–#306.
