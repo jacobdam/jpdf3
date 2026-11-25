@@ -43,7 +43,8 @@ fn the_default_budgets_fit_the_ci_job() {
     let targets =
         std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuzz/fuzz_targets"))
             .unwrap()
-            .count() as u64;
+            .count();
+    let targets = u64::try_from(targets).unwrap();
     assert!(targets >= 1);
     let worst = super::super::DEFAULT_MINUTES
         + 1
