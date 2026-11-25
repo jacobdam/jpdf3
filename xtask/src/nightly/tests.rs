@@ -27,6 +27,8 @@ fn parses_flags_and_defaults() {
             limit: None,
             previous: None,
             max_minutes: 120,
+            bench_minutes: 20,
+            fuzz_seconds: 1200,
         }
     );
     let o = p(&[
@@ -40,6 +42,10 @@ fn parses_flags_and_defaults() {
         "prev.json",
         "--max-minutes",
         "1440",
+        "--bench-minutes",
+        "120",
+        "--fuzz-seconds",
+        "3600",
     ])
     .unwrap();
     assert_eq!(
@@ -50,8 +56,13 @@ fn parses_flags_and_defaults() {
             limit: Some(200_000),
             previous: Some(PathBuf::from("prev.json")),
             max_minutes: 1440,
+            bench_minutes: 120,
+            fuzz_seconds: 3600,
         }
     );
+    // 0 skips the bench or the fuzz pass (spec items 12 and 13).
+    let o = p(&["--bench-minutes", "0", "--fuzz-seconds", "0"]).unwrap();
+    assert_eq!((o.bench_minutes, o.fuzz_seconds), (0, 0));
     assert_eq!(
         p(&["--limit", "1", "--max-minutes", "1"]).unwrap().limit,
         Some(1)
@@ -72,6 +83,18 @@ fn usage_errors() {
         (
             &["--max-minutes", "99999999999999999999999"][..],
             "bad --max-minutes",
+        ),
+        (&["--bench-minutes", "121"][..], "bad --bench-minutes"),
+        (&["--bench-minutes", "-1"][..], "bad --bench-minutes"),
+        (&["--fuzz-seconds", "3601"][..], "bad --fuzz-seconds"),
+        (&["--fuzz-seconds", "+1"][..], "bad --fuzz-seconds"),
+        (
+            &["--fuzz-seconds", "1", "--fuzz-seconds", "1"][..],
+            "given twice",
+        ),
+        (
+            &["--bench-minutes", "1", "--bench-minutes", "1"][..],
+            "given twice",
         ),
         (&["--limit"][..], "needs a value"),
         (&["--out", "a", "--out", "b"][..], "given twice"),

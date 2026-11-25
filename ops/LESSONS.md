@@ -100,6 +100,12 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   their own group; test the guard with the kill command textually swapped for `echo` (assert the swap happened). Prove
   each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
+- Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
+  use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
+  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
+- GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
+  retry in one loop that first checks whether the comment already exists, so nothing is posted twice
+  ([journal](journal/2026-11-25/1600-311-done-reply.md)).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
@@ -111,7 +117,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   change. Don't rerun: one rerun worked (#39), another hit "Multiple artifacts named
   github-pages" and could never deploy (#59). The next push to main redeploys. If the upload
   step failed or was skipped, it's a real bug. Durable fix proposed in
-  `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63).
+  `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63). Exception: deploy-pages got
+  HTTP 500 and main's head has no newer push → `gh run rerun --failed` worked (run 45649071740)
+  ([journal](journal/2026-11-25/1620-main-red-pages.md)).
 - main red on an infra job while a newer main `ci` run is in progress → don't `rerun --failed`: it queues in the main
   concurrency group, and a later push before it starts cancels it (run 45249100863 attempt 2 ran no job). Read the newer run's result
   for the same job instead, and record the run's state after acting ([journal](journal/2026-11-23.md), PR #271).
@@ -307,6 +315,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   window) → also walk each §8 output (split labels, output 2's fold, step 6's auto-merge) and what the scheduler reads
   of the kept or refiled issue; PR #312's routing fixes drew R2.1 and R3.1–R3.3
   ([journal](journal/2026-11-24/0346-249-design-product.md)).
+- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
+  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
+  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
