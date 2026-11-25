@@ -79,7 +79,8 @@ starts without its scratch files.
 driver). It builds a temp repo with seven worktrees (`t/12-open`, `t/13-nopr`, `t/1`,
 `t/12-open-x`, a detached HEAD, all dated 3 days back; `t/15-edge`, dated 2 days 23 hours back,
 just inside the age limit; and a fresh `t/14-fresh`) and a fake `gh` (needs `jq`) that acts like
-`gh pr list`: it keeps only the `--json` fields asked for, applies the `-q` filter, marks fork PRs
+`gh pr list`: it reads at most `--limit` PRs (default 30), keeps only the `--json` fields asked
+for, applies the `-q` filter, marks fork PRs
 `isCrossRepository: true`, and fails unless asked for `--state open`:
 
 | Case | Proposed driver | Current driver |
@@ -89,13 +90,14 @@ just inside the age limit; and a fresh `t/14-fresh`) and a fake `gh` (needs `jq`
 | `gh` fails: nothing removed | ok | FAIL (all old ones deleted) |
 | no open PRs: every old one removed | ok | ok |
 | open PRs `t/1`, `t/13-nopr`, `t/12-open-x`: those stay, `t/12-open` goes | ok | FAIL |
+| 31 open PRs, `t/12-open` last: `open` stays | ok | FAIL (`open` deleted) |
 | open PR `t/12-open` and a fork's PR on `t/13-nopr`: `t/13-nopr` goes | ok | FAIL (`open` deleted) |
 | `git worktree prune` ran (no prunable entries) | ok | ok |
 
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
 `-x`), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
 detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
-`--state all`, dropping the fork filter or its `isCrossRepository` field, and `-mtime +0`, `+1` or
+`--state all`, `--limit 1`, `--limit 30` or no `--limit`, dropping the fork filter or its `isCrossRepository` field, and `-mtime +0`, `+1` or
 `+3` for `+2`.
 
 After applying: `ops/driver/driver.sh --pilot`, then `grep 'keeping worktree' ops/logs/driver.log`

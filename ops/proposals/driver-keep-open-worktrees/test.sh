@@ -34,13 +34,13 @@ run() { # GH: "ok" or "fail"; then the open PRs' head branches, "fork:<b>" for a
   { echo '#!/usr/bin/env bash'
     [[ "$gh" == fail ]] && echo 'echo "gh: error" >&2; exit 1'
     cat <<EOS
-state="" fields="" q=""
+state="" fields="" q="" limit=30
 while (( \$# )); do
-  case "\$1" in --state) state="\$2"; shift ;; --json) fields="\$2"; shift ;; -q|--jq) q="\$2"; shift ;; esac
+  case "\$1" in --state) state="\$2"; shift ;; --json) fields="\$2"; shift ;; -q|--jq) q="\$2"; shift ;; -L|--limit) limit="\$2"; shift ;; esac
   shift
 done
 [[ "\$state" == open && -n "\$fields" ]] || { echo "fake gh: want --state open and --json" >&2; exit 1; }
-jq --arg f "\$fields" '[.[] | with_entries(select(.key as \$k | \$f | split(",") | index(\$k)))]' "$tmp/prs.json" |
+jq --arg f "\$fields" --argjson n "\$limit" '.[:\$n] | [.[] | with_entries(select(.key as \$k | \$f | split(",") | index(\$k)))]' "$tmp/prs.json" |
   if [[ -n "\$q" ]]; then jq -r "\$q"; else cat; fi
 EOS
   } > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
@@ -64,6 +64,8 @@ setup; run ok
 check "no open PRs: every old one removed" "edge fresh "
 setup; run ok t/1 t/13-nopr t/12-open-x
 check "exact branch names: t/1, t/13-nopr, t/12-open-x kept; t/12-open (no PR) removed" "edge fresh nopr prefix suffix "
+setup; run ok $(seq -f 't/9%02g-other' 1 30) t/12-open
+check "31 open PRs (the gh default --limit is 30), the one this worktree has last: kept" "edge fresh open "
 setup; run ok t/12-open fork:t/13-nopr
 check "a fork's PR with an agent branch name keeps nothing: t/13-nopr removed" "edge fresh open "
 cd "$tmp/repo" && [[ -z "$(git worktree list --porcelain | grep -c prunable | grep -v '^0$')" ]] && echo "ok   git worktree prune ran (no prunable entries)" || { echo "FAIL prunable worktrees left"; fail=1; }
