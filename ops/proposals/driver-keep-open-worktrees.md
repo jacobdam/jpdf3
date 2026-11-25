@@ -97,8 +97,9 @@ for, applies the `-q` filter, marks fork PRs
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
 `-x`), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
 detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
-`--state all`, `--limit 1`, `--limit 30` or no `--limit`, dropping the fork filter or its `isCrossRepository` field, and `-mtime +0`, `+1` or
-`+3` for `+2`.
+`--state all`, `--limit 1`, `--limit 30` or no `--limit`, dropping the fork filter or its
+`isCrossRepository` field, and `-mtime +0`, `+1` or `+3` for `+2`. A `--limit` from 31 to 199
+still passes (#344).
 
 After applying: `ops/driver/driver.sh --pilot`, then `grep 'keeping worktree' ops/logs/driver.log`
 lists the open PRs' worktrees older than 2 days, if any.
