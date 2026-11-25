@@ -549,8 +549,11 @@ The first stretch, M0 through the start of M1 (~1–2 weeks), runs **lightly sup
 
 Then the driver switches to **maintenance mode**: nightly fuzzing and corpus runs, crash
 fixes, dependency refresh, one session per day. It opens a single issue
-`owner-todo: release` listing the human-only steps (Apple Developer signing/notarization,
-hosting/domain, App Store listing). Phase 2 starts only when the owner opens a `human` issue for it.
+`owner-todo: release` listing the human-only step of the v1.0 source release: the release
+itself (a tag and a source release, PLAN §1 assumptions). The web demo is the GitHub Pages
+site CI already deploys on every merge (§12). Publishing (Apple Developer signing and
+notarization, the App Store listing, a custom domain or other hosting) is Phase 2 (#335). Phase 2 starts only
+when the owner opens a `human` issue for it.
 
 ## 16. Known residual risks
 

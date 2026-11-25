@@ -6,11 +6,11 @@ Phase: bootstrap (pilot)
 ## In flight
 - ADR 0012 merged (PR #327). Its one-time moves are done (owner session 2026-11-24): `Ops` milestone created; #308
   and #248 → M1, #250 → M3, #251 → M4; #247 (`deferred`), #313, #314, #319, #328 → `Ops`. M0: 28 → 20 open.
-- **PR #332** (#311, docs/PRODUCT.md v1): approved by the owner (PR comment 7140348636), merging. Owner open points on
-  #311: the Chinese variant, the web app's v1.0 distribution, and PLAN.md:356 and :37-38 lagging the answers (owner's).
-  Journey gaps: #331 (web offline), #334 (four languages), both M10, `design-product`.
+- **PR #336** (#335): the owner's answers to #311's open points (Simplified Chinese; users build and host v1.0 from
+  source, the GitHub Pages site is the demo; publishing is Phase 2) in docs/PRODUCT.md, PLAN.md §1/§4/§8 and
+  AUTOMATION.md §15; merges on the owner's approval. Journey gaps: #331 (web offline), #334 (four languages), both M10.
 - Merged today: #316 (#277), #317 (#288 part 2), #318 (#294), #321 (#300, nightly 1/3; deferred #322, #323), #312
-  (#249, Design: product 1/2), #327 (#326), #329 (#319), #330 (#313), #333 (#314: step 3 picks `worker design-window #N`; TICK §1's by-hand
+  (#249, Design: product 1/2), #327 (#326), #329 (#319), #330 (#313), #332 (#311, docs/PRODUCT.md v1), #333 (#314: step 3 picks `worker design-window #N`; TICK §1's by-hand
   check is gone).
 - `cargo xtask nightly` parts 2 (#301) and 3 (#302; the CI `--previous` step needs the owner) wait for the Planner's
   `ready`. Codex timed out (2400 s) on #321's three round briefs (45–110 KB).
