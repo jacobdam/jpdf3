@@ -9,7 +9,7 @@ Status: implemented
 `npm run licenses` in `apps/web` first runs the unit tests (`node --test
 scripts/licenses.test.mjs`), then `scripts/check-licenses.mjs`. That script reads
 `package-lock.json`, `package.json`, every installed `node_modules/<path>/package.json`,
-`index.html`, `vite.config.ts`, the app directory's file names and every file under `src/`,
+`index.html`, `dashboard/index.html` (when it exists), `vite.config.ts`, the app directory's file names and every file under `src/`,
 recursively (only lower-case `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` files are
 allowed there; see item 6). An optional argument names another app
 directory (used by the integration test). The
@@ -111,7 +111,10 @@ code and has no dependencies.
    - These config keys: `alias`, `publicDir`, `root`, `input`, library builds (`lib`,
      `entry`), preprocessor injections (`additionalData`), code or import-source injection
      (`jsxInject`, `jsxImportSource`, `tsconfigRaw`, `renderBuiltUrl`) and an inline
-     `postcss` config.
+     `postcss` config. One `input` is exempt, the exact text
+     `input: { app: "index.html", dashboard: "dashboard/index.html" },` (its first copy only):
+     both pages are scanned (specs/tooling/dashboard.md). Any other `input`, a second copy
+     included, is refused (`scripts/licenses.test.mjs`).
    - Plugin hooks that resolve, load or transform modules (`resolveId`,
      `resolveDynamicImport`, `load`, `transform`, `renderChunk`, `generateBundle`), emit
      chunks (`emitFile`), edit the config or Rollup options (`config`, `configResolved`,
