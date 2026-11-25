@@ -734,6 +734,7 @@ mod tests {
     fn blocked_issues_and_milestone_forecast() {
         let until = d(UNTIL);
         let issues = [
+            issue(12, "OPEN", "2026-11-20", None, &["blocked"], None), // same age as #1, listed first (gh is newest first): sorted by number
             issue(1, "OPEN", "2026-11-20", None, &["blocked"], Some("M1")),
             issue(
                 2,
@@ -765,7 +766,6 @@ mod tests {
             ), // after --until
             issue(9, "OPEN", "2026-11-01", None, &[], Some("M2")),
             issue(10, "OPEN", "2026-11-01", None, &[], Some("M2")),
-            issue(12, "OPEN", "2026-11-20", None, &["blocked"], None), // same age as #1: by number
         ];
         let snap = compute(
             &inputs_with(prs_for(until, &[]), &issues, "", None),
