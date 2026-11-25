@@ -91,7 +91,7 @@ passes: bash reads an empty `free` as 0 in `(( ))`, so it still returns low with
 guard stays for clarity.
 
 After applying, on the VM: `ops/driver/driver.sh --pilot` runs one session; the log must not show
-`low disk` or `disk check failed`. If it shows `disk check failed`, stop it (see below).
+`low disk` or `disk check failed`. If it shows either, stop it (see below).
 
 ## Not in this proposal
 
