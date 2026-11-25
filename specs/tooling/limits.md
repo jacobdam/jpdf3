@@ -85,7 +85,7 @@ As item 7. Messages start with `xtask: limits:` (from the nightly, `xtask: night
   `usage_errors`).
 - The size check: exactly T/2 and exactly 512 MiB pass, one byte past either fails
   (`the_size_check_is_exact_at_both_ends`); every class meets it at 64, 500 and 511 MiB
-  (`every_case_reaches_its_size_at_the_bounds`, which also covers 75 to 79 MiB, where a
+  (`every_case_reaches_its_size_at_the_bounds`, which also generates at 75, 76 and 79 MiB, where a
   `max-per-object` count of ⌊T/40 MiB⌋ fell short: PR #349 R1.1); `max_per_object_fits_at_every_size`
   checks that class's count at every `--mib` from 64 to 511.
 - The engine limits each class sits under or over are the defaults in specs/cli/jpdf-cli.md
