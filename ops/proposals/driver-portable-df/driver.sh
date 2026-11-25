@@ -297,7 +297,7 @@ while true; do
   halted; h=$?
   if (( h == 0 )); then log "halted; exiting"; notify "loop halted"; exit 0; fi
   if (( h == 2 )); then [[ "$MODE" == "once" ]] && exit 1; sleep 300; continue; fi
-  if ! disk_ok; then sleep 3600; continue; fi
+  if ! disk_ok; then [[ "$MODE" == "once" ]] && exit 1; sleep 3600; continue; fi
   sync_main || { log "git sync failed"; sleep 600; continue; }
   run_session; rc=$?
   [[ "$MODE" == "once" ]] && exit "$rc"
