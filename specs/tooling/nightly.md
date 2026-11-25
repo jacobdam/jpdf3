@@ -66,7 +66,8 @@ filing issues is #302)
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
    UTF-8, the **first** 4 KiB; the judge keeps the last 8 KiB, so a long log can push the panic
    message out: #322 keeps the tail instead).
-6. **Memory limit.** Before the runs, `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
+6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
+   item 11 use it too), `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
    exactly `2097152` (2 GiB in KiB, the judge's `RLIMIT_AS`). If it does, every run is
    `/bin/sh -c 'ulimit -v 2097152 || exit 125; exec "$0" "$@"' <jpdf-cli> <arguments>`: the
    shell sets the limit and replaces itself with `jpdf-cli` (same process, same group), so the
@@ -116,8 +117,9 @@ filing issues is #302)
      `new_failures` counts changes to `crash` or `timeout` from any other status; `fixed`
      counts changes from `crash` or `timeout` to `ok`, `error` or `not_implemented`.
      stderr gets `nightly: regress diff: <C> changes, <N> new crash/timeout, <F> fixed`.
-10. **Exit codes.** The nightly exits non-zero only for a tool failure, never for what
-    `jpdf-cli` did (part 3, #302, files issues for crashes):
+10. **Exit codes.** The nightly exits non-zero only for a tool failure or a failed limits case
+    (item 11), never for what `jpdf-cli` did with a regress file (part 3, #302, files issues for
+    crashes):
     - 2: usage (item 1);
     - 1: a tool failure: an unreadable or invalid previous file, the build (or no `jpdf-cli`
       file where the build should have put it), the manifest, the cache, the watchdog, the
@@ -132,24 +134,37 @@ filing issues is #302)
       not be downloaded (the corpus tool's and the judge's rule) and no other tool failure.
       This includes the case where every row is missing because of it (no network): that
       stops before the runs with 75, not 1, since the cause is infrastructure;
+    - 4: a limits case did not pass (item 11) and the regress part would have exited 0: a
+      hostile file that crashes, hangs or gets the wrong answer is a regression, unlike a regress
+      file's status. When the regress part exits 1 or 75, that code wins (a 75 night is rerun,
+      which runs the cases again); the failed case is still in `limits.json` and on stderr;
     - 0 otherwise, whatever the runs' statuses and `complete`.
+    A tool failure in the limits part is a 1 too, but the regress part still runs.
     Once the runs started, `regress.json` and the diff are written (each to a `.tmp` name,
     then renamed over an earlier night's file) before the nightly exits 1 or 75, so nothing
     measured is lost, and an earlier night's files stay on disk until this night's replace
     them (a night that dies mid-run leaves the previous pair intact). So the files in `DIR` are
-    this night's only when the nightly exited 0 or 75 after the runs; neither file names its
+    this night's only when the nightly exited 0, 4 or 75 after the runs; neither file names its
     night, so a reader (part 3, #302) must check the exit code before it reads `DIR`. If the
     diff can't be written, an earlier `regress-diff.json` is removed (best effort: a failed
     removal is only logged), and a kill between the two renames can leave this night's
     `regress.json` next to an earlier diff; the exit code tells these cases apart too. A
     failed rename can leave `regress.json.tmp` or `regress-diff.json.tmp` in `DIR`. A failure
-    before the runs writes nothing. Through the memory wrapper,
+    before the regress runs writes neither file (`limits.json`, item 11, is written once the
+    limits part ran). Through the memory wrapper,
     `/bin/sh` always starts; a `jpdf-cli` removed or made non-executable during the runs then
     shows as `crash` with exit 126 or 127 (the wrapper's own failure is 125), like any other
     such exit of `jpdf-cli`.
 
+11. **Limits cases** (#25). After the build, the memory probe and the watchdog, and before the
+    fetch (so a night without network still runs them), the nightly runs the seven cases of
+    specs/tooling/limits.md at its default size (500 MiB) with the same `jpdf-cli` and memory
+    wrapper, and writes `DIR/limits.json`. A failed case gives exit 4 (item 10). A tool failure
+    there is logged as `xtask: nightly: limits: <problem>` and gives exit 1; the regress part
+    runs either way.
+
 ## Persistence
-No document persistence. `regress.json`, `regress-diff.json` and `work/` under `DIR` (and their
+No document persistence. `regress.json`, `regress-diff.json`, `limits.json` (item 11) and `work/` under `DIR` (and their
 `.tmp` names after a failed rename, item 10); nothing in the repository. The previous night's file is passed in by the caller: the CI step that downloads
 it is part 3 (#302) and needs the owner (`.github/` is protected).
 
@@ -168,7 +183,9 @@ can't be removed). A usage error prints the problem and the usage line.
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
   enforces it (item 6); stderr kept ≤ 4 KiB per run, stdout never read.
-- Whole run: `--max-minutes` (≤ 1440) plus at most one run's limit; `--limit` ≤ 200 000 rows
+- Whole run: the limits part (item 11: seven generated files of ≤ 512 MiB, each run ≤ 20 s, so
+  at most 140 s of runs plus the writes; about 15 s locally), then `--max-minutes` (≤ 1440) plus
+  at most one run's limit for the regress part, whose clock starts after the limits part; `--limit` ≤ 200 000 rows
   (the corpus manifest's own row cap).
 - The previous file: at most 64 MiB, read bounded at 64 MiB + 1 byte (more is an error), at
   most 200 000 files; JSON nesting is capped by `jpdf_testgen::json` (128); each file has at most
@@ -235,11 +252,12 @@ like the judge's own helper.
 ## Performance
 Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5250-file tier takes a few
 minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are implemented; part 2 (#301) adds
-bench and fuzz time to the same CI job (240 min).
+bench and fuzz time to the same CI job (240 min). The limits part (item 11) adds about 15 s before the regress runs.
 
 ## Tests
 `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
 and memory wrapper with fake `jpdf-cli` scripts, missing files, the results JSON, the previous-file
 validator, the diff), `tools/bench/src/engine.rs`
 `run_child_reports_the_exit_code_or_the_signal`, `tools/corpus/tests/corpus.rs`
-`is_verified_accepts_only_the_exact_file`.
+`is_verified_accepts_only_the_exact_file`. The limits part (item 11): `xtask/src/limits/tests.rs`
+(specs/tooling/limits.md "Tests"; `nightly_exit_codes_with_the_limits_cases` for item 10's 4).

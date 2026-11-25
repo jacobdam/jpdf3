@@ -130,6 +130,7 @@ dependencies = [
  "jpdf-arlington",
  "jpdf-bench",
  "jpdf-corpus",
+ "jpdf-engine",
  "jpdf-fsio",
  "jpdf-testgen",
 ]

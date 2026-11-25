@@ -19,7 +19,7 @@ const MAX_ROWS: u64 = 200_000;
 const MAX_MINUTES: u64 = 1440;
 const DEFAULT_MINUTES: u64 = 120;
 /// The judge's address-space limit, in KiB (`ulimit -v`): 2 GiB (ops/judge/lib/common.py).
-const MEM_KIB: u64 = 2_097_152;
+pub(crate) const MEM_KIB: u64 = 2_097_152;
 /// Checks that the shell can set the limit (spec item 6).
 const MEM_PROBE: &str = "ulimit -v 2097152 && ulimit -v";
 /// Sets the limit, then becomes `jpdf-cli` (`$0`) with its arguments (`$@`), never
@@ -107,7 +107,7 @@ pub struct Options {
 }
 
 /// A plain decimal number in `lo..=hi` (no sign, no leading `+`).
-fn number(flag: &str, v: &str, lo: u64, hi: u64) -> Result<u64, String> {
+pub(crate) fn number(flag: &str, v: &str, lo: u64, hi: u64) -> Result<u64, String> {
     v.bytes()
         .all(|b| b.is_ascii_digit())
         .then(|| v.parse::<u64>().ok())
@@ -241,7 +241,7 @@ fn run_files(
 }
 
 /// Whether `/bin/sh` can set the judge's address-space limit here (spec item 6).
-fn memory_limit_applies() -> bool {
+pub(crate) fn memory_limit_applies() -> bool {
     Command::new("/bin/sh")
         .args(["-c", MEM_PROBE])
         .stdin(Stdio::null())
@@ -251,7 +251,7 @@ fn memory_limit_applies() -> bool {
 }
 
 /// Runs `cli args` once under `limit`, through the memory wrapper when `mem` (spec item 6).
-fn exec(cli: &Path, mem: bool, args: &[OsString], limit: Duration) -> Option<Outcome> {
+pub(crate) fn exec(cli: &Path, mem: bool, args: &[OsString], limit: Duration) -> Option<Outcome> {
     if mem {
         let mut a: Vec<OsString> = vec!["-c".into(), MEM_WRAPPER.into(), cli.into()];
         a.extend_from_slice(args);
@@ -545,7 +545,7 @@ fn unstarted(files: &[FileResult]) -> usize {
         .count()
 }
 
-fn write(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write(path: &Path, text: &str) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, text)
         .and_then(|()| std::fs::rename(&tmp, path))
@@ -553,7 +553,7 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// Builds `jpdf-cli` the judge's way; returns its path (spec item 2).
-fn build_cli(root: &Path) -> Result<PathBuf, String> {
+pub(crate) fn build_cli(root: &Path) -> Result<PathBuf, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)
         .current_dir(root)
@@ -580,6 +580,31 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
             cli.display()
         ));
     }
+    let mem = memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))?;
+    engine::start_watchdog()?;
+    // Spec item 11: the limits cases first, so a night without network still runs them.
+    let target = crate::limits::DEFAULT_MIB.saturating_mul(1024 * 1024);
+    let limits = crate::limits::run_with(&cli, mem, &opts.out, target);
+    if let Err(e) = &limits {
+        eprintln!("xtask: nightly: limits: {e}");
+    }
+    let code = regress(opts, &previous, &cli, mem)?;
+    Ok(with_limits(code, &limits))
+}
+
+/// The exit code once the limits cases ran too (spec items 10 and 11): a tool failure in
+/// either part is 1, then the regress part's infrastructure failure 75, then a failed limits
+/// case 4.
+pub(crate) fn with_limits(regress: u8, limits: &Result<bool, String>) -> u8 {
+    match (regress, limits) {
+        (1, _) | (_, Err(_)) => 1,
+        (0, Ok(false)) => 4,
+        (code, _) => code,
+    }
+}
+
+/// The regress part of the nightly (spec items 3–10).
+fn regress(opts: &Options, previous: &Previous, cli: &Path, mem: bool) -> Result<u8, String> {
     let cache = jpdf_corpus::resolve_cache(
         opts.cache.clone(),
         std::env::var_os("JPDF_CORPUS_CACHE").map(PathBuf::from),
@@ -608,8 +633,6 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         }
         return stop;
     }
-    let mem = memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))?;
-    engine::start_watchdog()?;
     let work = opts.out.join("work");
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot write {}: {e}", work.display()))?;
     let png = std::path::absolute(work.join("render.png")).map_err(|e| e.to_string())?;
@@ -620,7 +643,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         &png,
         budget,
         &mut || start.elapsed(),
-        &mut |op, args| exec(&cli, mem, args, op.limit()),
+        &mut |op, args| exec(cli, mem, args, op.limit()),
     );
     let results = results_json(&files, mem, opts.max_minutes, complete);
     write(&opts.out.join("regress.json"), &results)?;
@@ -635,7 +658,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
         }
     );
     let mut failed = false;
-    let (text, line) = diff_for(&previous, &files);
+    let (text, line) = diff_for(previous, &files);
     eprintln!("{line}");
     let diff_path = opts.out.join("regress-diff.json");
     if let Err(e) = write(&diff_path, &text) {
@@ -693,7 +716,7 @@ fn nothing_to_run(jobs: &[Job], fetch_code: u8) -> Option<Result<u8, String>> {
 
 /// Whether runs get the memory wrapper (spec item 6): the probe result, except that on
 /// Linux a failed probe is a tool failure.
-fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, String> {
+pub(crate) fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, String> {
     if applies {
         return Ok(true);
     }
@@ -709,7 +732,7 @@ fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, String> {
 /// A regular file with an execute bit set (unix). Through the memory wrapper `/bin/sh`
 /// always starts, so a `jpdf-cli` it can't exec would look like a crash (126) per run: it is
 /// refused before the runs instead (spec item 10).
-fn is_executable_file(p: &Path) -> bool {
+pub(crate) fn is_executable_file(p: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

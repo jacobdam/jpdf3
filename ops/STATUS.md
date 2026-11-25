@@ -14,12 +14,14 @@ Phase: bootstrap (pilot)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
+- #25 (PR #349): `cargo xtask limits`, seven 500 MiB hostile files under the 2 GiB limit, run by the nightly
+  (exit 4 on a failed case); `ai-review` success, auto-merge on. Its deferral #350 (order test) waits for the Planner.
 - #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i, #25 (the lowest M0 `ready` issue with its dependencies
-   closed), else `idle` today (the Planner ran).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i, the next lowest M0 `ready` issue with its dependencies
+   closed (#322 or #323), else `idle` today (the Planner ran).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -53,6 +55,9 @@ Phase: bootstrap (pilot)
 - Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
   hand-mutate each filter before round 1 and give the filtered records a value that changes the result
   ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
+- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
+  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
+  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
 - Infra: a pages-only main failure where deploy-pages gets HTTP 500 and main's head has no newer push → `gh run rerun
   --failed` worked (run 45649071740); refine LESSONS' "Don't rerun" pages entry to this case
   ([journal](journal/2026-11-25/1620-main-red-pages.md)).
