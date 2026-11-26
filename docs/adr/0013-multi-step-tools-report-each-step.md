@@ -111,14 +111,16 @@ Per tool, one test drives the driver with a recording fake:
 For #350 this pins "limits before the fetch" and "regress after a limits tool failure"; for
 #352, a failed removal shows as its own `Failed` entry whatever the write does.
 
-**What broken implementation still passes:** a real adapter that maps an error to `Ok`, or to
-the wrong failing kind (a fetch integrity failure as `Infra` gives 75 where item 10 says 1; a
-fuzz `crash` as `Finding` gives 4 where item 13 says 0): the fake replaces it; each adapter is
-one expression, checked by the reviewer against item 10, and the function it wraps keeps its
-own unit tests; order inside one step (a step that does two things in the
-wrong order: split it into two steps where its spec fixes that order); a `run` that calls a real
-step outside the driver (the reviewer checks that `run` only builds the real interface and calls
-the driver); the real build, fetch and CI wiring, which stay outside tests as today.
+**What broken implementation still passes:**
+- a real adapter that maps an error to `Ok`, or to the wrong failing kind (a fetch integrity
+  failure as `Infra` gives 75 where item 10 says 1; a fuzz `crash` as `Finding` gives 4 where
+  item 13 says 0). The fake replaces it, so each adapter is one expression, checked by the
+  reviewer against items 10–13, and the function it wraps keeps its own unit tests;
+- order inside one step (a step that does two things in the wrong order): split it into two
+  steps where its spec fixes that order;
+- a `run` that calls a real step outside the driver (the reviewer checks that `run` only builds
+  the real interface and calls the driver);
+- the real build, fetch and CI wiring, which stay outside tests as today.
 
 ## Issues in the group
 | Issue | Outcome | Why |
@@ -133,7 +135,7 @@ the driver); the real build, fetch and CI wiring, which stay outside tests as to
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Depends on |
 |---|---|---|
-| 1 | `xtask/src/steps.rs` (`Outcome`, the log, `exit_code` and its table test) and the nightly's `run`/`regress` sequence moved onto a driver over an injected step interface, replacing `with_limits` and `exit_code(failed, fetch_code)`; `extra::run` is one step of it for now (its `bool` mapped to `Ok` or `Failed`: the one fold allowed until task 2); `JUDGE-INFRA-FAILURE` printed from the log; the order tests of #350 (limits before the fetch; regress after a limits tool failure; nothing after an early stop) and one run per failing step, the fake recording each step's data; specs/tooling/nightly.md items 10, 12, 15 and "Tests" updated, settling in the spec each failure whose later steps it leaves open today (a failed `regress.json` write stops the night, while item 12 says the bench runs "whatever their outcome"; the no-file stop), and the "Not covered by tests" line about the order removed. About 700 added lines. | #357 |
+| 1 | `xtask/src/steps.rs` (`Outcome`, the log, `exit_code` and its table test) and the nightly's `run`/`regress` sequence moved onto a driver over an injected step interface, replacing `with_limits` and `exit_code(failed, fetch_code)`; `extra::run` is one step of it for now (its `bool` mapped to `Ok` or `Failed`: the one fold allowed until task 2); `JUDGE-INFRA-FAILURE` printed from the log, a deliberate change to item 10 stated in the spec (today a no-network night whose limits part has a tool failure prints the marker at the early stop and exits 1; from task 1 the marker comes only with exit 75); the order tests of #350 (limits before the fetch; regress after a limits tool failure; nothing after an early stop) and one run per failing step, the fake recording each step's data; specs/tooling/nightly.md items 10, 12, 15 and "Tests" updated, settling in the spec each failure whose later steps it leaves open today (a failed `regress.json` write stops the night, while item 12 says the bench runs "whatever their outcome"; the no-file stop), and the "Not covered by tests" line about the order removed. About 700 added lines. | #357 |
 | 2 | `extra::run`'s four parts (stale-summary removal, bench, fuzz pass, `nightly.json` write) become steps of the task 1 driver, each with its own outcome, and `extra::run` and its `bool` go; driver tests pin item 14's order (removal before the bench, the write after the fuzz pass) and #352's case (a failed removal is its own entry when the write succeeds); the spec's items 14, 15 and "Tests" updated. About 300 added lines. | task 1 |
 
 ## What reviewers check against
