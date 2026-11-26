@@ -39,7 +39,8 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #345: apply ops/proposals/driver-keep-open-worktrees.md and run its §Tests.
+- #345: applied in the owner's PR #355 (auto-merge on); after it merges, `ops/driver/driver.sh --pilot` on the Mac
+  mini and `grep "keeping worktree" ops/logs/driver.log`.
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
