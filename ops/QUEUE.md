@@ -58,6 +58,8 @@ The budget counts a session as milestone work only if a PR for its issue changes
 one open M0 issue expected to count. PLAN §8's M0 row has no product deliverable left without
 an issue (the backend adapters come from #304), so step 4a added no product issues to M0. No
 issue moved to `Ops`: `xtask/` (except the scheduler, metrics, dashboard and issue-lint files)
-is the `tooling` area, a product area in ops/areas.toml, and the process-area ones left (#344,
-#195) are about `ops/driver/` and `ops/proposals/`, strict-list subjects that TICK §5 term 4
-keeps here. The mix is expected to rise only once M0 closes and M1 (syntax and security) opens.
+is the `tooling` area, a product area in ops/areas.toml. The process-area ones left stay:
+#344 and #195 are about `ops/driver/` and `ops/proposals/`, and #179 applies an
+`ops/proposals/` change (strict-list subjects, TICK §5 term 4; #179 is also one ADR 0012 §4
+kept); #21 writes `docs/retros/0000-pilot.md` and is M0's exit criterion "pilot fire drill
+passed" (term 1). The mix is expected to rise only once M0 closes and M1 (syntax and security) opens.
