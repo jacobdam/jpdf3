@@ -71,9 +71,10 @@ extra fuzz time (#301); filing issues is #302)
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
    UTF-8, the **last** 4 KiB, as the judge keeps the last 8 KiB, so a panic message or abort
    reason after a long log is kept, #322). `run_child`'s tail mode (`Keep::Tail`) reads the
-   pipe to its end through a deque reserved once for the cap plus one 8 KiB read chunk (room
+   pipe to its end through a deque reserved once for the cap, plus one 8 KiB read chunk (room
    is made before each chunk is added, so the kept bytes never exceed the cap and the deque
-   never reallocates); a flood costs
+   never reallocates; if the reservation fails, nothing is kept and the pipe is still
+   drained, so the run records no stderr but is classified as usual); a flood costs
    CPU until the run's group is killed (at exit or at the time limit). Once the run is
    collected (at most 1 s after exit, as before), the reader stops at its next read, so a
    grandchild that escaped the group and holds the pipe can't keep it draining; such a run

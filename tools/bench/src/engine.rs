@@ -336,15 +336,16 @@ const TAIL_CHUNK: usize = 8192;
 
 /// Reads `r` to its end (or a read error, or until `stop` is set) and returns its last `cap`
 /// bytes. Its buffers are the deque reserved up front for `cap` bytes plus one chunk,
-/// whatever the reader yields.
+/// whatever the reader yields. If the deque can't be reserved (a cap too large for memory),
+/// it keeps nothing but still drains `r`, so the writer never gets EPIPE.
 fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> {
-    // A cap past the address space keeps everything, which no pipe can exceed anyway.
-    let cap = usize::try_from(cap).unwrap_or(usize::MAX);
     let mut kept: VecDeque<u8> = VecDeque::new();
     // Reserved once: `kept` never holds more than `cap` bytes, so it never reallocates and
-    // its allocation stays at the reserved size. A cap too large to reserve (no caller passes
-    // one) leaves the deque growing as needed, still holding at most `cap` bytes.
-    let _ = kept.try_reserve_exact(cap);
+    // its allocation stays at the reserved size. A failed reservation makes the cap 0.
+    let cap = match usize::try_from(cap) {
+        Ok(c) if kept.try_reserve_exact(c).is_ok() => c,
+        _ => 0,
+    };
     let mut chunk = vec![0u8; TAIL_CHUNK];
     while !stop.load(Ordering::Relaxed) {
         let n = match r.read(&mut chunk) {
@@ -633,6 +634,10 @@ mod tests {
         let big: Vec<u8> = (0..=255u8).cycle().take(5 * TAIL_CHUNK).collect();
         let t = tail(&big, 2 * TAIL_CHUNK as u64 + 3);
         assert_eq!(t, big.get(big.len() - (2 * TAIL_CHUNK + 3)..).unwrap());
+        // A cap that can't be reserved keeps nothing, and the reader is still drained.
+        let mut left = &log[..];
+        assert_eq!(read_tail(&mut left, u64::MAX, &go), b"");
+        assert!(left.is_empty());
         // A set stop flag reads nothing more.
         let stopped = AtomicBool::new(true);
         assert_eq!(read_tail(&log[..], 64, &stopped), b"");
