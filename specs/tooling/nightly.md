@@ -74,7 +74,8 @@ extra fuzz time (#301); filing issues is #302)
    pipe to its end through a deque reserved once for the cap, plus one 8 KiB read chunk (room
    is made before each chunk is added, so the kept bytes never exceed the cap and the deque
    never reallocates; if the reservation fails, nothing is kept and the pipe is still
-   drained, so the run records no stderr but is classified as usual); a flood costs
+   read until its end, a read error or the stop below, with the chunk on the reader's stack
+   (no other heap allocation), so the run records no stderr but is classified as usual); a flood costs
    CPU until the run's group is killed (at exit or at the time limit). Once the run is
    collected (at most 1 s after exit, as before), the reader stops at its next read, so a
    grandchild that escaped the group and holds the pipe can't keep it draining; such a run

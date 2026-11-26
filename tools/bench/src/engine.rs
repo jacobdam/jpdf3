@@ -337,7 +337,8 @@ const TAIL_CHUNK: usize = 8192;
 /// Reads `r` to its end (or a read error, or until `stop` is set) and returns its last `cap`
 /// bytes. Its buffers are the deque reserved up front for `cap` bytes plus one chunk,
 /// whatever the reader yields. If the deque can't be reserved (a cap too large for memory),
-/// it keeps nothing but still drains `r`, so the writer never gets EPIPE.
+/// it keeps nothing but still reads `r` until its end, a read error or `stop`, as when the cap
+/// is reserved.
 fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> {
     let mut kept: VecDeque<u8> = VecDeque::new();
     // Reserved once: `kept` never holds more than `cap` bytes, so it never reallocates and
@@ -346,7 +347,8 @@ fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> 
         Ok(c) if kept.try_reserve_exact(c).is_ok() => c,
         _ => 0,
     };
-    let mut chunk = vec![0u8; TAIL_CHUNK];
+    // On the stack, so a failed reservation needs no other heap allocation to keep draining.
+    let mut chunk = [0u8; TAIL_CHUNK];
     while !stop.load(Ordering::Relaxed) {
         let n = match r.read(&mut chunk) {
             Ok(0) => break,
