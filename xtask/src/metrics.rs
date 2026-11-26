@@ -279,15 +279,15 @@ fn records(commits: &[Commit], dir: &str) -> Vec<(usize, i64, String)> {
 // Sessions (ops/logs/index.tsv: stamp, exit code, session id, duration)
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Sessions {
-    count: u64,
+pub(crate) struct Sessions {
+    pub(crate) count: u64,
     nonzero: u64,
     total_s: u64,
     median_s: Option<u64>,
-    malformed: u64,
+    pub(crate) malformed: u64,
 }
 
-fn parse_sessions(text: &str, since: i64, until: i64) -> Sessions {
+pub(crate) fn parse_sessions(text: &str, since: i64, until: i64) -> Sessions {
     let mut s = Sessions::default();
     let mut durations = Vec::new();
     for line in text.lines().filter(|l| !l.is_empty()) {
@@ -345,7 +345,7 @@ fn stamp_day(stamp: &str) -> Option<i64> {
 }
 
 /// The middle value (the upper one of the two middles for an even count).
-fn median(v: &mut [u64]) -> Option<u64> {
+pub(crate) fn median(v: &mut [u64]) -> Option<u64> {
     v.sort_unstable();
     v.get(v.len() / 2).copied()
 }
@@ -353,12 +353,12 @@ fn median(v: &mut [u64]) -> Option<u64> {
 // ---------------------------------------------------------------------------------------------
 // JSON helpers
 
-fn array<'a>(v: &'a Value, what: &str) -> Result<&'a [Value], String> {
+pub(crate) fn array<'a>(v: &'a Value, what: &str) -> Result<&'a [Value], String> {
     v.as_array()
         .ok_or_else(|| format!("{what}: not a JSON array"))
 }
 
-fn num(v: &Value, key: &str, what: &str) -> Result<u64, String> {
+pub(crate) fn num(v: &Value, key: &str, what: &str) -> Result<u64, String> {
     match v.get(key) {
         Some(Value::Number(n)) => n
             .parse()
@@ -367,18 +367,18 @@ fn num(v: &Value, key: &str, what: &str) -> Result<u64, String> {
     }
 }
 
-fn string<'a>(v: &'a Value, key: &str, what: &str) -> Result<&'a str, String> {
+pub(crate) fn string<'a>(v: &'a Value, key: &str, what: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{what}: missing string `{key}`"))
 }
 
-fn day_of(v: &Value, key: &str, what: &str) -> Result<i64, String> {
+pub(crate) fn day_of(v: &Value, key: &str, what: &str) -> Result<i64, String> {
     let s = string(v, key, what)?;
     iso_day(s).ok_or_else(|| format!("{what}: `{key}` is not a timestamp"))
 }
 
-fn label_names(v: &Value) -> Vec<&str> {
+pub(crate) fn label_names(v: &Value) -> Vec<&str> {
     v.get("labels")
         .and_then(Value::as_array)
         .unwrap_or_default()
@@ -387,7 +387,7 @@ fn label_names(v: &Value) -> Vec<&str> {
         .collect()
 }
 
-fn parse_list(text: &str, what: &str) -> Result<Value, String> {
+pub(crate) fn parse_list(text: &str, what: &str) -> Result<Value, String> {
     json::parse(text).map_err(|e| format!("{what}: {e}"))
 }
 
@@ -397,9 +397,9 @@ fn parse_list(text: &str, what: &str) -> Result<Value, String> {
 const SEVERITIES: [&str; 4] = ["blocker", "major", "minor", "nit"];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Review {
+pub(crate) struct Review {
     pr: u64,
-    rounds: u64,
+    pub(crate) rounds: u64,
     final_check: bool,
     /// A design final check ran (ops/TICK.md §8 output 3), counted apart from `final_check`.
     design_final_check: bool,
@@ -467,7 +467,7 @@ fn finding(line: &str) -> Option<(&str, usize)> {
     Some((id, SEVERITIES.iter().position(|s| *s == sev)?))
 }
 
-fn review_of(pr: u64, comments: &[Value]) -> Option<Review> {
+pub(crate) fn review_of(pr: u64, comments: &[Value]) -> Option<Review> {
     let mut rev = Review {
         pr,
         ..Review::default()
@@ -944,7 +944,7 @@ fn render_ci_md(o: &mut String, ci: &Ci) {
 
 /// A JSON string literal: `"` and `\` escaped with a backslash, control characters and
 /// U+2028/U+2029 as `\uXXXX`.
-fn json_str(s: &str) -> String {
+pub(crate) fn json_str(s: &str) -> String {
     let mut o = String::with_capacity(s.len().saturating_add(2));
     o.push('"');
     for c in s.chars() {
@@ -1286,12 +1286,12 @@ const GIT_LOG_ARGS: &[&str] = &[
     "origin/main",
 ];
 
-fn read(dir: &Path, name: &str) -> Result<String, String> {
+pub(crate) fn read(dir: &Path, name: &str) -> Result<String, String> {
     let p = dir.join(name);
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
-fn read_optional(p: &Path) -> Result<Option<String>, String> {
+pub(crate) fn read_optional(p: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(p) {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -1328,7 +1328,7 @@ fn remove_stale(p: &Path) -> Result<(), String> {
     }
 }
 
-fn gh(args: &str) -> Result<String, String> {
+pub(crate) fn gh(args: &str) -> Result<String, String> {
     let args: Vec<&str> = args.split_whitespace().collect();
     crate::macos::capture("gh", &args, None).map(|(out, _)| out)
 }

@@ -3,8 +3,10 @@
 
 mod arlington;
 mod bench;
+mod dashboard;
 mod fuzz;
 mod issue_lint;
+mod limits;
 mod macos;
 mod metrics;
 mod next_session;
@@ -16,9 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
-     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] | arlington | check-specs [--root DIR] \
+     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
+     | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
      | next-session [--from DIR] | issue-lint [--from DIR]";
 
@@ -96,6 +99,23 @@ fn main() -> ExitCode {
                 }
             }
         }
+        // specs/tooling/limits.md: exit 4 = a case failed, 1 = a tool failure.
+        (Some("limits"), _) => {
+            let opts = match limits::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: limits: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match limits::run(Path::new("."), &opts) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("xtask: limits: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         // specs/tooling/fuzz.md. Needs the pinned nightly + cargo-fuzz; `ci linux` runs the
         // short variant through `fuzz::ci`.
         (Some("fuzz"), _) => {
@@ -117,7 +137,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        // specs/tooling/bench.md. `cargo xtask nightly` (#19) will call this.
+        // specs/tooling/bench.md. `cargo xtask nightly` runs the same build (`bench::build`).
         (Some("bench"), _) => {
             let opts = match bench::parse(args.get(1..).unwrap_or_default()) {
                 Ok(o) => o,
@@ -151,6 +171,26 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("xtask: metrics: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/dashboard.md: the snapshot the Pages dashboard renders (read-only gh/git).
+        (Some("dashboard"), _) => {
+            let opts = match dashboard::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: dashboard: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match dashboard::run(Path::new("."), &opts) {
+                Ok(path) => {
+                    eprintln!("xtask: dashboard: wrote {}", path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: dashboard: {e}");
                     ExitCode::from(1)
                 }
             }

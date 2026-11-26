@@ -144,6 +144,7 @@ paths = [
   "docs/retros/",
   "xtask/src/next_session.rs",
   "xtask/src/metrics.rs",
+  "xtask/src/dashboard.rs",
   "xtask/src/issue_lint.rs",
   "xtask/tests/next_session.rs",
   "xtask/tests/metrics.rs",
@@ -151,6 +152,7 @@ paths = [
   "xtask/tests/fixtures/metrics/",
   "specs/tooling/next-session.md",
   "specs/tooling/metrics.md",
+  "specs/tooling/dashboard.md",
   "specs/tooling/design-technical.md",
   "specs/tooling/issue-lint.md",
 ]

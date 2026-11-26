@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "generated": "2026-11-25",
+  "until": "2026-11-25",
+  "weeks": [
+    {"start": "2026-09-07", "end": "2026-09-13", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-09-14", "end": "2026-09-20", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-09-21", "end": "2026-09-27", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-09-28", "end": "2026-10-04", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-10-05", "end": "2026-10-11", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-10-12", "end": "2026-10-18", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-10-19", "end": "2026-10-25", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-10-26", "end": "2026-11-01", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-11-02", "end": "2026-11-08", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-11-09", "end": "2026-11-15", "merged_prs": 0, "median_rounds": null, "sessions": 0},
+    {"start": "2026-11-16", "end": "2026-11-22", "merged_prs": 101, "median_rounds": 2, "sessions": 0},
+    {"start": "2026-11-23", "end": "2026-11-25", "merged_prs": 49, "median_rounds": 2, "sessions": 11}
+  ],
+  "sessions": "index",
+  "journal_entries": {"prs": 35, "median": 1, "max": 4, "histogram": [{"entries": 1, "prs": 28}, {"entries": 2, "prs": 5}, {"entries": 3, "prs": 1}, {"entries": 4, "prs": 1}]},
+  "blocked": [],
+  "milestones": [
+    {"title": "M0", "open": 20, "closed": 82, "closed_28d": 82, "forecast": "2026-12-02"},
+    {"title": "M1", "open": 11, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M2", "open": 7, "closed": 2, "closed_28d": 2, "forecast": "2027-03-03"},
+    {"title": "M3", "open": 2, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M4", "open": 7, "closed": 1, "closed_28d": 1, "forecast": "2027-06-09"},
+    {"title": "M5", "open": 1, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M6", "open": 1, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M9", "open": 4, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M10", "open": 29, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "Ops", "open": 2, "closed": 3, "closed_28d": 3, "forecast": "2026-12-14"}
+  ],
+  "truncated": [],
+  "malformed_index_rows": 0
+}
