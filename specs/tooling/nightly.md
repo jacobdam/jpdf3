@@ -71,10 +71,14 @@ extra fuzz time (#301); filing issues is #302)
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
    UTF-8, the **last** 4 KiB, as the judge keeps the last 8 KiB, so a panic message or abort
    reason after a long log is kept, #322). `run_child`'s tail mode (`Keep::Tail`) reads the
-   pipe to its end through a buffer of at most the cap plus one 8 KiB read chunk; a flood costs
+   pipe to its end through a buffer of at most the cap plus one 8 KiB read chunk (room is
+   made before each chunk is added, so the kept bytes never exceed the cap); a flood costs
    CPU until the run's group is killed (at exit or at the time limit). Once the run is
    collected (at most 1 s after exit, as before), the reader stops at its next read, so a
-   grandchild that escaped the group and holds the pipe can't keep it draining. The bench's
+   grandchild that escaped the group and holds the pipe can't keep it draining; such a run
+   records no stderr (what the reader drained is dropped), where the head mode would have
+   kept the first 4 KiB. No nightly child is known to do this (jpdf-bench sends its own
+   children's stderr to the null device). The bench's
    engine probes keep the head (`Keep::Head`, specs/tooling/bench.md item 2).
 6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
    item 11 use it too), `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
@@ -326,9 +330,10 @@ Self-check:
     many or too few: the fake `jpdf-cli`'s 5000-byte log ends in a panic line that must be the
     end of the kept 4096 bytes (it fails with `Keep::Head`), and `read_tail`'s unit tests cover
     the exact cap, one byte past it, a cap across several read chunks, an `Interrupted` read
-    (retried) and a hard read error (stops, keeps what it read). Not tested: that the buffer
-    never exceeds the cap plus one chunk mid-read (it is drained after every read; the spec
-    states it, no test measures it).
+    (retried), a hard read error (stops, keeps what it read) and an endless reader that the
+    stop flag ends mid-drain. Not tested: that `run_child` sets the flag after collecting
+    the run (one line after `recv_timeout`; no hook observes the reader thread), and the
+    memory bound (stated, not measured).
   - A validator that accepts anything: one test per rejected shape of the previous file
     (schema 2, a string schema, no `files`, a bad blob, a repeated blob, an unknown op, a
     repeated op, an unknown status, a missing file with runs, too many files, too large), each

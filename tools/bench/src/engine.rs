@@ -239,7 +239,9 @@ pub struct Outcome {
 /// writes get EPIPE); [`Keep::Tail`] reads to the end and keeps only the last `stderr_cap`
 /// bytes. Either way a flooding program costs no disk and at most the cap plus one read chunk
 /// of memory; a tail reader costs CPU until the child's group is killed (at exit or at the
-/// limit), and stops at its next read once the run is collected.
+/// limit), and stops at its next read once the run is collected. A tail reader whose pipe is
+/// still open when the run is collected (a writer that escaped the group) loses what it
+/// drained: the run records no stderr, where [`Keep::Head`] would have stopped at the cap.
 pub fn run_child(
     bin: &Path,
     args: &[OsString],
@@ -348,9 +350,14 @@ fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> 
         let got = chunk.get(..n).unwrap_or_default();
         // Only the chunk's last `cap` bytes can survive.
         let got = got.get(got.len().saturating_sub(cap)..).unwrap_or_default();
-        kept.extend(got);
-        let over = kept.len().saturating_sub(cap);
+        // Make room first, so `kept` never holds more than `cap` bytes.
+        let over = kept
+            .len()
+            .saturating_add(got.len())
+            .saturating_sub(cap)
+            .min(kept.len());
         kept.drain(..over);
+        kept.extend(got);
     }
     kept.into()
 }
@@ -623,6 +630,32 @@ mod tests {
         // A set stop flag reads nothing more.
         let stopped = AtomicBool::new(true);
         assert_eq!(read_tail(&log[..], 64, &stopped), b"");
+    }
+
+    #[test]
+    fn read_tail_stops_draining_an_endless_pipe_once_told() {
+        // A writer that never stops (a grandchild that escaped the group): the flag, set
+        // after the third read here, ends the loop; `kept` never exceeds the cap.
+        struct Endless<'a> {
+            reads: u32,
+            stop: &'a AtomicBool,
+        }
+        impl std::io::Read for Endless<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                if self.reads == 3 {
+                    self.stop.store(true, Ordering::Relaxed);
+                }
+                buf.fill(b'y');
+                Ok(buf.len())
+            }
+        }
+        let stop = AtomicBool::new(false);
+        let r = Endless {
+            reads: 0,
+            stop: &stop,
+        };
+        assert_eq!(read_tail(r, 100, &stop), vec![b'y'; 100]);
     }
 
     #[test]
