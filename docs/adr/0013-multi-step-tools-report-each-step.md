@@ -59,16 +59,22 @@ exit code as a function of the outcomes alone.
 In a `cargo xtask` command whose spec fixes an order of side-effecting steps or says that a
 step runs after another step failed:
 
-1. each step's result is a value of one shared type, `steps::Outcome` (`Ok`, `Finding` for a
-   measured failure such as a failed limits case, `Infra(reason)` for exit 75, `Failed(reason)`
-   for a tool failure), recorded under the step's name; no step's result is merged into
-   another's before the end;
+1. each step's result is a value of one shared type, `steps::Outcome` (`Ok`; `Finding` for a
+   result the spec gives exit 4, today only a failed limits case; `Infra(reason)` for exit 75;
+   `Failed(reason)` for a tool failure), recorded under the step's name; no step's result is
+   merged into another's before the end. A measured result the spec records without failing the
+   tool (a regress run's `crash` or `timeout`, item 10; a bench `timeout`, item 12; a fuzz
+   `crash`, item 13) is `Ok`: it lives in the step's report file, not in the exit code. The
+   driver may record entries of its own under their own names for a decision it makes from
+   earlier results (the "no regress file to run" stop, item 10, is a `Failed` entry when the
+   fetch was not an infrastructure failure);
 2. which steps run, in what order, and what a failure stops is decided by one driver function
    that calls the steps through an injected interface (a trait or a struct of closures, like
    `extra::Hooks` today) and returns the log of the steps that ran, with their outcomes;
 3. the exit code is a pure function of that log: `Failed` gives 1, else `Infra` 75, else
    `Finding` 4, else 0 (specs/tooling/nightly.md item 10's precedence, which `with_limits` and
-   `exit_code` encode today in two places);
+   `exit_code` encode today in two places); `run` prints `JUDGE-INFRA-FAILURE` (item 10) once,
+   from the log, exactly when that code is 75;
 4. the real implementation of each step is a thin adapter from the existing function's result
    to an `Outcome`; it decides nothing about order.
 
@@ -96,14 +102,20 @@ Per tool, one test drives the driver with a recording fake:
   can return them): the log holds exactly the steps the spec runs after that failure, and the
   exit code is the table's;
 - one table test of `exit_code` over every pair of outcome kinds, so the precedence is pinned
-  once for every tool.
+  once for every tool;
+- the fake records the data each step receives (for the nightly: which jobs the regress runs
+  and the bench get), so a driver that hands a step the wrong data fails;
+- the function that prints `JUDGE-INFRA-FAILURE` from the log is tested for a 75 log and its
+  near miss (a log whose code is 1 with an `Infra` entry in it).
 
 For #350 this pins "limits before the fetch" and "regress after a limits tool failure"; for
 #352, a failed removal shows as its own `Failed` entry whatever the write does.
 
-**What broken implementation still passes:** a real adapter that maps an error to `Ok` (the
-fake replaces it; each adapter is one expression, checked by the reviewer, and the function it
-wraps keeps its own unit tests); order inside one step (a step that does two things in the
+**What broken implementation still passes:** a real adapter that maps an error to `Ok`, or to
+the wrong failing kind (a fetch integrity failure as `Infra` gives 75 where item 10 says 1; a
+fuzz `crash` as `Finding` gives 4 where item 13 says 0): the fake replaces it; each adapter is
+one expression, checked by the reviewer against item 10, and the function it wraps keeps its
+own unit tests; order inside one step (a step that does two things in the
 wrong order: split it into two steps where its spec fixes that order); a `run` that calls a real
 step outside the driver (the reviewer checks that `run` only builds the real interface and calls
 the driver); the real build, fetch and CI wiring, which stay outside tests as today.
@@ -121,8 +133,8 @@ the driver); the real build, fetch and CI wiring, which stay outside tests as to
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Depends on |
 |---|---|---|
-| 1 | `xtask/src/steps.rs` (`Outcome`, the log, `exit_code` and its table test) and the nightly's `run`/`regress` sequence moved onto a driver over an injected step interface, replacing `with_limits` and `exit_code(failed, fetch_code)`; the order tests of #350 (limits before the fetch; regress after a limits tool failure; nothing after an early stop) and one run per failing step; specs/tooling/nightly.md items 10, 15 and "Tests" updated, and the "Not covered by tests" line about the order removed. About 600 added lines. | #357 |
-| 2 | `extra::run` returns its steps' outcomes (stale-summary removal, bench, fuzz, `nightly.json` write) to the task 1 driver instead of one `bool`; #352's test (a failed removal is its own entry when the write succeeds); the spec's item 14 and "Tests" updated. About 250 added lines. | task 1 |
+| 1 | `xtask/src/steps.rs` (`Outcome`, the log, `exit_code` and its table test) and the nightly's `run`/`regress` sequence moved onto a driver over an injected step interface, replacing `with_limits` and `exit_code(failed, fetch_code)`; `extra::run` is one step of it for now (its `bool` mapped to `Ok` or `Failed`: the one fold allowed until task 2); `JUDGE-INFRA-FAILURE` printed from the log; the order tests of #350 (limits before the fetch; regress after a limits tool failure; nothing after an early stop) and one run per failing step, the fake recording each step's data; specs/tooling/nightly.md items 10, 12, 15 and "Tests" updated, settling in the spec each failure whose later steps it leaves open today (a failed `regress.json` write stops the night, while item 12 says the bench runs "whatever their outcome"; the no-file stop), and the "Not covered by tests" line about the order removed. About 700 added lines. | #357 |
+| 2 | `extra::run`'s four parts (stale-summary removal, bench, fuzz pass, `nightly.json` write) become steps of the task 1 driver, each with its own outcome, and `extra::run` and its `bool` go; driver tests pin item 14's order (removal before the bench, the write after the fuzz pass) and #352's case (a failed removal is its own entry when the write succeeds); the spec's items 14, 15 and "Tests" updated. About 300 added lines. | task 1 |
 
 ## What reviewers check against
 P4 (added by this ADR), governing `xtask/src/`:
@@ -133,6 +145,9 @@ P4 (added by this ADR), governing `xtask/src/`:
 >   `Finding`, `Infra`, `Failed`) under the step's name; one driver function, calling the steps
 >   through an injected interface, decides which run and in what order and returns the log; the
 >   exit code is `steps::exit_code(&log)` (`Failed` 1, else `Infra` 75, else `Finding` 4, else 0).
+>   `Finding` is only a result the spec gives exit 4 (a failed limits case); a measured result the
+>   spec records without failing the tool (a regress `crash`, a bench `timeout`, a fuzz `crash`)
+>   is `Ok`.
 >   A tool whose every step stops it on the first failure, in source order, needs no driver.
 >   The nightly doesn't hold it yet (see Enforced by).
 > - **Decided in:** ADR 0013.
@@ -144,8 +159,8 @@ P4 (added by this ADR), governing `xtask/src/`:
 >   `bool`; `cargo xtask ci linux` stays the known exception until a PR changes its checks
 >   (ADR 0013, Requirements on future callers).
 > - **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
->   step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` and
->   decides nothing about order; no step's result is folded into a `bool` or an exit code before
+>   step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` as
+>   the spec's exit codes say, and decides nothing about order; no step's result is folded into a `bool` or an exit code before
 >   the end; the driver's tests cover the new step's failure.
 > - **Paths:** `xtask/src/`.
 
@@ -153,9 +168,11 @@ P4 (added by this ADR), governing `xtask/src/`:
 - #302's issue filing is a step of the nightly driver with its own `Outcome` (a `gh` failure is
   `Failed` or `Infra` by the spec's rule), and its position in the order is in the driver and
   its tests.
-- `cargo xtask ci linux` (xtask/src/main.rs) moves onto `steps.rs` in the next PR that adds,
-  removes or reorders one of its checks; until then it is the known exception (four checks, no
-  order the spec fixes).
+- `cargo xtask ci linux` (xtask/src/main.rs) meets P4's trigger (it runs every check after an
+  earlier one failed, and specs/tooling/check-specs.md has check-specs run after the web check
+  writes `e2e.json`), but its four checks have no driver yet. It moves onto `steps.rs` in the
+  next PR that adds, removes or reorders one of its checks, keeping that order; until then it is
+  the known exception.
 - A new multi-step tool (a nightly-like command, `cargo xtask limits` if it ever continues
   after a failed precondition) is built on `steps.rs` from its first PR.
 - A tool whose steps all stop the tool on their first failure, in source order, with one

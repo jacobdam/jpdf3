@@ -1,8 +1,9 @@
 # Principles: how jpdf is built
 
-Each entry is an invariant of the product's code (P4: of its `cargo xtask` tooling), with the ADR that decided it, how it is
-enforced and what a reviewer checks (ADR 0011 §6). The CONSTITUTION's rules apply everywhere
-and are not repeated here; `ops/LESSONS.md` is about how the agent works, not the product.
+Each entry is an invariant of the product's code or its `cargo xtask` tooling, with the ADR
+that decided it, how it is enforced and what a reviewer checks (ADR 0011 §6). The
+CONSTITUTION's rules apply everywhere and are not repeated here; `ops/LESSONS.md` is about how
+the agent works, not the product.
 
 **Who reads it.** A Worker loads the entries whose `Paths:` cover the files it changes. The
 reviewer brief (ops/TICK.md §4) holds the entries whose `Paths:` match a file in the diff. A
@@ -72,6 +73,9 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   `Finding`, `Infra`, `Failed`) under the step's name; one driver function, calling the steps
   through an injected interface, decides which run and in what order and returns the log; the
   exit code is `steps::exit_code(&log)` (`Failed` 1, else `Infra` 75, else `Finding` 4, else 0).
+  `Finding` is only a result the spec gives exit 4 (a failed limits case); a measured result the
+  spec records without failing the tool (a regress `crash`, a bench `timeout`, a fuzz `crash`)
+  is `Ok`.
   A tool whose every step stops it on the first failure, in source order, needs no driver.
   The nightly doesn't hold it yet (see Enforced by).
 - **Decided in:** ADR 0013.
@@ -83,7 +87,7 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   `bool`; `cargo xtask ci linux` stays the known exception until a PR changes its checks
   (ADR 0013, Requirements on future callers).
 - **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
-  step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` and
-  decides nothing about order; no step's result is folded into a `bool` or an exit code before
+  step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` as
+  the spec's exit codes say, and decides nothing about order; no step's result is folded into a `bool` or an exit code before
   the end; the driver's tests cover the new step's failure.
 - **Paths:** `xtask/src/`.
