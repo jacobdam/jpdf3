@@ -71,13 +71,14 @@ extra fuzz time (#301); filing issues is #302)
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
    UTF-8, the **last** 4 KiB, as the judge keeps the last 8 KiB, so a panic message or abort
    reason after a long log is kept, #322). `run_child`'s tail mode (`Keep::Tail`) reads the
-   pipe to its end through a buffer of at most the cap plus one 8 KiB read chunk (room is
-   made before each chunk is added, so the kept bytes never exceed the cap); a flood costs
+   pipe to its end through a deque reserved once for the cap plus one 8 KiB read chunk (room
+   is made before each chunk is added, so the kept bytes never exceed the cap and the deque
+   never reallocates); a flood costs
    CPU until the run's group is killed (at exit or at the time limit). Once the run is
    collected (at most 1 s after exit, as before), the reader stops at its next read, so a
    grandchild that escaped the group and holds the pipe can't keep it draining; such a run
-   records no stderr (what the reader drained is dropped), where the head mode would have
-   kept the first 4 KiB. No nightly child is known to do this (jpdf-bench gives its
+   records no stderr (what the reader drained is dropped). The head mode loses its bytes the
+   same way, unless they filled the 4 KiB cap before the 1 s collection timeout. No nightly child is known to do this (jpdf-bench gives its
    children their own pipe or the null device, never its stderr). The bench's
    engine probes keep the head (`Keep::Head`, specs/tooling/bench.md item 2).
 6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
@@ -267,7 +268,7 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
 
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
-  enforces it (item 6); stderr kept ≤ 4 KiB per run (the last bytes; the reader's buffer ≤ 4 KiB + 8 KiB), stdout never read.
+  enforces it (item 6); stderr kept ≤ 4 KiB per run (the last bytes; the reader's buffers: a deque reserved once for 4 KiB and one 8 KiB chunk), stdout never read.
 - Whole run: the limits part (item 11: seven generated files of ≤ 512 MiB, each run ≤ 20 s, so
   at most 140 s of runs plus the writes; about 15 s locally), then `--max-minutes` (≤ 1440) plus
   at most one run's limit for the regress part, whose clock starts after the limits part; `--limit` ≤ 200 000 rows

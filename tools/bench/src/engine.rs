@@ -237,11 +237,12 @@ pub struct Outcome {
 /// overlap (the bench runs them one at a time). Captured stderr goes
 /// through a pipe read on a helper thread. [`Keep::Head`] stops reading at the cap (later
 /// writes get EPIPE); [`Keep::Tail`] reads to the end and keeps only the last `stderr_cap`
-/// bytes. Either way a flooding program costs no disk and at most the cap plus one read chunk
-/// of memory; a tail reader costs CPU until the child's group is killed (at exit or at the
+/// bytes. Either way a flooding program costs no disk, and memory for the cap (a tail reader:
+/// a buffer reserved once for the cap, plus one read chunk); a tail reader costs CPU until the child's group is killed (at exit or at the
 /// limit), and stops at its next read once the run is collected. A tail reader whose pipe is
 /// still open when the run is collected (a writer that escaped the group) loses what it
-/// drained: the run records no stderr, where [`Keep::Head`] would have stopped at the cap.
+/// drained: the run records no stderr. [`Keep::Head`] loses its bytes the same way unless they
+/// filled the cap before the collection timeout.
 pub fn run_child(
     bin: &Path,
     args: &[OsString],
@@ -334,11 +335,16 @@ pub fn run_child(
 const TAIL_CHUNK: usize = 8192;
 
 /// Reads `r` to its end (or a read error, or until `stop` is set) and returns its last `cap`
-/// bytes. Memory stays at most `cap` plus one chunk, whatever the reader yields.
+/// bytes. Its buffers are the deque reserved up front for `cap` bytes plus one chunk,
+/// whatever the reader yields.
 fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> {
     // A cap past the address space keeps everything, which no pipe can exceed anyway.
     let cap = usize::try_from(cap).unwrap_or(usize::MAX);
     let mut kept: VecDeque<u8> = VecDeque::new();
+    // Reserved once: `kept` never holds more than `cap` bytes, so it never reallocates and
+    // its allocation stays at the reserved size. A cap too large to reserve (no caller passes
+    // one) leaves the deque growing as needed, still holding at most `cap` bytes.
+    let _ = kept.try_reserve_exact(cap);
     let mut chunk = vec![0u8; TAIL_CHUNK];
     while !stop.load(Ordering::Relaxed) {
         let n = match r.read(&mut chunk) {
