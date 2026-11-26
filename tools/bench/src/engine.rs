@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn read_tail_stops_draining_an_endless_pipe_once_told() {
         // A writer that never stops (a grandchild that escaped the group): the flag, set
-        // after the third read here, ends the loop; `kept` never exceeds the cap.
+        // after the third read here, ends the loop (a regression hangs this test).
         struct Endless<'a> {
             reads: u32,
             stop: &'a AtomicBool,

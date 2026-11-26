@@ -77,8 +77,8 @@ extra fuzz time (#301); filing issues is #302)
    collected (at most 1 s after exit, as before), the reader stops at its next read, so a
    grandchild that escaped the group and holds the pipe can't keep it draining; such a run
    records no stderr (what the reader drained is dropped), where the head mode would have
-   kept the first 4 KiB. No nightly child is known to do this (jpdf-bench sends its own
-   children's stderr to the null device). The bench's
+   kept the first 4 KiB. No nightly child is known to do this (jpdf-bench gives its
+   children their own pipe or the null device, never its stderr). The bench's
    engine probes keep the head (`Keep::Head`, specs/tooling/bench.md item 2).
 6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
    item 11 use it too), `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
