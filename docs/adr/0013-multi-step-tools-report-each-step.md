@@ -160,8 +160,8 @@ P4 (added by this ADR), governing `xtask/src/`:
 >   (ADR 0013, Requirements on future callers).
 > - **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
 >   step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` as
->   the spec's exit codes say, and decides nothing about order; no step's result is folded into a `bool` or an exit code before
->   the end; the driver's tests cover the new step's failure.
+>   the spec's exit codes say, and decides nothing about order; no step's result is folded into
+>   a `bool` or an exit code before the end; the driver's tests cover the new step's failure.
 > - **Paths:** `xtask/src/`.
 
 ## Requirements on future callers
