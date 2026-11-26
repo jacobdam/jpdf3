@@ -365,7 +365,7 @@ fn fake_cli(dir: &Path) -> PathBuf {
          info:) echo '{\"pages\": 1}'; exit 0;;\n\
          render:1) exit 3;;\n\
          render:2) echo 'page 2 of 1' >&2; exit 2;;\n\
-         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; exit 101;;\n\
+         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; echo 'panicked: tail' >&2; exit 101;;\n\
          text:2) kill -s ABRT $$;;\n\
          ulimit:) ulimit -v; exit 0;;\n\
          esac\n\
@@ -426,6 +426,13 @@ fn real_runs_are_classified_with_exit_signal_and_stderr() {
             ("crash", None, Some(6), Some(0)),
         ]
     );
+    // The kept 4096 bytes are the tail: the panic line after 5000 bytes of log (item 5).
+    let crash = files[0].runs.as_ref().unwrap()[3]
+        .stderr
+        .as_deref()
+        .unwrap();
+    assert!(crash.ends_with("xpanicked: tail\n"), "{crash:?}");
+    assert_eq!(crash.len(), 4096);
     // A hang past the limit is a timeout, with no exit code or signal.
     let o = exec(
         Path::new("/bin/sh"),
