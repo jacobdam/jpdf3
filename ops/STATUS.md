@@ -7,10 +7,12 @@ Phase: bootstrap (pilot)
 - main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
 - #301 (nightly 2/3) merged (PR #351); its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on
   #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
-- #305 (dashboard 1/2): PR #354, `cargo xtask dashboard` writes the committed snapshot `ops/metrics/dashboard.json`
-  (the site's CI job has no token or history); 3 review rounds, `ai-review` success, auto-merge on. The page split
-  off as #353 (no `ready`; Depends on #305): finished work on branch `t/353-dashboard-page` (75d990f), merge
-  origin/main into it once #354 merges. #306 (judge metrics) follows #353.
+- #305 (dashboard 1/2) merged (PR #354). The page, #353 (no `ready`), has finished work on branch
+  `t/353-dashboard-page` (75d990f): merge origin/main into it. #306 (judge metrics) follows #353.
+- #331 (journey J-PC-08, the web app offline): PR #347's first 24-hour window passed, but the PR conflicted with main
+  in ops/STATUS.md. Session 2026-11-27 23:00 merged origin/main (record-only, clean server-side merge), re-posted
+  `ai-review` success on the new head, and started a new window (§8 step 5; `owner-todo` stays on #331). The next
+  `worker design-window #347` pick enables auto-merge. Its round-4 minors are #348.
 - Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
   (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
 - Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
@@ -39,8 +41,9 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #345: applied in the owner's PR #355 (auto-merge on); after it merges, `ops/driver/driver.sh --pilot` on the Mac
-  mini and `grep "keeping worktree" ops/logs/driver.log`.
+- #331 / PR #347: a new 24-hour `/hold` window on the merged head.
+- #345 (closed): applied on main (PR #355, eaaa553); left: `ops/driver/driver.sh --pilot` on the Mac mini and
+  `grep "keeping worktree" ops/logs/driver.log`.
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
@@ -53,4 +56,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none)
+- Merging origin/main locally is blocked by the guard when the merge brings a protected-path change from main →
+  set the conflicting record file to main's copy in a record commit, push, then `gh pr update-branch N`
+  (ops/journal/2026-11-27/2300-347-design-window.md).
