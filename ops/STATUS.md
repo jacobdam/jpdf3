@@ -20,8 +20,10 @@ Phase: bootstrap (pilot)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
-- #25 (PR #349, merged): `cargo xtask limits`, run by the nightly (exit 4 on a failed case). Its deferral #350 (order
-  test) waits for the Planner.
+- Design #357 (nightly steps): PR #359, ADR 0013 and principle P4 (one driver per multi-step xtask tool, per-step
+  `Outcome`s, exit code from the log); 2 review rounds, `ai-review` success, in its 24-hour `/hold` window
+  (`owner-todo` on #357); then `worker design-window #359`. Its tasks fold #350 and #352 (closed); #302 depends on task 1.
+- #25 (PR #349, merged): `cargo xtask limits`, run by the nightly (exit 4 on a failed case). Its deferral #350 is folded into ADR 0013's task 1.
 - #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
