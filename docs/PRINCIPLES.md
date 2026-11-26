@@ -1,6 +1,6 @@
 # Principles: how jpdf is built
 
-Each entry is an invariant of the product's code, with the ADR that decided it, how it is
+Each entry is an invariant of the product's code (P4: of its `cargo xtask` tooling), with the ADR that decided it, how it is
 enforced and what a reviewer checks (ADR 0011 §6). The CONSTITUTION's rules apply everywhere
 and are not repeated here; `ops/LESSONS.md` is about how the agent works, not the product.
 
@@ -65,3 +65,25 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
 - **Reviewers check:** a `Cargo.toml` change outside `crates/jpdf-backends/` adds no
   third-party normal or build dependency; `fuzz/` stays excluded.
 - **Paths:** `**/Cargo.toml`.
+
+## P4. A multi-step tool reports each step; one driver decides the order
+- **Invariant:** a `cargo xtask` command whose spec fixes an order of side-effecting steps, or
+  runs a step after another failed, records each step's result as a `steps::Outcome` (`Ok`,
+  `Finding`, `Infra`, `Failed`) under the step's name; one driver function, calling the steps
+  through an injected interface, decides which run and in what order and returns the log; the
+  exit code is `steps::exit_code(&log)` (`Failed` 1, else `Infra` 75, else `Finding` 4, else 0).
+  A tool whose every step stops it on the first failure, in source order, needs no driver.
+  The nightly doesn't hold it yet (see Enforced by).
+- **Decided in:** ADR 0013.
+- **Enforced by:** not yet: ADR 0013's tasks (designed in #357) add the types in
+  `xtask/src/steps.rs` (the driver returns the log; steps return an `Outcome`) and each
+  driver's tests with a recording fake (the full order, one run per failing step, the
+  `exit_code` table); the real adapters and `run`'s wiring stay reviewer vigilance. Until
+  then the nightly folds its results in `with_limits`, `exit_code` and `extra::run`'s
+  `bool`; `cargo xtask ci linux` stays the known exception until a PR changes its checks
+  (ADR 0013, Requirements on future callers).
+- **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
+  step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` and
+  decides nothing about order; no step's result is folded into a `bool` or an exit code before
+  the end; the driver's tests cover the new step's failure.
+- **Paths:** `xtask/src/`.
