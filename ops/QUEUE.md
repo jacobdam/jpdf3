@@ -25,14 +25,13 @@ lowest number first.
 ## Waiting (labeled `ready`, a dependency still open)
 - #360 (ADR 0013 task 1, nightly steps 1/2; readied today) on #357.
 - #361 (ADR 0013 task 2, nightly steps 2/2; readied today) on #360.
-- #302 (nightly 3/3) on #322 and #360.
+- #302 (nightly 3/3) on #360 (#322 closed: PR #362 merged today).
 - #304 (backend selection 2/2) on #303.
 - #306 (dashboard 2/2) on #353.
 - #21 (pilot fire drill) on #19, which closes after #302; it also needs the owner's drill steps
   (#208).
 
 ## In flight
-- PR #362 (#322, the stderr tail; `in-progress`).
 - PR #359 (#357, ADR 0013; in its 24-hour window).
 - PR #347 (#331, a `design-product` journey; not an M0 issue).
 
@@ -45,8 +44,8 @@ lowest number first.
 
 ## Critical path
 The judge's M0 gate passes (nightly 45179218903, 2026-11-23). The `m0` tag waits for an empty
-M0 backlog. The longest chain is #357 → #360 → #302 → #19 → #21 (#302 also waits on #322), which also
-needs the owner's #208 steps. #303 → #304 and #353 → #306 run beside it.
+M0 backlog. The longest chain is #357 → #360 → #302 → #19 → #21, which also needs the owner's #208 steps.
+#303 → #304 and #353 → #306 run beside it.
 
 ## Design ahead (ADR 0011 §6)
 None yet. The Planner lists the next milestone's cross-cutting concerns when it opens that
