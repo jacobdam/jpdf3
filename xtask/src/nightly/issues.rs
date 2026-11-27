@@ -55,8 +55,8 @@ fn shown_url(url: &str) -> String {
     }
 }
 
-/// Every finding of the night in filing order: failed limits cases, then regress files with
-/// a crash or timeout, then regressions, each by blob and op (spec item 16).
+/// Every finding of the night: failed limits cases in case order, then regress files with a
+/// crash or timeout in run order (blob-id order), then regressions by blob and op (spec item 16).
 pub fn findings(
     limits: &[CaseResult],
     previous: Option<&Previous>,

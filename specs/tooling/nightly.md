@@ -262,7 +262,8 @@ files here (item 16), the fuzz pass and the bench in #383)
     - `limits`, `fetch`, `runs` and `diff` never stop it (a failed limits case or limits tool
       failure, a fetch integrity or infrastructure failure, a run that could not start, a diff
       that can't be written: the later steps run);
-    - `issues` runs last, after a stop too, whenever the `limits` step ran (so not after a stop
+    - `issues` runs last, after a stop too, whenever the `limits` step ran (its failure is a 1,
+      which beats an `Infra` fetch's 75: item 16) (so not after a stop
       at `previous` … `watchdog`): it gets the limits cases, the previous night and this night's
       files, or no files when the night stopped before the runs;
     - after the fetch, no verified file (item 10) stops the night: the driver records its
@@ -278,19 +279,22 @@ files here (item 16), the fuzz pass and the bench in #383)
     | signature | from | label | title |
     |---|---|---|---|
     | `limits:<case>` | a limits case whose status is not `pass` (item 11) | `crash` for `crash` or `timeout`, else `bug` | `nightly: limits case <case> ended <status>` |
-    | `regress:<blob>` | a regress file with at least one `crash` or `timeout` run (item 5), by blob | `crash` | `nightly: jpdf-cli crash or timeout on regress file <first 12 hex>` |
+    | `regress:<blob>` | a regress file with at least one `crash` or `timeout` run (item 5), in run order (blob-id order, item 4) | `crash` | `nightly: jpdf-cli crash or timeout on regress file <first 12 hex>` |
     | `regression:<blob>:<op>` | with a previous night (item 9): a run `ok` then and `error` or `not_implemented` now, by blob then op | `bug` | `nightly: regress regression: <op> on <first 12 hex> went from ok to <status>` |
 
     A run that becomes `crash` or `timeout` is the file's `regress:` finding, not a regression;
     a file whose blob is not 40 lowercase hex digits is never filed. Signatures hold only
     ASCII lowercase letters, digits, `_`, `:` and `-`.
-    **Filing**, only with `--file-issues`; with no finding, `gh` is not called at all. For each
-    label the findings use (sorted), `gh issue list --state open --label <label> --limit 1000
+    **Filing**, only with `--file-issues`; with no finding, `gh` is not called at all. For both
+    labels, `bug` then `crash` (a limits case changes label with its status, so its open issue
+    may carry the other one), `gh issue list --state open --label <label> --limit 1000
     --json number,body`. A list of 1000 or more is refused (it may be cut, so a duplicate could
     be missed). An issue matches a signature when its body starts with the agent tag and has
-    the line `nightly-signature: <signature>` exactly; the lowest number wins. Then, in finding
-    order, at most 20 writes (creates plus comments; the rest wait for a later night and are
-    counted on stderr): a matched signature gets `gh issue comment <n> --body <comment>`, any
+    the line `nightly-signature: <signature>` exactly; the lowest number wins. Then at most 20
+    writes (creates plus comments; the rest are counted on stderr and wait for a later night):
+    first the creates, then the comments, each in finding order, so a new finding is filed by
+    the first night that has room after the creates before it, never starved by comments on
+    known ones. A matched signature gets `gh issue comment <n> --body <comment>`, any
     other `gh issue create --title <title> --label <label> --body <body>`. A closed issue never
     matches, so a failure that returns after its fix opens a new issue. The body:
     ```
@@ -317,7 +321,9 @@ files here (item 16), the fuzz pass and the bench in #383)
     --file-issues)`), else `Failed` at the first `gh` failure (it couldn't start, exited
     non-zero, timed out, or its list output was not the expected JSON), with the counts done
     before it; later findings are not filed that night. A GitHub outage is a tool failure (1),
-    not `Infra`: a rerun of the whole night would not be cheaper than the next night.
+    not `Infra`: a rerun of the whole night would not be cheaper than the next night. So with
+    `--file-issues`, a night without network that also has a finding (a failed limits case)
+    exits 1, not the fetch's 75 (item 10: `Failed` beats `Infra`).
     The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN`; it
     needs `--file-issues` added to its command (ops/proposals/nightly-file-issues.md).
 
@@ -368,8 +374,8 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   stderr, only for crashes and timeouts) and the previous file (≤ 64 MiB).
 - Issues (item 16): ≤ 20 writes per night; each `gh` call ≤ 120 s and ≤ 64 MiB of stdout;
   lists of < 1000 open issues per label. Exact-boundary tests: 20 findings give 20 writes and
-  21 give 20 plus one counted; a list one short of its limit is used and one at it refused (the
-  limit passed in small, the real value pinned).
+  21 give 20 plus one counted; a list one short of its limit is used and one at it refused, and stdout of exactly the cap
+  is read while one byte more fails (both limits passed in small, the real values pinned).
 - Bench: `--bench-minutes` ≤ 120 of wall time, killed at the limit; a sample of ≤ 20 files.
 - Fuzz: `--fuzz-seconds` ≤ 3600 per target (libFuzzer's `-max_total_time`), so the pass takes
   ⌈targets / cores⌉ × S plus the build; ≤ 100 artifacts copied per target.
@@ -403,9 +409,12 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   stderr, no corpus bytes and nothing from the sealed corpus (the tier is `regress`); titles
   and signatures are built from xtask's own names, statuses, numbers and checked blob ids, the
   URL from the repository's manifest is shown only inside backticks and only when it can't
-  leave them. Another account's issue can't capture a finding: a match needs the tag at the
-  start of the body and the exact signature line (a stranger who copies both gets a comment
-  on that issue, not a missed finding). Nothing is written without `--file-issues`. `gh` gets
+  leave them. What keeps another account's issue from capturing a finding is the label filter:
+  only open issues labeled `bug` or `crash` are read, and only accounts with triage rights can
+  set labels. The tag at the start of the body (followed by a space) and the exact signature
+  line only keep other issues of those labels from matching; the author is not checked, so a
+  tagged issue an owner or agent session labels with the same line captures it (it gets the
+  comments). Nothing is written without `--file-issues`. `gh` gets
   an argv list, never a shell string.
 - **CONSTITUTION 8–11:** no new crates; xtask gains path dependencies on the workspace's own
   `jpdf-bench` and `jpdf-corpus`.
@@ -461,7 +470,9 @@ Self-check:
     night on a fake `gh` (which acts on its real arguments: lists filter by state and label,
     newest first, creates add issues, comments attach) comments on the two issues the first
     night filed and creates nothing; near misses (a closed issue, an untagged body, the line
-    inside other text, a longer signature, the wrong label) don't match, and of two matches the
+    inside other text, a longer signature, a tag without its space, a label that is neither `bug`
+    nor `crash`) don't match, a limits case that changes label keeps its issue, and a night over
+    the cap files the rest the next night, and of two matches the
     lowest wins (hand-mutated: dropping the tag check or the `min` fails a test). The findings
     have one test per source, each with statuses that must not count (`pass`, `error` → `not_implemented`,
     `ok` → `crash`, a missing file). No `gh` call without findings or without `--file-issues`.
