@@ -303,7 +303,7 @@ jobs:
         working-directory: pr
         env:
           GH_TOKEN: ${{ github.token }}
-        run: cargo xtask nightly --out ../nightly
+        run: cargo xtask nightly --out ../nightly --file-issues
 
   # ---------------------------------------------------------------- trusted: the verdict
   verdict:
