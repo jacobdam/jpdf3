@@ -4345,3 +4345,175 @@ fn step3_design_window_malformed_inputs_exit_1() {
         assert_eq!(pick(&[with_pr(&plain)]), "planner", "{rollup}");
     }
 }
+
+// #373: an `ai-review` success counts from the triage comment its `targetUrl` names, when that
+// is a triage comment on the same PR, so a success re-posted on a record-only update (TICK §4
+// "after the last check") keeps the window's start.
+const TRIAGE_URL: &str = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-9";
+
+/// An `ai-review` success rollup whose status started at `at` and links `target` (raw JSON).
+fn reviewed_to(at: &str, target: &str) -> String {
+    format!(
+        r#"[{{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":{at:?},"targetUrl":{target}}}]"#
+    )
+}
+
+/// A comment with a `url`.
+fn comment(login: &str, body: &str, at: &str, url: &str) -> String {
+    format!(
+        r#"{{"author":{{"login":{login:?}}},"body":{body:?},"createdAt":{at:?},"url":{url:?}}}"#
+    )
+}
+
+fn triage(at: &str) -> String {
+    comment(
+        "jacobdam",
+        &format!("{TAG} **AI review triage, round 4**\n\nR4.1: fixed"),
+        at,
+        TRIAGE_URL,
+    )
+}
+
+#[test]
+fn step3_design_window_starts_at_the_linked_triage() {
+    let ready_none = design_ready(&[(320, &[])]);
+    let issue_todo = plus(
+        "issues.json",
+        &[issue(321, "adr", &["design", "owner-todo"])],
+    );
+    let go = |rollup: &str, comments: &[String], more: &[(&'static str, Option<String>)]| {
+        let mut c = vec![
+            with_pr(&design_pr(320, EARLY, rollup, &[])),
+            ready_none.clone(),
+            issue_todo.clone(),
+            holds(&[(320, comments)]),
+        ];
+        c.extend(more.iter().cloned());
+        pick(&c)
+    };
+    let linked = format!("{TRIAGE_URL:?}");
+    // Re-posted after the window passed (status AFTER_24H): the linked triage's time counts.
+    for (at, want) in [
+        (AT_24H, "worker design-window #320"),
+        (AFTER_24H, "planner"),
+    ] {
+        assert_eq!(
+            go(&reviewed_to(AFTER_24H, &linked), &[triage(at)], &[]),
+            want,
+            "triage {at}"
+        );
+        // The comment replaces the status time, also when it is the later one (the safe side).
+        assert_eq!(
+            go(&reviewed_to(EARLY, &linked), &[triage(at)], &[]),
+            want,
+            "triage {at}, status early"
+        );
+    }
+    // A `/release` after the triage still restarts the window.
+    for (at, want) in [
+        (AT_24H, "worker design-window #320"),
+        (AFTER_24H, "planner"),
+    ] {
+        assert_eq!(
+            go(
+                &reviewed_to(AFTER_24H, &linked),
+                &[triage(EARLY), cmd("jacobdam", "/release", at)],
+                &[]
+            ),
+            want,
+            "release {at}"
+        );
+    }
+    // Near misses: the status time counts (AFTER_24H, so not picked).
+    let other_url = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-10";
+    for (rollup, comments, why) in [
+        (reviewed_to(AFTER_24H, &linked), vec![], "no comment"),
+        (
+            reviewed_to(AFTER_24H, "null"),
+            vec![triage(EARLY)],
+            "null targetUrl",
+        ),
+        (reviewed(AFTER_24H), vec![triage(EARLY)], "no targetUrl"),
+        (
+            reviewed_to(AFTER_24H, &format!("{other_url:?}")),
+            vec![triage(EARLY)],
+            "another comment",
+        ),
+        (
+            reviewed_to(AFTER_24H, &linked),
+            vec![triage(EARLY).replace(r#""login":"jacobdam""#, r#""login":"someone""#)],
+            "another author",
+        ),
+        (
+            reviewed_to(AFTER_24H, &linked),
+            vec![comment(
+                "jacobdam",
+                &format!("{TAG} **AI review, round 4** of abc1234"),
+                EARLY,
+                TRIAGE_URL,
+            )],
+            "a review, not a triage",
+        ),
+        (
+            reviewed_to(AFTER_24H, &linked),
+            vec![comment(
+                "jacobdam",
+                "**AI review triage, round 4**",
+                EARLY,
+                TRIAGE_URL,
+            )],
+            "untagged",
+        ),
+        (
+            reviewed_to(AFTER_24H, &linked),
+            vec![comment(
+                "jacobdam",
+                &format!(" {TAG} **AI review triage, round 4**"),
+                EARLY,
+                TRIAGE_URL,
+            )],
+            "not at the start",
+        ),
+    ] {
+        assert_eq!(go(&rollup, &comments, &[]), "planner", "{why}");
+    }
+    // The triage on another PR (its URL names this PR's comment, but it is listed under 321).
+    assert_eq!(
+        pick(&[
+            with_pr(&design_pr(
+                320,
+                EARLY,
+                &reviewed_to(AFTER_24H, &linked),
+                &[]
+            )),
+            ready_none.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[]), (321, &[triage(EARLY)])]),
+        ]),
+        "planner"
+    );
+    // Malformed: a triage comment without a `url` or with a bad `createdAt`; a `targetUrl`
+    // that isn't a string or null. Other comments need no `url` (`cmd` has none).
+    for (rollup, comments, why) in [
+        (
+            reviewed(EARLY),
+            vec![triage(EARLY).replace(&format!(r#","url":{TRIAGE_URL:?}"#), "")],
+            "no url",
+        ),
+        (
+            reviewed(EARLY),
+            vec![triage(EARLY).replace(EARLY, "2026-11-21 00:00:00")],
+            "bad createdAt",
+        ),
+        (reviewed_to(EARLY, "9"), vec![], "numeric targetUrl"),
+    ] {
+        let o = run_with(&[
+            with_pr(&design_pr(320, EARLY, &rollup, &[])),
+            ready_none.clone(),
+            holds(&[(320, &comments)]),
+        ])
+        .unwrap();
+        assert_eq!(o.status.code(), Some(1), "{why}");
+        assert!(o.stdout.is_empty(), "{why}");
+    }
+}

@@ -434,7 +434,8 @@ Each round K runs in this order:
      commit is a record commit or a merge whose remerge-diff is empty or touches only record
      paths (the post-cap terms above), re-post `ai-review` success on the new head
      (`target_url`: the check's triage comment) and re-enable auto-merge (for a PR labeled
-     `design`, §8 step 5's new window first). Anything else (a resolution that edits another
+     `design`, only once its window has passed: such an update keeps the window's start, §8
+     step 5, #373). Anything else (a resolution that edits another
      file, a fix for a CI failure) goes to the owner, not to design, since a design session has
      no finding to rule on and may not write code: push it, turn the PR back into a draft
      (`gh pr ready N --undo`), post `ai-review` with `state=failure` on the new head, comment on the
@@ -714,12 +715,22 @@ specs/tooling/design-technical.md.
    issue. Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
-   `/release` on it. Once the window has passed, with `ai-review` success on the head and no
+   `/release` on it. The success counts from the time of the triage comment its `target_url`
+   links when that is a triage comment on this PR (`🤖 jpdf-agent **AI review triage`), else
+   from the status itself (#373). Once the window has passed, with `ai-review` success on the head and no
    `/hold` after the last `/release`, `cargo xtask next-session` picks `worker design-window #N`
-   (§2 step 3), and that session enables auto-merge and removes `owner-todo` (ADR 0011 §7). **A push to a PR labeled `design`** (a fix, a merge of origin/main) starts
-   with `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review`
-   success the PR goes through this step again (`owner-todo`, a new window), so the owner always
-   gets 24 hours on what merges.
+   (§2 step 3), and that session enables auto-merge and removes `owner-todo` (ADR 0011 §7).
+   **A record-only update keeps the window** (#373): when every commit since the last reviewed
+   one is a record commit or a merge of origin/main whose remerge-diff is empty or touches only
+   record paths (§4 step 6's post-cap terms), re-post `ai-review` success on the new head with
+   the same `target_url` (the last triage comment), so the window keeps its start, and leave
+   auto-merge as it was. If the window, counted that way, has already passed, enable auto-merge
+   and remove `owner-todo` from the design issue in the same session (as the `design-window`
+   pick would), so the next merge on main can't conflict it again. **Any other push to a PR
+   labeled `design`** (a fix, a merge resolution that edits another file) starts with
+   `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review` success
+   (its own triage comment) the PR goes through this step again (`owner-todo`, a new window), so
+   the owner always gets 24 hours on what merges: a record-only update doesn't change that.
 6. **Finish outputs 1 and 3:** if the PR has a `/hold` after its last `/release`, stop: nothing
    moves until `/release` (§5). If the PR closes a `design-product` issue (a Design: product
    PR, or a split of one, whose split issue keeps that label), run `gh pr ready N` and
@@ -879,7 +890,8 @@ specs/tooling/next-session.md step 8.
      open it (so every path to a merge, §8 step 6 included, sees the label), and after
      `ai-review` success follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
      in PR #N merges after 24 h unless you /hold it`; the scheduler's `worker design-window #N`
-     pick (§2 step 3) enables auto-merge.
+     pick (§2 step 3) enables auto-merge. A record-only update keeps the window's start (§8
+     step 5, #373); any other push starts a new one.
 7. **Bound:** one PR per session and one product PR open at a time (the scheduler's rule). A
    product issue whose PR closed unmerged stays open and is picked again.
 8. **Record** as §5 says (`Picked: rule k (Design: product)`).
