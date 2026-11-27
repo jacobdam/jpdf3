@@ -4,6 +4,7 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- #373 (owner: a record-only update keeps a design PR's 24-hour window): PR #374, 2 rounds, `ai-review` success, auto-merge on; post "done:" on #373 after it merges.
 - main: ci run 45918554776 for c105253 passed; run 45920627986 (PR #368's merge, 4cf0fdb) was in progress at 01:06 UTC.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
@@ -52,6 +53,7 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant ([journal](journal/2026-11-27/0901-373-design-window.md)).
 - A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
   call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
   in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).
