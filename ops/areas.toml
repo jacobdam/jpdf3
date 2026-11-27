@@ -132,6 +132,7 @@ name = "process"
 kind = "process"
 paths = [
   "ops/",
+  "ops/lessons/pending/README.md",
   ".claude/",
   "CONSTITUTION.md",
   "AUTOMATION.md",
@@ -159,8 +160,11 @@ paths = [
   "specs/tooling/issue-lint.md",
 ]
 
-# Session records: journal entries and STATUS (ADR 0011 §3).
+# Session records: journal entries and pending lesson files (ADR 0011 §3). The pending
+# directory's README.md is the process area's (above): it holds the rule, not a record.
+# ops/STATUS.md is gone (#392); a change or delete of it on an older branch still counts as a
+# record change in a record commit (ops/TICK.md §4 step 6), but it owns no area here.
 [[area]]
 name = "records"
 kind = "process"
-paths = ["ops/journal/", "ops/STATUS.md"]
+paths = ["ops/journal/", "ops/lessons/pending/"]

@@ -6,8 +6,8 @@ finish **one** unit of work, record it, and exit. The next session starts fresh,
 except files and GitHub.
 
 Repo: `jacobdam/jpdf3` (cwd). Owner: GitHub user `jacobdam`.
-Read **CONSTITUTION.md** first and obey it exactly. Then `ops/STATUS.md`, **`ops/LESSONS.md`**
-(what earlier sessions learned the hard way), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
+Read **CONSTITUTION.md** first and obey it exactly. Then the output of `cargo xtask status`, **`ops/LESSONS.md`**
+(what earlier sessions learned the hard way) and `ops/lessons/pending/` (lessons not yet moved into it), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
 milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 0. Ground rules for this session
@@ -90,6 +90,17 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
   later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
   one this size.
+- **A part is a GitHub sub-issue of its parent** (owner, #398), so the parent shows its
+  progress. File it with `gh issue create --parent <parent> ...`, or link an existing issue with
+  `gh issue edit <part> --parent <parent>`, each its own CLI write. The parts are: a sizing
+  split's parts (above, and §9 step 2's) under the original issue, or, when that issue is itself
+  a part, under its parent (#383, a split of part #302, sits under #19); §8 output 1's split
+  issues under the escalated issue; §8 step 5's design tasks under the design issue; an
+  umbrella's part filed later under the umbrella. The text links (`Part 2 of #302`,
+  `Depends on:`, `Designed in:`) stay: the scheduler reads bodies and labels, not sub-issue
+  links. Review deferrals and discoveries are not parts of the PR's issue and stay unlinked.
+  An issue has at most one parent: read `gh issue view <part> --json parent` first and link
+  only a part whose `parent` is `null`, since an edit may move it from another parent.
 - **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
   merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
   can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
@@ -97,7 +108,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
+cargo xtask status  # milestone, in flight, next step, blockers (specs/tooling/status.md); any non-zero exit: no status, do no work, exit
+cat ops/LESSONS.md ops/lessons/pending/*.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -402,9 +414,13 @@ Each round K runs in this order:
      `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
      merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
      (it shows only what you changed while merging, conflict resolutions included). A **record
-     commit** (one that changes only files under `ops/journal/` and `ops/STATUS.md`) and a merge
-     whose remerge-diff is empty or touches only those paths are left out (ADR 0011 §3); a
-     commit touching any other file counts, `ops/LESSONS.md` included;
+     commit** (one that changes only files under `ops/journal/` and, under
+     `ops/lessons/pending/`, adds or edits only `.md` pending lesson files that aren't on
+     origin/main, never its `README.md`; changing or deleting one that is on main is not a
+     record change; changing or deleting `ops/STATUS.md`, which #392 removed from main and a
+     branch opened before it may still carry, is a record change, but adding it back is not) and a merge whose remerge-diff
+     is empty or touches only those paths that way are left out (ADR 0011 §3); a commit
+     touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
      regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
      lines and no new file, one **final check** runs (header
@@ -509,8 +525,8 @@ session.
   `/hold`. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Records go into the work PR** (ADR 0011 §3): the journal entry and the STATUS rewrite are
-  one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
+- **Records go into the work PR** (ADR 0011 §3): the journal entry and the
+  session's pending lesson file, if it has one (Lessons, below), are one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
   session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
@@ -521,7 +537,7 @@ session.
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
   `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
   two PRs carrying records merge in either order (retro 0002: 4 sessions on 2026-11-23 did
-  nothing but merge journal/STATUS conflicts). Entries written before retro 0002 stay in
+  nothing but merge journal/STATUS conflicts; #392 deleted the shared `ops/STATUS.md`). Entries written before retro 0002 stay in
   the single `ops/journal/YYYY-MM-DD.md` files, so 2026-11-23 has both. Use this template:
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
@@ -538,16 +554,22 @@ session.
   right heading, as one line in the form *situation → what to do* plus a link to the journal entry.
   Check for an existing entry first and refine it rather than duplicating it. A LESSONS change
   is not a record commit, so it goes into the work PR **before its last review round**. A lesson
-  found after that goes under `## Pending lessons` in `ops/STATUS.md` (the record commit carries
-  it); the next session that opens a work PR moves each one into `ops/LESSONS.md` before that
-  PR's round 1 and deletes it from the list. Skip a lesson that an open agent PR already moves
-  (its branch's `ops/LESSONS.md` has it: `git show origin/<branch>:ops/LESSONS.md`), so two
+  found after that goes into this session's own file, `ops/lessons/pending/YYYY-MM-DD-HHMM-<slug>.md`
+  (the journal entry's date and name), one line per lesson exactly as it will read in
+  `ops/LESSONS.md`; the record commit carries it, and no other session edits it
+  (`ops/lessons/pending/README.md` has the format). The next session that opens a work PR
+  moves the lines of each such file into `ops/LESSONS.md` before that PR's round 1 and deletes
+  the file in the same commit. Skip a file that an open agent PR already deletes
+  (`git diff --name-status origin/main...origin/<branch> -- ops/lessons/pending/`), so two
   open PRs never add it twice.
-- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
-  step, blockers. It has no "last session" section (the journal files are that record). A merge
-  of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
-  0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
-  list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
+- **State lives where it is true** (#386): open PRs, labels (`in-progress`, `blocked`,
+  `owner-todo`) and the scheduler, which `cargo xtask status` prints; there is no shared status
+  file to rewrite. A note a later session needs that none of those shows (a step left to do, why
+  an issue waits, a standing decision) goes on the issue it is about as a comment (file one,
+  as Discoveries below says, if there is none; one the owner can act on gets `owner-todo`, §0);
+  a lasting decision goes into PLAN.md or an ADR. A branch opened before #392 may still change
+  `ops/STATUS.md`: a merge of origin/main that conflicts on it takes main's side (`git rm
+  ops/STATUS.md`), a record-only resolution (§4 step 6).
 - **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
@@ -589,7 +611,7 @@ session.
   `Lane: light` against the strict list (§4 Lanes, read from origin/main's `ops/areas.toml` at
   its merge); one that should have been strict is a finding.
 - **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; check every `owner-todo` label
-  against §0 (add or remove it); reconcile PLAN/STATUS/issues
+  against §0 (add or remove it); reconcile PLAN/issues/labels
   with reality; remove dead or duplicated code; refresh deps through admission; update
   `rust-toolchain.toml` to the latest stable.
 - **Record:** write `docs/audits/NNNN.md`.
@@ -617,7 +639,10 @@ session.
    - a verdict on the previous retro's items (**keep / revert / extend**)
 3. **Curate `ops/LESSONS.md`** (keep ≤ 60 entries): merge duplicates, delete stale ones, and
    promote any lesson that recurred 3+ times into this file, a template or an ADR (then remove
-   it from LESSONS).
+   it from LESSONS). Fold the lines of every pending lesson file still in `ops/lessons/pending/`
+   (all but its `README.md`) into LESSONS, or drop a stale one, and delete the file; skip a file
+   that an open agent PR already deletes (`git diff --name-status
+   origin/main...origin/<branch> -- ops/lessons/pending/`), as §5 does.
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
    reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
    PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
@@ -658,7 +683,8 @@ specs/tooling/design-technical.md.
    missing is a scope, taste or money decision (ADR 0011 §7). A `needs-design` PR takes one of:
    1. **split:** only if every line of the part that converged is already in the original PR's
       diff at its last reviewed commit, unchanged. File one issue for that part and one per
-      remaining part, each with `Designed in: #<escalated issue>`; open the split PR from
+      remaining part, each with `Designed in: #<escalated issue>` and as a sub-issue of the
+      escalated issue (§0); open the split PR from
       origin/main with those lines only (`Closes #<split issue>`; label it `design` if the
       original PR had that label, so step 6 gives it the 24-hour window; label every split
       issue `design-product` if the escalated issue had it, so step 6 and the scheduler's
@@ -692,7 +718,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/` and `ops/STATUS.md`). The check's brief: that diff, the ledger, the
+      `ops/journal/` and adding or editing pending lesson files not on origin/main, or changing or deleting the retired `ops/STATUS.md` but never adding it, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
@@ -717,7 +743,7 @@ specs/tooling/design-technical.md.
    the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
-   issue. Then add `owner-todo` to the design issue and comment
+   issue. Each is a sub-issue of the design issue (§0). Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it (/approve merges it sooner)`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
    `/release` on it. The success counts from the time of the triage comment its `target_url`
@@ -799,8 +825,8 @@ gate them.
    PLAN.md §8 (the milestone's row) and `cargo xtask metrics`. No code.
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
-   scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first
-   and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
+   scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
+   each a sub-issue of it, §0, and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
    missing one). An umbrella whose remaining work is in other issues gets no `ready` (rule i).
    Remove `in-progress` from a dead claim (no open PR links it and no worktree is on its branch),
    and `ready` from an issue that no longer qualifies. **Milestone moves** (ADR 0011 §1): an
@@ -820,6 +846,17 @@ gate them.
    see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
    open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
    that lists the group, and name it in `ops/QUEUE.md`.
+2b. **Sub-issues** (owner, #398): walk from the parts, since a parent may already be closed (§8
+   output 1 closes the escalated issue; a design issue closes with its ADR). For each open issue
+   in the milestone that is a part, and each part, open or closed, that an open umbrella in it
+   names ("closes after #A and #B"), read `gh issue view <part> --json parent`; if it is `null`,
+   link it with `gh issue edit <part> --parent <parent>` (§0). The parent is §0's: the issue a
+   part's body names (`Part 1 of #19`, `Part 1 of 3 of owner issue #386`, `Split from #305`;
+   for a split of a part, that part's own parent), a §8 output 1 split issue's escalated issue,
+   a §8 step 5 task's `design` issue (the one on its `Depends on:` line). A `Designed in:` line
+   alone doesn't name the parent: §8 output 2's design issue carries one too and is not a part,
+   and an escalated PR's tasks name the escalated issue there. A part that already has another
+   parent stays where it is; note it in the journal.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
@@ -847,7 +884,7 @@ gate them.
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
-   journal and STATUS commits skip review); the brief adds this section and ADR 0011 §1, and
+   record commits skip review: journal and pending lesson files not on origin/main, and changes or deletes of the retired `ops/STATUS.md`, §4 step 6); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
