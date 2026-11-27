@@ -1,6 +1,7 @@
 # 9. Security issues carry a severity; only high+ block the owner preview
 
 Status: accepted (owner issue #143, decided in the owner's interactive session, 2026-11-22).
+Amended 2026-11-28 (owner decision on #402 part 2, audit 0003 AS.56): rows for policy-check bypasses.
 
 ## Context
 The biggest product risk is never delivering. TICK rule d put every `security` issue ahead of the
@@ -15,9 +16,9 @@ Every `security` issue carries exactly one severity label, set when it is filed:
 | Label | Meaning |
 |---|---|
 | `sev:critical` | Escapes the trust boundary or leaks data: PDF JavaScript or a Launch action runs, data is sent out, the sandbox is escaped, a redaction leaks. |
-| `sev:high` | One hostile PDF crashes, hangs or exceeds the 2 GiB cap on open or render, or a signature verifies wrongly. Counts even if the path doesn't exist yet but will exist by M4. |
-| `sev:medium` | Needs an unusual setup (a local attacker, a non-default configuration, a future caller misusing an API), or wastes resources while staying within the limits. |
-| `sev:low` | Defence in depth: test and conformance-suite strength, CI and tooling hygiene, hardening with no reachable failure. |
+| `sev:high` | One hostile PDF crashes, hangs or exceeds the 2 GiB cap on open or render, or a signature verifies wrongly. Counts even if the path doesn't exist yet but will exist by M4. A proven bypass of a CONSTITUTION policy check that lets agent text pass as the owner's. |
+| `sev:medium` | Needs an unusual setup (a local attacker, a non-default configuration, a future caller misusing an API), or wastes resources while staying within the limits. A proven bypass of a CONSTITUTION policy check (the license check, a guard rule) that needs this project's own code or agent to trigger it, for example tool-only licensed material reaching a shipped artifact. |
+| `sev:low` | Defence in depth: test and conformance-suite strength, CI and tooling hygiene (a proven policy-check bypass is medium or high, above), hardening with no reachable failure. |
 
 When unsure between two levels, pick the higher one and say why on the issue.
 
