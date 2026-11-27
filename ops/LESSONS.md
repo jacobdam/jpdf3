@@ -187,6 +187,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   first (PR #169 round 1: 2 majors, 2 minors) ([journal](journal/2026-11-22.md), PR #169). Same for a cleanup's
   "one copy", "only", "every" claims: grep the whole tree for the duplicated shape before writing them (PR #212 spent
   rounds 1 and 2 on such a sentence) ([journal](journal/2026-11-22.md), PR #212).
+- A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
+  (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
+  ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1).
 
 ## Apps (web, macOS)
 - Writing a check that "nothing from set X reaches the artifact" (licenses, imports) → a text
@@ -364,3 +367,6 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).
+- A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
+  old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
+  R1.1).
