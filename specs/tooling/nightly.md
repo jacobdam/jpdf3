@@ -262,10 +262,10 @@ files here (item 16), the fuzz pass and the bench in #383)
     - `limits`, `fetch`, `runs` and `diff` never stop it (a failed limits case or limits tool
       failure, a fetch integrity or infrastructure failure, a run that could not start, a diff
       that can't be written: the later steps run);
-    - `issues` runs last, after a stop too, whenever the `limits` step ran (its failure is a 1,
-      which beats an `Infra` fetch's 75: item 16) (so not after a stop
+    - `issues` runs last, after a stop too, whenever the `limits` step ran (so not after a stop
       at `previous` … `watchdog`): it gets the limits cases, the previous night and this night's
-      files, or no files when the night stopped before the runs;
+      files, or no files when the night stopped before the runs. Its failure is a 1, which beats
+      an `Infra` fetch's 75 (item 16);
     - after the fetch, no verified file (item 10) stops the night: the driver records its
       own `files` entry, `Failed` with `no regress file to run (<N> rows missing)`, unless
       the fetch was `Infra` (then the fetch's 75 stands alone).

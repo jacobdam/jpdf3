@@ -323,8 +323,7 @@ fn a_repeat_night_comments_on_the_open_issue_instead_of_filing() {
             skipped: 0
         }
     );
-    // One list per label used (sorted), then the creates in finding order.
-    // Both labels are always listed (R1.2).
+    // Both labels are always listed (R1.2), then the creates in finding order.
     let heads: Vec<String> = gh
         .calls
         .iter()
