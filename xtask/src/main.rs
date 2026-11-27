@@ -12,6 +12,7 @@ mod metrics;
 mod next_session;
 mod nightly;
 mod specs;
+mod steps;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -97,8 +98,9 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
-        // specs/tooling/nightly.md: exit 1 = a tool failure, 75 = corpus fetch infra failure;
-        // what jpdf-cli did never changes the exit code.
+        // specs/tooling/nightly.md item 10: exit 1 = a tool failure, 75 = corpus fetch infra
+        // failure, 4 = a failed limits case; what jpdf-cli did with a regress file never
+        // changes the exit code. The code is `steps::exit_code` of the driver's log.
         (Some("nightly"), _) => {
             let opts = match nightly::parse(args.get(1..).unwrap_or_default()) {
                 Ok(o) => o,
@@ -107,13 +109,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            match nightly::run(Path::new("."), &opts) {
-                Ok(code) => ExitCode::from(code),
-                Err(e) => {
-                    eprintln!("xtask: nightly: {e}");
-                    ExitCode::from(1)
-                }
-            }
+            ExitCode::from(nightly::run(Path::new("."), &opts))
         }
         // specs/tooling/limits.md: exit 4 = a case failed, 1 = a tool failure.
         (Some("limits"), _) => {

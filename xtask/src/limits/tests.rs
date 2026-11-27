@@ -271,22 +271,6 @@ fn results_json_has_the_spec_shape() {
     assert!(results_json(&[], 1, false).contains("\"memory_limit_kib\":null,"));
 }
 
-#[test]
-fn nightly_exit_codes_with_the_limits_cases() {
-    let ok: Result<bool, String> = Ok(true);
-    let failed: Result<bool, String> = Ok(false);
-    let broken: Result<bool, String> = Err("x".into());
-    assert_eq!(crate::nightly::with_limits(0, &ok), 0);
-    assert_eq!(crate::nightly::with_limits(75, &ok), 75);
-    assert_eq!(crate::nightly::with_limits(1, &ok), 1);
-    assert_eq!(crate::nightly::with_limits(0, &failed), 4);
-    // An infrastructure night stays 75 (rerun); the failed case is in limits.json and stderr.
-    assert_eq!(crate::nightly::with_limits(75, &failed), 75);
-    assert_eq!(crate::nightly::with_limits(1, &failed), 1);
-    assert_eq!(crate::nightly::with_limits(0, &broken), 1);
-    assert_eq!(crate::nightly::with_limits(75, &broken), 1);
-}
-
 /// End to end through the memory wrapper with a fake `jpdf-cli` that refuses every file as
 /// overlapping: the two overlap cases pass, the others fail, and `limits.json` says so.
 #[cfg(unix)]

@@ -850,21 +850,7 @@ fn only_verified_files_become_runnable_jobs() {
 }
 
 #[test]
-fn exit_codes_follow_the_spec() {
-    let none = jobs(2, &[0, 1]);
-    let one = jobs(2, &[0]);
-    assert_eq!(nothing_to_run(&one, 0), None);
-    assert_eq!(
-        nothing_to_run(&one, 75),
-        None,
-        "some files ran: 75 comes at the end"
-    );
-    assert_eq!(nothing_to_run(&none, 75), Some(Ok(75)));
-    for code in [0, 1] {
-        let e = nothing_to_run(&none, code).unwrap().unwrap_err();
-        assert!(e.contains("no regress file to run (2 rows missing)"), "{e}");
-    }
-    assert!(nothing_to_run(&[], 0).unwrap().is_err(), "no rows at all");
+fn the_memory_probe_decides_the_wrapper() {
     assert_eq!(memory_limit_allowed(true, true), Ok(true));
     assert_eq!(memory_limit_allowed(true, false), Ok(true));
     assert_eq!(memory_limit_allowed(false, false), Ok(false));
@@ -872,10 +858,6 @@ fn exit_codes_follow_the_spec() {
         memory_limit_allowed(false, true)
             .unwrap_err()
             .contains("not enforced")
-    );
-    assert_eq!(
-        [(false, 0), (false, 1), (false, 75), (true, 0), (true, 75)].map(|(f, c)| exit_code(f, c)),
-        [0, 1, 75, 1, 1]
     );
 }
 
@@ -985,3 +967,5 @@ fn only_a_cli_the_runner_can_exec_is_accepted() {
     }
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+mod driver;

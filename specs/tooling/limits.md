@@ -139,5 +139,6 @@ About 12 s at 500 MiB (item "Limits"). Disk: one file of ≤ 512 MiB at a time.
 `every_case_reaches_its_size_at_the_bounds`,
 `the_size_check_is_exact_at_both_ends`, `verdicts_follow_the_spec`,
 `each_file_is_fresh_and_removed_after_its_run`, `an_unwritable_file_is_a_tool_failure`,
-`results_json_has_the_spec_shape`, `nightly_exit_codes_with_the_limits_cases`,
-`run_with_a_fake_cli_writes_the_results`.
+`results_json_has_the_spec_shape`, `run_with_a_fake_cli_writes_the_results`. The nightly's exit
+codes with the limits cases: `xtask/src/nightly/tests/driver.rs`
+`exit_codes_with_the_limits_cases` (specs/tooling/nightly.md items 10 and 15).
