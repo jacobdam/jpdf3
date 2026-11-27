@@ -2289,6 +2289,8 @@ mod tests {
         assert!(dependencies("**Refs:** PLAN §3. Depends on: #5").is_empty());
         assert!(dependencies("x\n**Size:** small. **Depends on:** #5.").is_empty());
         assert!(dependencies("* Depends on: #5").is_empty());
+        // R1.2: no space between `**` and the phrase.
+        assert!(dependencies("** Depends on: #5").is_empty());
         assert_eq!(dependencies("  **Depends on:** #5"), [5]);
         assert_eq!(dependencies("\tDepends on: #6\nsee Depends on: #7"), [6]);
     }

@@ -377,7 +377,7 @@ PR that fails in its window.
       and none of `in-progress` (claimed), `design`, `design-pending`, `design-product` (step 8's), not in flight, and with its
       dependencies closed: every `#N` of the list right after `Depends on:` on a dependency line
       of its body is not an open issue in `issues.json`. A dependency line is one whose text,
-      after leading whitespace and an optional `**`, starts with `Depends on:`; the phrase
+      after leading whitespace and an optional `**` (no space after it), starts with `Depends on:`; the phrase
       anywhere else in a line (``Its `Depends on: #14` is met by``, `**Refs:** … Depends on:
       #14`) names nothing (#412: #303's body named #14 that way, and the loop idled for about
       70 sessions). The list is `#N` items separated by commas, spaces or `and`,
