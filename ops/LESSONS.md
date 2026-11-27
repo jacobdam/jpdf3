@@ -222,7 +222,8 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   `&:hover` override ties with the theme's focus-visible rule and wins, so set only the
   property you mean ([journal](journal/2026-11-20.md), PR #49).
 - macOS XCUITest → Automation Mode must work without a password: locally that needs the
-  owner's sudo (#52), GitHub runners have it; `project-macos` skips PRs, so verify UI tests
+  owner's sudo (#52), GitHub runners have it; `project-macos` skips PRs and runs no Rust tests
+  (macOS-only Rust paths are checked locally only), so verify UI tests
   with `gh workflow run ci.yml --ref <branch>` before merging. Query SwiftUI elements by
   `accessibilityIdentifier` + `.element` (the title bar is a static text too; `firstMatch`
   failed with count 1), read static text from `value` when `label` is empty; check

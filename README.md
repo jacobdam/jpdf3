@@ -7,8 +7,8 @@ License: [MIT](LICENSE).
 > **Status: early development (milestone M0, Foundation).** The judge, CI, test harnesses and
 > specs are in place, and parts of the syntax layer (lexer, xref) exist; M0 work remains.
 > The apps don't open PDFs yet.
-> See [ops/STATUS.md](ops/STATUS.md) for the current state and [PLAN.md](PLAN.md) §8 for the
-> milestones.
+> Run `cargo xtask status` for the current state ([specs/tooling/status.md](specs/tooling/status.md))
+> and see [PLAN.md](PLAN.md) §8 for the milestones.
 
 ## Goals
 

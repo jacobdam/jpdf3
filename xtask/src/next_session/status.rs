@@ -1,6 +1,6 @@
-//! `cargo xtask status` (specs/tooling/status.md; #386 part 1, #390): the three sections of
-//! ops/STATUS.md that copy state kept elsewhere, generated from the scheduler's own inputs and
-//! parse rules, so the two can't disagree. Read-only, like the scheduler.
+//! `cargo xtask status` (specs/tooling/status.md; #386 part 1, #390): the three sections of the
+//! former ops/STATUS.md (deleted by #392) that copied state kept elsewhere, generated from the
+//! scheduler's own inputs and parse rules, so the two can't disagree. Read-only, like the scheduler.
 
 use std::fmt::Write as _;
 
