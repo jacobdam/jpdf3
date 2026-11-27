@@ -7,13 +7,15 @@ Phase: bootstrap (pilot)
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
 - #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
   comments. Follow-up #377 (wording, `Ops`, without `ready`).
-- #302 (nightly 3/3 part 1, the `issues` step: limits cases, regress crashes and timeouts, regressions; `--file-issues`):
-  PR #384 (`ai-review` success, auto-merge on). It adds ops/proposals/nightly-file-issues.md (the CI job's flag): once
-  it merges, a session labels an owner issue for it `owner-todo` (TICK §0; #302 closes with the PR). Part 2 (fuzz and
-  bench findings) is #383, without `ready`, depending on #302 and #361.
-- #334 (journeys J-PC-09, J-PC-10, the four app languages, Design: product): PR #379, 4 rounds, `ai-review` success;
-  the owner's `/approve` ended its window, auto-merge on. Merged origin/main again (STATUS conflict only, record-only
-  merge, `ai-review` re-posted). Follow-up #380 (specs/ui Preferences Language row, R4.1), M10 without `ready`.
+- #302 (nightly 3/3 part 1): PR #384 merged. It added ops/proposals/nightly-file-issues.md (the CI job's flag): the
+  next session's §1 owner-todo check files or labels the owner issue for it. Part 2 (fuzz and bench findings) is #383,
+  without `ready`, depending on #302 and #361.
+- #334 (journeys J-PC-09, J-PC-10, the four app languages): PR #379 merged. Follow-up #380 (specs/ui Preferences
+  Language row), M10 without `ready`.
+- #348 (J-PC-08 fixture details, Design: product): PR #388 (label `design`), 2 rounds, `ai-review` success, ready;
+  `owner-todo` on #348 with the 24-hour window comment; auto-merge off until `worker design-window #388`. Follow-ups
+  #387 (CI pins poppler-data, a proposal once the e2e test exists) and #389 (R2.1, generator negative tests), both
+  M10 without `ready`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
 - #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
   milestone-work issues are all closed.
@@ -35,8 +37,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361), or rule c for PR #384; the session after
-   PR #384's merge files the owner issue for its proposal (above).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361); the owner-todo step for PR #384's proposal
+   (above); `worker design-window #388` once its window passes.
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
