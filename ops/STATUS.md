@@ -24,8 +24,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). #357's design PR #359 is open, so rule i comes next (#303, #323, …
-   lowest first; #322 is PR #362, auto-merge on).
+0. `cargo xtask next-session` (TICK §2). #357's design PR #359 is open, so rule i comes next (#303, …
+   lowest first; #323 is PR #364, auto-merge on).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -49,4 +49,5 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- none
+- An exec oracle for permission modes with a shell-script fixture → give the owner read (0o500, not 0o100): the
+  interpreter must read the script ([journal](journal/2026-11-27/0020-323-exec-check.md)).
