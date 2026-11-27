@@ -3,13 +3,13 @@
 Areas `SG` (digital signatures: verify, sign, certify, digital IDs, trust, timestamps and
 long-term validation) and `PC` (platform conventions: unsaved changes, file changed on disk,
 crash recovery, Save As, print preference, multiple windows, the shortcuts list, offline use
-on the web). PLAN §4
+on the web, the app's language). PLAN §4
 (Security & signatures; Optimize & save), PLAN §1 R12 and R11 (files never leave the device), feature groups F-SC-2 … F-SC-4 and the
 platform rows of F-RD-1, F-RD-5 and F-OS-1 in [specs/TRACE.md](../TRACE.md). Inventory and
 coverage: [RESEARCH.md](RESEARCH.md). Format: ops/judge/CONTRACT.md §4.
 Milestones (PLAN §8): signatures are M9; conventions that need saving (unsaved changes, file
 changed on disk, crash recovery, Save As, several windows) are M6 (writer); the print
-preference and the shortcuts list are M4; offline use on the web is M10 (PWA offline).
+preference and the shortcuts list are M4; offline use on the web is M10 (PWA offline), and so is the app's language (localization).
 
 Shared rules for every journey in this file. The reader rules at the top of
 [reader.md](reader.md), the annotate rules in [annotate.md](annotate.md), the pages-edit rules
@@ -556,6 +556,45 @@ typed permission errors → enter the owner password (J-RD-29) → both are enab
   deleted; recovery never needs them: J-PC-03 restores only against an unchanged source file). The
   forms-security.md redaction residue search covers snapshots.
 
+### Language rules (J-PC-09, J-PC-10)
+
+- **The four languages** are English (`en`), Vietnamese (`vi`), Japanese (`ja`) and Simplified
+  Chinese (`zh-Hans`) (PLAN §8 row M10). The app's own text is everything it writes: menus,
+  toolbars, sidebars, inspectors, dialogs, notices, error messages, tooltips, accessible names
+  and the shortcuts list (J-PC-06). Text the platform supplies (macOS: the document
+  architecture's alerts, the open, save and print panels, and the menu items AppKit adds, such
+  as Services, Hide Others and Enter Full Screen) is the system's, in the language the app was
+  launched in.
+- **String catalogs.** Each platform has one catalog per language, keyed as its English one; a
+  key with plural forms has the forms of that language's CLDR plural rules (English: one and
+  other; Vietnamese, Japanese, Chinese: other). A contract test per platform checks that every
+  catalog has exactly English's keys, no empty value, and per key the same placeholders; that
+  every non-English value equal to its English value is on that catalog's reviewed
+  same-as-English list (such as "PDF"), so an untranslated copy of English fails; and that
+  every typed error code the binding exports has a catalog key.
+- **Errors are translated by the app, not the engine.** The engine returns typed errors, a code
+  and its values (CONSTITUTION 5); the app maps each code to its catalog entry and shows no
+  engine text (CONSTITUTION 6: the native layer only displays).
+- **Dates, times, numbers and sizes** use the platform's formatter (macOS: `FormatStyle`; web:
+  `Intl`) with the app's language and the system's (web: the browser's first preferred
+  locale's) region, as macOS does for a per-app language: `vi` on an `en-US` system formats as
+  `vi-US`. The tests compare against that formatter's output, not against fixed strings.
+- **The document is never translated.** Page content, the outline, annotation text and author
+  names, form field values, the file name and the text of document properties (title, author,
+  subject, keywords, producer) are shown exactly as stored, in every language, even when they
+  equal a catalog string.
+- **Which language.** With "Follow system" (the default), the app uses the first language in
+  the user's preferred list (macOS: the system and per-app language settings; web:
+  `navigator.languages`) that is one of the four, matched by language and script, the script
+  being the tag's own or else its CLDR likely script: `vi-VN` is `vi`; `zh`, `zh-CN` and `zh-SG`
+  are `zh-Hans`; `zh-TW`, `zh-HK`, `zh-Hant` and `zh-Hant-CN` match none. If none matches,
+  English.
+- **Spot strings** (fixed, so a catalog can't pass by copying English), two labels the app
+  draws itself on both platforms: the sidebar's Thumbnails tab is "Thumbnails", "Hình thu nhỏ",
+  "サムネイル", "缩略图", and the Annotate mode tool row's Highlight tool
+  ([information-architecture.md](../ui/information-architecture.md) §3) is "Highlight", "Tô sáng",
+  "ハイライト", "高亮" (en, vi, ja, zh-Hans), compared exactly.
+
 ## J-PC-01: Unsaved changes when closing and quitting
 - milestone: M6
 - platform: web, macos
@@ -755,3 +794,57 @@ and the fixture's bytes finds nothing.
 Offline does not make every feature work: features that need the network and that the user
 turns on (timestamps, online revocation checks, J-SG-09 and J-SG-10) can't reach their
 servers; this journey uses none of them.
+
+## J-PC-09: The app follows the system or browser language
+- milestone: M10
+- platform: web, macos
+- test: e2e.web.pc_language_system, e2e.macos.pc_language_system
+
+Fixture `languages.pdf`: 3 pages, over 1 MB (so its size shows a decimal part); document
+title "Save" and author "Lan"; a creation date; outline entries "Chapter One" and "Open"; a
+sticky note with the text "Ghi chú tiếng Việt", author "Lan" and a modification date (`/M`).
+Steps, run once per language `en`, `vi`, `ja`, `zh-Hans` (macOS: launch with
+`-AppleLanguages (<lang>)`; web: a Playwright context with `locale` `en-US`, `vi-VN`, `ja-JP`,
+`zh-CN`): launch → the start screen, and every menu item and toolbar control from the app's
+command registry (J-PC-06) that the app draws itself (not the ones macOS supplies), equal
+that catalog's entries; web: `<html lang>` is the language tag → open `languages.pdf` and
+choose Annotate mode → the spot strings are that language's → the page indicator, the outline ("Chapter One" and "Open", untranslated), the annotation list (the
+note's text and author unchanged, its date in the formatter's output) and Document Properties
+(title "Save" and author "Lan" unchanged; the creation date and the file size in the
+formatter's output) → open the shortcuts list (J-PC-06) → every command name and group
+heading is the catalog's → open `not-a-pdf.pdf` (text bytes) → the open-failed notice
+([information-architecture.md](../ui/information-architecture.md), "Open failed") is the
+catalog's entry for the engine's "not a PDF" code, with the file name unchanged → the
+accessibility audits (axe-core; the XCUITest audit) pass, and each accessible name checked is
+the catalog's.
+Fallback branch (web: the context `locale` is the first tag, and an init script sets
+`navigator.languages` to the list): the list `fr-FR`, `ja-JP` → Japanese; `zh` → Simplified
+Chinese; `zh-SG` → Simplified Chinese; `zh-TW` → English; `zh-HK` → English; `zh-Hant` →
+English; `fr-FR` → English.
+
+## J-PC-10: Choose the app's language
+- milestone: M10
+- platform: web, macos
+- test: e2e.web.pc_language_choose, e2e.macos.pc_language_choose
+
+Steps: launch with the system (web: browser) locale `en-US` → Preferences > Language lists
+"Follow system" (selected) and the four languages, each named in its own language (English,
+Tiếng Việt, 日本語, 简体中文); on macOS a note under it says that system menus and dialogs
+change at the next launch → open `languages.pdf` (J-PC-09's fixture), go to page 2, set the
+zoom to 150%, add a highlight without saving; web: set a sentinel property on `window` →
+choose Tiếng Việt → the app's own text (the command registry's items the app draws, the spot strings, the
+sidebar, the inspector, Preferences) switches to Vietnamese at once (on macOS the menu items the
+system supplies, the File menu's document commands among them, keep the launch language until
+the relaunch), with no relaunch (macOS: the same
+process) and no page reload (web: the sentinel is still set, and Playwright records no `load`
+or main-frame `framenavigated` event); web: `<html lang>` is `vi` → the document is still open
+on page 2 at 150%, the highlight is there, the document is marked edited, and Undo removes the
+highlight → Redo → the note's date and Document Properties' creation date and size are the
+formatter's output for `vi` with the region US, not for `en-US` → quit (J-PC-01's
+unsaved-changes prompt; discard) → launch again → the app is in Vietnamese while the system
+locale is still `en-US`; on macOS the platform-supplied text is too: add a highlight to
+`languages.pdf` and close it → the unsaved-changes alert's text equals that alert's text in a
+launch with `-AppleLanguages (vi)`; discard → open `languages.pdf` again and choose Annotate
+mode → choose 日本語, then 简体中文 → each applies at
+once (its spot strings) → choose "Follow system" → English again, at once; after a relaunch,
+still English → launch with the system locale `vi-VN` and "Follow system" → Vietnamese.

@@ -51,6 +51,7 @@ journey assigned to it to pass (PLAN §8).
 | Search, select and copy text, internal links, external links after a confirmation; scripts never run (F-RD-4) | J-RD-15 … J-RD-18, J-RD-28, J-RD-31 |
 | Read and presentation modes, dark or sepia page tint, print, document properties (F-RD-5) | J-RD-19 … J-RD-22, J-PC-04 |
 | The keyboard shortcuts list (PLAN R8; TRACE lists it under R8, not a feature group) | J-PC-06 |
+| The app's language: it follows the system or browser, or the user picks one of the four in Preferences (M10; PLAN §8 row M10; TRACE lists it under R8) | J-PC-09, J-PC-10 |
 
 **Review** (M5)
 | Feature | Journeys |
@@ -135,7 +136,7 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 | **Fast, without trading away safety.** A first page in under 200 ms for a typical 10 MB file, 60 fps scrolling | PLAN R2, §5; PLAN §8 rows M4 and M10 |
 | **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10; J-PC-08 |
 | **Open source.** MIT, with only permissively licensed dependencies | PLAN R10; CONSTITUTION 10 |
-| **In four languages.** The apps' text in English, Vietnamese, Japanese and Simplified Chinese at v1.0 | owner decisions ([languages](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945), [Simplified](https://github.com/jacobdam/jpdf3/issues/335)); PLAN §8 row M10; no journey yet: #334 |
+| **In four languages.** The apps' text in English, Vietnamese, Japanese and Simplified Chinese at v1.0 | owner decisions ([languages](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945), [Simplified](https://github.com/jacobdam/jpdf3/issues/335)); PLAN §8 row M10; J-PC-09 (the system or browser language), J-PC-10 (choosing one in Preferences) |
 
 ## 5. Platforms
 
