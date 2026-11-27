@@ -311,6 +311,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a
   URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant
   ([journal](journal/2026-11-27/0901-373-design-window.md)).
+- A tool that files or updates issues across nights (dedup by a key) → before round 1, run it in a test for two
+  nights over the cap (a shared write cap spent on updates starves new findings forever: create first) and with a
+  finding whose label changes between nights (list every label a key can carry); PR #384 R1.1, R1.2
+  ([journal](journal/2026-11-27/1405-302-nightly-issues.md)).
 - Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
   in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
   the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
