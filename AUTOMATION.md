@@ -55,7 +55,8 @@ GitHub (public repo jacobdam/jpdf3)
 | `specs/**` | feature specs, UI spec | agent |
 | `specs/TRACE.md` | requirement → journeys → specs → tests | agent; judge checks completeness |
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
-| `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit; its `Pending lessons` list holds lessons found after a PR's last review round (ADR 0011 §3) | agent |
+| `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit (ADR 0011 §3) | agent |
+| `ops/lessons/pending/YYYY-MM-DD-HHMM-<slug>.md` | one file per session holding the lessons it found after its PR's last review round, moved into `ops/LESSONS.md` by the next work PR (format in the directory's `README.md`; ADR 0011 §3) | agent |
 | `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | one file per session (since retro 0002; earlier entries in `ops/journal/YYYY-MM-DD.md`), each with a `Session:` line; committed to the session's work PR, or a records PR when there is none (ADR 0011 §3) | agent |
 | `ops/areas.toml` | the areas behind the `area:` labels: name, product or process, the paths each owns (ADR 0011 §4; checked by `cargo xtask issue-lint`) | agent |
 | `ops/QUEUE.md` | the Planner's plan for the current milestone: `Milestone:` line (read by `cargo xtask next-session` step 8), ready list, waits, critical path, design ahead (ops/TICK.md §9) | agent (Planner sessions) |
@@ -100,7 +101,7 @@ GitHub (public repo jacobdam/jpdf3)
    on the PR → posts commit status `ai-review`.
 8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
-9. RECORD: journal, STATUS.md, new issues for discoveries. Exit. The journal and STATUS go
+9. RECORD: journal, STATUS.md, a pending lesson file if any, new issues for discoveries. Exit. The journal and STATUS go
    into the work PR as a record commit pushed before step 7's `ai-review` post (ADR 0011 §3),
    so in time this step runs between the review rounds and that post.
 ```

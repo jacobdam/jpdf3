@@ -63,7 +63,3 @@ Phase: bootstrap (pilot)
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console. macOS CI runs no Rust tests.
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
-## Pending lessons
-- A test or spec claim that a fixture keeps N flags or labels independent ("a swapped field fails") → compute each
-  word's set of fixture items, opposites included, by script and run one swap mutant per pair before round 1; checked
-  by eye it took PR #393 three rounds (R1.2, R2.1, R3.1) ([journal](journal/2026-11-27/1501-390-status.md)).

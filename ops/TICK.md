@@ -97,7 +97,7 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
+cat ops/STATUS.md ops/LESSONS.md ops/lessons/pending/*.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -402,9 +402,10 @@ Each round K runs in this order:
      `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
      merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
      (it shows only what you changed while merging, conflict resolutions included). A **record
-     commit** (one that changes only files under `ops/journal/` and `ops/STATUS.md`) and a merge
-     whose remerge-diff is empty or touches only those paths are left out (ADR 0011 §3); a
-     commit touching any other file counts, `ops/LESSONS.md` included;
+     commit** (one that changes only files under `ops/journal/`, pending lesson files under
+     `ops/lessons/pending/` (not its `README.md`) and `ops/STATUS.md`) and a merge whose
+     remerge-diff is empty or touches only those paths are left out (ADR 0011 §3); a commit
+     touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
      regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
      lines and no new file, one **final check** runs (header
@@ -509,8 +510,8 @@ session.
   `/hold`. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Records go into the work PR** (ADR 0011 §3): the journal entry and the STATUS rewrite are
-  one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
+- **Records go into the work PR** (ADR 0011 §3): the journal entry, the STATUS rewrite and the
+  session's pending lesson file, if it has one (Lessons, below), are one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
   session without a work PR (a Planner run with nothing to change in `ops/QUEUE.md`, a "done:"
@@ -538,16 +539,19 @@ session.
   right heading, as one line in the form *situation → what to do* plus a link to the journal entry.
   Check for an existing entry first and refine it rather than duplicating it. A LESSONS change
   is not a record commit, so it goes into the work PR **before its last review round**. A lesson
-  found after that goes under `## Pending lessons` in `ops/STATUS.md` (the record commit carries
-  it); the next session that opens a work PR moves each one into `ops/LESSONS.md` before that
-  PR's round 1 and deletes it from the list. Skip a lesson that an open agent PR already moves
-  (its branch's `ops/LESSONS.md` has it: `git show origin/<branch>:ops/LESSONS.md`), so two
+  found after that goes into this session's own file, `ops/lessons/pending/YYYY-MM-DD-HHMM-<slug>.md`
+  (the journal entry's date and name), one line per lesson exactly as it will read in
+  `ops/LESSONS.md`; the record commit carries it, and no other session edits it
+  (`ops/lessons/pending/README.md` has the format). The next session that opens a work PR
+  moves the lines of each such file into `ops/LESSONS.md` before that PR's round 1 and deletes
+  the file in the same commit. Skip a file that an open agent PR already deletes
+  (`git diff --name-status origin/main...origin/<branch> -- ops/lessons/pending/`), so two
   open PRs never add it twice.
 - **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
   step, blockers. It has no "last session" section (the journal files are that record). A merge
   of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
-  0011 §3), dropping lines about PRs that have merged since. Its `Pending lessons` list is main's
-  list, minus the ones this PR moved into LESSONS, plus the ones this PR added.
+  0011 §3), dropping lines about PRs that have merged since. It has no `Pending lessons` list
+  (they are files, Lessons above).
 - **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
@@ -617,7 +621,8 @@ session.
    - a verdict on the previous retro's items (**keep / revert / extend**)
 3. **Curate `ops/LESSONS.md`** (keep ≤ 60 entries): merge duplicates, delete stale ones, and
    promote any lesson that recurred 3+ times into this file, a template or an ADR (then remove
-   it from LESSONS).
+   it from LESSONS). Fold the lines of every pending lesson file still in `ops/lessons/pending/`
+   (all but its `README.md`) into LESSONS, or drop a stale one, and delete the file.
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
    reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
    PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
@@ -692,7 +697,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/` and `ops/STATUS.md`). The check's brief: that diff, the ledger, the
+      `ops/journal/`, pending lesson files and `ops/STATUS.md`, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
