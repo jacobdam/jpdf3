@@ -63,14 +63,26 @@ extra fuzz time (#301); filing issues is #302)
    `jpdf_bench::engine::run_child`: stdin and stdout on the null device, its own process
    group killed at exit and at the limit, the bench watchdog (started first; if it can't start
    the nightly is a tool failure) killing it if xtask dies (specs/tooling/bench.md item 7), and
-   at most 4 KiB of stderr kept.
+   the **last** 4 KiB of stderr kept (item 5).
 5. **Classification** (CONTRACT §1): exit 0 `ok`, 2 `error`, 3 `not_implemented`, a kill at
    the time limit `timeout`, any other code, a signal or a spawn failure `crash`. Each run
    records `exit` (the code, or `null`), `signal` (the signal number on unix when the child
    was ended by one that was not our time-limit kill, else `null`) and `ms` (wall time from
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
-   UTF-8, the **first** 4 KiB; the judge keeps the last 8 KiB, so a long log can push the panic
-   message out: #322 keeps the tail instead).
+   UTF-8, the **last** 4 KiB, as the judge keeps the last 8 KiB, so a panic message or abort
+   reason after a long log is kept, #322). `run_child`'s tail mode (`Keep::Tail`) reads the
+   pipe to its end through a deque reserved once for the cap, plus one 8 KiB read chunk (room
+   is made before each chunk is added, so the kept bytes never exceed the cap and the deque
+   never reallocates; if the reservation fails, nothing is kept and the pipe is still
+   read until its end, a read error or the stop below, with the chunk on the reader's stack
+   (no other heap allocation), so the run records no stderr but is classified as usual); a flood costs
+   CPU until the run's group is killed (at exit or at the time limit). Once the run is
+   collected (at most 1 s after exit, as before), the reader stops at its next read, so a
+   grandchild that escaped the group and holds the pipe can't keep it draining; such a run
+   records no stderr (what the reader drained is dropped). The head mode loses its bytes the
+   same way, unless they filled the 4 KiB cap before the 1 s collection timeout. No nightly child is known to do this (jpdf-bench gives its
+   children their own pipe or the null device, never its stderr). The bench's
+   engine probes keep the head (`Keep::Head`, specs/tooling/bench.md item 2).
 6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
    item 11 use it too), `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
    exactly `2097152` (2 GiB in KiB, the judge's `RLIMIT_AS`). If it does, every run is
@@ -179,7 +191,7 @@ extra fuzz time (#301); filing issues is #302)
     `jpdf-bench --cli <release>/jpdf-cli --out DIR/bench.json --corpus DIR/bench-corpus --sample <n>`
     (absolute paths; the engines' defaults: mutool and pdfium_test are used when found on
     `PATH`), run like a regress run (item 4: its own process group, the watchdog, stdout on
-    the null device, the first 4 KiB of stderr kept and printed when it didn't end `ok`)
+    the null device, the last 4 KiB of stderr kept and printed when it didn't end `ok`)
     and through the memory wrapper when it applies (item 6), so jpdf-bench and every program
     it starts run under the 2 GiB limit. Its time limit is `--bench-minutes`; at the limit its
     group is killed (jpdf-bench's own watchdog then kills the groups of its children,
@@ -258,7 +270,7 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
 
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
-  enforces it (item 6); stderr kept ≤ 4 KiB per run, stdout never read.
+  enforces it (item 6); stderr kept ≤ 4 KiB per run (the last bytes; the reader's buffers: a deque reserved once for 4 KiB and one 8 KiB chunk), stdout never read.
 - Whole run: the limits part (item 11: seven generated files of ≤ 512 MiB, each run ≤ 20 s, so
   at most 140 s of runs plus the writes; about 15 s locally), then `--max-minutes` (≤ 1440) plus
   at most one run's limit for the regress part, whose clock starts after the limits part; `--limit` ≤ 200 000 rows
@@ -278,7 +290,7 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   verified files, and 21 give 20; exactly 100 new artifacts are copied and a 101st is not; a run at elapsed = budget − 1 ns runs, at elapsed = budget
   it is `not_run`; a previous file of exactly the cap is read and one byte more fails, and
   a file list of exactly the cap passes and one more fails (both caps passed in small by the
-  tests, which also pin the real values); stderr is cut at exactly 4096 bytes.
+  tests, which also pin the real values); stderr is cut at exactly 4096 bytes: a tail of exactly the cap is kept whole and one byte more drops the first byte, and a 5000-byte log ending in a panic line keeps that line.
 - No panics: no `unwrap`, `expect` or indexing on input-derived data (workspace lints);
   counts use saturating arithmetic; `ms` is `u128` milliseconds written as a JSON number.
 
@@ -288,7 +300,7 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
 - **Hostile bytes:** the nightly never parses PDF bytes. `jpdf-cli` runs as a separate process
   under the judge's limits, in its own group, with the watchdog. Only files that pass the blob
   check run (item 3). Paths given to it are absolute.
-- **Hostile output:** `jpdf-cli`'s stderr is data (CONSTITUTION 1). It is cut at 4 KiB, decoded
+- **Hostile output:** `jpdf-cli`'s stderr is data (CONSTITUTION 1). It is cut to its last 4 KiB, decoded
   lossily and JSON-escaped (`jpdf_bench::json::string`) before it is written, so it can't
   break the results file. The previous results file is untrusted input: bounded, strictly
   parsed, every value checked (item 9); its blob ids and URLs are only compared and escaped.
@@ -317,6 +329,14 @@ Self-check:
     added, removed and missing files, each status change direction for `new_failures` and
     `fixed`, an unchanged pair (not listed) and the sort order.
   - A deadline off by one: the boundary test in "Limits".
+  - A stderr reader that keeps the head, drops the end of the last read, or keeps one byte too
+    many or too few: the fake `jpdf-cli`'s 5000-byte log ends in a panic line that must be the
+    end of the kept 4096 bytes (it fails with `Keep::Head`), and `read_tail`'s unit tests cover
+    the exact cap, one byte past it, a cap across several read chunks, an `Interrupted` read
+    (retried), a hard read error (stops, keeps what it read) and an endless reader that the
+    stop flag ends mid-drain. Not tested: that `run_child` sets the flag after collecting
+    the run (one line after `recv_timeout`; no hook observes the reader thread), and the
+    memory bound (stated, not measured).
   - A validator that accepts anything: one test per rejected shape of the previous file
     (schema 2, a string schema, no `files`, a bad blob, a repeated blob, an unknown op, a
     repeated op, an unknown status, a missing file with runs, too many files, too large), each

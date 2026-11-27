@@ -50,8 +50,8 @@ Status: implemented
    it. The other four classes are their target size.
 5. **Runs and verdicts.** Each file gets one run, `jpdf-cli info <absolute path>`, with the
    judge's 20 s `info` limit, through `jpdf_bench::engine::run_child` as in the nightly (its own
-   process group, killed at the limit; stdin and stdout on the null device; the first 4 KiB of
-   stderr kept). The verdict:
+   process group, killed at the limit; stdin and stdout on the null device; the last 4 KiB of
+   stderr kept, specs/tooling/nightly.md item 5). The verdict:
    - `crash`: the run crashed (a signal, an exit code other than 0, 2 or 3, or a spawn failure);
    - `timeout`: killed at the time limit;
    - `pass`: an exit-0 case exited 0, or an exit-2 case exited 2 with `jpdf-cli: <expected text>`

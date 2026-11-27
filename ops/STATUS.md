@@ -4,7 +4,7 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
+- main is green: ci run 45914751752 for cf87e1e (PR #362's merge) passed.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #305 (dashboard 1/2) merged (PR #354). The page is #353 (`ready`): finished work on branch
@@ -47,4 +47,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none)
+- A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
+  can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
+  of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
