@@ -4,13 +4,15 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
-- #301 (nightly 2/3) merged (PR #351); its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on
-  #322, PR #362: the nightly keeps the last 4 KiB of stderr) reads `nightly.json` and `limits.json` as well as `regress.json`.
+- main is green: ci run 45916075639 for dd478e4 (PR #363's merge) passed.
+- #323 (exec check) is PR #364: round 1 clean after wording fixes, `ai-review` success; origin/main merged in
+  (STATUS conflict only), auto-merge on.
+- #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
+  #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #305 (dashboard 1/2) merged (PR #354). The page is #353 (`ready`): finished work on branch
   `t/353-dashboard-page` (75d990f); merge origin/main into it and open the PR. #306 (judge metrics) now depends on #353.
-- Planner 2026-11-26 (PR #358): `ready` on #350, #352, #353; filed design issue #357 (`ready`) for the 6 open
-  `cargo xtask nightly` issues, so the next pick is a Design: technical session on it.
+- ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
+  2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
 - Work mix 0 of 20: #353 (`apps/web/`) is the only open M0 issue that counts as milestone work; the mix rises once
   M0 closes and M1 opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
@@ -18,14 +20,12 @@ Phase: bootstrap (pilot)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
-- #25 (PR #349, merged): `cargo xtask limits`, run by the nightly (exit 4 on a failed case). Its deferral #350 (order
-  test) waits for the Planner.
 - #21 waits on #19 (#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). #357's design PR #359 is open, so rule i comes next (#303, …
-   lowest first; #323 is PR #364, auto-merge on).
+0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window passes,
+   then rule i (#303, #344, #353, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -49,5 +49,4 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- An exec oracle for permission modes with a shell-script fixture → give the owner read (0o500, not 0o100): the
-  interpreter must read the script ([journal](journal/2026-11-27/0020-323-exec-check.md)).
+(none)
