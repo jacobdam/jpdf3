@@ -9,6 +9,8 @@ Phase: bootstrap (pilot)
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #305 (dashboard 1/2) merged (PR #354). The page is #353 (`ready`): finished work on branch
   `t/353-dashboard-page` (75d990f); merge origin/main into it and open the PR. #306 (judge metrics) now depends on #353.
+- #344 (driver test's 200-PR bound): PR #365, auto-merge on. Follow-ups #366 (the test needs GNU `touch -d`, fails on
+  macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
   2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
 - Work mix 0 of 20: #353 (`apps/web/`) is the only open M0 issue that counts as milestone work; the mix rises once
@@ -23,7 +25,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window passes,
-   then rule i (#303, #323, #344, #353, lowest first).
+   then rule i (#303, #323, #353, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's

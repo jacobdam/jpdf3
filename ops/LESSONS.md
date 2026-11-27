@@ -102,7 +102,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
 - Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
   use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
-  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
+  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)). Both forms are GNU-only: macOS `touch` rejects
+  them, so a driver test (the driver runs on the Mac mini) must also run there; to run one now, put a `touch -d` →
+  `touch -t` shim first on PATH (#366, [journal](journal/2026-11-27/0030-344-limit-bound.md)).
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
