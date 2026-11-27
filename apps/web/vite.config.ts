@@ -1,8 +1,9 @@
 import { defineConfig, type Plugin } from "vite";
 import { CSP } from "./csp";
 
-// Adds the CSP meta tag to the built index.html only. The dev server injects its own inline
-// scripts (HMR), so it runs without the policy; every E2E test runs against the build.
+// Adds the CSP meta tag to every built page (index.html and dashboard/index.html). The dev
+// server injects its own inline scripts (HMR), so it runs without the policy; every E2E test
+// runs against the build.
 function cspMeta(): Plugin {
   return {
     name: "jpdf-csp-meta",
@@ -31,6 +32,8 @@ export default defineConfig({
     assetsInlineLimit: 0,
     sourcemap: false,
     rollupOptions: {
+      // The web app and the metrics dashboard (specs/tooling/dashboard.md); both get the CSP.
+      input: { app: "index.html", dashboard: "dashboard/index.html" },
       // MUI marks modules "use client" for React Server Components; meaningless in a SPA.
       onwarn(warning, warn) {
         if (warning.code !== "MODULE_LEVEL_DIRECTIVE") warn(warning);
