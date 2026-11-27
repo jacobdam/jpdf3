@@ -7,9 +7,10 @@ Phase: bootstrap (pilot)
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
 - #372 (owner `/approve` on design PRs): PR #376 merged, "done:" posted (#378). Follow-up #377 (`Ops`, without `ready`).
 - #334 (journeys for the four app languages, Design: product): PR #379 (J-PC-09, J-PC-10; TRACE R8; PRODUCT.md §2, §4),
-  4 rounds, `ai-review` success; labeled `design`, so it merges after its 24-hour window unless the owner `/hold`s it
-  (`owner-todo` on #334; three owner choices in the PR description). Follow-up #380 (specs/ui Preferences Language
-  row, plus R4.1's reflow), M10 without `ready`.
+  4 rounds, `ai-review` success; labeled `design`, so it merges after its 24-hour window (from 2026-11-27 13:33 UTC)
+  unless the owner `/hold`s it (three owner choices in the PR description). `owner-todo` on #334 was removed at
+  13:43 UTC by the shared account (owner or session unknown). Follow-up #380 (specs/ui Preferences Language row,
+  plus R4.1's reflow), M10 without `ready`.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
@@ -18,8 +19,8 @@ Phase: bootstrap (pilot)
 - #323 (nightly exec check): PR #364 merged (bc6c053).
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
-- ADR 0013 (#357, PR #359) merged (ecc89a0). Its tasks #360, #361 are `ready` (Planner 2026-11-27); they fold #350
-  and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
+- ADR 0013 (#357, PR #359) merged (ecc89a0). Task 1 #360: PR #382 merged (f51a2b9). Task 2
+  #361 (`ready`) depends on it; #302 also depends on #360. #322 merged (PR #362).
 - Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
@@ -31,7 +32,7 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i (#303, lowest first).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361, lowest first; PR #382 merged).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -55,6 +56,9 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
+- A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
+  old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
+  R1.1).
 - A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
   (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
   ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1)
