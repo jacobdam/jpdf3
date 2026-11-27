@@ -701,7 +701,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/` and `ops/STATUS.md` and adding or editing new pending lesson files, §4 step 6). The check's brief: that diff, the ledger, the
+      `ops/journal/` and `ops/STATUS.md` and adding or editing pending lesson files not on origin/main, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
@@ -856,7 +856,7 @@ gate them.
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
-   record commits skip review: journal, STATUS and new pending lesson files, §4 step 6); the brief adds this section and ADR 0011 §1, and
+   record commits skip review: journal, STATUS and pending lesson files not on origin/main, §4 step 6); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
