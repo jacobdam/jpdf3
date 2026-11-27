@@ -6,7 +6,7 @@ Phase: bootstrap (pilot)
 ## In flight
 - main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
 - #301 (nightly 2/3) merged (PR #351); its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on
-  #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
+  #322, PR #362: the nightly keeps the last 4 KiB of stderr) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #305 (dashboard 1/2) merged (PR #354). The page is #353 (`ready`): finished work on branch
   `t/353-dashboard-page` (75d990f); merge origin/main into it and open the PR. #306 (judge metrics) now depends on #353.
 - Planner 2026-11-26 (PR #358): `ready` on #350, #352, #353; filed design issue #357 (`ready`) for the 6 open
@@ -24,8 +24,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: `design-technical design-issue #357` (step 6), then rule i
-   (#303, #322, #323, … lowest first).
+0. `cargo xtask next-session` (TICK §2). #357's design PR #359 is open, so rule i comes next (#303, #323, …
+   lowest first; #322 is PR #362, auto-merge on).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -49,4 +49,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none)
+- A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
+  can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
+  of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
