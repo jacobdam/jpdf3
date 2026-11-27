@@ -66,6 +66,11 @@ setup; run ok t/1 t/13-nopr t/12-open-x
 check "exact branch names: t/1, t/13-nopr, t/12-open-x kept; t/12-open (no PR) removed" "edge fresh nopr prefix suffix "
 setup; run ok $(seq -f 't/9%02g-other' 1 30) t/12-open
 check "31 open PRs (the gh default --limit is 30), the one this worktree has last: kept" "edge fresh open "
+# The read bound is exactly 200 (#344): PR 200 is read, PR 201 is not.
+setup; run ok $(seq -f 't/9%03g-other' 1 199) t/12-open
+check "200 open PRs, the one this worktree has last: kept" "edge fresh open "
+setup; run ok $(seq -f 't/9%03g-other' 1 200) t/12-open
+check "201 open PRs, the one this worktree has last (past the 200 read): removed" "edge fresh "
 setup; run ok t/12-open fork:t/13-nopr
 check "a fork's PR with an agent branch name keeps nothing: t/13-nopr removed" "edge fresh open "
 cd "$tmp/repo" && [[ -z "$(git worktree list --porcelain | grep -c prunable | grep -v '^0$')" ]] && echo "ok   git worktree prune ran (no prunable entries)" || { echo "FAIL prunable worktrees left"; fail=1; }
