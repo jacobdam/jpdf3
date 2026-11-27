@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use jpdf_testgen::json::{self, Value};
 
+mod status;
+
 const OWNER: &str = "jacobdam";
 const TAG: &str = "🤖 jpdf-agent";
 const ISSUE_URL: &str = "https://github.com/jacobdam/jpdf3/issues/";
@@ -52,7 +54,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         [flag, dir] if flag == "--from" => Ok(Options {
             from: Some(PathBuf::from(dir)),
         }),
-        _ => Err("next-session takes only --from DIR".to_owned()),
+        _ => Err("it takes only --from DIR".to_owned()),
     }
 }
 
@@ -452,6 +454,12 @@ pub fn run(root: &Path, opts: &Options) -> Result<String, Error> {
     decide(&inp).map_err(Error::Broken)
 }
 
+/// `cargo xtask status` (specs/tooling/status.md): the generated status, from the same inputs.
+pub fn status(root: &Path, opts: &Options) -> Result<String, Error> {
+    let inp = load(root, opts.from.as_deref())?;
+    status::render(&inp).map_err(Error::Broken)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Parsing
 
@@ -581,6 +589,10 @@ struct Pr {
     review: Option<Review>,
     /// Open and on the owner's `/hold` (`held_prs`), set by `decide`.
     held: bool,
+    /// Open and `mergeable` is `CONFLICTING` (part of `failing`).
+    conflict: bool,
+    /// Open and its rollup has a failing check or no `ai-review` success (part of `failing`).
+    rollup_bad: bool,
 }
 
 impl Pr {
@@ -742,6 +754,8 @@ fn parse_prs(text_: &str) -> Result<Vec<Pr>, String> {
             created: created.to_owned(),
             review,
             held: false,
+            conflict: open && conflict,
+            rollup_bad,
         };
         // The account is shared with the owner: only tagged PRs are the agent's own.
         if tagged(body) {
@@ -1672,7 +1686,8 @@ fn plan_milestone(queue: Option<&str>) -> Option<&str> {
         .map(str::trim)
 }
 
-fn decide(inp: &Inputs) -> Result<String, String> {
+/// The pick and the brief's notes.
+fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
     let mut prs = parse_prs(&inp.prs)?;
     let held = held_prs(&inp.holds)?;
     for p in &mut prs {
@@ -2184,6 +2199,11 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if p.first.starts_with("planner") {
         notes.push(mix.note());
     }
+    Ok((p, notes))
+}
+
+fn decide(inp: &Inputs) -> Result<String, String> {
+    let (p, notes) = choose(inp)?;
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
     for l in &p.load {
         let _ = writeln!(out, "- {l}");
