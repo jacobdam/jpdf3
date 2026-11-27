@@ -154,9 +154,10 @@ extra fuzz time (#301); filing issues is #302)
       This includes the case where every row is missing because of it (no network): that
       stops before the runs with 75, not 1, since the cause is infrastructure. The line
       `JUDGE-INFRA-FAILURE: <n> regress files could not be fetched` is printed once, at the
-      end, exactly when the exit code is 75 (ADR 0013 task 1 changed this: before it, a
-      no-network night whose limits part had a tool failure printed the line at the stop and
-      exited 1; now that night exits 1 without it);
+      end, exactly when the exit code is 75 (ADR 0013 task 1 changed this: before it,
+      the line followed the regress part's own code, so any night whose regress part was 75
+      (no network, or too many rows not downloaded while some files ran) and whose limits part
+      had a tool failure printed the line and exited 1; now such a night exits 1 without it);
     - 4: a limits case did not pass (item 11) and the regress part would have exited 0: a
       hostile file that crashes, hangs or gets the wrong answer is a regression, unlike a regress
       file's status. When the regress part exits 1 or 75, that code wins (a 75 night is rerun,

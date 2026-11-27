@@ -25,6 +25,8 @@ const FULL: [&str; 13] = [
 struct Fake {
     bad: Vec<(&'static str, Step)>,
     jobs: Vec<Job>,
+    /// What the `memory` step returns.
+    mem: bool,
     calls: Vec<String>,
 }
 
@@ -74,6 +76,7 @@ impl Fake {
         Fake {
             bad: Vec::new(),
             jobs,
+            mem: true,
             calls: Vec::new(),
         }
     }
@@ -114,7 +117,8 @@ impl Steps for Fake {
     }
 
     fn memory(&mut self) -> Result<bool, Step> {
-        self.data("memory", true)
+        let mem = self.mem;
+        self.data("memory", mem)
     }
 
     fn watchdog(&mut self) -> Step {
@@ -226,6 +230,23 @@ fn every_step_runs_once_in_the_spec_order_with_its_data() {
     );
 }
 
+/// The memory step's answer reaches every step that runs `jpdf-cli` (a probe that fails on
+/// macOS must not put the runs through the wrapper).
+#[test]
+fn the_memory_answer_reaches_every_step_that_runs_the_cli() {
+    let mut f = Fake::new(two());
+    f.mem = false;
+    let log = drive(&mut f, Log::default());
+    assert_eq!(log.names(), FULL);
+    assert_eq!(f.calls[5], "limits /fake/jpdf-cli false");
+    assert_eq!(
+        f.calls[9],
+        "runs a,b- /fake/work/render.png /fake/jpdf-cli false"
+    );
+    assert_eq!(f.calls[10], "results a,b- complete=false false");
+    assert_eq!(f.calls[12], "extra a,b- false");
+}
+
 /// One run per failing step (ADR 0013 "Verification"): a stopping step ends the log at
 /// itself; after the others the night goes on to the end.
 #[test]
@@ -313,6 +334,10 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
         Log::default(),
     );
     assert_eq!(log.names(), [to_fetch, &["files"]].concat());
+    assert_eq!(
+        log.entries()[8].1,
+        Step::Failed("no regress file to run (2 rows missing)".into())
+    );
     assert_eq!(steps::exit_code(&log), 1);
     // No network: the fetch's 75 alone, with the marker.
     let mut f = Fake::new(none()).with("fetch", infra());

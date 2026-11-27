@@ -59,10 +59,19 @@ impl Log {
 
     /// Records `step`'s outcome.
     pub fn push(&mut self, step: &'static str, outcome: Outcome) {
-        if let (Some(prefix), Outcome::Failed(why)) = (self.prefix, &outcome) {
-            eprintln!("{prefix}{why}");
+        if let Some(line) = self.line(&outcome) {
+            eprintln!("{line}");
         }
         self.entries.push((step, outcome));
+    }
+
+    /// What [`Log::push`] prints for `outcome`: `<prefix><reason>` for `Failed` in a printing
+    /// log, else nothing.
+    fn line(&self, outcome: &Outcome) -> Option<String> {
+        match (self.prefix, outcome) {
+            (Some(prefix), Outcome::Failed(why)) => Some(format!("{prefix}{why}")),
+            _ => None,
+        }
     }
 
     /// Records a step that stops the tool unless it is `Ok`; returns whether it was.
@@ -193,6 +202,20 @@ mod tests {
             infra_line(&log(&[infra(), Outcome::Infra("later".into())])).as_deref(),
             Some("JUDGE-INFRA-FAILURE: 3 regress files could not be fetched")
         );
+    }
+
+    /// The only stderr path for tool failures (`main` prints none for the nightly).
+    #[test]
+    fn a_printing_log_prints_failed_reasons_only() {
+        let l = Log::printing("xtask: nightly: ");
+        assert_eq!(
+            l.line(&Outcome::Failed("cannot write x".into())).as_deref(),
+            Some("xtask: nightly: cannot write x")
+        );
+        for o in [Outcome::Ok, Outcome::Finding, Outcome::Infra("i".into())] {
+            assert_eq!(l.line(&o), None, "{o:?}");
+        }
+        assert_eq!(Log::default().line(&Outcome::Failed("x".into())), None);
     }
 
     #[test]
