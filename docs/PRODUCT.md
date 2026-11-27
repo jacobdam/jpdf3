@@ -51,6 +51,7 @@ journey assigned to it to pass (PLAN §8).
 | Search, select and copy text, internal links, external links after a confirmation; scripts never run (F-RD-4) | J-RD-15 … J-RD-18, J-RD-28, J-RD-31 |
 | Read and presentation modes, dark or sepia page tint, print, document properties (F-RD-5) | J-RD-19 … J-RD-22, J-PC-04 |
 | The keyboard shortcuts list (PLAN R8; TRACE lists it under R8, not a feature group) | J-PC-06 |
+| The app's language: it follows the system or browser, or the user picks one of the four in Preferences (M10; PLAN §8 row M10; TRACE lists it under R8) | J-PC-09, J-PC-10 |
 
 **Review** (M5)
 | Feature | Journeys |
