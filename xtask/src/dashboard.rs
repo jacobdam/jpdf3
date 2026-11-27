@@ -1635,8 +1635,15 @@ mod tests {
                 Vec::new()
             };
             assert_eq!(snap.truncated, want, "{n} dispatched runs");
-            let snap =
-                compute(&judge_inputs(&runs, &[]), until, until).unwrap_or_else(|e| panic!("{e}"));
+            // The schedule list as the first of two, as in a live run.
+            let inp = Inputs {
+                nightly_runs: Some(vec![
+                    ("runs-schedule.json".to_owned(), list.clone()),
+                    ("runs-workflow_dispatch.json".to_owned(), "[]".to_owned()),
+                ]),
+                ..judge_inputs(&[], &[])
+            };
+            let snap = compute(&inp, until, until).unwrap_or_else(|e| panic!("{e}"));
             let want: Vec<String> = if flagged {
                 vec!["runs-schedule".to_owned()]
             } else {

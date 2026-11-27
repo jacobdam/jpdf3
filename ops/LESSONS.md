@@ -141,6 +141,11 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27). A Rust check that mirrors a GitHub Actions `if:` expression → fold case:
   `startsWith`/`contains` there ignore case (PR #296 R1.1: [journal](journal/2026-11-24/0150-295-hold-skip.md)).
+- Reading a judge output (report.json, gates.json) in a tool or page → read the writer in ops/judge/ for every value
+  each field can take, not one downloaded sample: verdict.py writes journey `pass: None` when a platform has no e2e
+  results (push runs without macOS), and nightlies also run on `workflow_dispatch` (PR #370 R1.1, R1.6). A "rejects
+  over the cap" test must use otherwise valid input, or the parse error passes it (R2.1)
+  ([journal](journal/2026-11-27/0106-306-judge-metrics.md)).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
