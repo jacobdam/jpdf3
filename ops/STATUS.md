@@ -5,8 +5,11 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
-- #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
-  comments. Follow-up #377 (wording, `Ops`, without `ready`).
+- #372 (owner `/approve` on design PRs): PR #376 merged, "done:" posted (#378). Follow-up #377 (`Ops`, without `ready`).
+- #334 (journeys for the four app languages, Design: product): PR #379 (J-PC-09, J-PC-10; TRACE R8; PRODUCT.md §2, §4),
+  4 rounds, `ai-review` success; labeled `design`, so it merges after its 24-hour window unless the owner `/hold`s it
+  (`owner-todo` on #334; three owner choices in the PR description). Follow-up #380 (specs/ui Preferences Language
+  row, plus R4.1's reflow), M10 without `ready`.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
@@ -52,4 +55,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- none
+- A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
+  (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
+  ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1)
