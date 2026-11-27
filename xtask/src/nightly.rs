@@ -14,6 +14,8 @@ use jpdf_bench::engine::{self, Keep, Outcome, Status};
 use jpdf_corpus::{Tier, fetch, manifest};
 use jpdf_testgen::json::{self, Value};
 
+use crate::steps::{self, Log, Outcome as Step};
+
 /// Most `--limit` rows and most files in a previous results file (the corpus manifest's cap).
 const MAX_ROWS: u64 = 200_000;
 /// Most `--max-minutes`.
@@ -163,6 +165,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
 }
 
 /// One manifest row: `path` is `None` when the cached file failed the blob check (missing).
+#[derive(Debug, Clone)]
 struct Job {
     blob: String,
     url: String,
@@ -583,138 +586,275 @@ pub(crate) fn build_cli(root: &Path) -> Result<PathBuf, String> {
     Ok(root.join(target).join("release").join("jpdf-cli"))
 }
 
-/// The whole nightly (spec items 2–10). `Ok(code)` is the exit code; `Err` is a tool failure
-/// before the runs (exit 1).
-pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
-    let previous = load_previous(opts.previous.as_deref())?;
-    let cli = std::path::absolute(build_cli(root)?).map_err(|e| e.to_string())?;
-    if !is_executable_file(&cli) {
-        return Err(format!(
-            "no executable jpdf-cli at {} after the build",
-            cli.display()
-        ));
-    }
-    let mem = memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))?;
-    engine::start_watchdog()?;
-    // Spec item 11: the limits cases first, so a night without network still runs them.
-    let target = crate::limits::DEFAULT_MIB.saturating_mul(1024 * 1024);
-    let limits = crate::limits::run_with(&cli, mem, &opts.out, target);
-    if let Err(e) = &limits {
-        eprintln!("xtask: nightly: limits: {e}");
-    }
-    let code = regress(root, opts, &previous, &cli, mem)?;
-    Ok(with_limits(code, &limits))
+/// The corpus step's data for the fetch (spec item 3): the selected rows and the cache dir.
+struct Corpus {
+    entries: Vec<manifest::Entry>,
+    dir: PathBuf,
 }
 
-/// The exit code once the limits cases ran too (spec items 10 and 11): a tool failure in
-/// either part is 1, then the regress part's infrastructure failure 75, then a failed limits
-/// case 4.
-pub(crate) fn with_limits(regress: u8, limits: &Result<bool, String>) -> u8 {
-    match (regress, limits) {
-        (1, _) | (_, Err(_)) => 1,
-        (0, Ok(false)) => 4,
-        (code, _) => code,
-    }
+/// What the regress runs produced (spec items 4–7).
+struct Ran {
+    files: Vec<FileResult>,
+    complete: bool,
 }
 
-/// The regress part of the nightly (spec items 3–10), then the bench and the fuzz pass
-/// (items 12–15).
-fn regress(
-    root: &Path,
-    opts: &Options,
-    previous: &Previous,
-    cli: &Path,
-    mem: bool,
-) -> Result<u8, String> {
-    let cache = jpdf_corpus::resolve_cache(
-        opts.cache.clone(),
-        std::env::var_os("JPDF_CORPUS_CACHE").map(PathBuf::from),
-        std::env::var_os("HOME").map(PathBuf::from),
-        &jpdf_corpus::repo_root(),
-    )
-    .map_err(|e| e.to_string())?;
-    let m = manifest::load(&Tier::Regress.manifest()).map_err(|e| e.to_string())?;
-    let entries = fetch::select(m.entries, opts.limit);
-    let dir = jpdf_corpus::sub_dir(&cache, Tier::Regress.name()).map_err(|e| e.to_string())?;
-    let report = fetch::fetch(&entries, &dir, &fetch::Options::default());
-    for line in report.integrity.iter().chain(&report.failed) {
-        eprintln!("xtask: nightly: fetch: {line}");
-    }
-    eprintln!("xtask: nightly: fetch: {}", report.summary());
-    let infra = || {
-        eprintln!(
-            "JUDGE-INFRA-FAILURE: {} regress files could not be fetched",
-            report.failed.len()
-        );
-    };
-    let jobs = jobs_for(&entries, &dir);
-    if let Some(stop) = nothing_to_run(&jobs, report.exit_code()) {
-        if stop == Ok(75) {
-            infra();
+/// The nightly's steps (spec item 15), called only by [`drive`] (ADR 0013, P4). Each returns
+/// its own [`Step`] outcome, plus the data a later step needs; none decides the order.
+trait Steps {
+    /// Item 9: the previous night, loaded and checked before anything else.
+    fn previous(&mut self) -> Result<Previous, Step>;
+    /// Item 2: the release build; the absolute path of `jpdf-cli`.
+    fn build(&mut self) -> Result<PathBuf, Step>;
+    /// Item 10: an executable `jpdf-cli` where the build put it.
+    fn executable(&mut self, cli: &Path) -> Step;
+    /// Item 6: whether runs get the memory wrapper.
+    fn memory(&mut self) -> Result<bool, Step>;
+    /// Item 4: the engine watchdog.
+    fn watchdog(&mut self) -> Step;
+    /// Item 11: the limits cases (`Finding` when one failed).
+    fn limits(&mut self, cli: &Path, mem: bool) -> Step;
+    /// Item 3: the cache and the manifest's selected rows.
+    fn corpus(&mut self) -> Result<Corpus, Step>;
+    /// Item 3: the fetch and its rows as jobs (`Infra` by the judge's rule, `Failed` for an
+    /// integrity failure).
+    fn fetch(&mut self, corpus: &Corpus) -> (Step, Vec<Job>);
+    /// The work directory; the absolute path renders go to.
+    fn workdir(&mut self) -> Result<PathBuf, Step>;
+    /// Items 4–7: the regress runs (`Failed` when a run could not start).
+    fn runs(&mut self, jobs: &[Job], png: &Path, cli: &Path, mem: bool) -> (Step, Ran);
+    /// Item 8: `regress.json`.
+    fn results(&mut self, ran: &Ran, mem: bool) -> Step;
+    /// Item 9: `regress-diff.json`.
+    fn diff(&mut self, previous: &Previous, ran: &Ran) -> Step;
+    /// Items 12–14: the bench, the fuzz pass and `nightly.json`, one step until ADR 0013
+    /// task 2 (#361) splits it.
+    fn extra(&mut self, jobs: &[Job], mem: bool) -> Step;
+}
+
+/// The nightly's order (spec items 10, 11 and 15): which steps run, and what a failure stops.
+/// Returns `log` with every step that ran, in order.
+fn drive(s: &mut dyn Steps, mut log: Log) -> Log {
+    let _ = sequence(s, &mut log);
+    log
+}
+
+/// [`drive`]'s body; `None` is a stop.
+fn sequence(s: &mut dyn Steps, log: &mut Log) -> Option<()> {
+    let previous = log.take("previous", s.previous())?;
+    let cli = log.take("build", s.build())?;
+    log.proceed("executable", s.executable(&cli))
+        .then_some(())?;
+    let mem = log.take("memory", s.memory())?;
+    log.proceed("watchdog", s.watchdog()).then_some(())?;
+    // Item 11: before the fetch, so a night without network still runs them; whatever their
+    // outcome, the regress part runs.
+    log.push("limits", s.limits(&cli, mem));
+    let corpus = log.take("corpus", s.corpus())?;
+    let (fetched, jobs) = s.fetch(&corpus);
+    let infra = matches!(fetched, Step::Infra(_));
+    log.push("fetch", fetched);
+    // Item 10: no verified file stops the night before the runs; that is the fetch's 75 when
+    // it was an infrastructure failure, else a tool failure of its own.
+    if !jobs.iter().any(|j| j.path.is_some()) {
+        if !infra {
+            log.push(
+                "files",
+                Step::Failed(format!(
+                    "no regress file to run ({} rows missing)",
+                    jobs.len()
+                )),
+            );
         }
-        return stop;
+        return None;
     }
-    let work = opts.out.join("work");
-    std::fs::create_dir_all(&work).map_err(|e| format!("cannot write {}: {e}", work.display()))?;
-    let png = std::path::absolute(work.join("render.png")).map_err(|e| e.to_string())?;
-    let budget = Duration::from_secs(opts.max_minutes.saturating_mul(60));
-    let start = Instant::now();
-    let (files, complete) = run_files(
-        &jobs,
-        &png,
-        budget,
-        &mut || start.elapsed(),
-        &mut |op, args| exec(cli, mem, args, op.limit()),
-    );
-    let results = results_json(&files, mem, opts.max_minutes, complete);
-    write(&opts.out.join("regress.json"), &results)?;
-    eprintln!(
-        "xtask: nightly: wrote {} ({} files{})",
-        opts.out.join("regress.json").display(),
-        files.len(),
-        if complete {
-            ""
+    let png = log.take("workdir", s.workdir())?;
+    let (ran_outcome, ran) = s.runs(&jobs, &png, &cli, mem);
+    log.push("runs", ran_outcome);
+    // Item 12: a failed `regress.json` write stops the night; a failed diff doesn't.
+    log.proceed("results", s.results(&ran, mem)).then_some(())?;
+    log.push("diff", s.diff(&previous, &ran));
+    log.push("extra", s.extra(&jobs, mem));
+    Some(())
+}
+
+/// The whole nightly (spec items 2–15): the real steps through [`drive`]; returns the exit
+/// code, `steps::exit_code` of the log, after printing `JUDGE-INFRA-FAILURE` exactly when it is
+/// 75 (item 10).
+pub fn run(root: &Path, opts: &Options) -> u8 {
+    let log = drive(&mut Real { root, opts }, Log::printing("xtask: nightly: "));
+    if let Some(line) = steps::infra_line(&log) {
+        eprintln!("{line}");
+    }
+    steps::exit_code(&log)
+}
+
+/// The real steps: each maps the existing function's result to a [`Step`] (ADR 0013
+/// invariant 4).
+struct Real<'a> {
+    root: &'a Path,
+    opts: &'a Options,
+}
+
+impl Steps for Real<'_> {
+    fn previous(&mut self) -> Result<Previous, Step> {
+        load_previous(self.opts.previous.as_deref()).map_err(Step::Failed)
+    }
+
+    fn build(&mut self) -> Result<PathBuf, Step> {
+        build_cli(self.root)
+            .and_then(|p| std::path::absolute(p).map_err(|e| e.to_string()))
+            .map_err(Step::Failed)
+    }
+
+    fn executable(&mut self, cli: &Path) -> Step {
+        if is_executable_file(cli) {
+            Step::Ok
         } else {
-            ", time budget reached"
+            Step::Failed(format!(
+                "no executable jpdf-cli at {} after the build",
+                cli.display()
+            ))
         }
-    );
-    let mut failed = false;
-    let (text, line) = diff_for(previous, &files);
-    eprintln!("{line}");
-    let diff_path = opts.out.join("regress-diff.json");
-    if let Err(e) = write(&diff_path, &text) {
-        eprintln!("xtask: nightly: {e}");
-        // An earlier night's diff must not sit next to this night's results (spec item 10).
-        if let Err(e) = std::fs::remove_file(&diff_path)
-            && e.kind() != std::io::ErrorKind::NotFound
+    }
+
+    fn memory(&mut self) -> Result<bool, Step> {
+        memory_limit_allowed(memory_limit_applies(), cfg!(target_os = "linux"))
+            .map_err(Step::Failed)
+    }
+
+    fn watchdog(&mut self) -> Step {
+        engine::start_watchdog().map_or_else(Step::Failed, |()| Step::Ok)
+    }
+
+    fn limits(&mut self, cli: &Path, mem: bool) -> Step {
+        let target = crate::limits::DEFAULT_MIB.saturating_mul(1024 * 1024);
+        match crate::limits::run_with(cli, mem, &self.opts.out, target) {
+            Ok(true) => Step::Ok,
+            Ok(false) => Step::Finding,
+            Err(e) => Step::Failed(format!("limits: {e}")),
+        }
+    }
+
+    fn corpus(&mut self) -> Result<Corpus, Step> {
+        let cache = jpdf_corpus::resolve_cache(
+            self.opts.cache.clone(),
+            std::env::var_os("JPDF_CORPUS_CACHE").map(PathBuf::from),
+            std::env::var_os("HOME").map(PathBuf::from),
+            &jpdf_corpus::repo_root(),
+        )
+        .map_err(|e| Step::Failed(e.to_string()))?;
+        let m =
+            manifest::load(&Tier::Regress.manifest()).map_err(|e| Step::Failed(e.to_string()))?;
+        let entries = fetch::select(m.entries, self.opts.limit);
+        let dir = jpdf_corpus::sub_dir(&cache, Tier::Regress.name())
+            .map_err(|e| Step::Failed(e.to_string()))?;
+        Ok(Corpus { entries, dir })
+    }
+
+    fn fetch(&mut self, c: &Corpus) -> (Step, Vec<Job>) {
+        let report = fetch::fetch(&c.entries, &c.dir, &fetch::Options::default());
+        for line in report.integrity.iter().chain(&report.failed) {
+            eprintln!("xtask: nightly: fetch: {line}");
+        }
+        eprintln!("xtask: nightly: fetch: {}", report.summary());
+        let outcome = match report.exit_code() {
+            0 => Step::Ok,
+            75 => Step::Infra(format!(
+                "{} regress files could not be fetched",
+                report.failed.len()
+            )),
+            _ => Step::Failed(format!(
+                "fetch: {} rows failed the integrity check",
+                report.integrity.len()
+            )),
+        };
+        (outcome, jobs_for(&c.entries, &c.dir))
+    }
+
+    fn workdir(&mut self) -> Result<PathBuf, Step> {
+        let work = self.opts.out.join("work");
+        std::fs::create_dir_all(&work)
+            .map_err(|e| format!("cannot write {}: {e}", work.display()))
+            .and_then(|()| std::path::absolute(work.join("render.png")).map_err(|e| e.to_string()))
+            .map_err(Step::Failed)
+    }
+
+    fn runs(&mut self, jobs: &[Job], png: &Path, cli: &Path, mem: bool) -> (Step, Ran) {
+        let budget = Duration::from_secs(self.opts.max_minutes.saturating_mul(60));
+        let start = Instant::now();
+        let (files, complete) = run_files(
+            jobs,
+            png,
+            budget,
+            &mut || start.elapsed(),
+            &mut |op, args| exec(cli, mem, args, op.limit()),
+        );
+        let n = unstarted(&files);
+        let outcome = if n > 0 {
+            Step::Failed(format!("{n} runs could not start {}", cli.display()))
+        } else {
+            Step::Ok
+        };
+        (outcome, Ran { files, complete })
+    }
+
+    fn results(&mut self, ran: &Ran, mem: bool) -> Step {
+        let path = self.opts.out.join("regress.json");
+        let text = results_json(&ran.files, mem, self.opts.max_minutes, ran.complete);
+        if let Err(e) = write(&path, &text) {
+            return Step::Failed(e);
+        }
+        eprintln!(
+            "xtask: nightly: wrote {} ({} files{})",
+            path.display(),
+            ran.files.len(),
+            if ran.complete {
+                ""
+            } else {
+                ", time budget reached"
+            }
+        );
+        Step::Ok
+    }
+
+    fn diff(&mut self, previous: &Previous, ran: &Ran) -> Step {
+        let (text, line) = diff_for(previous, &ran.files);
+        eprintln!("{line}");
+        let path = self.opts.out.join("regress-diff.json");
+        let Err(e) = write(&path, &text) else {
+            return Step::Ok;
+        };
+        // An earlier night's diff must not sit next to this night's results (spec item 10);
+        // best effort: a failed removal is only logged.
+        if let Err(r) = std::fs::remove_file(&path)
+            && r.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("xtask: nightly: cannot remove {}: {e}", diff_path.display());
+            eprintln!("xtask: nightly: cannot remove {}: {r}", path.display());
         }
-        failed = true;
+        Step::Failed(e)
     }
-    let n = unstarted(&files);
-    if n > 0 {
-        eprintln!("xtask: nightly: {n} runs could not start {}", cli.display());
-        failed = true;
+
+    fn extra(&mut self, jobs: &[Job], mem: bool) -> Step {
+        let root = self.root;
+        let failed = extra::run(
+            root,
+            &self.opts.out,
+            jobs,
+            self.opts.bench_minutes,
+            self.opts.fuzz_seconds,
+            extra::Hooks {
+                build: &mut || crate::bench::build(root),
+                exec: &mut |bin, args, limit| exec(bin, mem, args, limit),
+                pass: &mut |secs| extra::real_pass(root, secs),
+            },
+        );
+        // `extra::run`'s one `bool`, the fold ADR 0013 allows until task 2 (#361).
+        if failed {
+            Step::Failed("the bench, the fuzz pass or nightly.json failed (above)".into())
+        } else {
+            Step::Ok
+        }
     }
-    // The bench and the fuzz pass run after the regress results are on disk (spec item 12).
-    failed |= extra::run(
-        root,
-        &opts.out,
-        &jobs,
-        opts.bench_minutes,
-        opts.fuzz_seconds,
-        extra::Hooks {
-            build: &mut || crate::bench::build(root),
-            exec: &mut |bin, args, limit| exec(bin, mem, args, limit),
-            pass: &mut |secs| extra::real_pass(root, secs),
-        },
-    );
-    let code = exit_code(failed, report.exit_code());
-    if code == 75 {
-        infra();
-    }
-    Ok(code)
 }
 
 /// The rows as jobs: a row whose cached file fails the blob check is missing (spec item 3).
@@ -730,22 +870,6 @@ fn jobs_for(entries: &[manifest::Entry], dir: &Path) -> Vec<Job> {
             }
         })
         .collect()
-}
-
-/// When no row has a verified file, the nightly stops before any run (spec item 10): 75 when
-/// the fetch was an infrastructure failure, else a tool failure. `None`: something to run.
-fn nothing_to_run(jobs: &[Job], fetch_code: u8) -> Option<Result<u8, String>> {
-    if jobs.iter().any(|j| j.path.is_some()) {
-        return None;
-    }
-    Some(if fetch_code == 75 {
-        Ok(75)
-    } else {
-        Err(format!(
-            "no regress file to run ({} rows missing)",
-            jobs.len()
-        ))
-    })
 }
 
 /// Whether runs get the memory wrapper (spec item 6): the probe result, except that on
@@ -789,12 +913,6 @@ pub(crate) fn is_executable_file(p: &Path) -> bool {
     {
         p.is_file()
     }
-}
-
-/// The exit code once the runs are written (spec item 10): a tool failure (`failed`, or the
-/// fetch's integrity failure 1) beats the fetch's infrastructure failure 75.
-fn exit_code(failed: bool, fetch_code: u8) -> u8 {
-    if failed { 1 } else { fetch_code }
 }
 
 mod extra;

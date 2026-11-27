@@ -77,15 +77,16 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   spec records without failing the tool (a regress `crash`, a bench `timeout`, a fuzz `crash`)
   is `Ok`.
   A tool whose every step stops it on the first failure, in source order, needs no driver.
-  The nightly doesn't hold it yet (see Enforced by).
+  The nightly holds it except for `extra::run`'s one `bool` (see Enforced by).
 - **Decided in:** ADR 0013.
-- **Enforced by:** not yet: ADR 0013's tasks (designed in #357) add the types in
-  `xtask/src/steps.rs` (the driver returns the log; steps return an `Outcome`) and each
-  driver's tests with a recording fake (the full order, one run per failing step, the
-  `exit_code` table); the real adapters and `run`'s wiring stay reviewer vigilance. Until
-  then the nightly folds its results in `with_limits`, `exit_code` and `extra::run`'s
-  `bool`; `cargo xtask ci linux` stays the known exception until a PR changes its checks
-  (ADR 0013, Requirements on future callers).
+- **Enforced by:** the types in `xtask/src/steps.rs` (the driver returns the log; steps return
+  an `Outcome`; `exit_code` and its table test) and each driver's tests with a recording fake
+  (the full order, one run per failing step); for the nightly, `drive` in
+  `xtask/src/nightly.rs` and `xtask/src/nightly/tests/driver.rs` (ADR 0013 task 1, #360). The
+  real adapters and `run`'s wiring stay reviewer vigilance. Until ADR 0013 task 2 (#361) the
+  nightly's `extra` step folds the bench, the fuzz pass and `nightly.json` into one `bool`;
+  `cargo xtask ci linux` stays the known exception until a PR changes its checks (ADR 0013,
+  Requirements on future callers).
 - **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
   step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` as
   the spec's exit codes say, and decides nothing about order; no step's result is folded into

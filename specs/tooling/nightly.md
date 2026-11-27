@@ -152,13 +152,19 @@ extra fuzz time (#301); filing issues is #302)
     - 75 with `JUDGE-INFRA-FAILURE` on stderr: more than `max(1, ⌊N/100⌋)` of the N rows could
       not be downloaded (the corpus tool's and the judge's rule) and no other tool failure.
       This includes the case where every row is missing because of it (no network): that
-      stops before the runs with 75, not 1, since the cause is infrastructure;
+      stops before the runs with 75, not 1, since the cause is infrastructure. The line
+      `JUDGE-INFRA-FAILURE: <n> regress files could not be fetched` is printed once, at the
+      end, exactly when the exit code is 75 (ADR 0013 task 1 changed this: before it, a
+      no-network night whose limits part had a tool failure printed the line at the stop and
+      exited 1; now that night exits 1 without it);
     - 4: a limits case did not pass (item 11) and the regress part would have exited 0: a
       hostile file that crashes, hangs or gets the wrong answer is a regression, unlike a regress
       file's status. When the regress part exits 1 or 75, that code wins (a 75 night is rerun,
       which runs the cases again); the failed case is still in `limits.json` and on stderr;
     - 0 otherwise, whatever the runs' statuses and `complete`.
     A tool failure in the limits part is a 1 too, but the regress part still runs.
+    The exit code is `steps::exit_code` of the step log (item 15): `Failed` 1, else `Infra`
+    75, else `Finding` 4, else 0 (ADR 0013).
     Once the runs started, `regress.json` and the diff are written (each to a `.tmp` name,
     then renamed over an earlier night's file) before the nightly exits 1 or 75, so nothing
     measured is lost, and an earlier night's files stay on disk until this night's replace
@@ -182,7 +188,8 @@ extra fuzz time (#301); filing issues is #302)
     there is logged as `xtask: nightly: limits: <problem>` and gives exit 1; the regress part
     runs either way.
 
-12. **Bench** (after `regress.json` and the diff are written, whatever their outcome; skipped
+12. **Bench** (after `regress.json` is written and the diff step ends, whatever the diff's
+    outcome; a failed `regress.json` write stops the night before the diff, item 15; skipped
     when `--bench-minutes` is 0). The sample is the first 20 files with a verified copy
     (item 3), in blob-id order: they are copied, as `<blob>.pdf`, into `DIR/bench-corpus/`,
     which is emptied first, so the bench never sees a file that failed the blob check or one
@@ -238,11 +245,25 @@ extra fuzz time (#301); filing issues is #302)
     `failed` or `skipped`; `targets` lists the targets whose run started, in `cargo fuzz list` order, each
     with `ok` and the copied artifacts (paths relative to `DIR`); `error` the tool failure.
     Strings are JSON-escaped (artifact names are read lossily as UTF-8).
-15. **Order.** Regress runs, `regress.json`, the diff, then the bench, the fuzz pass and
-    `nightly.json` (the limits part, item 11, runs before all of them). A nightly that stops
-    before the regress runs (item 10) runs neither the
-    bench nor the fuzz pass and writes no `nightly.json`. The exit code is item 10's: a bench
-    or fuzz tool failure makes it 1, which beats 75 and 4.
+15. **Order.** One driver (`drive` in `xtask/src/nightly.rs`, ADR 0013 and
+    docs/PRINCIPLES.md P4) calls the steps through an injected interface and records each
+    step's outcome (`Ok`, `Finding`, `Infra`, `Failed`) under its name, in this order:
+    `previous` (item 9), `build` (item 2), `executable` (item 10), `memory` (item 6),
+    `watchdog`, `limits` (item 11), `corpus` (the cache and the manifest, item 3), `fetch`,
+    `workdir`, `runs` (items 4–7), `results` (`regress.json`, item 8), `diff` (item 9), `extra`
+    (the bench, the fuzz pass and `nightly.json`, items 12–14; one step with one outcome until
+    ADR 0013 task 2, #361). What a failure stops:
+    - any outcome but `Ok` of `previous`, `build`, `executable`, `memory`, `watchdog`,
+      `corpus`, `workdir` or `results` stops the night: no later step runs;
+    - `limits`, `fetch`, `runs` and `diff` never stop it (a failed limits case or limits tool
+      failure, a fetch integrity or infrastructure failure, a run that could not start, a diff
+      that can't be written: the later steps run);
+    - after the fetch, no verified file (item 10) stops the night: the driver records its
+      own `files` entry, `Failed` with `no regress file to run (<N> rows missing)`, unless
+      the fetch was `Infra` (then the fetch's 75 stands alone).
+    So a nightly that stops before the regress runs runs neither the bench nor the fuzz pass
+    and writes no `nightly.json`. The exit code is item 10's, computed from the log alone: a
+    bench or fuzz tool failure makes it 1, which beats 75 and 4.
 
 ## Persistence
 No document persistence. `regress.json`, `regress-diff.json`, `limits.json` (item 11),
@@ -262,7 +283,11 @@ the corpus tool's manifest or cache error, `cannot start the engine watchdog (/b
 `fetch: <url>: <problem>` lines then `fetch: <summary>`, `previous results <path>: <problem>`,
 `no regress file to run (<N> rows missing)`, `no executable jpdf-cli at <path> after the build`,
 `<N> runs could not start <path>` (and `cannot remove <path>: <io error>` when a stale diff
-can't be removed). The bench and the fuzz pass each print one line,
+can't be removed), `fetch: <N> rows failed the integrity check` (after the fetch's own lines),
+`limits: <problem>`, and `the bench, the fuzz pass or nightly.json failed (above)` after the
+bench's and the fuzz pass's lines. Each tool failure is printed when its step ends (the step
+log prints each `Failed` reason as it is recorded); `JUDGE-INFRA-FAILURE` is printed last
+(item 10). The bench and the fuzz pass each print one line,
 `xtask: nightly: bench: <status> (<n> files)[: <error>]` and
 `xtask: nightly: fuzz: <status> (<t> targets, <S> s each, <a> artifacts)[: <error>]`; the
 error is the same text as in `nightly.json` (`release build failed (<status>)`,
@@ -352,10 +377,19 @@ Self-check:
     fuzz pass with no `fuzz/` (`failed`).
   - An artifact copy that copies old, linked or unbounded files: tests with an old file, a
     symlink, a directory and the 100/101 cap.
-- Not covered by tests: the real build, the real fetch (network), the CI wiring, and the order
-  of steps inside `run` (the previous file loaded before `regress.json` is written: the test
-  checks that the loaded copy is held in memory, not where `run` calls it; the bench and fuzz
-  pass called after the diff); a real fuzz pass (the nightly toolchain and minutes of fuzzing:
+  - A driver that runs steps in another order, skips one, stops where the spec goes on (or
+    goes on where it stops), or hands a step the wrong data: the driver tests (ADR 0013
+    "Verification") run a recording fake through every step `Ok` (the exact call list, with
+    the jobs, paths and flags each step got), each step failing alone, and the no-file stop;
+    `steps::exit_code` has a table test over every pair of outcome kinds, and the
+    `JUDGE-INFRA-FAILURE` line a test for a 75 log and its near miss (`Infra` in a log whose
+    code is 1). What still passes: a real adapter that maps an error to the wrong outcome (each
+    is one expression, checked by the reviewer against items 10–13), and a `run` that calls a
+    real step outside the driver (it only builds `Real` and calls `drive`).
+- Not covered by tests: the real build, the real fetch (network), the CI wiring, the real
+  adapters (`Real` in `xtask/src/nightly.rs`; the functions they wrap have their own tests);
+  the order inside the `extra` step (removal, bench, fuzz pass, write: ADR 0013 task 2, #361);
+  a real fuzz pass (the nightly toolchain and minutes of fuzzing:
   `run_fuzz` with real targets runs only in the local run and the nightly job, its parts are
   unit-tested in `fuzz.rs` and here); the real jpdf-bench under the memory wrapper (a local
   run). Local runs on the cached tier, including `--previous` naming the output's own
@@ -394,4 +428,8 @@ and memory wrapper with fake `jpdf-cli` scripts, missing files, the results JSON
 validator, the diff), `tools/bench/src/engine.rs`
 `run_child_reports_the_exit_code_or_the_signal`, `tools/corpus/tests/corpus.rs`
 `is_verified_accepts_only_the_exact_file`. The limits part (item 11): `xtask/src/limits/tests.rs`
-(specs/tooling/limits.md "Tests"; `nightly_exit_codes_with_the_limits_cases` for item 10's 4).
+(specs/tooling/limits.md "Tests"). The order and the exit code (items 10, 11, 12 and 15):
+`xtask/src/nightly/tests/driver.rs` (a recording fake of the steps: the full order with each
+step's data, one run per failing step, the no-file stop, the limits part's codes, item 10's
+4, in `exit_codes_with_the_limits_cases`) and `xtask/src/steps.rs` (the `exit_code` table, the
+`JUDGE-INFRA-FAILURE` line, the log).
