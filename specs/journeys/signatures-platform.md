@@ -765,9 +765,21 @@ first; Save As into a folder the harness made read-only (macOS) / the adapter fa
 - test: e2e.web.pc_offline
 
 Fixture `offline.pdf`: 12 pages; the word "harbor" appears exactly 3 times, on pages 2, 7 and
-11; page 5 holds Japanese text in a Type0 font with `/Encoding /90ms-RKSJ-H` (a predefined
-CMap, loaded from the CMaps the app ships) and an embedded subset of a permissively licensed
-font as its CIDFont descendant; page 9 holds a random text sentinel.
+11; page 5 holds two runs of Japanese text, each in its own Type0 font with
+`/Encoding /90ms-RKSJ-H` (a predefined CMap, loaded from the CMaps the app ships) and an
+embedded subset of a permissively licensed font as its CIDFont descendant. Each descendant's
+`/CIDSystemInfo` is Registry `Adobe`, Ordering `Japan1`, Supplement 2 or more (the collection
+`90ms-RKSJ-H` maps into, Adobe-Japan1-2). The first descendant is a `/CIDFontType0` with a
+CID-keyed CFF (`/FontFile3`, `/Subtype /CIDFontType0C`); the second is a `/CIDFontType2` with
+a `/CIDToGIDMap` stream built for its subset (ISO 32000-2 §9.7.4.2). The fixture generator
+checks, for every CID page 5 uses, that the glyph it reaches in the subset has the same
+outline as the unsubsetted source font's glyph for that CID's character (Adobe's Adobe-Japan1
+CID-to-Unicode table, then the source font's `cmap`), and fails the build otherwise, so an
+off-by-one map or a shuffled charset can't make all three renders agree on wrong glyphs.
+Page 9 holds a random text sentinel. The MuPDF and Poppler reference renders of page 5 need
+their predefined CMap data (Poppler's is the poppler-data set, e.g. the Debian `poppler-data`
+package): the comparison fails if `mutool draw` or `pdftoppm` writes, while rendering page 5,
+any stderr line that names `90ms-RKSJ-H` or `Adobe-Japan1`.
 
 Steps: load the app once with the network on → on this load the reader.md network rule holds
 (only same-origin GETs for static app assets, none cross-origin) → its service worker installs
