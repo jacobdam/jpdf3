@@ -22,6 +22,8 @@ Phase: bootstrap (pilot)
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) merged (ecc89a0). Task 1 #360 merged (PR #382, f51a2b9). Task 2
   #361 (`ready`) is next. #322 merged (PR #362).
+- #334 (journeys J-PC-09, J-PC-10, the four languages): PR #379 owner-`/approve`d, auto-merge on; "done:" posted.
+  Follow-up #380 (wording).
 - Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
