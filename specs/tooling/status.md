@@ -13,7 +13,7 @@ fourth, pending lessons, into one file per session (`ops/lessons/pending/`); par
 deleted `ops/STATUS.md` and the rules that wrote it: sessions read this command's output at
 ops/TICK.md §1, and a record commit touches only files new in its session (a journal entry, a
 pending lesson file; ADR 0011 §3), so two PRs' records merge in either order without a conflict
-(the drill in PR #392's description). A note GitHub and the scheduler don't show goes on the
+(the drill in PR #401's description). A note GitHub and the scheduler don't show goes on the
 issue it is about (ops/TICK.md §5).
 
 `cargo xtask status [--from DIR]` loads exactly the inputs of `cargo xtask next-session`
