@@ -2,15 +2,16 @@
 
 Area: tooling
 ISO 32000-2 clauses: none (development tool; it never parses PDF bytes, `jpdf-cli` does)
-Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300, #301)
+Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300, #301, #302)
 Status: implemented (parts 1 and 2 of 3: the regress tier and the diff (#300), the bench and
-extra fuzz time (#301); filing issues is #302)
+extra fuzz time (#301); part 3, filing issues (#302), in two parts: limits cases and regress
+files here (item 16), the fuzz pass and the bench in #383)
 
 ## Behavior
 1. **Usage.**
    ```
    cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]
-                       [--bench-minutes B] [--fuzz-seconds S]
+                       [--bench-minutes B] [--fuzz-seconds S] [--file-issues]
    ```
    - `--out DIR`: where the results go (default `target/xtask-out`, like the other tasks). The
      judge's CI runs `cargo xtask nightly --out ../nightly` (CONTRACT §2).
@@ -25,6 +26,8 @@ extra fuzz time (#301); filing issues is #302)
      the bench.
    - `--fuzz-seconds S` (0 ≤ S ≤ 3600, the cap of `cargo xtask fuzz --seconds`; default 1200):
      the fuzz time per target (item 13); 0 skips the fuzz pass.
+   - `--file-issues` (no value): the `issues` step files with `gh` (item 16); without it the
+     step only counts the findings, so a local run never writes to GitHub.
    - Each flag at most once; an unknown flag, a missing value, a value out of range or not a
      plain decimal number is a usage error (exit 2) before anything runs.
 2. **Build.** `$CARGO build --release --locked -p jpdf-cli` (the judge's build, CONTRACT §1), then
@@ -253,26 +256,79 @@ extra fuzz time (#301); filing issues is #302)
     `watchdog`, `limits` (item 11), `corpus` (the cache and the manifest, item 3), `fetch`,
     `workdir`, `runs` (items 4–7), `results` (`regress.json`, item 8), `diff` (item 9), `extra`
     (the bench, the fuzz pass and `nightly.json`, items 12–14; one step with one outcome until
-    ADR 0013 task 2, #361). What a failure stops:
+    ADR 0013 task 2, #361), then `issues` (item 16). What a failure stops:
     - any outcome but `Ok` of `previous`, `build`, `executable`, `memory`, `watchdog`,
       `corpus`, `workdir` or `results` stops the night: no later step runs;
     - `limits`, `fetch`, `runs` and `diff` never stop it (a failed limits case or limits tool
       failure, a fetch integrity or infrastructure failure, a run that could not start, a diff
       that can't be written: the later steps run);
+    - `issues` runs last, after a stop too, whenever the `limits` step ran (so not after a stop
+      at `previous` … `watchdog`): it gets the limits cases, the previous night and this night's
+      files, or no files when the night stopped before the runs;
     - after the fetch, no verified file (item 10) stops the night: the driver records its
       own `files` entry, `Failed` with `no regress file to run (<N> rows missing)`, unless
       the fetch was `Infra` (then the fetch's 75 stands alone).
     So a nightly that stops before the regress runs runs neither the bench nor the fuzz pass
-    and writes no `nightly.json`. The exit code is item 10's, computed from the log alone: a
+    and writes no `nightly.json` (but files the limits cases' issues). The exit code is item 10's, computed from the log alone: a
     bench or fuzz tool failure makes it 1, which beats 75 and 4.
+16. **Issues** (#302 part 1; the fuzz pass and the bench are #383). The step reads only what
+    the earlier steps returned in memory (item 15), never `DIR`, so it can't file from an
+    earlier night's files (item 10). **Findings**, in this order:
+
+    | signature | from | label | title |
+    |---|---|---|---|
+    | `limits:<case>` | a limits case whose status is not `pass` (item 11) | `crash` for `crash` or `timeout`, else `bug` | `nightly: limits case <case> ended <status>` |
+    | `regress:<blob>` | a regress file with at least one `crash` or `timeout` run (item 5), by blob | `crash` | `nightly: jpdf-cli crash or timeout on regress file <first 12 hex>` |
+    | `regression:<blob>:<op>` | with a previous night (item 9): a run `ok` then and `error` or `not_implemented` now, by blob then op | `bug` | `nightly: regress regression: <op> on <first 12 hex> went from ok to <status>` |
+
+    A run that becomes `crash` or `timeout` is the file's `regress:` finding, not a regression;
+    a file whose blob is not 40 lowercase hex digits is never filed. Signatures hold only
+    ASCII lowercase letters, digits, `_`, `:` and `-`.
+    **Filing**, only with `--file-issues`; with no finding, `gh` is not called at all. For each
+    label the findings use (sorted), `gh issue list --state open --label <label> --limit 1000
+    --json number,body`. A list of 1000 or more is refused (it may be cut, so a duplicate could
+    be missed). An issue matches a signature when its body starts with the agent tag and has
+    the line `nightly-signature: <signature>` exactly; the lowest number wins. Then, in finding
+    order, at most 20 writes (creates plus comments; the rest wait for a later night and are
+    counted on stderr): a matched signature gets `gh issue comment <n> --body <comment>`, any
+    other `gh issue create --title <title> --label <label> --body <body>`. A closed issue never
+    matches, so a failure that returns after its fix opens a new issue. The body:
+    ```
+    🤖 jpdf-agent **Nightly finding**, filed by `cargo xtask nightly --file-issues` (specs/tooling/nightly.md item 16).
+
+    nightly-signature: <signature>
+
+    First seen: <YYYY-MM-DD> UTC[ (CI run <id>)].
+
+    <detail>
+    ```
+    and the comment `🤖 jpdf-agent Seen again: <night>.` plus the detail. The detail lists, for
+    a limits case, its id, size, status, exit, signal and time and `cargo xtask limits`; for a
+    regress file, the blob, its manifest URL in backticks (left out with "URL not shown" when it
+    is empty or holds a byte outside printable ASCII or a backtick) and each `crash` or
+    `timeout` run's op, status, exit, signal and time; for a regression, the blob, URL, op and
+    both statuses. **No `jpdf-cli` output (stderr) and no corpus bytes go into an issue**
+    (CONSTITUTION 1, 13): to see the message, run the file again. The CI run id comes from
+    `GITHUB_RUN_ID` when it is 1 to 20 digits, else it is left out. `gh` runs with
+    `GH_PROMPT_DISABLED=1`, no pager, stdin on the null device and stderr to the nightly's
+    stderr, its arguments as an argv list (no shell), killed after 120 s; its stdout is read up
+    to 64 MiB and must be UTF-8. **Outcome:** `Ok` (stderr `xtask: nightly: issues: <n>
+    findings: <c> filed, <u> updated, <s> over the cap of 20`, or `… not filed (no
+    --file-issues)`), else `Failed` at the first `gh` failure (it couldn't start, exited
+    non-zero, timed out, or its list output was not the expected JSON), with the counts done
+    before it; later findings are not filed that night. A GitHub outage is a tool failure (1),
+    not `Infra`: a rerun of the whole night would not be cheaper than the next night.
+    The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN`; it
+    needs `--file-issues` added to its command (ops/proposals/nightly-file-issues.md).
 
 ## Persistence
-No document persistence. `regress.json`, `regress-diff.json`, `limits.json` (item 11),
+No document persistence. GitHub issues and comments (item 16, only with `--file-issues`).
+`regress.json`, `regress-diff.json`, `limits.json` (item 11),
 `nightly.json`, `bench.json` (and jpdf-bench's `bench.json.work/`), `bench-corpus/`, `fuzz/` and
 `work/` under `DIR` (and the `.tmp` names after a failed rename, item 10). In the repository's
 ignored paths: the fuzz pass's seeds and corpus under `fuzz/corpus/`, its artifacts under
-`fuzz/artifacts/`, its logs under `target/fuzz-logs/` (specs/tooling/fuzz.md). The previous night's file is passed in by the caller: the CI step that downloads
-it is part 3 (#302) and needs the owner (`.github/` is protected).
+`fuzz/artifacts/`, its logs under `target/fuzz-logs/` (specs/tooling/fuzz.md). The previous night's file is passed in by the caller (with no previous file there are no regression findings, item 16): the CI step that downloads
+it needs the owner (`.github/` is protected) and is not proposed yet (ops/proposals/nightly-file-issues.md, "Not in this proposal").
 
 ## Undo
 Not applicable (development tool).
@@ -285,8 +341,10 @@ the corpus tool's manifest or cache error, `cannot start the engine watchdog (/b
 `no regress file to run (<N> rows missing)`, `no executable jpdf-cli at <path> after the build`,
 `<N> runs could not start <path>` (and `cannot remove <path>: <io error>` when a stale diff
 can't be removed), `fetch: <N> rows failed the integrity check` (after the fetch's own lines),
-`limits: <problem>`, and `the bench, the fuzz pass or nightly.json failed (above)` after the
-bench's and the fuzz pass's lines. Each tool failure is printed when its step ends (the step
+`limits: <problem>`, `the bench, the fuzz pass or nightly.json failed (above)` after the
+bench's and the fuzz pass's lines, and `issues: <problem> (<c> filed, <u> updated before it)`
+(item 16: `cannot start gh: <io error>`, `gh issue <cmd>: <exit status>`, `gh issue <cmd>: no
+answer in 120 s`, `gh issue list --label <label>: <problem>`). Each tool failure is printed when its step ends (the step
 log prints each `Failed` reason as it is recorded); `JUDGE-INFRA-FAILURE` is printed last
 (item 10). The bench and the fuzz pass each print one line,
 `xtask: nightly: bench: <status> (<n> files)[: <error>]` and
@@ -308,6 +366,10 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   `jpdf_fsio::OPEN_FLAGS` is set (a FIFO is refused, not waited on).
 - Memory of the nightly itself: the results of ≤ 200 000 files × 5 runs (each run ≤ 4 KiB of
   stderr, only for crashes and timeouts) and the previous file (≤ 64 MiB).
+- Issues (item 16): ≤ 20 writes per night; each `gh` call ≤ 120 s and ≤ 64 MiB of stdout;
+  lists of < 1000 open issues per label. Exact-boundary tests: 20 findings give 20 writes and
+  21 give 20 plus one counted; a list one short of its limit is used and one at it refused (the
+  limit passed in small, the real value pinned).
 - Bench: `--bench-minutes` ≤ 120 of wall time, killed at the limit; a sample of ≤ 20 files.
 - Fuzz: `--fuzz-seconds` ≤ 3600 per target (libFuzzer's `-max_total_time`), so the pass takes
   ⌈targets / cores⌉ × S plus the build; ≤ 100 artifacts copied per target.
@@ -337,6 +399,14 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   and runs under the memory wrapper and a time limit; the fuzz pass is `cargo xtask fuzz`'s,
   with its limits. Artifacts are copied, never opened or parsed; their names are escaped.
   Only regular files are copied (a symlink planted in `fuzz/artifacts/` is not followed).
+- **Issues (item 16):** every body and comment starts with the agent tag (CONSTITUTION 1); no
+  stderr, no corpus bytes and nothing from the sealed corpus (the tier is `regress`); titles
+  and signatures are built from xtask's own names, statuses, numbers and checked blob ids, the
+  URL from the repository's manifest is shown only inside backticks and only when it can't
+  leave them. Another account's issue can't capture a finding: a match needs the tag at the
+  start of the body and the exact signature line (a stranger who copies both gets a comment
+  on that issue, not a missed finding). Nothing is written without `--file-issues`. `gh` gets
+  an argv list, never a shell string.
 - **CONSTITUTION 8–11:** no new crates; xtask gains path dependencies on the workspace's own
   `jpdf-bench` and `jpdf-corpus`.
 
@@ -387,6 +457,16 @@ Self-check:
     code is 1). What still passes: a real adapter that maps an error to the wrong outcome (each
     is one expression, checked by the reviewer against items 10–13), and a `run` that calls a
     real step outside the driver (it only builds `Real` and calls `drive`).
+  - An issue step that files duplicates, misses one, or matches the wrong issue: a repeat
+    night on a fake `gh` (which acts on its real arguments: lists filter by state and label,
+    newest first, creates add issues, comments attach) comments on the two issues the first
+    night filed and creates nothing; near misses (a closed issue, an untagged body, the line
+    inside other text, a longer signature, the wrong label) don't match, and of two matches the
+    lowest wins (hand-mutated: dropping the tag check or the `min` fails a test). The findings
+    have one test per source, each with statuses that must not count (`pass`, `error` → `not_implemented`,
+    `ok` → `crash`, a missing file). No `gh` call without findings or without `--file-issues`.
+    What still passes: a real `gh` whose output differs from the fake's (the list's JSON
+    shape is checked strictly, so a change fails the step loudly).
 - Not covered by tests: the real build, the real fetch (network), the CI wiring, the real
   adapters (`Real` in `xtask/src/nightly.rs`; the functions they wrap have their own tests);
   the order inside the `extra` step (removal, bench, fuzz pass, write: ADR 0013 task 2, #361);
@@ -433,4 +513,8 @@ validator, the diff), `tools/bench/src/engine.rs`
 `xtask/src/nightly/tests/driver.rs` (a recording fake of the steps: the full order with each
 step's data, one run per failing step, the no-file stop, the limits part's codes, item 10's
 4, in `exit_codes_with_the_limits_cases`) and `xtask/src/steps.rs` (the `exit_code` table, the
-`JUDGE-INFRA-FAILURE` line, the log).
+`JUDGE-INFRA-FAILURE` line, the log). The `issues` step (item 16): `xtask/src/nightly/issues/tests.rs`
+(the findings, the bodies, the fake `gh`'s repeat night and near misses, both caps, a `gh`
+failure mid-way, the night label, and the real runner with fake `gh` scripts: arguments,
+exit codes, a hang killed at its limit, a missing program, non-UTF-8 output), and in
+`driver.rs` its place last, after a stop, and the data it gets.

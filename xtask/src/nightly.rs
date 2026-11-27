@@ -1,7 +1,8 @@
 //! `cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]
-//! [--bench-minutes B] [--fuzz-seconds S]`: the regress tier through `jpdf-cli` under the judge's
-//! limits, per-file results and a diff against the previous night (part 1), then the bench and
-//! extra fuzz time (part 2, `extra`). Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
+//! [--bench-minutes B] [--fuzz-seconds S] [--file-issues]`: the regress tier through `jpdf-cli`
+//! under the judge's limits, per-file results and a diff against the previous night (part 1),
+//! the bench and extra fuzz time (part 2, `extra`), and issues for the night's findings
+//! (part 3, `issues`). Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

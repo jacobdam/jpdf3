@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
-     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
+     | nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M] [--bench-minutes B] [--fuzz-seconds S] [--file-issues] | limits [--out DIR] [--mib N] | arlington | check-specs [--root DIR] \
      | fuzz [--short] [--seconds N] [--target NAME] \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \

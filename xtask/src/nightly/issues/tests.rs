@@ -212,7 +212,7 @@ fn a_url_that_could_leave_its_backticks_is_not_shown() {
 /// (number, open, labels, body, comments)
 type Issue = (u64, bool, Vec<String>, String, Vec<String>);
 
-/// A fake `gh` that acts on its arguments like the real one for the three commands the step
+/// A fake `gh` that acts on its arguments like the real one (lists newest first, as GitHub does) for the three commands the step
 /// uses, and refuses anything else.
 #[derive(Default)]
 struct FakeGh {
@@ -260,6 +260,7 @@ impl Gh for FakeGh {
                 let shown = self
                     .issues
                     .iter()
+                    .rev()
                     .filter(|i| i.1 && i.2.iter().any(|l| l == label))
                     .take(n);
                 for (k, i) in shown.enumerate() {
@@ -516,7 +517,11 @@ fn scratch(tag: &str) -> PathBuf {
 fn script(dir: &Path, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt as _;
     let p = dir.join("gh");
-    std::fs::write(&p, format!("#!/bin/sh\n[ -n \"$WARM\" ] && exit 0\n{body}\n")).unwrap();
+    std::fs::write(
+        &p,
+        format!("#!/bin/sh\n[ -n \"$WARM\" ] && exit 0\n{body}\n"),
+    )
+    .unwrap();
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     // A first exec of a fresh script can be slow on macOS (ops/LESSONS.md): warm it up.
     let _ = std::process::Command::new(&p).env("WARM", "1").output();
