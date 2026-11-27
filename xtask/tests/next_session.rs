@@ -5055,7 +5055,7 @@ fn status_fixture() -> Changes {
         "OPEN",
         "Closes #311",
         "t/311-z",
-        &["needs-design", "owner-todo"],
+        &["needs-design"],
         "[]",
     )
     .replace(r#""isDraft":false"#, r#""isDraft":true"#)
@@ -5085,7 +5085,7 @@ fn status_fixture() -> Changes {
         "OPEN",
         "no link",
         "t/330-w",
-        &["blocked-ish", "needs-design", "blocked"],
+        &["blocked-ish", "owner-todo", "blocked"],
         GREEN,
     )
     .replace(r#""isDraft":false"#, r#""isDraft":true"#);
@@ -5111,7 +5111,7 @@ fn status_fixture() -> Changes {
                 raw_pr(320, "OPEN", "Closes #312", "owner/x", &[], GREEN),
                 held_draft,
                 conflicted,
-                pr(350, "OPEN", "x", "owner/z", &[], GREEN),
+                pr(350, "OPEN", "x", "owner/z", &["needs-design"], GREEN),
                 // Merged: not in flight.
                 pr(
                     299,
@@ -5163,10 +5163,10 @@ fn status_prints_each_section_from_the_inputs() {
          \n\
          ## In flight\n\
          - PR #300: closes #301 r: ready, auto-merge on, green, owner-todo\n\
-         - PR #310: closes #311 two lines: draft, auto-merge on, conflicting, not green (a failing check or no ai-review success), needs-design, owner-todo\n\
-         - PR #330: no Closes line: draft, auto-merge off, green, on the owner's /hold, needs-design, blocked\n\
+         - PR #310: closes #311 two lines: draft, auto-merge on, conflicting, not green (a failing check or no ai-review success), needs-design\n\
+         - PR #330: no Closes line: draft, auto-merge off, green, on the owner's /hold, owner-todo, blocked\n\
          - PR #340: closes #999 (not an open issue): ready, auto-merge off, conflicting, green, the owner's branch, design, blocked\n\
-         - PR #350: no Closes line: ready, auto-merge off, green, the owner's branch\n\
+         - PR #350: no Closes line: ready, auto-merge off, green, the owner's branch, needs-design\n\
          - #301 in-progress: r (PR #300)\n\
          - #311 in-progress: two lines (PR #310)\n\
          - #312 in-progress: dead claim (no open agent PR closes it)\n\
@@ -5179,8 +5179,7 @@ fn status_prints_each_section_from_the_inputs() {
          - #311 blocked: two lines\n\
          - #313 blocked, owner-todo: owner turn\n\
          - PR #300 owner-todo\n\
-         - PR #310 owner-todo\n\
-         - PR #330 blocked\n\
+         - PR #330 blocked, owner-todo\n\
          - PR #340 blocked\n"
     );
     assert_eq!(status_of(&fixture), expected);
