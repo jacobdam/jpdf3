@@ -1,0 +1,810 @@
+//! specs/tooling/admit.md "Tests". Tool output fixtures are shaped like the real tools' output
+//! (cargo 1.100, cargo-deny 0.21.0, cargo-vet 0.10.3), trimmed to the fields that matter.
+
+use super::*;
+
+fn p(line: &str) -> Result<Options, String> {
+    parse(
+        &line
+            .split(' ')
+            .filter(|a| !a.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn opts() -> Options {
+    p("miniz_oxide@0.8.9 --work /w/probe").unwrap()
+}
+
+fn cap(code: i32, stdout: &str, stderr: &str) -> Captured {
+    let (stdout, stderr) = (stdout.to_owned(), stderr.to_owned());
+    Captured {
+        code: Some(code),
+        stdout,
+        stderr,
+    }
+}
+
+fn pkg(name: &str, build_time: bool) -> Package {
+    let (name, version, license) = (name.to_owned(), "1.0.0".to_owned(), Some("MIT".to_owned()));
+    Package {
+        name,
+        version,
+        license,
+        build_time,
+    }
+}
+
+fn lines(c: &Checked) -> String {
+    c.details.join("\n")
+}
+
+fn failed(c: &Checked) -> bool {
+    matches!(c.outcome, Outcome::Failed(_))
+}
+
+// ---- parse ----
+
+#[test]
+fn parses_target_and_flags() {
+    let (work, python) = (PathBuf::from("/w/probe"), "python3".to_owned());
+    let (name, version) = ("miniz_oxide".to_owned(), "0.8.9".to_owned());
+    let want = Options {
+        name,
+        version,
+        work,
+        features: Vec::new(),
+        no_default_features: false,
+        python,
+    };
+    assert_eq!(opts(), want);
+    let o = p("--features std,simd-adler32 --no-default-features zune-jpeg@0.5.0-rc.1+b.2 --python /opt/py --work /w/x")
+        .unwrap();
+    assert_eq!(
+        (o.name.as_str(), o.version.as_str()),
+        ("zune-jpeg", "0.5.0-rc.1+b.2")
+    );
+    assert_eq!(
+        (
+            o.features.join(","),
+            o.no_default_features,
+            o.python.as_str()
+        ),
+        ("std,simd-adler32".to_owned(), true, "/opt/py")
+    );
+    assert_eq!(o.work, PathBuf::from("/w/x"));
+}
+
+#[test]
+fn rejects_missing_repeated_and_unknown_arguments() {
+    for args in [
+        "--work /w",
+        "a@1.0.0",
+        "a@1.0.0 --work",
+        "a@1.0.0 b@1.0.0 --work /w",
+        "a --work /w",
+        "a@1.0.0 --work /w --work /v",
+        "a@1.0.0 --work /w --features x --features y",
+        "a@1.0.0 --work /w --python p --python q",
+        "a@1.0.0 --work /w --offline",
+        "a@1.0.0 --work /w --no-default-features --no-default-features",
+    ] {
+        assert!(p(args).is_err(), "{args}");
+    }
+    let empty_python = ["a@1.0.0", "--work", "/w", "--python", ""].map(str::to_owned);
+    assert!(parse(&empty_python).is_err());
+}
+
+#[test]
+fn crate_names() {
+    let n = |name: &str| parse(&[format!("{name}@1.0.0"), "--work".into(), "/w".into()]);
+    for good in ["a", "A9", "a_b-c", &"a".repeat(MAX_NAME)] {
+        assert!(n(good).is_ok(), "{good}");
+    }
+    for bad in [
+        "",
+        "9a",
+        "_a",
+        "a b",
+        "a\"b",
+        "a.b",
+        "a/b",
+        "é",
+        &"a".repeat(MAX_NAME + 1),
+    ] {
+        assert!(n(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn exact_versions_only() {
+    let v = |version: &str| parse(&[format!("a@{version}"), "--work".into(), "/w".into()]);
+    // At the limit: "1.0.0-" plus 58 letters is 64 bytes.
+    let at = format!("1.0.0-{}", "a".repeat(MAX_VERSION - 6));
+    for good in "0.0.0 1.2.3 10.20.30 1.0.0-rc.1 1.0.0+b.7 1.0.0-a-b+c-d"
+        .split(' ')
+        .chain([at.as_str()])
+    {
+        assert!(v(good).is_ok(), "{good}");
+    }
+    let past = format!("{at}a");
+    let bad = "1 1.2 1.2.3.4 01.2.3 1.02.3 1.2.03 ^1.2.3 =1.2.3 ~1.2.3 1.2.* 1.2.3- 1.2.3+ 1.2.3+a+b \
+               1.2.3-a_b 1.2.3-\" -1.2.3 1..3";
+    for bad in bad.split(' ').chain(["", "1.2.3 ", &past]) {
+        assert!(v(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn feature_lists() {
+    let f = |list: &str| parse(&["a@1.0.0", "--work", "/w", "--features", list].map(str::to_owned));
+    let (at_len, at_count) = ("f".repeat(MAX_FEATURE), vec!["f"; MAX_FEATURES].join(","));
+    for good in ["std", "a_b-c+d.e", &at_len, &at_count] {
+        assert!(f(good).is_ok(), "{good}");
+    }
+    let (past_len, past_count) = (
+        "f".repeat(MAX_FEATURE + 1),
+        vec!["f"; MAX_FEATURES + 1].join(","),
+    );
+    for bad in [
+        "",
+        "a,,b",
+        "a,",
+        "dep:x",
+        "a/b",
+        "a\"b",
+        "a b",
+        &past_len,
+        &past_count,
+    ] {
+        assert!(f(bad).is_err(), "{bad:?}");
+    }
+}
+
+// ---- probe ----
+
+#[test]
+fn manifest_pins_the_one_dependency() {
+    let want = "[package]\nname = \"jpdf-admit-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
+                [dependencies.miniz_oxide]\nversion = \"=0.8.9\"\ndefault-features = true\nfeatures = []\n\n[workspace]\n";
+    assert_eq!(manifest(&opts()), want);
+    let mut o = opts();
+    (o.features, o.no_default_features) = (vec!["std".to_owned(), "a+b".to_owned()], true);
+    let m = manifest(&o);
+    assert!(
+        m.contains("default-features = false\nfeatures = [\"std\", \"a+b\"]\n"),
+        "{m}"
+    );
+}
+
+fn scratch(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("xtask-admit-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+    fs::canonicalize(d).unwrap()
+}
+
+#[test]
+fn work_dir_rules() {
+    use std::os::unix::fs::symlink;
+    let base = scratch("work");
+    let never = |_: &Path| false;
+    assert_eq!(
+        check_work(&base.join("new"), &never).unwrap(),
+        base.join("new")
+    );
+    symlink(base.join("nowhere"), base.join("link")).unwrap();
+    fs::write(base.join("file"), b"").unwrap();
+    // Relative, existing (a directory, a dangling symlink), a missing or non-directory parent,
+    // ending in `..`.
+    for bad in [
+        PathBuf::from("rel/new"),
+        base.clone(),
+        base.join("link"),
+        base.join("missing/new"),
+    ] {
+        assert!(check_work(&bad, &never).is_err(), "{bad:?}");
+    }
+    for bad in [base.join("file/new"), base.join("new/..")] {
+        assert!(check_work(&bad, &never).is_err(), "{bad:?}");
+    }
+    // A checkout at the parent, further up, or behind a symlinked parent.
+    let (at, up) = (base.clone(), base.parent().unwrap().to_path_buf());
+    assert!(check_work(&base.join("new"), &|a: &Path| a == at).is_err());
+    assert!(check_work(&base.join("new"), &|a: &Path| a == up).is_err());
+    fs::create_dir(base.join("real")).unwrap();
+    symlink(base.join("real"), base.join("alias")).unwrap();
+    let real = base.join("real");
+    assert!(check_work(&base.join("alias/new"), &|a: &Path| a == real).is_err());
+    assert_eq!(
+        check_work(&base.join("alias/new"), &never).unwrap(),
+        base.join("real/new")
+    );
+}
+
+#[test]
+fn has_git_sees_dirs_and_worktree_files() {
+    let base = scratch("git");
+    assert!(!has_git(&base));
+    fs::create_dir_all(base.join("repo/.git")).unwrap();
+    assert!(has_git(&base.join("repo")));
+    fs::create_dir(base.join("wt")).unwrap();
+    fs::write(base.join("wt/.git"), b"gitdir: x\n").unwrap();
+    assert!(has_git(&base.join("wt")));
+    // The live check refuses this repository's own tree.
+    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("no-such-probe");
+    assert!(
+        check_work(&here, &has_git)
+            .unwrap_err()
+            .contains("inside the git checkout")
+    );
+}
+
+#[test]
+fn write_probe_creates_new_files_only() {
+    let base = scratch("write");
+    let (repo, probe) = (base.join("repo"), base.join("probe"));
+    fs::create_dir_all(repo.join("supply-chain")).unwrap();
+    for rel in COPIED {
+        fs::write(repo.join(rel), format!("# {rel}\n")).unwrap();
+    }
+    write_probe(&probe, &repo, &opts()).unwrap();
+    assert_eq!(
+        fs::read_to_string(probe.join("Cargo.toml")).unwrap(),
+        manifest(&opts())
+    );
+    assert_eq!(fs::read(probe.join("src/lib.rs")).unwrap(), b"");
+    for rel in COPIED {
+        assert_eq!(
+            fs::read_to_string(probe.join(rel)).unwrap(),
+            format!("# {rel}\n")
+        );
+    }
+    // A second run into the same directory fails rather than reusing it; so does a missing file.
+    assert!(write_probe(&probe, &repo, &opts()).is_err());
+    fs::remove_file(repo.join("rust-toolchain.toml")).unwrap();
+    assert!(write_probe(&base.join("probe2"), &repo, &opts()).is_err());
+}
+
+#[test]
+fn commands_are_pinned() {
+    let (probe, repo) = (Path::new("/w/p"), Path::new("/r"));
+    let line = |c: Cmd| format!("{} {}", c.program, c.args.join(" "));
+    assert_eq!(line(lock_cmd()), "cargo generate-lockfile --color never");
+    assert_eq!(
+        line(metadata_cmd()),
+        "cargo metadata --format-version 1 --locked --color never"
+    );
+    let deny =
+        "cargo deny --color never --manifest-path /w/p/Cargo.toml --config /r/deny.toml check";
+    assert_eq!(line(deny_cmd(probe, repo)), deny);
+    assert_eq!(
+        line(vet_cmd(probe)),
+        "cargo vet --manifest-path /w/p/Cargo.toml --output-format json"
+    );
+    let scan = unsafe_cmd("py", probe, repo);
+    assert_eq!(scan.program, "py");
+    assert_eq!(
+        scan.args,
+        ["-I", "-c", UNSAFE_SNIPPET, "/r/ops/judge", "/w/p"]
+    );
+    assert!(UNSAFE_SNIPPET.contains("policy.check_deps(Path(sys.argv[2]), r)"));
+    // A path with a space stays one argument.
+    assert_eq!(
+        vet_cmd(Path::new("/a b")).args.get(2).unwrap(),
+        "/a b/Cargo.toml"
+    );
+}
+
+// ---- cargo metadata ----
+
+const META: &str = r#"{"packages":[
+ {"name":"adler2","version":"2.0.1","license":"0BSD OR MIT OR Apache-2.0","source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["lib"]},{"kind":["bench"]}]},
+ {"name":"jpdf-admit-probe","version":"0.0.0","license":null,"source":null,"targets":[{"kind":["lib"]}]},
+ {"name":"libc","version":"0.2.170","license":"MIT OR Apache-2.0","source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["lib"]},{"kind":["custom-build"]}]},
+ {"name":"serde_derive","version":"1.0.219","license":null,"source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["proc-macro"]}]}
+],"resolve":null,"version":1}"#;
+
+#[test]
+fn metadata_lists_registry_packages() {
+    let got = parse_metadata(META).unwrap();
+    let text: Vec<String> = got
+        .iter()
+        .map(|p| format!("{}@{} {} {:?}", p.name, p.version, p.build_time, p.license))
+        .collect();
+    assert_eq!(
+        text.join("\n"),
+        "adler2@2.0.1 false Some(\"0BSD OR MIT OR Apache-2.0\")\nlibc@0.2.170 true Some(\"MIT OR Apache-2.0\")\n\
+         serde_derive@1.0.219 true None"
+    );
+}
+
+#[test]
+fn metadata_shapes_it_does_not_know_are_errors() {
+    let probe = r#"{"name":"jpdf-admit-probe","version":"0.0.0","source":null,"targets":[{"kind":["lib"]}]}"#;
+    let dep =
+        r#"{"name":"a","version":"1.0.0","source":"registry+x","targets":[{"kind":["lib"]}]}"#;
+    let doc = |items: &[&str]| format!(r#"{{"packages":[{}]}}"#, items.join(","));
+    assert!(parse_metadata(&doc(&[probe, dep])).is_ok());
+    let edit = |from: &str, to: &str| doc(&[probe, &dep.replace(from, to)]);
+    for bad in [
+        "not json".to_owned(),
+        r#"{"packages":{}}"#.to_owned(),
+        doc(&[dep]),
+        doc(&[probe]),
+        doc(&[probe, probe, dep]),
+        edit(r#""source":"registry+x""#, r#""source":null"#),
+        edit(r#""source":"registry+x""#, r#""source":7"#),
+        edit(r#""name":"a","#, ""),
+        edit(r#""version":"1.0.0","#, ""),
+        edit(r#","targets":[{"kind":["lib"]}]"#, ""),
+        edit(r#"{"kind":["lib"]}"#, "{}"),
+        edit(r#"["lib"]"#, "[1]"),
+        edit(r#""source""#, r#""license":5,"source""#),
+    ] {
+        assert!(parse_metadata(&bad).is_err(), "{bad}");
+    }
+}
+
+// ---- deny ----
+
+const DENY_OK: &str = "advisories ok, bans ok, licenses ok, sources ok\n";
+const DENY_FAIL: &str = "error[rejected]: failed to satisfy license requirements
+   ┌─ /home/u/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ffmpeg-next-7.1.0/Cargo.toml:35:12
+   │
+35 │ license = \"WTFPL\"
+warning[duplicate]: found 2 duplicate entries for crate 'shlex'
+error[vulnerability]: something
+";
+
+#[test]
+fn deny_pass_and_rejection() {
+    assert_eq!(
+        deny_result(&cap(0, DENY_OK, ""), &[]),
+        checked(Outcome::Ok, Vec::new())
+    );
+    let bad = deny_result(
+        &cap(
+            4,
+            "advisories FAILED, bans ok, licenses FAILED, sources ok\n",
+            DENY_FAIL,
+        ),
+        &[],
+    );
+    assert_eq!(bad.outcome, Outcome::Finding);
+    assert_eq!(
+        lines(&bad),
+        "failed: advisories, licenses\nerror[rejected]: failed to satisfy license requirements\n  \
+         ┌─ /home/u/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ffmpeg-next-7.1.0/Cargo.toml:35:12\n\
+         error[vulnerability]: something"
+    );
+}
+
+#[test]
+fn deny_without_a_matching_summary_fails() {
+    for c in [
+        cap(1, "", "error: failed to load config\n"),
+        cap(4, DENY_OK, DENY_FAIL),
+        cap(
+            0,
+            "advisories ok, bans ok, licenses FAILED, sources ok\n",
+            "",
+        ),
+        cap(0, "", ""),
+        cap(4, "advisories ok, bans ok, licenses FAILED\n", DENY_FAIL),
+        cap(
+            4,
+            "advisories ok, bans ok, sources FAILED, licenses ok\n",
+            DENY_FAIL,
+        ),
+        cap(
+            4,
+            "advisories ok, bans ok, licenses failed, sources ok\n",
+            DENY_FAIL,
+        ),
+    ] {
+        assert!(failed(&deny_result(&c, &[])), "{c:?}");
+    }
+}
+
+#[test]
+fn deny_notes_ofl_licenses() {
+    let mut font = pkg("font-data", false);
+    font.license = Some("OFL-1.1 OR MIT".to_owned());
+    let c = deny_result(&cap(0, DENY_OK, ""), &[pkg("a", false), font]);
+    assert_eq!(c.outcome, Outcome::Ok);
+    let note = "note: font-data@1.0.0 is licensed OFL-1.1 OR MIT: OFL-1.1 is allowed for fonts only \
+                (CONSTITUTION 10), check it by hand";
+    assert_eq!(lines(&c), note);
+}
+
+// ---- the judge's dependency scan ----
+
+const LIBC: &str = "dependency libc 0.2.170 contains `unsafe` (47 files) and is not allowlisted";
+
+#[test]
+fn judge_scan_results() {
+    assert_eq!(
+        unsafe_result(&cap(0, "[]\n", "")),
+        checked(Outcome::Ok, Vec::new())
+    );
+    let hit = unsafe_result(&cap(0, &format!("[{LIBC:?}]\n"), ""));
+    assert_eq!(hit, checked(Outcome::Finding, vec![LIBC.to_owned()]));
+    for c in [
+        cap(0, "[\"cargo metadata failed: boom\"]\n", ""),
+        cap(1, "", "ModuleNotFoundError: No module named 'tomllib'\n"),
+        cap(1, "[]\n", ""),
+        cap(0, "", ""),
+        cap(0, "{}\n", ""),
+        cap(0, "[1]\n", ""),
+    ] {
+        assert!(failed(&unsafe_result(&c)), "{c:?}");
+    }
+}
+
+// ---- vet ----
+
+const VET_OK: &str = r#"{"conclusion":"success","vetted_fully":[{"name":"adler2","version":"2.0.1"}],"vetted_partially":[],"vetted_with_exemptions":[]}"#;
+const VET_FAIL: &str = r#"{
+  "conclusion": "fail (vetting)",
+  "failures": [
+    {"name": "libc", "version": "0.2.170", "missing_criteria": ["safe-to-deploy"]},
+    {"name": "r-efi", "version": "5.2.0", "missing_criteria": ["safe-to-deploy"]}
+  ],
+  "suggest": {"suggestions": []}
+}"#;
+
+fn set(items: &[(&str, &str)]) -> Unvetted {
+    Some(
+        items
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+            .collect(),
+    )
+}
+
+#[test]
+fn vet_pass_and_rejection() {
+    assert_eq!(
+        vet_result(&cap(0, VET_OK, "")),
+        (checked(Outcome::Ok, Vec::new()), set(&[]))
+    );
+    let (c, unvetted) = vet_result(&cap(255, VET_FAIL, ""));
+    assert_eq!(c.outcome, Outcome::Finding);
+    assert_eq!(
+        lines(&c),
+        "libc@0.2.170: no imported audit for safe-to-deploy\nr-efi@5.2.0: no imported audit for safe-to-deploy"
+    );
+    assert_eq!(unvetted, set(&[("libc", "0.2.170"), ("r-efi", "5.2.0")]));
+    let violation = vet_result(&cap(255, r#"{"conclusion":"fail (violation)"}"#, ""));
+    assert_eq!(
+        violation,
+        (
+            checked(
+                Outcome::Finding,
+                vec!["conclusion: fail (violation)".to_owned()]
+            ),
+            None
+        )
+    );
+}
+
+#[test]
+fn vet_results_it_cannot_read_fail() {
+    let store = r#"{"error": {"message": "Couldn't acquire the store","severity": "error"}}"#;
+    let why = Outcome::Failed("cargo vet: Couldn't acquire the store".to_owned());
+    assert_eq!(
+        vet_result(&cap(255, store, "")),
+        (checked(why, Vec::new()), None)
+    );
+    for c in [
+        cap(0, VET_FAIL, ""),
+        cap(255, VET_OK, ""),
+        cap(255, r#"{"conclusion":"fail (vetting)"}"#, ""),
+        cap(255, r#"{"conclusion":"fail (vetting)","failures":[]}"#, ""),
+        cap(
+            255,
+            r#"{"conclusion":"fail (vetting)","failures":[{"name":"a"}]}"#,
+            "",
+        ),
+        cap(255, r#"{"conclusion":"broken"}"#, ""),
+        cap(0, "", ""),
+        cap(0, "success", ""),
+    ] {
+        let (r, unvetted) = vet_result(&c);
+        assert!(failed(&r) && unvetted.is_none(), "{c:?}");
+    }
+}
+
+// ---- build-time code ----
+
+#[test]
+fn build_time_needs_an_audit() {
+    let libc = set(&[("libc", "1.0.0")]);
+    // No build-time crate: nothing to check, whatever vet said.
+    assert_eq!(
+        build_time_result(&[pkg("a", false)], &None),
+        checked(Outcome::Ok, Vec::new())
+    );
+    assert_eq!(
+        build_time_result(&[pkg("libc", false)], &libc),
+        checked(Outcome::Ok, Vec::new())
+    );
+    // Covered: not in vet's failures (the same name at another version doesn't count), or vet
+    // passed.
+    assert_eq!(
+        lines(&build_time_result(&[pkg("serde_derive", true)], &libc)),
+        "serde_derive@1.0.0: audited"
+    );
+    assert_eq!(
+        build_time_result(&[pkg("libc", true)], &set(&[("libc", "2.0.0")])).outcome,
+        Outcome::Ok
+    );
+    assert_eq!(
+        build_time_result(&[pkg("libc", true)], &set(&[])).outcome,
+        Outcome::Ok
+    );
+    let bad = build_time_result(&[pkg("serde_derive", true), pkg("libc", true)], &libc);
+    assert_eq!(bad.outcome, Outcome::Finding);
+    assert_eq!(
+        lines(&bad),
+        "serde_derive@1.0.0: audited\nlibc@1.0.0: not audited"
+    );
+    // Vet didn't decide: a build-time crate can't be cleared.
+    let unknown = build_time_result(&[pkg("libc", true)], &None);
+    assert!(failed(&unknown));
+    assert_eq!(lines(&unknown), "libc@1.0.0");
+}
+
+// ---- driver ----
+
+/// A fake runner: answers by the command's first argument and records each call.
+struct Fake {
+    calls: Vec<String>,
+    answers: Vec<(&'static str, Result<Captured, String>)>,
+}
+
+impl Fake {
+    fn passing() -> Fake {
+        let answers = vec![
+            ("generate-lockfile", Ok(cap(0, "", ""))),
+            ("metadata", Ok(cap(0, META, ""))),
+            ("deny", Ok(cap(0, DENY_OK, ""))),
+            ("-I", Ok(cap(0, "[]\n", ""))),
+            ("vet", Ok(cap(0, VET_OK, ""))),
+        ];
+        Fake {
+            calls: Vec::new(),
+            answers,
+        }
+    }
+
+    fn set(mut self, key: &str, answer: Result<Captured, String>) -> Fake {
+        let slot = self.answers.iter_mut().find(|(k, _)| *k == key).unwrap();
+        slot.1 = answer;
+        self
+    }
+
+    fn drive(&mut self, write_ok: bool) -> (Log, Report) {
+        let mut wrote = 0;
+        let mut write = || {
+            wrote += 1;
+            if write_ok {
+                Ok(())
+            } else {
+                Err("write failed".to_owned())
+            }
+        };
+        let mut run = |c: &Cmd| {
+            let key = c.args.first().cloned().unwrap_or_default();
+            self.calls.push(key.clone());
+            let answer = self
+                .answers
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, a)| a.clone());
+            answer.unwrap_or_else(|| Err(format!("unexpected {key}")))
+        };
+        let r = drive(
+            &opts(),
+            Path::new("/w/p"),
+            Path::new("/r"),
+            &mut write,
+            &mut run,
+        );
+        assert_eq!(wrote, 1);
+        r
+    }
+}
+
+const ALL: [&str; 5] = ["probe", "deny", "unsafe", "vet", "build-time"];
+
+fn steps_where(report: &Report, pick: fn(&Checked) -> bool) -> Vec<&'static str> {
+    report
+        .iter()
+        .filter(|(_, c)| pick(c))
+        .map(|(s, _)| *s)
+        .collect()
+}
+
+#[test]
+fn driver_runs_every_check_in_order() {
+    let mut f = Fake::passing();
+    let (log, report) = f.drive(true);
+    assert_eq!(
+        f.calls,
+        ["generate-lockfile", "metadata", "deny", "-I", "vet"]
+    );
+    assert_eq!((log.names(), steps::exit_code(&log)), (ALL.to_vec(), 0));
+    assert_eq!(steps_where(&report, |c| c.outcome == Outcome::Ok), ALL);
+    assert_eq!(
+        render(&opts(), &report, 0),
+        "admit: probe: ok\nadmit: deny: ok\nadmit: unsafe: ok\nadmit: vet: ok\nadmit: build-time: ok\n  \
+         libc@0.2.170: audited\n  serde_derive@1.0.219: audited\nadmit: miniz_oxide@0.8.9: admitted\n"
+    );
+}
+
+#[test]
+fn driver_keeps_going_after_a_rejection_or_failure() {
+    // Each check rejects on its own; the others still run.
+    let deny = Ok(cap(
+        4,
+        "advisories ok, bans ok, licenses FAILED, sources ok\n",
+        DENY_FAIL,
+    ));
+    let scan = Ok(cap(0, &format!("[{LIBC:?}]\n"), ""));
+    let vet = Ok(cap(
+        255,
+        &VET_FAIL
+            .replace("r-efi", "serde_derive")
+            .replace("5.2.0", "1.0.219"),
+        "",
+    ));
+    for (key, answer, rejected) in [
+        ("deny", deny, "deny"),
+        ("-I", scan, "unsafe"),
+        ("vet", vet, "vet, build-time"),
+    ] {
+        let mut f = Fake::passing().set(key, answer);
+        let (log, report) = f.drive(true);
+        assert_eq!(
+            (log.names(), f.calls.len(), steps::exit_code(&log)),
+            (ALL.to_vec(), 5, 4),
+            "{key}"
+        );
+        assert_eq!(
+            steps_where(&report, |c| c.outcome == Outcome::Finding).join(", "),
+            rejected,
+            "{key}"
+        );
+        let text = render(&opts(), &report, 4);
+        assert!(
+            text.ends_with(&format!(
+                "admit: miniz_oxide@0.8.9: rejected by {rejected}\n"
+            )),
+            "{text}"
+        );
+    }
+    // A check that can't start fails its step only; vet failing to run fails build-time too.
+    for (key, broken) in [
+        ("deny", "deny"),
+        ("-I", "unsafe"),
+        ("vet", "vet, build-time"),
+    ] {
+        let mut f = Fake::passing().set(key, Err("cannot run".to_owned()));
+        let (log, report) = f.drive(true);
+        assert_eq!(
+            (log.names(), steps::exit_code(&log)),
+            (ALL.to_vec(), 1),
+            "{key}"
+        );
+        assert_eq!(steps_where(&report, failed).join(", "), broken, "{key}");
+        assert!(
+            render(&opts(), &report, 1)
+                .ends_with("admit: miniz_oxide@0.8.9: not decided: a step failed\n")
+        );
+    }
+}
+
+#[test]
+fn driver_stops_when_the_probe_fails() {
+    let lock_fail = Ok(cap(
+        101,
+        "",
+        "error: no matching package named `nope` found\n",
+    ));
+    let meta_fail = Ok(cap(101, "", "error: the lock file needs to be updated\n"));
+    for (fake, write_ok, calls) in [
+        (Fake::passing(), false, ""),
+        (
+            Fake::passing().set("generate-lockfile", lock_fail.clone()),
+            true,
+            "generate-lockfile",
+        ),
+        (
+            Fake::passing().set("generate-lockfile", Err("no cargo".into())),
+            true,
+            "generate-lockfile",
+        ),
+        (
+            Fake::passing().set("metadata", meta_fail),
+            true,
+            "generate-lockfile metadata",
+        ),
+        (
+            Fake::passing().set("metadata", Ok(cap(0, "{}", ""))),
+            true,
+            "generate-lockfile metadata",
+        ),
+    ] {
+        let mut f = fake;
+        let (log, report) = f.drive(write_ok);
+        assert_eq!(
+            (f.calls.join(" "), log.names(), steps::exit_code(&log)),
+            (calls.to_owned(), vec!["probe"], 1)
+        );
+        assert_eq!(steps_where(&report, failed), ["probe"]);
+    }
+    let (_, report) = Fake::passing()
+        .set("generate-lockfile", lock_fail)
+        .drive(true);
+    assert_eq!(
+        render(&opts(), &report, 1),
+        "admit: probe: failed: cargo generate-lockfile: exit 101: error: no matching package named `nope` found\n\
+         admit: miniz_oxide@0.8.9: not decided: a step failed\n"
+    );
+}
+
+// ---- output ----
+
+#[test]
+fn failure_text_prefers_the_first_error_line() {
+    let cargo = "    Updating crates.io index\nerror: failed to select a version for `a = \"=9.0.0\"`\n\
+                 candidate versions found which didn't match: 1.0.0\nrequired by package `jpdf-admit-probe v0.0.0`\n";
+    assert_eq!(
+        cap(101, "", cargo).tail(),
+        "exit 101: error: failed to select a version for `a = \"=9.0.0\"`"
+    );
+    let python = "Traceback (most recent call last):\n  File \"<string>\", line 4\nModuleNotFoundError: No module named 'tomllib'\n\n";
+    assert_eq!(
+        cap(1, "", python).tail(),
+        "exit 1: ModuleNotFoundError: No module named 'tomllib'"
+    );
+    assert_eq!(cap(2, "", "").tail(), "exit 2: no output");
+    let killed = Captured {
+        code: None,
+        stdout: String::new(),
+        stderr: "x\n".to_owned(),
+    };
+    assert_eq!(killed.tail(), "exit signal: x");
+}
+
+#[test]
+fn clean_escapes_controls_and_caps_length() {
+    assert_eq!(clean("a\u{1b}[31mb\r\nc"), "a?[31mb??c");
+    let at = "x".repeat(MAX_LINE);
+    assert_eq!(clean(&at), at);
+    assert_eq!(clean(&format!("{at}y")), format!("{at}…"));
+    // A multi-byte character that would cross the cap is cut whole.
+    let near = "x".repeat(MAX_LINE - 1);
+    assert_eq!(clean(&format!("{near}é")), format!("{near}…"));
+}
+
+#[test]
+fn render_caps_details() {
+    let at: Vec<String> = (0..MAX_DETAILS).map(|i| format!("d{i}")).collect();
+    let text = |details: Vec<String>| {
+        render(
+            &opts(),
+            &vec![("unsafe", checked(Outcome::Finding, details))],
+            4,
+        )
+    };
+    let full = text(at.clone());
+    assert_eq!(full.lines().count(), MAX_DETAILS + 2);
+    assert!(!full.contains("more"));
+    let cut = text(at.into_iter().chain(["last".to_owned()]).collect());
+    assert_eq!(cut.lines().count(), MAX_DETAILS + 3);
+    assert!(cut.contains("  … 1 more\n") && !cut.contains("last"));
+}

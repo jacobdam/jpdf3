@@ -1,6 +1,7 @@
 //! Project task runner (NOT protected; the agent extends it). Contract: ops/judge/CONTRACT.md §2.
 #![forbid(unsafe_code)]
 
+mod admit;
 mod arlington;
 mod bench;
 mod dashboard;
@@ -24,7 +25,8 @@ const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
-     | next-session [--from DIR] | status [--from DIR] | issue-lint [--from DIR]";
+     | next-session [--from DIR] | status [--from DIR] | issue-lint [--from DIR] \
+     | admit <crate>@<version> --work DIR [--features A,B] [--no-default-features] [--python PATH]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -274,6 +276,23 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("xtask: issue-lint: {e}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        // specs/tooling/admit.md: exit 0 admitted, 4 rejected, 1 a step failed, 2 usage.
+        (Some("admit"), _) => {
+            let opts = match admit::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: admit: {e}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            match admit::run(Path::new("."), &opts) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("xtask: admit: {e}");
                     ExitCode::from(2)
                 }
             }
