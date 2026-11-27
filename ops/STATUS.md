@@ -4,9 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- #331 (journey J-PC-08, the web app offline): the owner approved PR #347 ("Look ok to me", 12:27 UTC); record-only
-  update since the round-4 check, `ai-review` success re-posted, auto-merge on. "done:" on #331 waits for the merge.
-- #373: PR #374 merged (4d56f1b); "done:" posted. main ci for 6bbfd59 passed.
+- #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
+- #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 at the 4-round cap, `ai-review` success,
+  auto-merge on. "done:" on #372 waits for the merge. Follow-up #377 (wording, `Ops`, without `ready`).
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
@@ -15,8 +15,8 @@ Phase: bootstrap (pilot)
 - #323 (nightly exec check): PR #364 merged (bc6c053).
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
-- ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
-  2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
+- ADR 0013 (#357, PR #359) merged (ecc89a0). Its tasks #360, #361 are `ready` (Planner 2026-11-27); they fold #350
+  and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
 - Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
@@ -28,8 +28,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window
-   passes, then rule i (#303, lowest first).
+0. `cargo xtask next-session` (TICK §2). Expected: rule a's "done:" on #372 once PR #376 merges, then rule i
+   (#303, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -53,11 +53,4 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant ([journal](journal/2026-11-27/0901-373-design-window.md)).
-- A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
-  call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
-  in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).
-- Merging origin/main locally is blocked by the guard when the merge brings a protected-path change from main →
-  set the conflicting record file to main's copy exactly (appended lines next to main's edits still conflict), push,
-  then `gh pr update-branch N`, and re-add your record lines after the merge
-  (ops/journal/2026-11-27/2300-347-design-window.md).
+- none
