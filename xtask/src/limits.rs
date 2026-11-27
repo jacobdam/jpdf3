@@ -608,6 +608,17 @@ pub fn results_json(results: &[CaseResult], target: u64, mem: bool) -> String {
 /// Runs the cases with `cli` and writes `DIR/limits.json` (spec items 2–6). `Ok(true)`: every
 /// case passed. The caller has started the watchdog and decided `mem`.
 pub fn run_with(cli: &Path, mem: bool, out: &Path, target: u64) -> Result<bool, String> {
+    run_results(cli, mem, out, target).map(|r| r.iter().all(|c| c.status == "pass"))
+}
+
+/// [`run_with`], returning every case's result (the nightly files issues from them,
+/// specs/tooling/nightly.md item 16).
+pub fn run_results(
+    cli: &Path,
+    mem: bool,
+    out: &Path,
+    target: u64,
+) -> Result<Vec<CaseResult>, String> {
     let work = out.join("work");
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot write {}: {e}", work.display()))?;
     let file = std::path::absolute(work.join("limits.pdf")).map_err(|e| e.to_string())?;
@@ -631,7 +642,7 @@ pub fn run_with(cli: &Path, mem: bool, out: &Path, target: u64) -> Result<bool, 
         results.len(),
         path.display()
     );
-    Ok(failed == 0)
+    Ok(results)
 }
 
 /// `cargo xtask limits` (spec item 7): 0 when every case passed, 4 when one failed;
