@@ -213,7 +213,8 @@ h. **RETRO session due** (7 days since the last one, or an incident since it: a 
    carry it); main red
    > 2 sessions ends in a revert) → §7.
 i. **A `ready` issue in the current milestone** (the lowest open `M<n>`) with every issue on its
-   `Depends on:` line closed, not `owner-todo`, `in-progress`, `design` or `design-pending`
+   `Depends on:` line closed (a line that starts with `Depends on:`, after optional `**`; the
+   phrase mid-line names nothing, #412, so write it on its own line), not `owner-todo`, `in-progress`, `design` or `design-pending`
    (lowest number first; while the work mix is below 70%, the lowest-numbered product issue, one
    with a product `area:` label of `ops/areas.toml`, first, ADR 0011 §3). An issue whose remaining work is in other issues (an umbrella that
    closes after them) loses `ready`, or names them on a `Depends on:` line.

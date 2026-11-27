@@ -375,8 +375,12 @@ PR that fails in its window.
   10. **A ready issue** (rule i): an open issue labeled `ready`, in the *current milestone* (the
       open milestone whose title is `M<digits>` with the smallest number), with no skip label
       and none of `in-progress` (claimed), `design`, `design-pending`, `design-product` (step 8's), not in flight, and with its
-      dependencies closed: every `#N` of the list right after a `Depends on:` in its body is not an
-      open issue in `issues.json`. The list is `#N` items separated by commas, spaces or `and`,
+      dependencies closed: every `#N` of the list right after `Depends on:` on a dependency line
+      of its body is not an open issue in `issues.json`. A dependency line is one whose text,
+      after leading whitespace and an optional `**` (no space after it), starts with `Depends on:`; the phrase
+      anywhere else in a line (``Its `Depends on: #14` is met by``, `**Refs:** … Depends on:
+      #14`) names nothing (#412: #303's body named #14 that way, and the loop idled for about
+      70 sessions). The list is `#N` items separated by commas, spaces or `and`,
       each optionally followed by one `(…)` note without nested parentheses; it ends at the
       first other text (a tab, a second or nested note included), so prose after the phrase
       names nothing (bold markers around the words allowed; case matters). Lowest
