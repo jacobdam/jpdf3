@@ -5,31 +5,18 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - **#386 (owner instruction, `human`): replace ops/STATUS.md with `cargo xtask status` and per-session lesson files.**
-  "picked up" posted; split into #390 (part 1, `cargo xtask status`: PR #393, 4 rounds, `ai-review` success, auto-merge
-  on), #391 (part 2, pending lesson files) and #392 (part 3, delete STATUS.md and its rules; its PR carries the "done:"
-  for the owner comment). Rule a keeps picking the owner comment until part 3 merges. Follow-up #394 (R4.1, `Ops`).
-- #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
+  "picked up" posted; split into #390 (part 1, `cargo xtask status`, PR #393 merged, 0c36f04), #391 (part 2, pending
+  lesson files in `ops/lessons/pending/`: PR #396, 2 rounds, `ai-review` success, auto-merge on) and #392 (part 3,
+  delete STATUS.md and its rules; its PR carries the "done:" for the owner comment). Rule a keeps picking the owner
+  comment until part 3 merges. Follow-ups #394 (R4.1 of #393) and #397 (R2.1 of #396), both `Ops`.
+- #302 (nightly 3/3 part 1): PR #384 merged (1a95aa6). It added ops/proposals/nightly-file-issues.md: a session still
+  has to file the owner issue for it with `owner-todo` (TICK §0). Part 2 (fuzz and bench findings) is #383, without
+  `ready`, depending on #361.
+- #348 (J-PC-08 fixture details): PR #388, owner `/approve` posted.
+- Follow-ups without `ready`: #377, #371 (`Ops`); #369, #366, #367 (M0); #380 (M10).
 - #179 (owner-comment tracking, test step 3): the owner's `/approve` closed it (2026-11-27); `owner-todo` removed,
   "done:" posted.
-- #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
-  comments. Follow-up #377 (wording, `Ops`, without `ready`).
-- #302 (nightly 3/3 part 1, the `issues` step: limits cases, regress crashes and timeouts, regressions; `--file-issues`):
-  PR #384 (`ai-review` success, auto-merge on). It adds ops/proposals/nightly-file-issues.md (the CI job's flag): once
-  it merges, a session labels an owner issue for it `owner-todo` (TICK §0; #302 closes with the PR). Part 2 (fuzz and
-  bench findings) is #383, without `ready`, depending on #302 and #361.
-- #334 (journeys J-PC-09, J-PC-10, the four app languages, Design: product): PR #379, 4 rounds, `ai-review` success;
-  the owner's `/approve` ended its window, auto-merge on. Merged origin/main again (STATUS conflict only, record-only
-  merge, `ai-review` re-posted). Follow-up #380 (specs/ui Preferences Language row, R4.1), M10 without `ready`.
-- #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
-- #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
-  milestone-work issues are all closed.
-- #323 (nightly exec check): PR #364 merged (bc6c053).
-- #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
-  macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
-- ADR 0013 (#357, PR #359) merged (ecc89a0). Task 1 #360 merged (PR #382, f51a2b9). Task 2
-  #361 (`ready`) is next. #322 merged (PR #362).
-- #334 (journeys J-PC-09, J-PC-10, the four languages): PR #379 owner-`/approve`d, auto-merge on; "done:" posted.
-  Follow-up #380 (wording).
+- ADR 0013 (#357) merged. Task 1 #360 merged (PR #382). Task 2 #361 (`ready`) is next.
 - Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
@@ -41,8 +28,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule a (#386's owner comment): work #391, then #392. PR #384
-   merged: a session still has to file the owner issue for ops/proposals/nightly-file-issues.md (above).
+0. `cargo xtask next-session` (TICK §2). Expected: rule a (#386's owner comment): work #392 once PR #396 merges.
+   A session still has to file the owner issue for ops/proposals/nightly-file-issues.md (above).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -63,7 +50,3 @@ Phase: bootstrap (pilot)
 - Local XCUITest on the Mac mini needs an unlocked, logged-in console. macOS CI runs no Rust tests.
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
-## Pending lessons
-- A test or spec claim that a fixture keeps N flags or labels independent ("a swapped field fails") → compute each
-  word's set of fixture items, opposites included, by script and run one swap mutant per pair before round 1; checked
-  by eye it took PR #393 three rounds (R1.2, R2.1, R3.1) ([journal](journal/2026-11-27/1501-390-status.md)).

@@ -132,6 +132,7 @@ name = "process"
 kind = "process"
 paths = [
   "ops/",
+  "ops/lessons/pending/README.md",
   ".claude/",
   "CONSTITUTION.md",
   "AUTOMATION.md",
@@ -159,8 +160,9 @@ paths = [
   "specs/tooling/issue-lint.md",
 ]
 
-# Session records: journal entries and STATUS (ADR 0011 §3).
+# Session records: journal entries, pending lesson files and STATUS (ADR 0011 §3). The pending
+# directory's README.md is the process area's (above): it holds the rule, not a record.
 [[area]]
 name = "records"
 kind = "process"
-paths = ["ops/journal/", "ops/STATUS.md"]
+paths = ["ops/journal/", "ops/lessons/pending/", "ops/STATUS.md"]

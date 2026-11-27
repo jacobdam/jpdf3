@@ -311,6 +311,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- A test or spec claim that a fixture keeps N flags or labels independent ("a swapped field fails") → compute each
+  word's set of fixture items, opposites included, by script and run one swap mutant per pair before round 1; checked
+  by eye it took PR #393 three rounds (R1.2, R2.1, R3.1) ([journal](journal/2026-11-27/1501-390-status.md)).
 - A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a
   URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant
   ([journal](journal/2026-11-27/0901-373-design-window.md)).
