@@ -90,6 +90,16 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
   later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
   one this size.
+- **A part is a GitHub sub-issue of its parent** (owner, #398), so the parent shows its
+  progress. File it with `gh issue create --parent <parent> ...`, or link an existing issue with
+  `gh issue edit <part> --parent <parent>`, each its own CLI write. The parts are: a sizing
+  split's parts (above, and §9 step 2's) under the original issue; §8 output 1's split issues
+  under the escalated issue; §8 step 5's design tasks under the design issue; an umbrella's part
+  filed later under the umbrella. The text links (`<area> 1/N`, `Depends on:`, `Designed in:`)
+  stay: the scheduler reads bodies and labels, not sub-issue links. Review deferrals and
+  discoveries are not parts of the PR's issue and stay unlinked. An issue has at most one
+  parent (GitHub refuses a second one, or the same link twice); read a link with
+  `gh issue view <n> --json parent,subIssues`.
 - **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
   merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
   can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
@@ -667,7 +677,8 @@ specs/tooling/design-technical.md.
    missing is a scope, taste or money decision (ADR 0011 §7). A `needs-design` PR takes one of:
    1. **split:** only if every line of the part that converged is already in the original PR's
       diff at its last reviewed commit, unchanged. File one issue for that part and one per
-      remaining part, each with `Designed in: #<escalated issue>`; open the split PR from
+      remaining part, each with `Designed in: #<escalated issue>` and as a sub-issue of the
+      escalated issue (§0); open the split PR from
       origin/main with those lines only (`Closes #<split issue>`; label it `design` if the
       original PR had that label, so step 6 gives it the 24-hour window; label every split
       issue `design-product` if the escalated issue had it, so step 6 and the scheduler's
@@ -726,7 +737,7 @@ specs/tooling/design-technical.md.
    the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
-   issue. Then add `owner-todo` to the design issue and comment
+   issue, each a sub-issue of the design issue (§0). Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it (/approve merges it sooner)`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
    `/release` on it. The success counts from the time of the triage comment its `target_url`
@@ -808,8 +819,8 @@ gate them.
    PLAN.md §8 (the milestone's row) and `cargo xtask metrics`. No code.
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
-   scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first
-   and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
+   scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
+   each a sub-issue of it, §0, and ready part 1), and every prerequisite is an issue named on its `Depends on:` line (file a
    missing one). An umbrella whose remaining work is in other issues gets no `ready` (rule i).
    Remove `in-progress` from a dead claim (no open PR links it and no worktree is on its branch),
    and `ready` from an issue that no longer qualifies. **Milestone moves** (ADR 0011 §1): an
@@ -829,6 +840,15 @@ gate them.
    see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
    open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
    that lists the group, and name it in `ops/QUEUE.md`.
+2b. **Sub-issues** (owner, #398): for each open umbrella in the milestone, read its links
+   (`gh issue view <n> --json subIssues`) and link each part, open or closed, that isn't a
+   sub-issue yet with `gh issue edit <part> --parent <n>` (§0). The parent is §0's: a numbered
+   part's original issue (its body says `Part i/N of #N`, or the umbrella names it: "closes
+   after #A and #B"), a §8 output 1 split issue's escalated issue, a §8 step 5 task's `design`
+   issue (the one on its `Depends on:` line). A `Designed in:` line alone doesn't name the
+   parent: §8 output 2's design issue carries one too and is not a part, and an escalated PR's
+   tasks name the escalated issue there. A part that already has another parent stays where
+   it is; note it in the journal.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
