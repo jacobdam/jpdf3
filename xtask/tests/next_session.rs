@@ -4954,6 +4954,25 @@ fn step3_design_window_owner_approve() {
         ]),
         owner_pick
     );
+    // A failing PR (R2.1): its approval is rule a's (pending, ops/TICK.md §8 step 5), and once
+    // the same reviewed head is green again it counts, so step 3 picks the PR by it.
+    let conflict = set_mergeable(&fresh, r#""CONFLICTING""#);
+    let on_conflict = |more: Vec<(&'static str, Option<String>)>| {
+        let mut c = vec![
+            with_pr(&conflict),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[a("/approve", AFTER_REVIEW)])]),
+        ];
+        c.extend(more);
+        pick(&c)
+    };
+    assert_eq!(on_conflict(vec![feed(APPROVE_URL)]), owner_pick);
+    assert_eq!(on_conflict(vec![]), "worker own-pr #320");
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], APPROVE_URL),
+        PICKED
+    );
     // Another owner comment on the PR: still rule a's.
     let other = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-78";
     assert_eq!(

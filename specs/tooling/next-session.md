@@ -721,7 +721,8 @@ of inputs where no step before 11 applies (→ `planner`):
   issue, no `design-ready.json` entry (none picked); an approval with an empty or malformed
   `createdAt` or no `url` exits 1. Step 1 (R1.1): with the approval in the feed, one that
   counts is step 3's pick, while one before the review, after a `/hold`, followed by a
-  `/release`, on a draft PR, or older than the review of a PR picked by its window is
+  `/release`, on a draft or conflicting PR (which, green again on the same review, is then
+  step 3's by it), or older than the review of a PR picked by its window is
   `worker owner-comment <url>`, and another owner comment on the PR stays rule a's, also next
   to a newer approval that counts. Hand mutants of the review-time comparison (`>` and dropped), the
   newest-command rule, the draft exemption, the issue-label rule, the word boundary, the tag,

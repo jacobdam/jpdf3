@@ -733,10 +733,19 @@ specs/tooling/design-technical.md.
    draft, no `/hold` after the last `/release`, the same label terms), and its `Rule:` line
    names the approval. A `/release` or `/hold` after it ends it; it never releases a `/hold`.
    It gets §0's replies: while it counts, the scheduler leaves it out of rule a (#372), so the
-   `design-window` session posts "picked up" and, once auto-merge is on, "done:". One that
-   doesn't count (given before the latest review, after a `/hold`, followed by a `/release`, on
-   a draft) stays rule a's: reply "done:" with why it doesn't count (`waiting on owner: a new
-   /approve` when the owner can give one) and move nothing.
+   `design-window` session posts "picked up" and, once auto-merge is on, "done:". Any other
+   `/approve` stays rule a's; that session never enables auto-merge for it, and its "done:"
+   says which case applies:
+   - **void** (given before the time the head's `ai-review` success counts from, followed by a
+     `/hold` or `/release`, or replaced by a newer `/approve`): `doesn't count: <reason>`, with
+     `waiting on owner: a new /approve` (or `nothing` when a newer one replaced it);
+   - **pending** (it is the newest command and no earlier than that review time, but the PR is
+     failing, a draft, held, auto-merge is already on, or a label parks it): `noted: it ends the
+     window once the PR is <what is missing> on the reviewed content`, since the scheduler
+     picks `worker design-window #N` by it as soon as that holds without a new review round
+     (a record-only fix or a CI rerun); a fix that needs a new round voids it (the new triage
+     is later). Then work the PR as its own rule (rule c for a failing one) if this session has
+     room, else leave it to the next pick.
    **A record-only update keeps the window** (#373) and the approval (#372): when every commit since the last reviewed
    one is a record commit or a merge of origin/main whose remerge-diff is empty or touches only
    record paths (§4 step 6's post-cap terms), re-post `ai-review` success on the new head with
