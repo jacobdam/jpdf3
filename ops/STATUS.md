@@ -8,8 +8,10 @@ Phase: bootstrap (pilot)
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
-- #306 (dashboard 2/2, judge metrics): PR #370, 4 rounds plus a clean final check, `ai-review` success, auto-merge on.
-  Follow-up #371 (R2.2, `Ops`, without `ready`). Once it merges, M0's milestone-work issues are all closed.
+- #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
+  milestone-work issues are all closed.
+- #323 (nightly exec check): PR #364, round 1 clean after fixes, `ai-review` success, auto-merge on (merged main twice
+  more for STATUS conflicts).
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
@@ -50,9 +52,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
-  can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
-  of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
 - A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
   call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
   in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).
