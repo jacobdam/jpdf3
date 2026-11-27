@@ -737,10 +737,15 @@ specs/tooling/design-technical.md.
    `/approve` stays rule a's; that session never enables auto-merge for it, and its "done:"
    says which case applies:
    - **void** (given before the time the head's `ai-review` success counts from, followed by a
-     `/hold` or `/release`, or replaced by a newer `/approve`): `doesn't count: <reason>`, with
-     `waiting on owner: a new /approve` (or `nothing` when a newer one replaced it);
+     `/hold` or `/release`, replaced by a newer `/approve`, given while the PR is held (after a
+     `/hold` with no `/release` since: only a `/release` lifts the hold, and it ends the
+     approval), or on an `owner/` branch): `doesn't count: <reason>`, with
+     `waiting on owner: a new /approve` (`/release, then a new /approve` when held; `nothing`
+     when a newer one replaced it or the branch is the owner's);
+   - **already merging** (auto-merge is on): `noted: auto-merge is already on, so it merges once
+     green`, `waiting on owner: nothing`;
    - **pending** (it is the newest command and no earlier than that review time, but the PR is
-     failing, a draft, held, auto-merge is already on, or a label parks it): `noted: it ends the
+     failing, a draft, or carries a skip label, or its issue `blocked` or `deferred`): `noted: it ends the
      window once the PR is <what is missing> on the reviewed content`, since the scheduler
      picks `worker design-window #N` by it as soon as that holds without a new review round
      (a record-only fix or a CI rerun); a fix that needs a new round voids it (the new triage
