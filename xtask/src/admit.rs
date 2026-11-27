@@ -253,8 +253,8 @@ impl Captured {
     }
 }
 
-/// A line of tool output as printed: control characters become `?` and it is cut to
-/// [`MAX_LINE`] bytes, so crate data can't forge or hide report lines.
+/// A line of tool output as printed: each character [`hides`] matches becomes `?` and the line
+/// is cut to [`MAX_LINE`] bytes, so crate data can't start or reorder a report line.
 pub fn clean(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars().map(|c| if hides(c) { '?' } else { c }) {
@@ -269,10 +269,10 @@ pub fn clean(s: &str) -> String {
 
 /// A character that can break or reorder a line where the report is shown: a control
 /// character, U+2028/U+2029 (line and paragraph separators) or a bidi embedding, override or
-/// isolate (U+202A-U+202E, U+2066-U+2069).
+/// isolate (U+202A-U+202E, U+2066-U+2069) or mark (U+200E, U+200F, U+061C).
 fn hides(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}')
 }
 
 /// A step's result plus the lines printed under it.

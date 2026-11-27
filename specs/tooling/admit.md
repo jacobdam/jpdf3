@@ -107,9 +107,10 @@ most 40, then `  … <n> more`), and a last line:
 
 A failure reason is also printed on stderr as `xtask: admit: <why>` when its step ends. Every
 line taken from tool output goes through `clean`: control characters (ANSI escapes, CR, LF),
-U+2028, U+2029 and the bidi embeddings, overrides and isolates (U+202A-U+202E,
-U+2066-U+2069) become `?`, and the line is cut at 300 bytes with `…`, so crate data can't
-start a new report line or reorder one in a terminal or a pasted copy. A failure reason quotes one stderr line: the first that starts with `error:` or
+U+2028, U+2029 and the bidi embeddings, overrides, isolates and marks (U+202A-U+202E,
+U+2066-U+2069, U+200E, U+200F, U+061C) become `?`, and the line is cut at 300 bytes with
+`…`, so crate data can't start a new report line or reorder one in a terminal or a pasted
+copy. A failure reason quotes one stderr line: the first that starts with `error:` or
 `error[` (cargo's own message), else the last non-blank one (a Python exception).
 
 ## Persistence
@@ -166,11 +167,11 @@ both fail `probe` (exit 1); cargo's quoted message says which.
   - What broken implementation still passes? A deny parser that accepted any output on exit 0,
     or any exit with a `FAILED` somewhere, fails `deny_without_a_matching_summary_fails` (exit 0
     with `FAILED`, exit 4 with all ok, reordered, three or five pairs, a lowercase `failed`,
-    the malformed lines each holding a real `FAILED`, so a lenient parser would reject instead of failing). A scan
-    step that passed on a non-zero exit or a `cargo metadata failed` entry fails
-    `judge_scan_results`. A driver that stopped after the first rejection, kept going after a
-    failed probe, or let a rejection outrank a failure fails the driver tests. Hand mutants of
-    each of these (17, listed in the PR description) were all caught.
+    the malformed lines each holding a real `FAILED`, so a lenient parser would reject instead
+    of failing). A scan step that passed on a non-zero exit or a `cargo metadata failed` entry
+    fails `judge_scan_results`. A driver that stopped after the first rejection, kept going
+    after a failed probe, or let a rejection outrank a failure fails the driver tests. Hand
+    mutants of each of these, listed in the PR description, were all caught.
   - Each rule has a should-reject and a near-miss should-accept case: names, versions
     (`1.0.0-a-b+c-d` against `1.2.3-a_b`), the work directory (a checkout at the parent, above
     it, and behind a symlinked parent, against the same paths with no checkout), each tool's

@@ -312,6 +312,22 @@ const LIBC: &str = "dependency libc 0.2.170 contains `unsafe` (47 files) and is 
 
 #[test]
 fn judge_scan_results() {
+    // The tomllib hint only when the quoted line names tomllib.
+    let why = |c: Captured| match unsafe_result(&c).outcome {
+        Outcome::Failed(w) => w,
+        o => format!("not failed: {o:?}"),
+    };
+    let py = cap(1, "", "ModuleNotFoundError: No module named 'tomllib'\n");
+    let hint = "judge dependency scan (needs Python 3.11+ for tomllib; see --python): exit 1: ";
+    assert_eq!(
+        why(py),
+        format!("{hint}ModuleNotFoundError: No module named 'tomllib'")
+    );
+    let other = cap(1, "[]\n", "OSError: [Errno 13] Permission denied\n");
+    assert_eq!(
+        why(other),
+        "judge dependency scan: exit 1: OSError: [Errno 13] Permission denied"
+    );
     assert_eq!(
         unsafe_result(&cap(0, "[]\n", "")),
         checked(Outcome::Ok, Vec::new())
@@ -555,6 +571,11 @@ fn failure_text_prefers_the_first_error_line() {
 #[test]
 fn clean_escapes_controls_and_caps_length() {
     assert_eq!(clean("a\u{1b}[31mb\r\nc"), "a?[31mb??c");
+    let marks = "\u{200E}\u{200F}\u{061C}";
+    assert_eq!(
+        clean(&format!("a{marks}b\u{200D}\u{061B}")),
+        "a???b\u{200D}\u{061B}"
+    );
     let hidden = "\u{2028}\u{2029}\u{202A}\u{202E}\u{2066}\u{2069}";
     assert_eq!(
         clean(&format!("a{hidden}b\u{2027}\u{202F}\u{2065}\u{206A}")),
