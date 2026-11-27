@@ -4,6 +4,10 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
+- **#386 (owner instruction, `human`): replace ops/STATUS.md with `cargo xtask status` and per-session lesson files.**
+  "picked up" posted; split into #390 (part 1, `cargo xtask status`: PR #393, 4 rounds, `ai-review` success, auto-merge
+  on), #391 (part 2, pending lesson files) and #392 (part 3, delete STATUS.md and its rules; its PR carries the "done:"
+  for the owner comment). Rule a keeps picking the owner comment until part 3 merges. Follow-up #394 (R4.1, `Ops`).
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
 - #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
   comments. Follow-up #377 (wording, `Ops`, without `ready`).
@@ -35,8 +39,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361), or rule c for PR #384; the session after
-   PR #384's merge files the owner issue for its proposal (above).
+0. `cargo xtask next-session` (TICK §2). Expected: rule a (#386's owner comment): work #391, then #392. PR #384
+   merged: a session still has to file the owner issue for ops/proposals/nightly-file-issues.md (above).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -60,9 +64,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
-  old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
-  R1.1).
-- A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
-  (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
-  ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1).
+- A test or spec claim that a fixture keeps N flags or labels independent ("a swapped field fails") → compute each
+  word's set of fixture items, opposites included, by script and run one swap mutant per pair before round 1; checked
+  by eye it took PR #393 three rounds (R1.2, R2.1, R3.1) ([journal](journal/2026-11-27/1501-390-status.md)).

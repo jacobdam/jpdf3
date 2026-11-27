@@ -24,7 +24,7 @@ const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
      | bench [--out DIR] [--corpus DIR] [--sample N] [--runs R] [--warmup W] [--mutool PATH|none] [--pdfium PATH|none] \
      | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
-     | next-session [--from DIR] | issue-lint [--from DIR]";
+     | next-session [--from DIR] | status [--from DIR] | issue-lint [--from DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -228,6 +228,31 @@ fn main() -> ExitCode {
                 }
                 Err(next_session::Error::Broken(e)) => {
                     eprintln!("xtask: next-session: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        // specs/tooling/status.md: the generated status (#386), from next-session's inputs and
+        // pick, with its exit codes: 2 = unknown (a command failed, nothing printed), 1 = broken.
+        (Some("status"), _) => {
+            let opts = match next_session::parse(args.get(1..).unwrap_or_default()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("xtask: status: {e}\n{USAGE}");
+                    return ExitCode::from(1);
+                }
+            };
+            match next_session::status(Path::new("."), &opts) {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(next_session::Error::Unknown(e)) => {
+                    eprintln!("xtask: status: unknown: {e}");
+                    ExitCode::from(2)
+                }
+                Err(next_session::Error::Broken(e)) => {
+                    eprintln!("xtask: status: {e}");
                     ExitCode::from(1)
                 }
             }

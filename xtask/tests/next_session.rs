@@ -679,6 +679,11 @@ fn base_of(name: &str) -> String {
 
 /// Writes `base()` with `changes` applied (`None` removes the file) and runs the scheduler.
 fn run_with(changes: &[(&str, Option<String>)]) -> std::io::Result<Output> {
+    run_command("next-session", changes)
+}
+
+/// `cargo xtask <command> --from <dir>` on base() with `changes` (`None` removes a file).
+fn run_command(command: &str, changes: &[(&str, Option<String>)]) -> std::io::Result<Output> {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "next-session-{}-{}",
         std::process::id(),
@@ -698,7 +703,7 @@ fn run_with(changes: &[(&str, Option<String>)]) -> std::io::Result<Output> {
         fs::write(dir.join(name), text)?;
     }
     Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["next-session", "--from", &dir.to_string_lossy()])
+        .args([command, "--from", &dir.to_string_lossy()])
         .output()
 }
 
@@ -5005,4 +5010,298 @@ fn step3_design_window_owner_approve() {
         assert_eq!(o.status.code(), Some(1), "{at:?}");
         assert!(String::from_utf8(o.stderr).unwrap().contains("holds.json"));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `cargo xtask status` (specs/tooling/status.md, #390): the same inputs, the same pick.
+
+/// The status run's stdout, or a description of the failure (so the caller's assertion shows it).
+fn status_of(changes: &[(&str, Option<String>)]) -> String {
+    match run_command("status", changes) {
+        Err(e) => format!("io error: {e}"),
+        Ok(o) if o.status.code() != Some(0) => format!(
+            "exit {:?}: {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+    }
+}
+
+/// next-session's first line and its `Rule:` line on the same fixture (empty on a failure,
+/// which no status output matches).
+fn pick_and_rule(changes: &[(&str, Option<String>)]) -> (String, String) {
+    let out = match run_with(changes) {
+        Ok(o) if o.status.code() == Some(0) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => return (String::new(), String::new()),
+    };
+    let first = out.lines().next().unwrap_or_default().to_owned();
+    let rule = out
+        .lines()
+        .find(|l| l.starts_with("Rule: "))
+        .unwrap_or_default()
+        .to_owned();
+    (first, rule)
+}
+
+/// One fixture's changes to base().
+type Changes = Vec<(&'static str, Option<String>)>;
+
+/// The fixture of the sections test: open PRs in every state the status shows, and issues with
+/// each label it reads, plus near misses of each.
+fn status_fixture() -> Changes {
+    let draft = pr(
+        310,
+        "OPEN",
+        "Closes #311",
+        "t/311-z",
+        &["needs-design"],
+        "[]",
+    )
+    .replace(r#""isDraft":false"#, r#""isDraft":true"#)
+    .replace(
+        r#""autoMergeRequest":null"#,
+        r#""autoMergeRequest":{"enabledAt":"2026-11-23T00:00:00Z"}"#,
+    );
+    let draft = set_mergeable(&draft, r#""CONFLICTING""#);
+    // Each state word on its own too (R1.2): auto-merge on a ready PR, a draft with auto-merge
+    // off, a conflict with a green rollup.
+    let auto = pr(
+        300,
+        "OPEN",
+        "Closes #301",
+        "t/301-y",
+        &["owner-todo"],
+        GREEN,
+    )
+    .replace(
+        r#""autoMergeRequest":null"#,
+        r#""autoMergeRequest":{"enabledAt":"2026-11-23T00:00:00Z"}"#,
+    );
+    // R2.1: no two state words on the same set of open PRs (each label on a green and a
+    // not-green PR, or on an owner and a `t/` branch).
+    let held_draft = pr(
+        330,
+        "OPEN",
+        "no link",
+        "t/330-w",
+        &["blocked-ish", "owner-todo", "blocked"],
+        GREEN,
+    )
+    .replace(r#""isDraft":false"#, r#""isDraft":true"#);
+    let conflicted = set_mergeable(
+        &pr(
+            340,
+            "OPEN",
+            "Closes #999",
+            "owner/y",
+            &["design", "blocked"],
+            GREEN,
+        ),
+        r#""CONFLICTING""#,
+    );
+    vec![
+        set(
+            "prs.json",
+            format!(
+                "[{},{},{},{},{},{},{}]",
+                auto,
+                draft,
+                // The owner's own PR (untagged): not the agent's, not listed.
+                raw_pr(320, "OPEN", "Closes #312", "owner/x", &[], GREEN),
+                held_draft,
+                conflicted,
+                pr(350, "OPEN", "x", "owner/z", &["needs-design"], GREEN),
+                // Merged: not in flight.
+                pr(
+                    299,
+                    "MERGED",
+                    "Closes #312",
+                    "t/298-x",
+                    &["owner-todo"],
+                    "[]"
+                )
+            ),
+        ),
+        set(
+            "issues.json",
+            format!(
+                "[{},{},{},{},{},{}]",
+                ready(301, "M0", &["in-progress"], ""),
+                issue(311, "two\nlines", &["in-progress", "blocked"]),
+                issue(312, "dead claim", &["in-progress"]),
+                issue(313, "owner turn", &["owner-todo", "blocked"]),
+                issue(
+                    314,
+                    "near",
+                    &["blocked-ish", "in-progress-x", "owner-todo "]
+                ),
+                issue(150, "low", &["security", "sev:low"])
+            ),
+        ),
+        holds(&[
+            (
+                300,
+                &[
+                    cmd("jacobdam", "/hold", "2026-11-23T01:00:00Z"),
+                    cmd("jacobdam", "/release", "2026-11-23T02:00:00Z"),
+                ],
+            ),
+            (330, &[cmd("jacobdam", "/hold", "2026-11-23T01:00:00Z")]),
+        ]),
+    ]
+}
+
+#[test]
+fn status_prints_each_section_from_the_inputs() {
+    let fixture = status_fixture();
+    let (first, rule) = pick_and_rule(&fixture);
+    let expected = format!(
+        "# Status (cargo xtask status, 2026-11-24T06:00:00Z; specs/tooling/status.md)\n\
+         \n\
+         Milestone: M0\n\
+         \n\
+         ## In flight\n\
+         - PR #300: closes #301 r: ready, auto-merge on, green, owner-todo\n\
+         - PR #310: closes #311 two lines: draft, auto-merge on, conflicting, not green (a failing check or no ai-review success), needs-design\n\
+         - PR #330: no Closes line: draft, auto-merge off, green, on the owner's /hold, owner-todo, blocked\n\
+         - PR #340: closes #999 (not an open issue): ready, auto-merge off, conflicting, green, the owner's branch, design, blocked\n\
+         - PR #350: no Closes line: ready, auto-merge off, green, the owner's branch, needs-design\n\
+         - #301 in-progress: r (PR #300)\n\
+         - #311 in-progress: two lines (PR #310)\n\
+         - #312 in-progress: dead claim (no open agent PR closes it)\n\
+         \n\
+         ## Next step\n\
+         {first}\n\
+         {rule}\n\
+         \n\
+         ## Blockers / owner-todo\n\
+         - #311 blocked: two lines\n\
+         - #313 blocked, owner-todo: owner turn\n\
+         - PR #300 owner-todo\n\
+         - PR #330 blocked, owner-todo\n\
+         - PR #340 blocked\n"
+    );
+    assert_eq!(status_of(&fixture), expected);
+}
+
+#[test]
+fn status_empty_sections_say_none() {
+    let out = status_of(&[
+        set(
+            "prs.json",
+            format!(
+                "[{}]",
+                pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+            ),
+        ),
+        set(
+            "issues.json",
+            format!("[{}]", issue(150, "low", &["security", "sev:low"])),
+        ),
+        set("milestones.json", "[]".to_owned()),
+    ]);
+    assert!(out.contains("Milestone: none\n"), "{out}");
+    assert!(
+        out.contains("## In flight\n- none\n\n## Next step\n"),
+        "{out}"
+    );
+    assert!(out.ends_with("## Blockers / owner-todo\n- none\n"), "{out}");
+}
+
+#[test]
+fn status_next_step_is_the_schedulers_pick() {
+    let url = format!("{ISSUES}777#issuecomment-1");
+    let failing = set(
+        "prs.json",
+        format!(
+            "[{},{}]",
+            pr(300, "OPEN", "Closes #301", "t/301-y", &[], "[]"),
+            pr(299, "MERGED", "Closes #298", "t/298-x", &[], "[]")
+        ),
+    );
+    let cases: Vec<(Changes, &str)> = vec![
+        (Vec::new(), "planner"),
+        (
+            vec![feed_plus(&[feed_comment("comment", &url, FLOOR)])],
+            "worker owner-comment",
+        ),
+        (vec![failing], "worker own-pr #300"),
+        (status_fixture(), ""),
+    ];
+    for (changes, starts) in cases {
+        let (first, rule) = pick_and_rule(&changes);
+        assert!(!first.is_empty() && first.starts_with(starts), "{first:?}");
+        assert!(rule.starts_with("Rule: "), "{rule:?}");
+        let out = status_of(&changes);
+        let next = out
+            .split("## Next step\n")
+            .nth(1)
+            .and_then(|r| r.split("\n\n").next())
+            .unwrap();
+        assert_eq!(next, format!("{first}\n{rule}"));
+    }
+}
+
+#[test]
+fn status_fails_closed() {
+    // A broken input: the scheduler's exit 1, nothing on stdout.
+    let o = run_command("status", &[set("prs.json", "[{}]".to_owned())]).unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty());
+    assert!(String::from_utf8(o.stderr).unwrap().contains("prs.json"));
+    // A missing input file is broken too.
+    let o = run_command("status", &[("issues.json", None)]).unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty());
+    // Bad arguments.
+    let xtask = || Command::new(env!("CARGO_BIN_EXE_xtask"));
+    for args in [
+        &["status", "--from"][..],
+        &["status", "--x", "d"],
+        &["status", "--from", "a", "b"],
+    ] {
+        let o = xtask().args(args).output().unwrap();
+        assert_eq!(o.status.code(), Some(1), "{args:?}");
+        assert!(o.stdout.is_empty());
+    }
+    // Live, with a feed script that works and a `gh` that fails: exit 2, nothing printed.
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("status-live-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let bin = dir.join("bin");
+    let driver = dir.join("ops/driver");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&driver).unwrap();
+    let script = |path: PathBuf, text: &str| {
+        fs::write(&path, text).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    script(
+        driver.join("owner-issues.sh"),
+        &format!("#!/bin/sh\nFLOOR=\"{FLOOR}\"\nexit 0\n"),
+    );
+    script(
+        bin.join("gh"),
+        "#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n",
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let o = xtask()
+        .arg("status")
+        .current_dir(&dir)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let err = String::from_utf8(o.stderr).unwrap();
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(o.stdout.is_empty());
+    assert!(
+        err.contains("xtask: status: unknown:") && err.contains("gh"),
+        "{err}"
+    );
 }
