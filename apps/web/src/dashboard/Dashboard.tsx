@@ -9,12 +9,16 @@ import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { type Bar, BarChart } from "./BarChart";
-import type { Milestone, Snapshot, Week } from "./data";
+import type { JudgeWeek, Milestone, Snapshot, Week } from "./data";
+import type { JudgeReport, ReportState } from "./judge";
 
 // specs/tooling/dashboard.md, Page. Snapshot text (issue titles) is rendered as React text.
 
 export const INVALID = "No metrics snapshot: data.json is missing or invalid.";
 export const NO_INDEX = "Missing: the snapshot has no session index.";
+export const NO_JUDGE_HISTORY = "Missing: the snapshot has no judge history.";
+export const NO_REPORT = "Missing: this site has no judge report.";
+export const BAD_REPORT = "Invalid: the judge report doesn't have the expected format.";
 
 function weekLabel(w: Week): string {
   // The last week is partial when --until isn't its Sunday.
@@ -42,7 +46,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function Dashboard({ snapshot }: { snapshot: Snapshot | null | undefined }) {
+export function Dashboard({
+  snapshot,
+  report,
+}: {
+  snapshot: Snapshot | null | undefined;
+  report: ReportState;
+}) {
   return (
     <Box component="main" sx={{ maxWidth: 960, mx: "auto", my: 4, px: 3 }}>
       <Stack spacing={4}>
@@ -54,14 +64,14 @@ export function Dashboard({ snapshot }: { snapshot: Snapshot | null | undefined 
         ) : snapshot === null ? (
           <Alert severity="warning">{INVALID}</Alert>
         ) : (
-          <Sections s={snapshot} />
+          <Sections s={snapshot} report={report} />
         )}
       </Stack>
     </Box>
   );
 }
 
-function Sections({ s }: { s: Snapshot }) {
+function Sections({ s, report }: { s: Snapshot; report: ReportState }) {
   const weeks = (f: (w: Week) => number | null): Bar[] =>
     s.weeks.map((w) => ({ label: weekLabel(w), value: f(w) }));
   return (
@@ -185,6 +195,115 @@ function Sections({ s }: { s: Snapshot }) {
           </TableBody>
         </Table>
       </Section>
+      <Section title="Judge metrics, latest main run">
+        {report.state === "loading" ? (
+          <Typography>Loading the judge report…</Typography>
+        ) : report.state === "missing" ? (
+          <Typography>{NO_REPORT}</Typography>
+        ) : report.state === "invalid" ? (
+          <Alert severity="warning">{BAD_REPORT}</Alert>
+        ) : (
+          <LatestReport r={report.report} />
+        )}
+      </Section>
+      <Section title="Judge metrics per week">
+        {s.judge === null ? (
+          <Typography>{NO_JUDGE_HISTORY}</Typography>
+        ) : (
+          <JudgeHistory weeks={s.weeks} judge={s.judge} />
+        )}
+      </Section>
     </>
+  );
+}
+
+function missing(v: number | null): string {
+  return v === null ? "missing" : String(v);
+}
+
+function LatestReport({ r }: { r: JudgeReport }) {
+  return (
+    <Stack spacing={2}>
+      <Typography variant="body2" color="text.secondary">
+        The smoke corpus report of the newest push to main (judge/report/report.json).
+      </Typography>
+      <Table size="small" aria-label="Smoke corpus, latest run" sx={{ maxWidth: 600 }}>
+        <TableHead>
+          <TableRow>
+            <TableCell component="th">Metric</TableCell>
+            <TableCell component="th" align="right">
+              Value
+            </TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {(
+            [
+              ["Open rate", missing(r.openRate)],
+              ["Render match", missing(r.renderMatch)],
+              ["Text F1", missing(r.textF1)],
+              ["Crashes", String(r.crashes)],
+            ] as const
+          ).map(([name, value]) => (
+            <TableRow key={name}>
+              <TableCell>{name}</TableCell>
+              <TableCell align="right">{value}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {r.milestones.length === 0 ? (
+        <Typography>No journeys in the report.</Typography>
+      ) : (
+        <Table size="small" aria-label="Journeys passing per milestone" sx={{ maxWidth: 600 }}>
+          <TableHead>
+            <TableRow>
+              <TableCell component="th">Milestone</TableCell>
+              <TableCell component="th" align="right">
+                Passing
+              </TableCell>
+              <TableCell component="th" align="right">
+                Journeys
+              </TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {r.milestones.map((m) => (
+              <TableRow key={m.title}>
+                <TableCell>{m.title}</TableCell>
+                <TableCell align="right">{m.passing}</TableCell>
+                <TableCell align="right">{m.journeys}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Stack>
+  );
+}
+
+function JudgeHistory({ weeks, judge }: { weeks: Week[]; judge: JudgeWeek[] }) {
+  // The validator pins judge[i].start to weeks[i].start, so both share the week labels.
+  const bars = (f: (j: JudgeWeek) => number | null): Bar[] =>
+    weeks.map((w, i) => {
+      const j = judge[i];
+      return { label: weekLabel(w), value: j === undefined ? null : f(j) };
+    });
+  const charts: [string, string, (j: JudgeWeek) => number | null][] = [
+    ["Smoke open rate per week", "Open rate", (j) => j.openRate],
+    ["Smoke render match per week", "Render match", (j) => j.renderMatch],
+    ["Smoke text F1 per week", "Text F1", (j) => j.textF1],
+    ["Smoke crashes per week", "Crashes", (j) => j.crashes],
+    ["Journeys passing per week", "Journeys passing", (j) => j.journeysPassing],
+  ];
+  return (
+    <Stack spacing={2}>
+      <Typography variant="body2" color="text.secondary">
+        The newest nightly judge run of each week (its gates report); a week without one is missing.
+      </Typography>
+      {charts.map(([title, column, f]) => (
+        <BarChart key={title} title={title} column="Week" valueColumn={column} bars={bars(f)} />
+      ))}
+    </Stack>
   );
 }

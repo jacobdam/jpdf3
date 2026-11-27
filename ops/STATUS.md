@@ -4,17 +4,18 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45914751752 for cf87e1e (PR #362's merge) passed.
+- main: ci run 45918554776 for c105253 passed; run 45920627986 (PR #368's merge, 4cf0fdb) was in progress at 01:06 UTC.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
-- #353 (dashboard page, 2/2): PR #368, 3 review rounds, `ai-review` success, auto-merge on. Follow-up #369 (R1.3,
-  R1.4), M0 without `ready`. #306 (judge metrics) depends on #353.
+- #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
+- #306 (dashboard 2/2, judge metrics): PR #370, 4 rounds plus a clean final check, `ai-review` success, auto-merge on.
+  Follow-up #371 (R2.2, `Ops`, without `ready`). Once it merges, M0's milestone-work issues are all closed.
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
   2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
-- Work mix 0 of 20: #353 (`apps/web/`) was the only open M0 issue that counts as milestone work; the mix rises once
-  M0 closes and M1 opens (ops/QUEUE.md, Work mix).
+- Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
+  opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
