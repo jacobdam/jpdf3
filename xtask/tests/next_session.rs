@@ -4159,18 +4159,20 @@ fn step3_design_window() {
             .unwrap()
             .contains("PR #320 is on the owner's /hold")
     );
-    // Failing: no `ai-review` success, an `ai-review` failure, a failed check, a conflict. Its
-    // issue has `owner-todo`, so the first term skips it too.
+    // Failing: no `ai-review` success, an `ai-review` failure, a failed check, a conflict. Not
+    // the window's; its issue's `owner-todo` is the window's own, so the first term picks it
+    // (#372: before, it skipped it too, and no step picked a design PR that conflicted in its
+    // window, the #347/#359 deadlock).
     for rollup in [
         "[]".to_owned(),
         r#"[{"__typename":"StatusContext","context":"ai-review","state":"FAILURE","startedAt":"2026-11-21T00:00:00Z"}]"#.to_owned(),
         r#"[{"__typename":"CheckRun","name":"policy","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"ai-review","state":"SUCCESS","startedAt":"2026-11-21T00:00:00Z"}]"#.to_owned(),
     ] {
-        assert_eq!(not_picked(&design_pr(320, EARLY, &rollup, &[]), &[]), "planner", "{rollup}");
+        assert_eq!(not_picked(&design_pr(320, EARLY, &rollup, &[]), &[]), "worker own-pr #320", "{rollup}");
     }
     assert_eq!(
         not_picked(&set_mergeable(&base_pr, r#""CONFLICTING""#), &[]),
-        "planner"
+        "worker own-pr #320"
     );
     // Without `owner-todo` on its issue, a failing design PR is the first term's.
     assert_eq!(
@@ -4562,5 +4564,445 @@ fn step3_design_window_starts_at_the_linked_triage() {
         .unwrap();
         assert_eq!(o.status.code(), Some(1), "{why}");
         assert!(o.stdout.is_empty(), "{why}");
+    }
+}
+
+// #372: a design PR that fails in its window (a conflict, a missing review) is the first term's,
+// though its issue carries `owner-todo`: that label is the window's own (TICK §8 step 5).
+#[test]
+fn step3_design_pr_failing_in_its_window() {
+    let ready_none = design_ready(&[(320, &[])]);
+    let on = |p: &str, issue_labels: &[&str]| {
+        pick(&[
+            with_pr(p),
+            ready_none.clone(),
+            plus("issues.json", &[issue(321, "adr", issue_labels)]),
+        ])
+    };
+    let conflicting = set_mergeable(
+        &design_pr(320, EARLY, &reviewed(EARLY), &[]),
+        r#""CONFLICTING""#,
+    );
+    let unreviewed = design_pr(320, EARLY, "[]", &[]);
+    for p in [&conflicting, &unreviewed] {
+        assert_eq!(
+            on(p, &["design", "owner-todo"]),
+            "worker own-pr #320",
+            "{p}"
+        );
+        // `blocked` or `deferred` on the issue still stops it (parked work).
+        for l in ["blocked", "deferred"] {
+            assert_eq!(on(p, &["design", "owner-todo", l]), "planner", "{l} {p}");
+            assert_eq!(on(p, &["design", l]), "planner", "{l} alone {p}");
+        }
+        // A draft (a design question, TICK §8 output 4, or an escalation): `owner-todo` is the
+        // owner's turn there, so it stops it.
+        let draft = p.replace(r#""isDraft":false"#, r#""isDraft":true"#);
+        assert_eq!(
+            on(&draft, &["design", "owner-todo"]),
+            "planner",
+            "draft {p}"
+        );
+        assert_eq!(
+            on(&draft, &["design"]),
+            "worker own-pr #320",
+            "draft, no todo {p}"
+        );
+        // Without the `design` label (a v1 PRODUCT.md PR waiting for approval, a parked PR).
+        for l in [&[][..], &["designx"], &["Design"]] {
+            let plain = p.replace(
+                r#""labels":[{"name":"design"}]"#,
+                &format!(
+                    "\"labels\":[{}]",
+                    l.iter()
+                        .map(|n| format!(r#"{{"name":{n:?}}}"#))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            );
+            assert_ne!(&plain, p, "label replaced");
+            assert_eq!(
+                on(&plain, &["design", "owner-todo"]),
+                "planner",
+                "{l:?} {p}"
+            );
+        }
+        // A skip label on the PR itself, or held: still not picked.
+        for l in ["owner-todo", "blocked", "deferred"] {
+            let labeled = p.replace(
+                r#""labels":[{"name":"design"}]"#,
+                &format!(r#""labels":[{{"name":"design"}},{{"name":{l:?}}}]"#),
+            );
+            assert_eq!(on(&labeled, &["design"]), "planner", "PR {l} {p}");
+        }
+        assert_eq!(
+            pick(&[
+                with_pr(p),
+                ready_none.clone(),
+                plus(
+                    "issues.json",
+                    &[issue(321, "adr", &["design", "owner-todo"])]
+                ),
+                holds(&[(320, &[cmd("jacobdam", "/hold", EARLY)])]),
+            ]),
+            "planner",
+            "held {p}"
+        );
+    }
+}
+
+// #372: the owner's `/approve` ends a design PR's 24-hour window early. NOW is
+// 2026-11-24T06:00:00Z; the review (and the PR) are an hour old, so the window hasn't passed.
+const REVIEW_AT: &str = "2026-11-24T05:00:00Z";
+const BEFORE_REVIEW: &str = "2026-11-24T04:59:59Z";
+const AFTER_REVIEW: &str = "2026-11-24T05:30:00Z";
+const APPROVE_URL: &str = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-77";
+
+#[test]
+fn step3_design_window_owner_approve() {
+    let ready = design_ready(&[(320, &[REVIEW_AT])]);
+    let issue_todo = plus(
+        "issues.json",
+        &[issue(321, "adr", &["design", "owner-todo"])],
+    );
+    let fresh = design_pr(320, REVIEW_AT, &reviewed(REVIEW_AT), &[]);
+    let on = |p: &str, comments: &[String]| {
+        pick(&[
+            with_pr(p),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, comments)]),
+        ])
+    };
+    let a = |body: &str, at: &str| comment("jacobdam", body, at, APPROVE_URL);
+    const PICKED: &str = "worker design-window #320";
+    // No command: the window runs.
+    assert_eq!(on(&fresh, &[]), "planner");
+    // At the review's second and after it: picked; one second before it: not (it saw an
+    // earlier commit).
+    assert_eq!(on(&fresh, &[a("/approve", REVIEW_AT)]), PICKED);
+    assert_eq!(on(&fresh, &[a("/approve", AFTER_REVIEW)]), PICKED);
+    assert_eq!(on(&fresh, &[a("/approve", BEFORE_REVIEW)]), "planner");
+    // The whole brief, with the approval's rule line.
+    let o = run_with(&[
+        with_pr(&fresh),
+        ready.clone(),
+        issue_todo.clone(),
+        holds(&[(320, &[a("/approve", AFTER_REVIEW)])]),
+    ])
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        "worker design-window #320\n\nRule: c (own design PR approved by the owner's /approve, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)\n\
+         Load:\n- gh pr view 320 --comments\n- gh issue view 321 --comments\n- ops/TICK.md §8 step 5\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n"
+    );
+    // Forms that count: any ASCII case, text after whitespace, a second line.
+    for body in [
+        "/Approve",
+        "/APPROVE",
+        "/approve looks good",
+        "/approve\nthanks",
+        "/approve\t",
+    ] {
+        assert_eq!(on(&fresh, &[a(body, AFTER_REVIEW)]), PICKED, "{body:?}");
+    }
+    // Near misses: not an approval.
+    for c in [
+        cmd("someone", "/approve", AFTER_REVIEW),
+        a(&format!("/approve {TAG}"), AFTER_REVIEW),
+        a(&format!("/approve {}", TAG.to_uppercase()), AFTER_REVIEW),
+        a("/approved", AFTER_REVIEW),
+        a("/approvex", AFTER_REVIEW),
+        a("ok /approve", AFTER_REVIEW),
+        a(" /approve", AFTER_REVIEW),
+        a("approve", AFTER_REVIEW),
+    ] {
+        assert_eq!(on(&fresh, std::slice::from_ref(&c)), "planner", "{c}");
+    }
+    let null_author = r#"{"author":null,"body":"/approve","createdAt":"2026-11-24T05:30:00Z"}"#;
+    assert_eq!(on(&fresh, &[null_author.to_owned()]), "planner");
+    // On another PR.
+    assert_eq!(
+        pick(&[
+            with_pr(&fresh),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[]), (321, &[a("/approve", AFTER_REVIEW)])]),
+        ]),
+        "planner"
+    );
+    // The newest command decides. A `/hold` after it: held (and noted).
+    let hold_after = [a("/approve", REVIEW_AT), a("/hold", AFTER_REVIEW)];
+    assert_eq!(on(&fresh, &hold_after), "planner");
+    // An approval after a `/hold` doesn't release it (the PR stays held).
+    let approve_after_hold = [a("/hold", REVIEW_AT), a("/approve", AFTER_REVIEW)];
+    assert_eq!(on(&fresh, &approve_after_hold), "planner");
+    for comments in [&hold_after, &approve_after_hold] {
+        let o = run_with(&[
+            with_pr(&fresh),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, comments)]),
+        ])
+        .unwrap();
+        assert!(
+            String::from_utf8(o.stdout)
+                .unwrap()
+                .contains("PR #320 is on the owner's /hold"),
+            "{comments:?}"
+        );
+    }
+    // A `/release` after it ends the approval (the window counts from the release).
+    assert_eq!(
+        on(
+            &fresh,
+            &[a("/approve", REVIEW_AT), a("/release", AFTER_REVIEW)]
+        ),
+        "planner"
+    );
+    // An approval after a `/release`: picked, in either list order.
+    for comments in [
+        [a("/release", REVIEW_AT), a("/approve", AFTER_REVIEW)],
+        [a("/approve", AFTER_REVIEW), a("/release", REVIEW_AT)],
+    ] {
+        assert_eq!(on(&fresh, &comments), PICKED, "{comments:?}");
+    }
+    // Equal times go by list order: the later one wins.
+    assert_eq!(
+        on(
+            &fresh,
+            &[a("/release", AFTER_REVIEW), a("/approve", AFTER_REVIEW)]
+        ),
+        PICKED
+    );
+    assert_eq!(
+        on(
+            &fresh,
+            &[a("/approve", AFTER_REVIEW), a("/release", AFTER_REVIEW)]
+        ),
+        "planner"
+    );
+    // Other comments after it don't end it.
+    assert_eq!(
+        on(
+            &fresh,
+            &[
+                a("/approve", REVIEW_AT),
+                a("thanks", AFTER_REVIEW),
+                cmd("someone", "/hold", AFTER_REVIEW)
+            ]
+        ),
+        PICKED
+    );
+
+    // A record-only update keeps the approval: the success re-posted after it (status time
+    // later than the approval) links the triage the owner saw.
+    let linked = format!("{TRIAGE_URL:?}");
+    let reposted = design_pr(320, REVIEW_AT, &reviewed_to(AFTER_REVIEW, &linked), &[]);
+    let triage_at = |at: &str| triage(at);
+    assert_eq!(
+        on(&reposted, &[triage_at(REVIEW_AT), a("/approve", REVIEW_AT)]),
+        PICKED
+    );
+    // Not linked (the safe side): the status time counts, so an approval before it is void.
+    let unlinked = design_pr(320, REVIEW_AT, &reviewed(AFTER_REVIEW), &[]);
+    assert_eq!(
+        on(&unlinked, &[triage_at(REVIEW_AT), a("/approve", REVIEW_AT)]),
+        "planner"
+    );
+    // A push after it: the new round's triage, later than the approval, is linked → void.
+    let new_round = design_pr(320, REVIEW_AT, &reviewed_to(AFTER_REVIEW, &linked), &[]);
+    assert_eq!(
+        on(
+            &new_round,
+            &[a("/approve", REVIEW_AT), triage_at(AFTER_REVIEW)]
+        ),
+        "planner"
+    );
+    // A push not yet reviewed: no `ai-review` success on the head, so it is failing and the
+    // first term's (its issue's `owner-todo` is the window's own), never the window's.
+    let pushed = design_pr(320, REVIEW_AT, "[]", &[]);
+    assert_eq!(
+        on(&pushed, &[a("/approve", AFTER_REVIEW)]),
+        "worker own-pr #320"
+    );
+
+    // The window term's other filters still apply to an approved PR.
+    let approved = [a("/approve", AFTER_REVIEW)];
+    for (p, why) in [
+        (
+            fresh.replace(r#""isDraft":false"#, r#""isDraft":true"#),
+            "draft",
+        ),
+        (
+            fresh.replace(
+                r#""autoMergeRequest":null"#,
+                r#""autoMergeRequest":{"enabledAt":"2026-11-24T05:40:00Z"}"#,
+            ),
+            "auto-merge on",
+        ),
+        (
+            design_pr(320, REVIEW_AT, &reviewed(REVIEW_AT), &["blocked"]),
+            "PR blocked",
+        ),
+        (
+            pr(
+                320,
+                "OPEN",
+                "Closes #321",
+                "t/321-adr",
+                &[],
+                &reviewed(REVIEW_AT),
+            ),
+            "no label",
+        ),
+        (
+            design_pr(320, REVIEW_AT, &reviewed(REVIEW_AT), &[]).replace("t/321-adr", "owner/adr"),
+            "owner branch",
+        ),
+    ] {
+        assert_ne!(on(&p, &approved), PICKED, "{why}");
+    }
+    for l in ["blocked", "deferred"] {
+        assert_eq!(
+            pick(&[
+                with_pr(&fresh),
+                ready.clone(),
+                plus(
+                    "issues.json",
+                    &[issue(321, "adr", &["design", "owner-todo", l])]
+                ),
+                holds(&[(320, &approved)]),
+            ]),
+            "planner",
+            "issue {l}"
+        );
+    }
+    // No `design-ready.json` entry: never picked.
+    assert_eq!(
+        pick(&[
+            with_pr(&fresh),
+            design_ready(&[]),
+            issue_todo.clone(),
+            holds(&[(320, &approved)]),
+        ]),
+        "planner"
+    );
+    // Step 1 (R1.1): the feed lists the `/approve` as a pending owner comment. One that
+    // counts is left to this term (its session posts both replies); one that doesn't count
+    // stays rule a's, and so does any other owner comment.
+    let feed = |url: &str| feed_plus(&[feed_comment("comment", url, AFTER_REVIEW)]);
+    let with_feed = |comments: &[String], url: &str| {
+        pick(&[
+            with_pr(&fresh),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, comments)]),
+            feed(url),
+        ])
+    };
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], APPROVE_URL),
+        PICKED
+    );
+    let owner_pick = format!("worker owner-comment {APPROVE_URL}");
+    for (comments, why) in [
+        (vec![a("/approve", BEFORE_REVIEW)], "before the review"),
+        (
+            vec![a("/hold", REVIEW_AT), a("/approve", AFTER_REVIEW)],
+            "held",
+        ),
+        (
+            vec![a("/approve", REVIEW_AT), a("/release", AFTER_REVIEW)],
+            "released after",
+        ),
+    ] {
+        assert_eq!(with_feed(&comments, APPROVE_URL), owner_pick, "{why}");
+    }
+    // A PR past its window, with an approval older than its review: the window term picks it,
+    // but not by that approval, so step 1 keeps the comment.
+    let old = design_pr(320, EARLY, &reviewed(EARLY), &[]);
+    let stale = comment("jacobdam", "/approve", "2026-11-20T23:59:59Z", APPROVE_URL);
+    assert_eq!(
+        pick(&[
+            with_pr(&old),
+            design_ready(&[(320, &[])]),
+            issue_todo.clone(),
+            holds(&[(320, std::slice::from_ref(&stale))]),
+        ]),
+        PICKED
+    );
+    assert_eq!(
+        pick(&[
+            with_pr(&old),
+            design_ready(&[(320, &[])]),
+            issue_todo.clone(),
+            holds(&[(320, &[stale])]),
+            feed(APPROVE_URL),
+        ]),
+        owner_pick
+    );
+    // A draft PR's approval doesn't count either.
+    assert_eq!(
+        pick(&[
+            with_pr(&fresh.replace(r#""isDraft":false"#, r#""isDraft":true"#)),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[a("/approve", AFTER_REVIEW)])]),
+            feed(APPROVE_URL),
+        ]),
+        owner_pick
+    );
+    // A failing PR (R2.1): its approval is rule a's (pending, ops/TICK.md §8 step 5), and once
+    // the same reviewed head is green again it counts, so step 3 picks the PR by it.
+    let conflict = set_mergeable(&fresh, r#""CONFLICTING""#);
+    let on_conflict = |more: Vec<(&'static str, Option<String>)>| {
+        let mut c = vec![
+            with_pr(&conflict),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[a("/approve", AFTER_REVIEW)])]),
+        ];
+        c.extend(more);
+        pick(&c)
+    };
+    assert_eq!(on_conflict(vec![feed(APPROVE_URL)]), owner_pick);
+    assert_eq!(on_conflict(vec![]), "worker own-pr #320");
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], APPROVE_URL),
+        PICKED
+    );
+    // Another owner comment on the PR: still rule a's.
+    let other = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-78";
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], other),
+        format!("worker owner-comment {other}")
+    );
+    // An older approval, no longer the newest command, isn't skipped even if a newer one is.
+    let older = comment("jacobdam", "/approve", REVIEW_AT, other);
+    assert_eq!(
+        with_feed(&[older, a("/approve", AFTER_REVIEW)], other),
+        format!("worker owner-comment {other}")
+    );
+    // An approval needs a `url` (step 1 matches it); other commands don't.
+    let o = run_with(&[
+        with_pr(&fresh),
+        ready.clone(),
+        holds(&[(320, &[cmd("jacobdam", "/approve", AFTER_REVIEW)])]),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8(o.stderr).unwrap().contains("holds.json"));
+    // An approval's `createdAt` must be GitHub's form (it is compared as time).
+    for at in ["", "2026-11-24 05:30:00"] {
+        let o = run_with(&[
+            with_pr(&fresh),
+            ready.clone(),
+            holds(&[(320, &[a("/approve", at)])]),
+        ])
+        .unwrap();
+        assert_eq!(o.status.code(), Some(1), "{at:?}");
+        assert!(String::from_utf8(o.stderr).unwrap().contains("holds.json"));
     }
 }

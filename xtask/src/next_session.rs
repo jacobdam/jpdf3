@@ -29,6 +29,9 @@ const READY_EVENT: &str = "ready_for_review";
 /// `targetUrl` names such a comment on the same PR starts the design window at that comment's
 /// time, so a success re-posted after a record-only update keeps the window (#373).
 const TRIAGE_HEAD: &str = "🤖 jpdf-agent **AI review triage";
+/// The owner's command that ends a design PR's 24-hour window early (#372, ADR 0011 §7). The
+/// owner-commands workflow ignores it (it acts on `/hold` and `/release` only).
+const APPROVE: &str = "/approve";
 /// What a Design: technical session loads besides the PR or issue (ops/TICK.md §8 step 2).
 const DESIGN_LOAD: [&str; 6] = [
     "ops/TICK.md §8",
@@ -514,6 +517,14 @@ fn skipped(labels: &[String]) -> bool {
     SKIP_LABELS.iter().any(|s| has_label(labels, s))
 }
 
+/// The linked issue's labels stop an open design PR that isn't a draft: `blocked` or `deferred`
+/// do (a session or the owner parked the work), `owner-todo` doesn't, since the issue carries it
+/// while the PR's 24-hour window runs (TICK §8 step 5). Shared by step 3's failing-PR term (so a
+/// design PR that conflicts in its window is picked, #372) and its window term (PR #333 R1.3).
+fn window_parked(labels: &[String]) -> bool {
+    has_label(labels, "blocked") || has_label(labels, "deferred")
+}
+
 /// `body` names `url` exactly: at a match, the next character isn't a digit (so a link to
 /// `…-1234` never counts for `…-123`).
 fn names_url(body: &str, url: &str) -> bool {
@@ -795,6 +806,66 @@ fn newest_commands(text_: &str) -> Result<Vec<(u64, String, bool)>, String> {
         }
         if let Some((at, hold)) = newest {
             out.push((n, at.to_owned(), hold));
+        }
+    }
+    Ok(out)
+}
+
+/// An owner `/approve` (#372): an owner-account comment without the tag (ASCII case, as the
+/// command rule above) whose body starts with `/approve` in any ASCII case, followed by the end
+/// or ASCII whitespace (so `/approved` is no approval).
+fn approve_command(login: Option<&str>, body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    login == Some(OWNER)
+        && !lower.contains(&TAG.to_ascii_lowercase())
+        && lower
+            .strip_prefix(APPROVE)
+            .is_some_and(|rest| rest.chars().next().is_none_or(|c| c.is_ascii_whitespace()))
+}
+
+/// For each PR in `holds.json` whose newest owner command, `/approve` (`approve_command`)
+/// counted with `/hold` and `/release` (`newest_commands`' rule), is an `/approve`: its
+/// `createdAt` and `url` (#372; an approval needs a string `url`, which step 1 matches). Newest is the largest `createdAt`; on a tie, the later in the list. A
+/// `/release` or `/hold` after it ends the approval; it never releases a hold (the hold rule
+/// ignores it).
+fn approvals(text_: &str) -> Result<std::collections::BTreeMap<u64, (String, String)>, String> {
+    let what = "holds.json";
+    let v = parse_list(text_, what)?;
+    let mut out = std::collections::BTreeMap::new();
+    for p in list(&v, what)? {
+        let n = number(p, "number", what)?;
+        let mut newest: Option<(&str, Option<&str>)> = None;
+        for c in list(field(p, "comments", what)?, what)? {
+            let body = text(c, "body", what)?;
+            let login = match field(c, "author", what)? {
+                Value::Null => None,
+                a => Some(text(a, "login", what)?),
+            };
+            let lower = body.to_ascii_lowercase();
+            let approve = approve_command(login, body);
+            let url = if approve {
+                Some(text(c, "url", what)?)
+            } else {
+                None
+            };
+            let other = login == Some(OWNER)
+                && !lower.contains(&TAG.to_ascii_lowercase())
+                && (lower.starts_with("/hold") || lower.starts_with("/release"));
+            if !approve && !other {
+                continue;
+            }
+            let at = text(c, "createdAt", what)?;
+            if !valid_floor(at) {
+                return Err(format!(
+                    "{what}: createdAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                ));
+            }
+            if newest.is_none_or(|(t, _)| at >= t) {
+                newest = Some((at, url));
+            }
+        }
+        if let Some((at, Some(url))) = newest {
+            out.insert(n, (at.to_owned(), url.to_owned()));
         }
     }
     Ok(out)
@@ -1180,7 +1251,10 @@ fn valid_floor(f: &str) -> bool {
         })
 }
 
-fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
+/// `approved`: the URLs of owner `/approve` comments that step 3's window term acts on (#372).
+/// Step 1 leaves them to that term, whose session posts both replies (TICK §8 step 5); an
+/// approval that doesn't count stays rule a's, so its session replies why.
+fn step1(inp: &Inputs, prs: &[Pr], approved: &[String]) -> Result<Option<Pick>, String> {
     let feed = parse_feed(&inp.feed)?;
     if !valid_floor(&inp.floor) {
         return Err(format!("floor {:?} is not YYYY-MM-DDTHH:MM:SSZ", inp.floor));
@@ -1226,6 +1300,7 @@ fn step1(inp: &Inputs, prs: &[Pr]) -> Result<Option<Pick>, String> {
         })
         .filter(|(at, url)| {
             *at >= inp.floor.as_str()
+                && !approved.iter().any(|a| a == url)
                 && !prs.iter().any(|p| {
                     p.open
                         && (!p.failing || p.parked() || p.needs_design())
@@ -1606,6 +1681,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     let commands = newest_commands(&inp.holds)?;
     let ready_at = ready_times(&inp.design_ready)?;
     let triaged = triage_times(&inp.holds)?;
+    let approved = approvals(&inp.holds)?;
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
     let now = unix(&inp.now, "now.txt")?;
@@ -1639,7 +1715,66 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             .unwrap_or_default()
     };
 
-    let mut chosen = step1(inp, &prs)?;
+    // ADR 0011 §7: the window starts at the latest of the PR marked ready, its last
+    // `ai-review` success and the owner's last `/release`; at exactly 24 hours it has passed.
+    // The success counts from the triage comment it links when that is one of this PR's
+    // (#373): a success re-posted on a record-only update links the same comment, so the
+    // window keeps its start; else from the status itself (the safe side: a restart).
+    // `now` is in the years 1970–9999 (`unix`), so this can't overflow; before 1970-01-02
+    // the cutoff is the epoch, which no GitHub time precedes.
+    let cutoff = iso(now.saturating_sub(DESIGN_WINDOW).max(0));
+    let window: Vec<(&Pr, bool)> = prs
+        .iter()
+        .filter(|p| {
+            p.design_label()
+                && !p.draft
+                && !p.auto_merge
+                && !p.failing
+                && !p.parked()
+                && !skipped(&p.labels)
+                // Its issue's `owner-todo` is the window's own; `blocked` or `deferred`
+                // there stops the merge (the safe side, PR #333 R1.3).
+                && !linked_issue(&p.body).is_some_and(|n| window_parked(labels_of(n)))
+        })
+        .filter_map(|p| {
+            // No entry: its ready time is unknown, so it is never picked (the safe side;
+            // live, every open agent design PR gets one).
+            let ready = ready_at.get(&p.number)?;
+            let ready = ready.clone().unwrap_or_else(|| p.created.clone());
+            let release = commands
+                .iter()
+                .find(|(n, _, hold)| *n == p.number && !hold)
+                .map(|(_, at, _)| at.clone());
+            // Not failing implies an `ai-review` success on the head; `review` is checked
+            // anyway, so a PR without its time is never picked.
+            let review = p.review.as_ref()?;
+            let reviewed = review
+                .target
+                .as_ref()
+                .and_then(|u| triaged.get(&(p.number, u.clone())))
+                .unwrap_or(&review.started)
+                .clone();
+            // #372: the owner's newest command is an `/approve` at or after the review it
+            // saw, so it covers the reviewed content. A record-only re-post links the same
+            // triage, so it keeps the approval; a new round's triage, later, ends it.
+            if approved.get(&p.number).is_some_and(|(a, _)| *a >= reviewed) {
+                return Some((p, true));
+            }
+            [Some(ready), Some(reviewed), release]
+                .into_iter()
+                .flatten()
+                .all(|t| t <= cutoff)
+                .then_some((p, false))
+        })
+        .collect();
+    // Step 1 leaves an approval that counts to this term (#372, PR #376 R1.1).
+    let approve_urls: Vec<String> = window
+        .iter()
+        .filter(|(_, by_approval)| *by_approval)
+        .filter_map(|(p, _)| approved.get(&p.number).map(|(_, u)| u.clone()))
+        .collect();
+
+    let mut chosen = step1(inp, &prs, &approve_urls)?;
     if chosen.is_none() && alarm.is_none() {
         chosen = red.map(|id| {
             pick(
@@ -1656,7 +1791,17 @@ fn decide(inp: &Inputs) -> Result<String, String> {
         chosen = prs
             .iter()
             .filter(|p| p.open && p.failing && !skipped(&p.labels) && !p.parked() && !p.needs_design())
-            .find(|p| linked_issue(&p.body).is_none_or(|n| !skipped(labels_of(n))))
+            // A design PR in its window: its issue's `owner-todo` is the window's own, so it
+            // doesn't hide a conflict or a missing review there (#372: else no step picks it).
+            .find(|p| {
+                linked_issue(&p.body).is_none_or(|n| {
+                    if p.design_label() && !p.draft {
+                        !window_parked(labels_of(n))
+                    } else {
+                        !skipped(labels_of(n))
+                    }
+                })
+            })
             .map(|p| {
                 let mut load = vec![
                     format!("gh pr view {} --comments", p.number),
@@ -1688,64 +1833,20 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             });
     }
     if chosen.is_none() {
-        // ADR 0011 §7: the window starts at the latest of the PR marked ready, its last
-        // `ai-review` success and the owner's last `/release`; at exactly 24 hours it has passed.
-        // The success counts from the triage comment it links when that is one of this PR's
-        // (#373): a success re-posted on a record-only update links the same comment, so the
-        // window keeps its start; else from the status itself (the safe side: a restart).
-        // `now` is in the years 1970–9999 (`unix`), so this can't overflow; before 1970-01-02
-        // the cutoff is the epoch, which no GitHub time precedes.
-        let cutoff = iso(now.saturating_sub(DESIGN_WINDOW).max(0));
-        chosen = prs
-            .iter()
-            .filter(|p| {
-                p.design_label()
-                    && !p.draft
-                    && !p.auto_merge
-                    && !p.failing
-                    && !p.parked()
-                    && !skipped(&p.labels)
-                    // Its issue's `owner-todo` is the window's own; `blocked` or `deferred`
-                    // there stops the merge (the safe side, PR #333 R1.3).
-                    && !linked_issue(&p.body)
-                        .and_then(|n| issues.iter().find(|i| i.number == n))
-                        .is_some_and(|i| {
-                            has_label(&i.labels, "blocked") || has_label(&i.labels, "deferred")
-                        })
-            })
-            .find(|p| {
-                // No entry: its ready time is unknown, so it is never picked (the safe side;
-                // live, every open agent design PR gets one).
-                let Some(ready) = ready_at.get(&p.number) else {
-                    return false;
-                };
-                let ready = ready.clone().unwrap_or_else(|| p.created.clone());
-                let release = commands
-                    .iter()
-                    .find(|(n, _, hold)| *n == p.number && !hold)
-                    .map(|(_, at, _)| at.clone());
-                // Not failing implies an `ai-review` success on the head; `review` is checked
-                // anyway, so a PR without its time is never picked.
-                p.review.as_ref().is_some_and(|review| {
-                    let reviewed = review
-                        .target
-                        .as_ref()
-                        .and_then(|u| triaged.get(&(p.number, u.clone())))
-                        .unwrap_or(&review.started)
-                        .clone();
-                    [Some(ready), Some(reviewed), release]
-                        .into_iter()
-                        .flatten()
-                        .all(|t| t <= cutoff)
-                })
-            })
-            .map(|p| {
+        chosen = window
+            .first()
+            .copied()
+            .map(|(p, approved)| {
                 let mut load = vec![format!("gh pr view {} --comments", p.number)];
                 load.extend(linked_issue(&p.body).map(view_issue));
                 load.push("ops/TICK.md §8 step 5".to_owned());
                 pick(
                     format!("worker design-window #{}", p.number),
-                    "c (own design PR past its 24-hour window, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)",
+                    if approved {
+                        "c (own design PR approved by the owner's /approve, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)"
+                    } else {
+                        "c (own design PR past its 24-hour window, ADR 0011 §7: enable auto-merge, remove owner-todo from its issue)"
+                    },
                     load,
                 )
             });

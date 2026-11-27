@@ -38,11 +38,12 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
     later change's 24-hour window).
   - Remove `owner-todo` once the owner's part is done (a merge on main applying it, which for a
     protected path needs the owner's signed commits, or the owner comment it waited for), or,
-    for a design ADR PR, once its window has passed with no `/hold` (§8 step 5; the owner's
-    turn was to object, and silence is the answer). The owner may also remove it.
+    for a design ADR PR, once its window has passed with no `/hold`, or once the owner's
+    `/approve` on it stands (§8 step 5; the owner's turn was to object, and silence is the answer). The
+    owner may also remove it.
   - Rules d and i skip issues labeled `owner-todo`: it is the owner's turn.
 - **Every owner instruction gets two replies** (owner, #173): an owner issue, a comment on an
-  issue or PR, an inline review comment, a review body, a command (`/hold`, `/release`). Both go in
+  issue or PR, an inline review comment, a review body, a command (`/hold`, `/release`, `/approve`). Both go in
   that issue's or PR's conversation (`gh issue comment` / `gh pr comment`; an inline review comment
   gets its replies on the PR conversation, since comment writes go only through those commands):
   - when you start: `🤖 jpdf-agent picked up <link to the owner comment> (session <time>)`;
@@ -117,8 +118,8 @@ git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protecte
 # audit and retro due: `cargo xtask next-session` (§2) decides them (step 7)
 # design PRs past their 24-hour window: `cargo xtask next-session` (§2) picks them (step 3)
 ```
-A design PR whose 24-hour window has passed (§8 step 5) is the scheduler's step 3 pick
-`worker design-window #N` (#314): enable auto-merge on it and remove `owner-todo` from its
+A design PR whose 24-hour window has passed, or that the owner `/approve`d (§8 step 5), is the
+scheduler's step 3 pick `worker design-window #N` (#314, #372): enable auto-merge on it and remove `owner-todo` from its
 issue, then record the session (§5) in a records PR.
 
 ## 2. Pick exactly one thing (strict priority)
@@ -139,7 +140,8 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   when it fails CI, conflicts with its base branch, or has no `ai-review` success on its head,
   unless the owner's newest `/hold` or `/release` on it is a `/hold` (§5, #295), its head
   branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298), or it is
-  labeled `needs-design` (step 6's, #275)).
+  labeled `needs-design` (step 6's, #275)). For a PR labeled `design` that isn't a draft, its
+  issue's `owner-todo` is the window's own (§8 step 5) and doesn't stop rule c (#372).
 - **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner`
   or `- Session: planner due` record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
   no PR), exit at once (ADR 0011 §3).
@@ -180,7 +182,8 @@ c. **Your own open PR** failing CI or review, or in conflict with its base (merg
    for the owner (`owner-todo` on its issue, §0) only when the next step needs the owner (a
    decision, a protected change, an infra fix only the owner can make); otherwise close it. Review
    rounds follow §4's cap (4 rounds, ADR 0010). A `worker design-window #N` pick (#314) is
-   your own design PR past its 24-hour window (§8 step 5): `gh pr merge N --auto --squash`,
+   your own design PR past its 24-hour window or approved by the owner's `/approve` (§8 step 5,
+   #372; the `Rule:` line says which): `gh pr merge N --auto --squash`,
    remove `owner-todo` from its issue, and record the session.
 d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`** (not
    `owner-todo`, §0). Every
@@ -434,8 +437,8 @@ Each round K runs in this order:
      commit is a record commit or a merge whose remerge-diff is empty or touches only record
      paths (the post-cap terms above), re-post `ai-review` success on the new head
      (`target_url`: the check's triage comment) and re-enable auto-merge (for a PR labeled
-     `design`, only once its window has passed: such an update keeps the window's start, §8
-     step 5, #373). Anything else (a resolution that edits another
+     `design`, only once its window has passed or the owner's `/approve` stands: such an update
+     keeps the window's start and the approval, §8 step 5, #373, #372). Anything else (a resolution that edits another
      file, a fix for a CI failure) goes to the owner, not to design, since a design session has
      no finding to rule on and may not write code: push it, turn the PR back into a draft
      (`gh pr ready N --undo`), post `ai-review` with `state=failure` on the new head, comment on the
@@ -501,7 +504,9 @@ session.
 - **Merge:** `gh pr merge N --auto --squash`. The owner's `/hold` comment turns the PR back
   into a draft (a workflow does it). Never mark a held PR ready or re-enable its auto-merge until
   the owner comments `/release`. On seeing a `/hold`, add `owner-todo` to the PR's issue (§0);
-  after `/release`, re-enable auto-merge and remove the label. CI (`judge-verdict`) is the real
+  after `/release`, re-enable auto-merge and remove the label. An owner `/approve` on a PR
+  labeled `design` ends its 24-hour window early (§8 step 5, #372); it doesn't release a
+  `/hold`. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
 - **Records go into the work PR** (ADR 0011 §3): the journal entry and the STATUS rewrite are
@@ -713,27 +718,56 @@ specs/tooling/design-technical.md.
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
    issue. Then add `owner-todo` to the design issue and comment
-   `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it`. The 24 hours
+   `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it (/approve merges it sooner)`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
    `/release` on it. The success counts from the time of the triage comment its `target_url`
    links when that is a triage comment on this PR (`🤖 jpdf-agent **AI review triage`), else
    from the status itself (#373). Once the window has passed, with `ai-review` success on the head and no
    `/hold` after the last `/release`, `cargo xtask next-session` picks `worker design-window #N`
    (§2 step 3), and that session enables auto-merge and removes `owner-todo` (ADR 0011 §7).
-   **A record-only update keeps the window** (#373): when every commit since the last reviewed
+   **The owner's `/approve` ends the window early** (#372): an untagged owner comment on the PR
+   whose body starts `/approve` (any ASCII case, then whitespace or the end) counts while
+   it is the owner's newest `/hold`, `/release` or `/approve` on the PR and no earlier than the
+   time the head's `ai-review` success counts from (above): it covers only the content it saw.
+   The scheduler then picks `worker design-window #N` as if the window had passed (the PR not a
+   draft, no `/hold` after the last `/release`, the same label terms), and its `Rule:` line
+   names the approval. A `/release` or `/hold` after it ends it; it never releases a `/hold`.
+   It gets §0's replies: while it counts, the scheduler leaves it out of rule a (#372), so the
+   `design-window` session posts "picked up" and, once auto-merge is on, "done:". Any other
+   `/approve` stays rule a's; that session never enables auto-merge for it, and its "done:"
+   says which case applies:
+   - **void** (given before the time the head's `ai-review` success counts from, followed by a
+     `/hold` or `/release`, replaced by a newer `/approve`, given while the PR is held (after a
+     `/hold` with no `/release` since: only a `/release` lifts the hold, and it ends the
+     approval), or on an `owner/` branch): `doesn't count: <reason>`, with
+     `waiting on owner: a new /approve` (`/release, then a new /approve` when held; `nothing`
+     when a newer one replaced it or the branch is the owner's);
+   - **already merging** (auto-merge is on): `noted: auto-merge is already on, so it merges once
+     green`, `waiting on owner: nothing`;
+   - **pending** (it is the newest command and no earlier than that review time, but the PR is
+     failing, a draft, or carries a skip label, or its issue `blocked` or `deferred`): `noted: it ends the
+     window once the PR is <what is missing> on the reviewed content`, since the scheduler
+     picks `worker design-window #N` by it as soon as that holds without a new review round
+     (a record-only fix or a CI rerun); a fix that needs a new round voids it (the new triage
+     is later). Then work the PR as its own rule (rule c for a failing one) if this session has
+     room, else leave it to the next pick.
+   **A record-only update keeps the window** (#373) and the approval (#372): when every commit since the last reviewed
    one is a record commit or a merge of origin/main whose remerge-diff is empty or touches only
    record paths (§4 step 6's post-cap terms), re-post `ai-review` success on the new head with
    the same `target_url` (the last triage comment), so the window keeps its start, and leave
-   auto-merge as it was. If the window, counted that way, has already passed, the PR is not a
-   draft, the owner's newest `/hold` or `/release` on it is not a `/hold`, the PR carries no
+   auto-merge as it was. If the window, counted that way, has already passed (or the owner's
+   `/approve` stands), the PR is not a draft, the owner's newest `/hold` or `/release` on it is not a `/hold`, the PR carries no
    `owner-todo`, `blocked` or `deferred` label, and its issue carries neither `blocked` nor
    `deferred` (the `design-window` pick's terms), enable auto-merge and
    remove `owner-todo` from the design issue in the same session, so the next merge on main
    can't conflict it again. **Any other push to a PR
    labeled `design`** (a fix, a merge resolution that edits another file) starts with
    `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review` success
-   (its own triage comment) the PR goes through this step again (`owner-todo`, a new window), so
-   the owner always gets 24 hours on what merges: a record-only update doesn't change that.
+   (its own triage comment) the PR goes through this step again (`owner-todo`, a new window,
+   and an earlier `/approve` no longer counts: the new triage is later), so the owner always
+   gets 24 hours, or an approval, on what merges: a record-only update doesn't change that.
+   A design PR that conflicts or loses its `ai-review` success in its window is rule c's
+   `worker own-pr #N`, though its issue has the window's `owner-todo` (#372).
 6. **Finish outputs 1 and 3:** if the PR has a `/hold` after its last `/release`, stop: nothing
    moves until `/release` (§5). If the PR closes a `design-product` issue (a Design: product
    PR, or a split of one, whose split issue keeps that label), run `gh pr ready N` and
@@ -892,8 +926,9 @@ specs/tooling/next-session.md step 8.
    - **A later change** gets the design ADR PR's 24-hour window: label the PR `design` when you
      open it (so every path to a merge, §8 step 6 included, sees the label), and after
      `ai-review` success follow §8 step 5 from "add `owner-todo`" on, with `ready for owner: docs/PRODUCT.md change
-     in PR #N merges after 24 h unless you /hold it`; the scheduler's `worker design-window #N`
-     pick (§2 step 3) enables auto-merge. A record-only update keeps the window's start (§8
+     in PR #N merges after 24 h unless you /hold it (/approve merges it sooner)`; the scheduler's `worker design-window #N`
+     pick (§2 step 3) enables auto-merge. The owner's `/approve` ends the window early (§8
+     step 5, #372). A record-only update keeps the window's start and the approval (§8
      step 5, #373); any other push starts a new one.
 7. **Bound:** one PR per session and one product PR open at a time (the scheduler's rule). A
    product issue whose PR closed unmerged stays open and is picked again.

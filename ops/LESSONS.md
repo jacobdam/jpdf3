@@ -8,6 +8,12 @@ Retro 0002 promoted the checker/filter/parser/loop-rule lessons into the specs/_
 dropped entries TICK §0 and §4 already state (background waits, "not proven" findings, post triggers).
 
 ## Tooling & environment
+- A merge of origin/main that brings a protected-path change from main → the guard blocks the merge, and once it
+  stops on conflicts every Bash call (even `git add`/`git commit`); `git merge --abort`, then either
+  `git merge origin/main -X theirs` and re-apply your side in a new commit, or set the conflicting record file to
+  main's copy exactly (appended lines next to main's edits still conflict), push, `gh pr update-branch N`, and re-add
+  your record lines after it ([journal](journal/2026-11-27/0048-353-dashboard-page.md),
+  [journal](journal/2026-11-27/2300-347-design-window.md)).
 - Dates and times → the machine's clock, the session's "today" and git `%cs`/`%cd` (committer time zone; some main
   commits are `+0700`) are local, while GitHub timestamps are UTC. Use `date -u` for the journal file name and the
   `HH:MM UTC` heading (the 2026-11-22.md "00:30 UTC" entry was really 17:10 UTC on 11-21), and `%ct` (Unix seconds)
@@ -302,6 +308,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a
+  URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant
+  ([journal](journal/2026-11-27/0901-373-design-window.md)).
 - Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
   in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
   the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
