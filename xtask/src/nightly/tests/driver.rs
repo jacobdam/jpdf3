@@ -1,10 +1,10 @@
 //! The nightly's driver over a recording fake (specs/tooling/nightly.md items 10, 11, 12 and 15;
-//! ADR 0013 "Verification"; #350).
+//! ADR 0013 "Verification"; #350, #352).
 
 use super::super::*;
 
 /// Every step in the spec's order (item 15), as the log names them.
-const FULL: [&str; 14] = [
+const FULL: [&str; 17] = [
     "previous",
     "build",
     "executable",
@@ -17,7 +17,10 @@ const FULL: [&str; 14] = [
     "runs",
     "results",
     "diff",
-    "extra",
+    "stale-summary",
+    "bench",
+    "fuzz",
+    "summary",
     "issues",
 ];
 
@@ -194,8 +197,41 @@ impl Steps for Fake {
         self.outcome(format!("diff {p} {}", ran_blobs(ran)))
     }
 
-    fn extra(&mut self, jobs: &[Job], mem: bool) -> Step {
-        self.outcome(format!("extra {} {mem}", job_blobs(jobs)))
+    fn stale_summary(&mut self) -> Step {
+        self.outcome("stale-summary".into())
+    }
+
+    fn bench(&mut self, jobs: &[Job], mem: bool) -> (Step, extra::BenchResult) {
+        let o = self.outcome(format!("bench {} {mem}", job_blobs(jobs)));
+        // A result no default would give, so a driver that hands `summary` another one fails.
+        let b = extra::BenchResult {
+            status: "timeout",
+            files: jobs.iter().filter(|j| j.path.is_some()).count(),
+            exit: None,
+            signal: Some(9),
+            ms: Some(60_000),
+            report: false,
+            error: None,
+        };
+        (o, b)
+    }
+
+    fn fuzz(&mut self) -> (Step, extra::FuzzResult) {
+        let o = self.outcome("fuzz".into());
+        let f = extra::FuzzResult {
+            status: "crash",
+            seconds: 9,
+            targets: Vec::new(),
+            error: None,
+        };
+        (o, f)
+    }
+
+    fn summary(&mut self, bench: &extra::BenchResult, fuzz: &extra::FuzzResult) -> Step {
+        self.outcome(format!(
+            "summary {}/{} {}/{}",
+            bench.status, bench.files, fuzz.status, fuzz.seconds
+        ))
     }
 
     fn issues(
@@ -259,7 +295,10 @@ fn every_step_runs_once_in_the_spec_order_with_its_data() {
             "runs a,b- /fake/work/render.png /fake/jpdf-cli true",
             "results a,b- complete=false true",
             "diff fake-previous a,b-",
-            "extra a,b- true",
+            "stale-summary",
+            "bench a,b- true",
+            "fuzz",
+            "summary timeout/1 crash/9",
             "issues [] fake-previous a,b-",
         ]
     );
@@ -279,7 +318,7 @@ fn the_memory_answer_reaches_every_step_that_runs_the_cli() {
         "runs a,b- /fake/work/render.png /fake/jpdf-cli false"
     );
     assert_eq!(f.calls[10], "results a,b- complete=false false");
-    assert_eq!(f.calls[12], "extra a,b- false");
+    assert_eq!(f.calls[13], "bench a,b- false");
 }
 
 /// One run per failing step (ADR 0013 "Verification"): a stopping step ends the log at
@@ -321,7 +360,8 @@ fn a_failing_step_stops_exactly_what_the_spec_says() {
     assert_eq!(drive(&mut f, Log::default()).names(), FULL[..=4]);
     // Item 11: the regress part runs after a limits tool failure or a failed case; item 12:
     // the bench and the fuzz pass run after a failed diff; a run that couldn't start, or a
-    // fetch that failed, still writes the results.
+    // fetch that failed, still writes the results; items 12–14: a failed removal, bench, fuzz
+    // pass or summary write stops nothing.
     let goes_on = [
         ("limits", failed(), 1),
         ("limits", Step::Finding, 4),
@@ -329,7 +369,10 @@ fn a_failing_step_stops_exactly_what_the_spec_says() {
         ("fetch", infra(), 75),
         ("runs", failed(), 1),
         ("diff", failed(), 1),
-        ("extra", failed(), 1),
+        ("stale-summary", failed(), 1),
+        ("bench", failed(), 1),
+        ("fuzz", failed(), 1),
+        ("summary", failed(), 1),
         ("issues", failed(), 1),
     ];
     for (step, o, code) in goes_on.clone() {
@@ -366,7 +409,7 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
     assert_eq!(
         names(&f.calls),
         [to_fetch, &["issues"]].concat(),
-        "no workdir, runs or extra"
+        "no workdir, runs, bench, fuzz pass or summary"
     );
     assert_eq!(
         f.calls.last().unwrap(),
@@ -499,4 +542,33 @@ fn the_issues_step_gets_what_the_night_found() {
     let log = drive(&mut f, Log::default());
     assert_eq!(log.entries().last().unwrap(), &("issues", failed()));
     assert_eq!(steps::exit_code(&log), 1);
+}
+
+/// #352: a stale `nightly.json` that can't be removed is its own `Failed` entry when this
+/// night's summary is written, and a failed write is its own entry when the removal worked
+/// (item 14; their places, before the bench and after the fuzz pass, are pinned by the full
+/// order above).
+#[test]
+fn a_failed_removal_and_a_failed_write_are_separate_entries() {
+    let at = |step: &str| FULL.iter().position(|s| *s == step).unwrap();
+    let log = drive(
+        &mut Fake::new(two()).with("stale-summary", failed()),
+        Log::default(),
+    );
+    assert_eq!(log.names(), FULL);
+    assert_eq!(log.entries()[at("stale-summary")].1, failed());
+    assert_eq!(log.entries()[at("summary")].1, Step::Ok);
+    assert_eq!(steps::exit_code(&log), 1);
+    let log = drive(
+        &mut Fake::new(two()).with("summary", failed()),
+        Log::default(),
+    );
+    assert_eq!(log.entries()[at("stale-summary")].1, Step::Ok);
+    assert_eq!(log.entries()[at("summary")].1, failed());
+    assert_eq!(steps::exit_code(&log), 1);
+    // A bench tool failure alone is a 1 too, and the summary still gets the bench's result.
+    let mut f = Fake::new(two()).with("bench", failed());
+    let log = drive(&mut f, Log::default());
+    assert_eq!(steps::exit_code(&log), 1);
+    assert!(f.calls.contains(&"summary timeout/1 crash/9".to_string()));
 }
