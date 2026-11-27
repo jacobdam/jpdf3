@@ -93,13 +93,14 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 - **A part is a GitHub sub-issue of its parent** (owner, #398), so the parent shows its
   progress. File it with `gh issue create --parent <parent> ...`, or link an existing issue with
   `gh issue edit <part> --parent <parent>`, each its own CLI write. The parts are: a sizing
-  split's parts (above, and §9 step 2's) under the original issue; §8 output 1's split issues
-  under the escalated issue; §8 step 5's design tasks under the design issue; an umbrella's part
-  filed later under the umbrella. The text links (`<area> 1/N`, `Depends on:`, `Designed in:`)
-  stay: the scheduler reads bodies and labels, not sub-issue links. Review deferrals and
-  discoveries are not parts of the PR's issue and stay unlinked. An issue has at most one
-  parent (GitHub refuses a second one, or the same link twice); read a link with
-  `gh issue view <n> --json parent,subIssues`.
+  split's parts (above, and §9 step 2's) under the original issue, or, when that issue is itself
+  a part, under its parent (#383, a split of part #302, sits under #19); §8 output 1's split
+  issues under the escalated issue; §8 step 5's design tasks under the design issue; an
+  umbrella's part filed later under the umbrella. The text links (`Part 2 of #302`,
+  `Depends on:`, `Designed in:`) stay: the scheduler reads bodies and labels, not sub-issue
+  links. Review deferrals and discoveries are not parts of the PR's issue and stay unlinked.
+  An issue has at most one parent: read `gh issue view <part> --json parent` first and link
+  only a part whose `parent` is `null`, since an edit may move it from another parent.
 - **The guard blocks**, so don't try: force pushes (so never rebase a pushed branch; use `git
   merge origin/main`), remote branch deletes, and any Bash call containing a GitHub CLI write it
   can't parse (heredocs, chains). Write files with Write/Edit and run each CLI write as its own
@@ -737,7 +738,7 @@ specs/tooling/design-technical.md.
    the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, so they wait until the ADR merges and closes the design
-   issue, each a sub-issue of the design issue (§0). Then add `owner-todo` to the design issue and comment
+   issue. Each is a sub-issue of the design issue (§0). Then add `owner-todo` to the design issue and comment
    `ready for owner: design ADR in PR #N merges after 24 h unless you /hold it (/approve merges it sooner)`. The 24 hours
    start at the latest of: the PR marked ready, its last `ai-review` success, the owner's last
    `/release` on it. The success counts from the time of the triage comment its `target_url`
@@ -840,15 +841,17 @@ gate them.
    see a follow-up chain of 3 or more issues, or 5 or more open issues on one subsystem, with no
    open `design` issue or merged design ADR covering it, file a `design` issue labeled `ready`
    that lists the group, and name it in `ops/QUEUE.md`.
-2b. **Sub-issues** (owner, #398): for each open umbrella in the milestone, read its links
-   (`gh issue view <n> --json subIssues`) and link each part, open or closed, that isn't a
-   sub-issue yet with `gh issue edit <part> --parent <n>` (§0). The parent is §0's: a numbered
-   part's original issue (its body says `Part i/N of #N`, or the umbrella names it: "closes
-   after #A and #B"), a §8 output 1 split issue's escalated issue, a §8 step 5 task's `design`
-   issue (the one on its `Depends on:` line). A `Designed in:` line alone doesn't name the
-   parent: §8 output 2's design issue carries one too and is not a part, and an escalated PR's
-   tasks name the escalated issue there. A part that already has another parent stays where
-   it is; note it in the journal.
+2b. **Sub-issues** (owner, #398): walk from the parts, since a parent may already be closed (§8
+   output 1 closes the escalated issue; a design issue closes with its ADR). For each open issue
+   in the milestone that is a part, and each part, open or closed, that an open umbrella in it
+   names ("closes after #A and #B"), read `gh issue view <part> --json parent`; if it is `null`,
+   link it with `gh issue edit <part> --parent <parent>` (§0). The parent is §0's: the issue a
+   part's body names (`Part 1 of #19`, `Part 1 of 3 of owner issue #386`, `Split from #305`;
+   for a split of a part, that part's own parent), a §8 output 1 split issue's escalated issue,
+   a §8 step 5 task's `design` issue (the one on its `Depends on:` line). A `Designed in:` line
+   alone doesn't name the parent: §8 output 2's design issue carries one too and is not a part,
+   and an escalated PR's tasks name the escalated issue there. A part that already has another
+   parent stays where it is; note it in the journal.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
