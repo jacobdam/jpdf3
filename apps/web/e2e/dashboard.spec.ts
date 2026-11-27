@@ -195,6 +195,46 @@ for (const [name, body] of [
   ["a week with a null merged count", withWeek({ merged_prs: null })],
   ["eleven weeks", snapshot({ weeks: (snapshot().weeks as unknown[]).slice(1) })],
   [
+    "thirteen weeks",
+    snapshot({
+      weeks: [
+        ...(snapshot().weeks as Record<string, unknown>[]),
+        { start: "2026-11-30", end: "2026-11-30", merged_prs: 0, median_rounds: null, sessions: 0 },
+      ],
+    }),
+  ],
+  [
+    "a histogram with three objects",
+    snapshot({
+      journal_entries: {
+        prs: 1,
+        median: 1,
+        max: 1,
+        histogram: [
+          { entries: 1, prs: 0 },
+          { entries: 2, prs: 0 },
+          { entries: 3, prs: 0 },
+        ],
+      },
+    }),
+  ],
+  [
+    "a histogram with a repeated entries value",
+    snapshot({
+      journal_entries: {
+        prs: 1,
+        median: 1,
+        max: 1,
+        histogram: [
+          { entries: 1, prs: 0 },
+          { entries: 1, prs: 0 },
+          { entries: 2, prs: 0 },
+          { entries: 3, prs: 0 },
+        ],
+      },
+    }),
+  ],
+  [
     "two weeks with one start",
     snapshot({
       weeks: (snapshot().weeks as Record<string, unknown>[]).map((w, i) =>

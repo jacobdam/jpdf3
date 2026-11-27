@@ -1,8 +1,9 @@
 import { defineConfig, type Plugin } from "vite";
 import { CSP } from "./csp";
 
-// Adds the CSP meta tag to every built page (index.html and dashboard/index.html). The dev server injects its own inline
-// scripts (HMR), so it runs without the policy; every E2E test runs against the build.
+// Adds the CSP meta tag to every built page (index.html and dashboard/index.html). The dev
+// server injects its own inline scripts (HMR), so it runs without the policy; every E2E test
+// runs against the build.
 function cspMeta(): Plugin {
   return {
     name: "jpdf-csp-meta",

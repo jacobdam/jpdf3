@@ -88,8 +88,8 @@ invalid.` and shows no section).
 The page validates `data.json` before rendering: `version` must be 1 and every field has its
 type (counts are non-negative integers, dates match `YYYY-MM-DD`), with exactly twelve weeks of
 distinct `start` dates and four histogram objects whose `entries` are 1, 2, 3, 4 in order; any
-other document is the "missing or invalid" state. Text from the snapshot (issue titles) is rendered as React text
-nodes only.
+other document is the "missing or invalid" state. Text from the snapshot (issue titles) is
+rendered as React text nodes only.
 
 ## Persistence
 `ops/metrics/dashboard.json` is a committed file, replaced by each snapshot run. The site is
@@ -109,8 +109,8 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
   milestone.
 - `ci linux`: a missing snapshot or a missing `site/dashboard/` (the web build failed; that
   failure is already reported) copies nothing and prints `dashboard: no snapshot, nothing copied`
-  or `dashboard: no page, nothing copied`; the page then shows its missing state. A snapshot that isn't a regular file,
-  is larger than 1 MiB or can't be copied fails `ci linux` (exit 1).
+  or `dashboard: no page, nothing copied`; the page then shows its missing state. A snapshot
+  that isn't a regular file, is larger than 1 MiB or can't be copied fails `ci linux` (exit 1).
 
 ## Limits
 - Each command's stdout and stderr: 16 MiB (`macos::capture`, boundary-tested there).
@@ -185,8 +185,9 @@ a regular file, no snapshot).
   `ci linux` when it fails): a full snapshot (every section, values, the partial week label,
   the truncation warning), `null` values as `missing`, a snapshot without an index, an invalid
   snapshot (version, negative or fractional count, bad dates, an unknown sessions source, a
-  non-text title, an array; in `weeks[]` a negative, a `null` count and a bad date, eleven weeks,
-  a repeated start; a histogram `entries` past 4 and a fractional count; a `null` blocked age; a
-  milestone forecast that isn't a date and a fractional count) and a 404, the committed `ops/metrics/dashboard.json` rendering
-  without the invalid state (so the writer and the validator agree), contrast in light and dark
+  non-text title, an array; in `weeks[]` a negative, a `null` count and a bad date, eleven and
+  thirteen weeks, a repeated start; a histogram with three objects, a repeated `entries`, an
+  `entries` past 4 and a fractional count; a `null` blocked age; a milestone forecast that isn't
+  a date and a fractional count) and a 404, the committed `ops/metrics/dashboard.json`
+  rendering without the invalid state (so the writer and the validator agree), contrast in light and dark
   mode, and the shared fixture checks (no console errors, CSP violations or foreign requests).

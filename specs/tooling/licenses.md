@@ -10,8 +10,8 @@ Status: implemented
 scripts/licenses.test.mjs`), then `scripts/check-licenses.mjs`. That script reads
 `package-lock.json`, `package.json`, every installed `node_modules/<path>/package.json`,
 `index.html`, `dashboard/index.html` (when it exists), `vite.config.ts`, the app directory's
-file names and every file under `src/`, recursively (only lower-case `.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` files are
-allowed there; see item 6). An optional argument names another app
+file names and every file under `src/`, recursively (only lower-case
+`.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts/.css/.html` files are allowed there; see item 6). An optional argument names another app
 directory (used by the integration test). The
 logic is in `scripts/licenses-lib.mjs`, pure functions over that data. It never runs package
 code and has no dependencies.
