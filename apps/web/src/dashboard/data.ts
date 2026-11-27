@@ -18,6 +18,19 @@ export type Milestone = {
   forecast: string | null;
 };
 
+/** One week of the judge history (nightly smoke metrics); every value null without a report. */
+export type JudgeWeek = {
+  start: string;
+  run: number | null;
+  day: string | null;
+  openRate: number | null;
+  renderMatch: number | null;
+  textF1: number | null;
+  crashes: number | null;
+  journeysPassing: number | null;
+  journeys: number | null;
+};
+
 export type Snapshot = {
   generated: string;
   until: string;
@@ -31,27 +44,29 @@ export type Snapshot = {
   };
   blocked: { number: number; title: string; ageDays: number }[];
   milestones: Milestone[];
+  /** null: no judge history (no `judge` field, or source `missing`). */
+  judge: JudgeWeek[] | null;
   truncated: string[];
   malformedIndexRows: number;
 };
 
 /** Thrown for the first field that doesn't have its type. */
-class Invalid extends Error {}
+export class Invalid extends Error {}
 
 type Obj = Record<string, unknown>;
 
-function obj(v: unknown): Obj {
+export function obj(v: unknown): Obj {
   if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Invalid("object");
   return v as Obj;
 }
 
-function list(v: unknown): unknown[] {
+export function list(v: unknown): unknown[] {
   if (!Array.isArray(v)) throw new Invalid("array");
   return v;
 }
 
 /** A non-negative safe integer (a count). */
-function count(v: unknown): number {
+export function count(v: unknown): number {
   if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) throw new Invalid("count");
   return v;
 }
@@ -60,7 +75,7 @@ function countOrNull(v: unknown): number | null {
   return v === null ? null : count(v);
 }
 
-function text(v: unknown): string {
+export function text(v: unknown): string {
   if (typeof v !== "string") throw new Invalid("string");
   return v;
 }
@@ -79,6 +94,38 @@ function day(v: unknown): string {
 
 function dayOrNull(v: unknown): string | null {
   return v === null ? null : day(v);
+}
+
+/** A number from 0 to 1, or null. */
+export function rateOrNull(v: unknown): number | null {
+  if (v === null) return null;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) throw new Invalid("rate");
+  return v;
+}
+
+/** The `judge` field: null when absent or `source` is `missing`; `starts` are `weeks[i].start`. */
+function judgeWeeks(v: unknown, starts: string[]): JudgeWeek[] | null {
+  if (v === undefined) return null; // a snapshot written before #306
+  const o = obj(v);
+  const source = text(o.source);
+  if (source !== "nightly" && source !== "missing") throw new Invalid("judge source");
+  const weeks = list(o.weeks).map((w) => {
+    const x = obj(w);
+    return {
+      start: day(x.start),
+      run: countOrNull(x.run),
+      day: dayOrNull(x.day),
+      openRate: rateOrNull(x.open_rate),
+      renderMatch: rateOrNull(x.render_match),
+      textF1: rateOrNull(x.text_f1),
+      crashes: countOrNull(x.crashes),
+      journeysPassing: countOrNull(x.journeys_passing),
+      journeys: countOrNull(x.journeys),
+    };
+  });
+  if (weeks.length !== starts.length || weeks.some((w, i) => w.start !== starts[i]))
+    throw new Invalid("judge weeks");
+  return source === "missing" ? null : weeks;
 }
 
 /** The snapshot, or null when `raw` isn't a valid version 1 snapshot. */
@@ -132,9 +179,14 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
           forecast: dayOrNull(x.forecast),
         };
       }),
+      judge: null as JudgeWeek[] | null,
       truncated: list(o.truncated).map(text),
       malformedIndexRows: count(o.malformed_index_rows),
     };
+    parsed.judge = judgeWeeks(
+      o.judge,
+      parsed.weeks.map((w) => w.start),
+    );
     const starts = new Set(parsed.weeks.map((w) => w.start));
     if (starts.size !== parsed.weeks.length) return null;
     return parsed;
