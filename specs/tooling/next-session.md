@@ -16,7 +16,8 @@ days without a Planner run) and widens `records.txt` to 7 days. Task 2 part 2 (#
 work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first order. Task 6
 part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's. Task 3
 part 3 (#314) adds step 3's third term: an own design PR past its 24-hour window (ADR 0011 §7),
-which TICK §1 checked by hand before.
+which TICK §1 checked by hand before. #373 counts that term's `ai-review` success from the
+triage comment it links, so a record-only update doesn't restart the window.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
@@ -219,8 +220,11 @@ which TICK §1 checked by hand before.
        a session or the owner parked the work). The window *has passed* when every one of these
        times is at or before `now − 86 400` (so at exactly 24 hours it has passed): the PR marked
        ready (the newest `created_at` of its `ready_for_review` events in `design-ready.json`,
-       or its `createdAt` when it has none: it was created ready); the newest `startedAt` of an
-       `ai-review` status context in state `SUCCESS` in its `statusCheckRollup`; and, when the
+       or its `createdAt` when it has none: it was created ready); the newest `ai-review` status
+       context in state `SUCCESS` in its `statusCheckRollup` (by `startedAt`), counted from the
+       triage comment its `targetUrl` names when that is one of this PR's comments in
+       `holds.json` with author `jacobdam` and a body starting `🤖 jpdf-agent **AI review
+       triage` (that comment's `createdAt`, #373), else from its own `startedAt`; and, when the
        newest of its owner commands in `holds.json` (the hold rule above, unchanged) is a release,
        that command's `createdAt`. A PR with no entry in `design-ready.json` (only a broken
        fixture, live) is never picked. Lowest number first → `worker design-window #N`. The
@@ -385,7 +389,10 @@ which TICK §1 checked by hand before.
   `statusCheckRollup`: objects with `__typename` `CheckRun` (`name`,
   `conclusion`) or `StatusContext` (`context`, `state`), other entries are ignored; on an open PR
   labeled `design`, an `ai-review` status in state `SUCCESS` also needs `startedAt` in the form
-  `YYYY-MM-DDTHH:MM:SSZ`). Every PR in `prs.json` needs `isDraft` (a boolean),
+  `YYYY-MM-DDTHH:MM:SSZ`, and its `targetUrl`, if present, is a string or null). In
+  `holds.json`, a comment by `jacobdam` whose body starts `🤖 jpdf-agent **AI review triage`
+  also needs a string `url` and a `createdAt` in that form (#373); other comments need neither
+  `url` nor, unless they are an owner command, `createdAt`. Every PR in `prs.json` needs `isDraft` (a boolean),
   `autoMergeRequest` (null or an object) and `createdAt` (`YYYY-MM-DDTHH:MM:SSZ`).
   `design-ready.json`: objects with a number `number` (each at most once) and an array `events`
   of objects with a string `event`; a `ready_for_review` event also needs `created_at` in that
@@ -439,7 +446,10 @@ never 2 (no command ran).
   100th comment is missed, and the window would start at an earlier time, so the PR could be
   picked before 24 hours after that release (the owner can `/hold` again; no open PR has 100
   comments today). The `ai-review` time is the status's `startedAt` as `statusCheckRollup`
-  shows it (the newest status of each context on the head; checked on PR #327 on 2026-11-24).
+  shows it (the newest status of each context on the head; checked on PR #327 on 2026-11-24),
+  or the `createdAt` of the triage comment its `targetUrl` names (#373; `targetUrl` checked on
+  PR #359 on 2026-11-27). A triage comment after a PR's 100th comment is missed, so the status
+  time counts and the window restarts (the safe side).
 - Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
   (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
   every issue updated in the week would cost one events call each. At most 100 issues updated
@@ -502,7 +512,13 @@ never 2 (no command ran).
   times come from GitHub (the timeline, the status, the PR) and from owner comments; the
   `ai-review` status is posted by the agent account, so a session could post one early and
   start its own window early, as it could under TICK §1's by-hand check: the owner still gets
-  24 hours from the PR marked ready and from any `/release`. A wrong pick costs a design ADR
+  24 hours from the PR marked ready and from any `/release`. Since #373 the success counts from
+  the triage comment it links, so a session that re-posts a success after a non-record push
+  while linking the old triage comment (TICK §4 allows the old link only after a record-only
+  update) would keep the old start; the PR then merges content the owner's window didn't
+  cover. Only the agent account can post the status or a tagged `jacobdam` comment, a stranger's
+  comment never counts (author check), and a link that names no triage comment of this PR falls
+  back to the status time (a restart). A wrong pick costs a design ADR
   merged before the owner's 24 hours, which is why this term is in the strict lane (ADR 0012
   §1, ADR 0011 §7). The cutoff `now − 86 400` saturates and is floored at the epoch (`now` is
   in the years 1970–9999).
@@ -638,7 +654,15 @@ of inputs where no step before 11 applies (→ `planner`):
   `design-ready.json` (7 shapes, also with no design PR open) and `prs.json` (`isDraft`,
   `autoMergeRequest`, `createdAt` wrong or missing; an open design PR's `ai-review` success
   without or with a malformed `startedAt`, which a PR without the label doesn't need) exit 1;
-  `design-window #N` is a PR for the work mix. Hand mutants of every filter (draft, auto-merge,
+  `design-window #N` is a PR for the work mix; and (#373) the `ai-review` success counts from
+  the triage comment its `targetUrl` names: a success re-posted after the window passed that
+  links a triage at exactly 24 hours is picked and one a second later isn't, also with the
+  status earlier than the comment; with two triage comments, the linked one counts in either list order (the new one linked: a restart, as after a non-record push and a new round; the old one linked: kept, as after a record-only re-post); an owner `/release` after the triage still restarts it; near
+  misses (the status time counts): no such comment, a null or absent `targetUrl`, a link to
+  another comment, another author, a review comment (not a triage), an untagged or indented
+  header, the triage listed under another PR; a triage comment without `url` or with a
+  malformed `createdAt`, and a `targetUrl` that isn't a string or null, exit 1. Hand mutants of
+  the PR-number key, the author check and the header check each fail a test. Hand mutants of every filter (draft, auto-merge,
   failing, parked, skip label, `<=` to `<`, `all` to `any`, the release, the review time, the
   newest ready event, the missing entry, the event filter, the review state, context and
   newest, `createdAt`, the duplicate check, the record word) each fail a test, except two that
