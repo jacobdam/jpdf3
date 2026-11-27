@@ -406,6 +406,11 @@ fn the_bench_step_fails_only_for_a_failed_bench() {
         bench_outcome(&bench("failed", Some("cannot start /r/jpdf-bench"))),
         Step::Failed("bench: cannot start /r/jpdf-bench".into())
     );
+    // A `failed` result without an error (none is built today) is still a tool failure.
+    assert_eq!(
+        bench_outcome(&bench("failed", None)),
+        Step::Failed("bench: failed".into())
+    );
     assert_eq!(
         bench_line(&bench("timeout", None)),
         "xtask: nightly: bench: timeout (2 files)"
@@ -452,6 +457,10 @@ fn the_fuzz_step_fails_only_for_a_failed_pass() {
     assert_eq!(
         fuzz_outcome(&pass("failed", Some("cannot run a"))),
         Step::Failed("fuzz: cannot run a".into())
+    );
+    assert_eq!(
+        fuzz_outcome(&pass("failed", None)),
+        Step::Failed("fuzz: failed".into())
     );
     assert_eq!(
         fuzz_line(&pass("crash", None)),
@@ -600,10 +609,8 @@ fn a_stale_summary_that_cannot_be_removed_is_a_tool_failure() {
     // The `stale-summary` step: absent is fine, a removed file is gone, a directory in its
     // place is a tool failure (its own entry in the log: driver.rs, #352).
     assert_eq!(remove_summary(&d.join("none")), Step::Ok);
-    std::fs::write(d.join("f.json"), b"x").unwrap();
-    std::fs::rename(d.join("f.json"), d.join("g")).unwrap();
     std::fs::create_dir_all(d.join("s")).unwrap();
-    std::fs::rename(d.join("g"), d.join("s/nightly.json")).unwrap();
+    std::fs::write(d.join("s/nightly.json"), b"x").unwrap();
     assert_eq!(remove_summary(&d.join("s")), Step::Ok);
     assert!(!d.join("s/nightly.json").exists());
     assert!(matches!(
