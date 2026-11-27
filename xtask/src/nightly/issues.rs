@@ -26,7 +26,7 @@ pub const MAX_WRITES: usize = 20;
 pub const LIST_LIMIT: usize = 1000;
 /// Each `gh` call's time limit, and the most stdout read from it.
 const GH_LIMIT: Duration = Duration::from_secs(120);
-const GH_STDOUT_CAP: u64 = 64 * 1024 * 1024;
+pub const GH_STDOUT_CAP: u64 = 64 * 1024 * 1024;
 
 /// One failure to file (spec item 16).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,7 +197,7 @@ fn index(
             .get("body")
             .and_then(Value::as_str)
             .ok_or_else(|| bad("an issue without a body"))?;
-        if !body.starts_with(TAG) {
+        if !body.starts_with(&format!("{TAG} ")) {
             continue;
         }
         for sig in body.lines().filter_map(|l| l.strip_prefix(SIGNATURE)) {
@@ -217,8 +217,13 @@ pub struct Filed {
     pub skipped: usize,
 }
 
+/// The labels a finding can carry, all listed for deduplication (a limits case changes label
+/// with its status, so its open issue may carry the other one).
+pub const LABELS: [&str; 2] = ["bug", "crash"];
+
 /// Files `found` (spec item 16): no `gh` call when there is nothing to file; else one list
-/// per label used, then at most `max_writes` creates and comments in order. `Err` at the
+/// per label of [`LABELS`], then at most `max_writes` writes: the creates first (in finding
+/// order), then the comments, so a new finding is never starved by known ones. `Err` at the
 /// first failed call, with what was filed before it.
 pub fn file(
     gh: &mut dyn Gh,
@@ -231,11 +236,8 @@ pub fn file(
     if found.is_empty() {
         return Ok(done);
     }
-    let mut labels: Vec<&str> = found.iter().map(|f| f.label).collect();
-    labels.sort_unstable();
-    labels.dedup();
     let mut map = BTreeMap::new();
-    for label in labels {
+    for label in LABELS {
         let limit = list_cap.to_string();
         let args = s(&[
             "issue",
@@ -252,7 +254,9 @@ pub fn file(
         let text = gh.run(&args).map_err(|e| (e, Filed::default()))?;
         index(&text, label, list_cap, &mut map).map_err(|e| (e, Filed::default()))?;
     }
-    for f in found {
+    let (new, known): (Vec<&Finding>, Vec<&Finding>) =
+        found.iter().partition(|f| !map.contains_key(&f.sig));
+    for f in new.into_iter().chain(known) {
         if done.created.saturating_add(done.commented) >= max_writes {
             done.skipped = done.skipped.saturating_add(1);
             continue;
@@ -328,10 +332,11 @@ pub fn night_label(now_secs: u64, run_id: Option<&str>) -> String {
 }
 
 /// The real `gh`: no prompts, no pager, stdin on the null device, stderr to ours, each call
-/// killed at `limit`, stdout read up to `GH_STDOUT_CAP` bytes (more is an error).
+/// killed at `limit`, stdout read up to `stdout_cap` bytes (`GH_STDOUT_CAP`; more is an error).
 pub struct RealGh {
     pub program: PathBuf,
     pub limit: Duration,
+    pub stdout_cap: u64,
 }
 
 impl RealGh {
@@ -339,6 +344,7 @@ impl RealGh {
         RealGh {
             program: PathBuf::from("gh"),
             limit: GH_LIMIT,
+            stdout_cap: GH_STDOUT_CAP,
         }
     }
 }
@@ -364,10 +370,11 @@ impl Gh for RealGh {
             let _ = child.wait();
             return Err(format!("{what}: no stdout pipe"));
         };
+        let cap = self.stdout_cap;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
-            let r = stdout.take(GH_STDOUT_CAP + 1).read_to_end(&mut buf);
+            let r = stdout.take(cap.saturating_add(1)).read_to_end(&mut buf);
             let _ = tx.send(r.map(|_| buf));
         });
         let start = Instant::now();
@@ -394,8 +401,8 @@ impl Gh for RealGh {
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| format!("{what}: stdout still open after exit"))?
             .map_err(|e| format!("{what}: {e}"))?;
-        if u64::try_from(out.len()).map_or(true, |n| n > GH_STDOUT_CAP) {
-            return Err(format!("{what}: more than {GH_STDOUT_CAP} bytes of output"));
+        if u64::try_from(out.len()).map_or(true, |n| n > cap) {
+            return Err(format!("{what}: more than {cap} bytes of output"));
         }
         String::from_utf8(out).map_err(|_| format!("{what}: output is not UTF-8"))
     }

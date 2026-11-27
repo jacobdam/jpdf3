@@ -324,6 +324,7 @@ fn a_repeat_night_comments_on_the_open_issue_instead_of_filing() {
         }
     );
     // One list per label used (sorted), then the creates in finding order.
+    // Both labels are always listed (R1.2).
     let heads: Vec<String> = gh
         .calls
         .iter()
@@ -359,12 +360,13 @@ fn only_an_open_tagged_issue_with_the_exact_signature_line_matches() {
     let sig = format!("regress:{A}");
     let mut gh = FakeGh::default();
     // Near misses: closed; untagged; the signature as part of a longer line or a longer sig;
-    // the right label missing.
+    // a label that is neither `bug` nor `crash`.
     gh.add(false, "crash", &format!("{TAG} x\n{SIGNATURE}{sig}\n"));
     gh.add(true, "crash", &format!("someone\n{SIGNATURE}{sig}\n"));
+    gh.add(true, "crash", &format!("{TAG}X\n{SIGNATURE}{sig}\n"));
     gh.add(true, "crash", &format!("{TAG} x\nsee {SIGNATURE}{sig}\n"));
     gh.add(true, "crash", &format!("{TAG} x\n{SIGNATURE}{sig}0\n"));
-    gh.add(true, "bug", &format!("{TAG} x\n{SIGNATURE}{sig}\n"));
+    gh.add(true, "docs", &format!("{TAG} x\n{SIGNATURE}{sig}\n"));
     let found = findings(
         &[],
         None,
@@ -410,7 +412,8 @@ fn the_write_cap_is_exact() {
         assert_eq!((d.created, d.skipped), (created, skipped), "{n}");
         assert_eq!(gh.writes(), created, "{n}");
     }
-    // Comments count against the cap too: 2 known + 1 new with a cap of 2.
+    // Comments count against the cap too, but the creates go first (R1.1): 2 known + 1 new
+    // with a cap of 2 files the new one and updates one known.
     let mut gh = FakeGh::default();
     let found = findings(&[], None, Some(&many(3)));
     file(&mut gh, &found[..2], "n", MAX_WRITES, LIST_LIMIT).unwrap();
@@ -419,12 +422,44 @@ fn the_write_cap_is_exact() {
     assert_eq!(
         d,
         Filed {
-            created: 0,
-            commented: 2,
+            created: 1,
+            commented: 1,
             skipped: 1
         }
     );
+    assert_eq!(gh.issues.len(), 3);
     assert_eq!(MAX_WRITES, 20);
+}
+
+/// R1.1: with more findings than the cap every night, each one is filed by the second night.
+#[test]
+fn findings_over_the_cap_are_filed_on_a_later_night() {
+    let mut gh = FakeGh::default();
+    let found = findings(&[], None, Some(&many(MAX_WRITES + 1)));
+    let d = file(&mut gh, &found, "night 1", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert_eq!((d.created, d.commented, d.skipped), (MAX_WRITES, 0, 1));
+    let d = file(&mut gh, &found, "night 2", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert_eq!((d.created, d.commented, d.skipped), (1, MAX_WRITES - 1, 1));
+    assert_eq!(gh.issues.len(), MAX_WRITES + 1);
+    let last = &found[MAX_WRITES].sig;
+    assert!(
+        gh.issues
+            .iter()
+            .any(|i| i.3.contains(&format!("{SIGNATURE}{last}\n")))
+    );
+}
+
+/// R1.2: a limits case that changes label keeps its one issue.
+#[test]
+fn a_finding_that_changes_label_keeps_its_issue() {
+    let mut gh = FakeGh::default();
+    let wrong = findings(&[case("xref-entries", "wrong_exit")], None, None);
+    let crash = findings(&[case("xref-entries", "crash")], None, None);
+    assert_eq!((wrong[0].label, crash[0].label), ("bug", "crash"));
+    file(&mut gh, &wrong, "night 1", MAX_WRITES, LIST_LIMIT).unwrap();
+    let d = file(&mut gh, &crash, "night 2", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert_eq!((d.created, d.commented), (0, 1));
+    assert_eq!(gh.issues.len(), 1);
 }
 
 #[test]
@@ -532,6 +567,7 @@ fn real(program: PathBuf, secs: u64) -> RealGh {
     RealGh {
         program,
         limit: Duration::from_secs(secs),
+        stdout_cap: GH_STDOUT_CAP,
     }
 }
 
@@ -564,4 +600,60 @@ fn the_real_runner_fails_on_exit_codes_hangs_and_missing_programs() {
     let p = script(&d, "printf '\\377'");
     let e = real(p, 30).run(&[]).unwrap_err();
     assert!(e.contains("not UTF-8"), "{e}");
+}
+
+/// R1.3: stdout of exactly the cap is read; one byte more fails (the cap passed in small, the
+/// real value pinned).
+#[test]
+fn the_stdout_cap_is_exact() {
+    let d = scratch("cap");
+    let p = script(&d, "head -c 1000 /dev/zero | tr '\\0' x");
+    for (cap, ok) in [(1000, true), (999, false)] {
+        let mut r = real(p.clone(), 30);
+        r.stdout_cap = cap;
+        let out = r.run(&[]);
+        assert_eq!(out.is_ok(), ok, "cap {cap}: {out:?}");
+        if ok {
+            assert_eq!(out.unwrap().len(), 1000);
+        } else {
+            assert!(out.unwrap_err().contains("more than 999 bytes"));
+        }
+    }
+    assert_eq!(GH_STDOUT_CAP, 64 * 1024 * 1024);
+}
+
+/// R1.5: a list whose items lack a number or a body, or whose number isn't a u64, fails.
+#[test]
+fn a_list_of_the_wrong_shape_fails() {
+    let mut map = BTreeMap::new();
+    for (text, want) in [
+        ("[{\"body\":\"x\"}]", "an issue without a number"),
+        (
+            "[{\"number\":\"7\",\"body\":\"x\"}]",
+            "an issue without a number",
+        ),
+        (
+            "[{\"number\":-1,\"body\":\"x\"}]",
+            "an issue without a number",
+        ),
+        (
+            "[{\"number\":1.5,\"body\":\"x\"}]",
+            "an issue without a number",
+        ),
+        ("[{\"number\":7}]", "an issue without a body"),
+        ("[{\"number\":7,\"body\":null}]", "an issue without a body"),
+        ("[1]", "an issue without a number"),
+        ("not json", "gh issue list --label crash: "),
+    ] {
+        let e = index(text, "crash", LIST_LIMIT, &mut map).unwrap_err();
+        assert!(e.contains(want), "{text}: {e}");
+    }
+    // The near miss: the right shape is read.
+    index(
+        "[{\"number\":7,\"body\":\"x\"}]",
+        "crash",
+        LIST_LIMIT,
+        &mut map,
+    )
+    .unwrap();
 }
