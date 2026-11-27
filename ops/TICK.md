@@ -407,7 +407,7 @@ Each round K runs in this order:
      `ops/lessons/pending/`, adds or edits only `.md` pending lesson files that aren't on
      origin/main, never its `README.md`; changing or deleting one that is on main is not a
      record change; changing or deleting `ops/STATUS.md`, which #392 removed from main and a
-     branch opened before it may still carry, is a record change) and a merge whose remerge-diff
+     branch opened before it may still carry, is a record change, but adding it back is not) and a merge whose remerge-diff
      is empty or touches only those paths that way are left out (ADR 0011 §3); a commit
      touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
@@ -706,7 +706,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/` and adding or editing pending lesson files not on origin/main, or changing or deleting the retired `ops/STATUS.md`, §4 step 6). The check's brief: that diff, the ledger, the
+      `ops/journal/` and adding or editing pending lesson files not on origin/main, or changing or deleting the retired `ops/STATUS.md` but never adding it, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
@@ -861,7 +861,7 @@ gate them.
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
-   record commits skip review: journal and pending lesson files not on origin/main, and the retired `ops/STATUS.md`, §4 step 6); the brief adds this section and ADR 0011 §1, and
+   record commits skip review: journal and pending lesson files not on origin/main, and changes or deletes of the retired `ops/STATUS.md`, §4 step 6); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
