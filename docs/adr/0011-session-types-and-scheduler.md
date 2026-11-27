@@ -127,7 +127,8 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   not on origin/main (`ops/lessons/pending/*.md`, not its `README.md`; changing or deleting one on
   origin/main counts; #391), or changes or deletes `ops/STATUS.md` (retired by #392; a branch
   opened before it may still carry it, and its merge of origin/main deletes it; a commit that
-  adds the file back is not a record commit, so the exemption ends with those branches), is
+  adds the file back is not a record commit; a branch that re-adds it in a reviewed commit could
+  then edit it in record commits, which nothing reads, #403), is
   a **record commit**: it doesn't count as "changed after
   the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
   `git show --remerge-diff` is empty or touches only those paths; any other merge resolution
