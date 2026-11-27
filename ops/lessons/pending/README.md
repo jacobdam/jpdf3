@@ -9,11 +9,15 @@ one file per session, so two open PRs never touch the same file (like the journa
 - **Content:** one line per lesson, written exactly as its `ops/LESSONS.md` line will read
   (*situation → what to do* plus the journal link, relative to `ops/`), so it moves verbatim.
   Nothing else: no heading, no other text.
-- **Written** by that session only, in its record commit. No other session edits it.
+- **Written** by that session only, in its record commit, which may only add it (or edit it
+  before it reaches main): changing or deleting a file on main is not a record change, so it
+  is reviewed (ops/TICK.md §4 step 6). No other
+  session edits it.
 - **Moved** by the next session that opens a work PR: before that PR's round 1 it adds each line
   to `ops/LESSONS.md` (refining an existing entry instead of duplicating it) and deletes the
   file, in the same commit. A file that an open agent PR already deletes is left to that PR.
-  The retro that curates `ops/LESSONS.md` (ops/TICK.md §7 step 3) folds and deletes any left.
+  The retro that curates `ops/LESSONS.md` (ops/TICK.md §7 step 3) folds and deletes any left,
+  skipping a file an open agent PR already deletes.
 
 This README is not a pending lesson: it stays, so the directory always exists, and it belongs
 to the process area (`ops/areas.toml`), so a change to it is reviewed.

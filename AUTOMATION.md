@@ -101,7 +101,7 @@ GitHub (public repo jacobdam/jpdf3)
    on the PR → posts commit status `ai-review`.
 8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
-9. RECORD: journal, STATUS.md, a pending lesson file if any, new issues for discoveries. Exit. The journal and STATUS go
+9. RECORD: journal, STATUS.md, a pending lesson file if any, new issues for discoveries. Exit. The journal, STATUS and pending lesson file go
    into the work PR as a record commit pushed before step 7's `ai-review` post (ADR 0011 §3),
    so in time this step runs between the review rounds and that post.
 ```

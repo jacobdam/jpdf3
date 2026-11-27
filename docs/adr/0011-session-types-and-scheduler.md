@@ -122,8 +122,10 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
 - **Records go into the work PR.** The journal and STATUS update is committed to the work PR
   before `ai-review` is posted, on the head commit that includes it (its `Result:` line
   says what was known then: "auto-merge on", "parked"). A commit that changes only files under
-  `ops/journal/`, pending lesson files (`ops/lessons/pending/`, not its `README.md`; #391) and
-  `ops/STATUS.md` is a **record commit**: it doesn't count as "changed after
+  `ops/journal/` and `ops/STATUS.md`, and adds or edits only pending lesson files
+  not yet on main (`ops/lessons/pending/*.md`, not its `README.md`; changing or deleting one on
+  main counts; #391), is
+  a **record commit**: it doesn't count as "changed after
   the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
   `git show --remerge-diff` is empty or touches only those paths; any other merge resolution
   counts, as TICK §4 step 6 says today. The check is by path: a commit touching any other file
@@ -132,7 +134,7 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   goes into the session's own file in `ops/lessons/pending/` (one file per session, so two open
   PRs never collide on it, as with journal entries; #386, #391); the next session that opens a
   work PR moves its lines into `ops/LESSONS.md` before that PR's round 1 and deletes the file,
-  and the retro that curates LESSONS folds any left. A
+  and the retro that curates LESSONS folds and deletes any left. A
   merge of origin/main that conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
 - **Sessions without a work PR** (a Gardener run, a "done:" reply, a Planner run with nothing
   to change in `ops/QUEUE.md`) still record themselves: one
@@ -315,7 +317,8 @@ still carried one on 2026-11-22). Each gets the `design` label when it is queued
   one session, and a broken scheduler sends the session to the legacy rules b and c and to the
   scheduler's own bug issue (§2), so the loop repairs it or reaches the owner after 3 sessions.
 - Record commits skip the final check by path only, so a record commit can't carry code. The
-  journal and STATUS text after the last review is no longer reviewed (today record PRs are:
+  journal, STATUS and pending lesson text after the last review is no longer reviewed (a
+  pending lesson is reviewed when a work PR moves it into LESSONS) (today record PRs are:
   PR #233's round 1 found a false tally in a journal entry). A false line there is caught only
   by the owner, the next session or an audit.
 - Labels carry more meaning (`design`, `design-pending`, `needs-design`, `area:`), and the agent

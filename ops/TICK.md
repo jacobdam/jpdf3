@@ -7,7 +7,7 @@ except files and GitHub.
 
 Repo: `jacobdam/jpdf3` (cwd). Owner: GitHub user `jacobdam`.
 Read **CONSTITUTION.md** first and obey it exactly. Then `ops/STATUS.md`, **`ops/LESSONS.md`**
-(what earlier sessions learned the hard way), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
+(what earlier sessions learned the hard way) and `ops/lessons/pending/` (lessons not yet moved into it), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
 milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 0. Ground rules for this session
@@ -402,9 +402,11 @@ Each round K runs in this order:
      `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
      merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
      (it shows only what you changed while merging, conflict resolutions included). A **record
-     commit** (one that changes only files under `ops/journal/`, pending lesson files under
-     `ops/lessons/pending/` (not its `README.md`) and `ops/STATUS.md`) and a merge whose
-     remerge-diff is empty or touches only those paths are left out (ADR 0011 §3); a commit
+     commit** (one that changes only files under `ops/journal/` and `ops/STATUS.md` and, under
+     `ops/lessons/pending/`, adds or edits only `.md` pending lesson files that aren't on
+     origin/main, never its `README.md`; changing or deleting one that is on main is not a
+     record change) and a merge whose remerge-diff
+     is empty or touches only those paths that way are left out (ADR 0011 §3); a commit
      touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
      regraded without a ruling, post `ai-review`. Otherwise, if the post-cap diff adds ≤ 100
@@ -622,7 +624,9 @@ session.
 3. **Curate `ops/LESSONS.md`** (keep ≤ 60 entries): merge duplicates, delete stale ones, and
    promote any lesson that recurred 3+ times into this file, a template or an ADR (then remove
    it from LESSONS). Fold the lines of every pending lesson file still in `ops/lessons/pending/`
-   (all but its `README.md`) into LESSONS, or drop a stale one, and delete the file.
+   (all but its `README.md`) into LESSONS, or drop a stale one, and delete the file; skip a file
+   that an open agent PR already deletes (`git diff --name-status
+   origin/main...origin/<branch> -- ops/lessons/pending/`), as §5 does.
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
    reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
    PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
@@ -697,7 +701,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/`, pending lesson files and `ops/STATUS.md`, §4 step 6). The check's brief: that diff, the ledger, the
+      `ops/journal/` and `ops/STATUS.md` and adding or editing new pending lesson files, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
@@ -852,7 +856,7 @@ gate them.
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
-   journal and STATUS commits skip review); the brief adds this section and ADR 0011 §1, and
+   record commits skip review: journal, STATUS and new pending lesson files, §4 step 6); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
