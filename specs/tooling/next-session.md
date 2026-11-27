@@ -17,7 +17,9 @@ work-mix budget of ADR 0011 §3: step 8's third term and step 10's product-first
 part 1 (#249) adds step 8's Design: product terms (ops/TICK.md §10) after the Planner's. Task 3
 part 3 (#314) adds step 3's third term: an own design PR past its 24-hour window (ADR 0011 §7),
 which TICK §1 checked by hand before. #373 counts that term's `ai-review` success from the
-triage comment it links, so a record-only update doesn't restart the window.
+triage comment it links, so a record-only update doesn't restart the window. #372 adds the
+owner's `/approve`, which ends that window early, and lets step 3's first term pick a design
+PR that fails in its window.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
@@ -186,7 +188,12 @@ triage comment it links, so a record-only update doesn't restart the window.
      raised; the session continues with other work); the brief notes the alarm instead.
   3. **Own PRs and the scheduler** (rule c, and ADR 0011 §2 Failure):
      - an open PR in `prs.json` that is failing, where neither the PR nor its linked issue
-       carries a skip label, that doesn't need design (step 6's), and that is not *held*. Lowest number first. A PR is held when,
+       carries a skip label, that doesn't need design (step 6's), and that is not *held*. For a
+       PR labeled `design` (exact) that isn't a draft, the linked issue's `owner-todo` doesn't
+       count (only `blocked` and `deferred` do, as in the window term below): the issue carries
+       it while the window runs, so without this a design PR that conflicts or loses its
+       review in its window was picked by no step (#372, the #347/#359 deadlock). A draft
+       design PR keeps the full rule (a design question or an escalation is the owner's turn). Lowest number first. A PR is held when,
        of its comments in `holds.json` that are an owner command, the newest (largest
        `createdAt`; on a tie, the later in the list) is a hold. A command is a comment that
        `.github/workflows/owner-commands.yml` acts on: author `jacobdam`, a body that starts
@@ -226,10 +233,22 @@ triage comment it links, so a record-only update doesn't restart the window.
        `holds.json` with author `jacobdam` and a body starting `🤖 jpdf-agent **AI review
        triage` (that comment's `createdAt`, #373), else from its own `startedAt`; and, when the
        newest of its owner commands in `holds.json` (the hold rule above, unchanged) is a release,
-       that command's `createdAt`. A PR with no entry in `design-ready.json` (only a broken
-       fixture, live) is never picked. Lowest number first → `worker design-window #N`. The
+       that command's `createdAt`. The window also ends early by the owner's `/approve`
+       (#372): a comment in `holds.json` by `jacobdam` without the tag (ASCII case, as the hold
+       rule) whose body starts with `/approve` in any ASCII case followed by ASCII whitespace
+       or the end (so `/approved`, `ok /approve` and ` /approve` are not). It counts when it is
+       the newest of the PR's owner commands counted together with the approvals (largest
+       `createdAt`, on a tie the later in the list; so a `/release` or `/hold` after it ends
+       it) and its `createdAt` is at or after the time the `ai-review` success counts from
+       (the linked triage comment's, else the status's): the owner saw that review, and a
+       success re-posted after a record-only update links the same triage, while a new round
+       after any other push links a later one. It doesn't change the hold rule, so an
+       approval after a `/hold` leaves the PR held. A PR with no entry in `design-ready.json` (only a broken
+       fixture, live) is never picked, approved or not. Lowest number first → `worker design-window #N`. The
        `Rule:` line says `c (own design PR past its 24-hour window, ADR 0011 §7: enable
-       auto-merge, remove owner-todo from its issue)`; the brief loads `gh pr view N --comments`,
+       auto-merge, remove owner-todo from its issue)`, or for an approval that counts `c (own
+       design PR approved by the owner's /approve, ADR 0011 §7: enable auto-merge, remove
+       owner-todo from its issue)`; the brief loads `gh pr view N --comments`,
        the linked issue (when there is a `Closes` link) and `ops/TICK.md §8 step 5`.
 
        The order follows ADR 0011 §2 step 3: a failing PR first (a design PR whose CI fails is
@@ -391,7 +410,8 @@ triage comment it links, so a record-only update doesn't restart the window.
   labeled `design`, an `ai-review` status in state `SUCCESS` also needs `startedAt` in the form
   `YYYY-MM-DDTHH:MM:SSZ`, and its `targetUrl`, if present, is a string or null). In
   `holds.json`, a comment by `jacobdam` whose body starts `🤖 jpdf-agent **AI review triage`
-  also needs a string `url` and a `createdAt` in that form (#373); other comments need neither
+  also needs a string `url` and a `createdAt` in that form (#373); an owner `/approve` needs
+  that `createdAt` too (#372); other comments need neither
   `url` nor, unless they are an owner command, `createdAt`. Every PR in `prs.json` needs `isDraft` (a boolean),
   `autoMergeRequest` (null or an object) and `createdAt` (`YYYY-MM-DDTHH:MM:SSZ`).
   `design-ready.json`: objects with a number `number` (each at most once) and an array `events`
@@ -449,7 +469,12 @@ never 2 (no command ran).
   shows it (the newest status of each context on the head; checked on PR #327 on 2026-11-24),
   or the `createdAt` of the triage comment its `targetUrl` names (#373; `targetUrl` checked on
   PR #359 on 2026-11-27). A triage comment after a PR's 100th comment is missed, so the status
-  time counts and the window restarts (the safe side).
+  time counts and the window restarts (the safe side). An `/approve` after a PR's 100th
+  comment is missed (the window runs its 24 hours: the safe side), but a `/hold` or
+  `/release` after the 100th that follows an earlier approval is missed too, so that approval
+  still counts (#372); the owner's `/hold` itself still drafts the PR through the workflow, so
+  GitHub can't merge it, and the session sees the hold (TICK §5). No open PR has 100 comments
+  today.
 - Blocked issues: only issues that still carry `blocked` when the scheduler runs are listed
   (`--label blocked`), so an issue labeled and unlabeled between two retros is missed; listing
   every issue updated in the week would cost one events call each. At most 100 issues updated
@@ -518,7 +543,13 @@ never 2 (no command ran).
   update) would keep the old start; the PR then merges content the owner's window didn't
   cover. Only the agent account can post the status or a tagged `jacobdam` comment, a stranger's
   comment never counts (author check), and a link that names no triage comment of this PR falls
-  back to the status time (a restart). A wrong pick costs a design ADR
+  back to the status time (a restart). The owner's `/approve` (#372) counts only from an
+  untagged `jacobdam` comment, so a stranger or an agent comment can't end the window; it can
+  only make a PR merge sooner, never hold one back or release a `/hold`. It counts from the
+  review time above, so the same exposure applies: a session that re-posts a success with an
+  old link after a non-record push would keep an approval the owner gave on other content.
+  Step 3's first term now picks a non-draft design PR whose issue has `owner-todo`; that only
+  sends a session to fix its own failing PR (TICK rule c), which merges nothing by itself. A wrong pick costs a design ADR
   merged before the owner's 24 hours, which is why this term is in the strict lane (ADR 0012
   §1, ADR 0011 §7). The cutoff `now − 86 400` saturates and is floored at the epoch (`now` is
   in the years 1970–9999).
@@ -669,6 +700,25 @@ of inputs where no step before 11 applies (→ `planner`):
   are equivalent: the release lookup ignoring a newest `/hold` (that PR is held, so never
   picked) and a looser label test in `design_label` (the review time is read only for the exact
   label, so such a PR is never picked);
+- step 3's failing design PR (#372): a design PR that conflicts or has no `ai-review`
+  success, whose issue has `owner-todo`, is `worker own-pr #N` (the existing window test's
+  failing cases changed from `planner` to that pick); near misses: `blocked` or `deferred` on
+  the issue (with or without `owner-todo`), a draft (with `owner-todo`: not picked; without:
+  picked), no label, `designx`, `Design`, each skip label on the PR, held;
+- step 3's `/approve` (#372): a design PR an hour into its window is picked with an approval
+  at the review's second and after it, not one second before; the whole brief with the
+  approval's `Rule:` line; `/Approve`, `/APPROVE`, text after a space, a second line, a tab
+  count; near misses: another author, a null author, the tag (any case), `/approved`,
+  `/approvex`, `ok /approve`, ` /approve`, `approve`, an approval on another PR; a `/hold`
+  after it and an approval after a `/hold` (held, noted); a `/release` after it; an approval
+  after a `/release` in either list order; equal times by list order; other comments after it;
+  a record-only re-post linking the triage the owner saw keeps it, an unlinked later status
+  and a new round's later triage end it, an unreviewed push is `own-pr`; a draft, auto-merge
+  on, a skip label on the PR, no label, an `owner/` branch, `blocked` or `deferred` on the
+  issue, no `design-ready.json` entry (none picked); an approval with an empty or malformed
+  `createdAt` exits 1. Hand mutants of the review-time comparison (`>` and dropped), the
+  newest-command rule, the draft exemption, the issue-label rule, the word boundary, the tag,
+  author and case checks and the hold/release counting each fail a test;
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,

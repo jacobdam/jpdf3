@@ -136,7 +136,8 @@ reviewed part, an ADR or principle (`docs/adr/_TEMPLATE-design.md`, `docs/PRINCI
 tasks, a ruling followed by one final check, or one question for the owner. One escalation per
 issue (`Designed in:`); a second goes to the owner. Issues labeled `design` and `ready` queue
 design work. Design ADR PRs merge 24 hours after the latest of: marked ready, their last
-`ai-review` success, the owner's last `/release`, unless the owner `/hold`s them; part 3
+`ai-review` success, the owner's last `/release`, unless the owner `/hold`s them, or as soon
+as the owner comments `/approve` on the reviewed content (#372); part 3
 (#314) makes that a scheduler pick, step 3's `worker design-window #N`, which enables
 auto-merge. Reviewer briefs carry the `docs/PRINCIPLES.md` entries for the paths a diff
 touches. Part 2 (#275) adds step 6 to the scheduler: after steps 1–5 it picks
@@ -173,7 +174,8 @@ issues are filed `ready`, like design-queue ones), no code. Its PR is reviewed l
 and over ADR 0010's cap goes to Design: technical like any other (a scope question there goes
 to the owner), which hands it back to the Design: product merge rule, never to auto-merge;
 an ADR there files the product part again as a new `design-product` issue. v1 (#311) merges only on the owner's explicit approval, asked again after any
-later push; later `PRODUCT.md` PRs get the design ADR PR's 24-hour `/hold` window.
+later push; later `PRODUCT.md` PRs get the design ADR PR's 24-hour `/hold` window (and its
+`/approve`).
 
 ## 5. Completeness: building the right thing
 
@@ -494,7 +496,8 @@ comment until a "done:" reply links it.
 
 **Jump in, lightest to heaviest**
 1. Issue or comment labeled `human` → top priority for the next session.
-2. `/hold` on a PR → it becomes a draft (unmergeable) until `/release`.
+2. `/hold` on a PR → it becomes a draft (unmergeable) until `/release`. `/approve` on a design
+   ADR PR or a later `PRODUCT.md` PR → it merges without waiting out its 24-hour window (#372).
 3. Issue labeled `halt` (or `touch ops/HALT`) → stops after the current session.
 4. Take over: halt, then `claude` in the repo, or `claude --resume <session-id>` from the log.
 5. Revert a merge → the next session sees the reopened issue.
