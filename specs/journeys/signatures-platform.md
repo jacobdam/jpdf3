@@ -805,7 +805,7 @@ sticky note with the text "Ghi chú tiếng Việt", author "Lan" and a modifica
 Steps, run once per language `en`, `vi`, `ja`, `zh-Hans` (macOS: launch with
 `-AppleLanguages (<lang>)`; web: a Playwright context with `locale` `en-US`, `vi-VN`, `ja-JP`,
 `zh-CN`): launch → the start screen, and every menu item and toolbar control from the app's
-command registry (J-PC-06), equal that catalog's entries; the spot strings are that
+command registry (J-PC-06) that the app draws itself (not the ones macOS supplies), equal that catalog's entries; the spot strings are that
 language's; web: `<html lang>` is the language tag → open `languages.pdf` → the page
 indicator, the outline ("Chapter One" and "Open", untranslated), the annotation list (the
 note's text and author unchanged, its date in the formatter's output) and Document Properties
