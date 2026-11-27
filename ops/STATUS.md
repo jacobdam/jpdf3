@@ -55,6 +55,3 @@ Phase: bootstrap (pilot)
 - A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
   call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
   in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).
-- Merging origin/main locally is blocked by the guard when the merge brings a protected-path change from main →
-  set the conflicting record file to main's copy in a record commit, push, then `gh pr update-branch N`
-  (ops/journal/2026-11-27/2300-347-design-window.md).
