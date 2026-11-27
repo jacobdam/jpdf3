@@ -1620,7 +1620,7 @@ mod tests {
                 .map(|i| run_json(u64::try_from(i).unwrap_or(0), "2026-08-01T00:00:00Z"))
                 .collect();
             let list = format!("[{}]", runs.join(","));
-            // Either list alone, as the second of two, at the limit is flagged by its own name.
+            // The dispatch list as the second of two, after an empty schedule list.
             let inp = Inputs {
                 nightly_runs: Some(vec![
                     ("runs-schedule.json".to_owned(), "[]".to_owned()),
