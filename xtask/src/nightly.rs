@@ -767,9 +767,11 @@ pub(crate) fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, S
 /// always starts, so a `jpdf-cli` it can't exec would look like a crash (126) per run: it is
 /// refused before the runs instead (spec item 10). The execute bit alone isn't enough: the
 /// kernel checks only the caller's class (owner, else group, else other), so a runner-owned
-/// file with mode 0o610 or 0o601 can't be exec'd (#323). The shell's `test -x` asks the kernel
-/// the same question for the effective ids (POSIX `test`), with no new crate; a shell that
-/// can't start counts as "not executable", so the nightly stops with a tool failure.
+/// file with mode 0o610 or 0o601 can't be exec'd (#323). The shell's `test -x` applies the same
+/// permission rule for the effective ids (POSIX `test`; for root, any execute bit), with no new
+/// crate. Some shells decide it from `stat` rather than the kernel, so ACLs or a `noexec` mount
+/// may not be seen. A shell that can't start counts as "not executable", so the nightly stops
+/// with a tool failure.
 pub(crate) fn is_executable_file(p: &Path) -> bool {
     #[cfg(unix)]
     {
