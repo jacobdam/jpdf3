@@ -257,7 +257,7 @@ impl Captured {
 /// [`MAX_LINE`] bytes, so crate data can't forge or hide report lines.
 pub fn clean(s: &str) -> String {
     let mut out = String::new();
-    for c in s.chars().map(|c| if c.is_control() { '?' } else { c }) {
+    for c in s.chars().map(|c| if hides(c) { '?' } else { c }) {
         if out.len().saturating_add(c.len_utf8()) > MAX_LINE {
             out.push('…');
             break;
@@ -265,6 +265,14 @@ pub fn clean(s: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// A character that can break or reorder a line where the report is shown: a control
+/// character, U+2028/U+2029 (line and paragraph separators) or a bidi embedding, override or
+/// isolate (U+202A-U+202E, U+2066-U+2069).
+fn hides(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// A step's result plus the lines printed under it.
@@ -332,10 +340,13 @@ fn deny_summary(line: &str) -> Option<Vec<String>> {
 /// are a rejection, except `cargo metadata failed`, which is the judge's own failure to run.
 pub fn unsafe_result(c: &Captured) -> Checked {
     if !c.ok() {
-        return failure(format!(
-            "judge dependency scan (needs Python 3.11+ for tomllib; see --python): {}",
-            c.tail()
-        ));
+        let tail = c.tail();
+        let hint = if tail.contains("tomllib") {
+            " (needs Python 3.11+ for tomllib; see --python)"
+        } else {
+            ""
+        };
+        return failure(format!("judge dependency scan{hint}: {tail}"));
     }
     let last = c
         .stdout
@@ -434,7 +445,7 @@ pub fn render(o: &Options, report: &Report, code: u8) -> String {
         .map(|(s, _)| *s)
         .collect();
     let verdict = match code {
-        0 => "admitted by the checks run (cargo vet is #413)".to_owned(),
+        0 => "admitted by the license and unsafe checks (cargo vet, build-time code and features: #413)".to_owned(),
         4 => format!("rejected by {}", rejected.join(", ")),
         _ => "not decided: a step failed".to_owned(),
     };

@@ -249,6 +249,9 @@ const DENY_FAIL: &str = "error[rejected]: failed to satisfy license requirements
 35 │ license = \"WTFPL\"
 warning[duplicate]: found 2 duplicate entries for crate 'shlex'
 error[vulnerability]: something
+   │
+error[banned]: other
+warning[x]: y
 ";
 
 #[test]
@@ -267,7 +270,7 @@ fn deny_pass_and_rejection() {
         bad.details.join("\n"),
         "failed: advisories, licenses\nerror[rejected]: failed to satisfy license requirements\n  \
          ┌─ /home/u/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ffmpeg-next-7.1.0/Cargo.toml:35:12\n\
-         error[vulnerability]: something"
+         error[vulnerability]: something\nerror[banned]: other"
     );
 }
 
@@ -322,6 +325,7 @@ fn judge_scan_results() {
         cap(0, "", ""),
         cap(0, "{}\n", ""),
         cap(0, "[1]\n", ""),
+        cap(0, "[]\nnot json\n", ""),
     ] {
         assert!(failed(&unsafe_result(&c)), "{c:?}");
     }
@@ -406,7 +410,7 @@ fn driver_runs_every_check_in_order() {
     assert_eq!(
         render(&opts(), &report, 0),
         "admit: probe: ok\nadmit: deny: ok\nadmit: unsafe: ok\n\
-         admit: miniz_oxide@0.8.9: admitted by the checks run (cargo vet is #413)\n"
+         admit: miniz_oxide@0.8.9: admitted by the license and unsafe checks (cargo vet, build-time code and features: #413)\n"
     );
 }
 
@@ -551,6 +555,11 @@ fn failure_text_prefers_the_first_error_line() {
 #[test]
 fn clean_escapes_controls_and_caps_length() {
     assert_eq!(clean("a\u{1b}[31mb\r\nc"), "a?[31mb??c");
+    let hidden = "\u{2028}\u{2029}\u{202A}\u{202E}\u{2066}\u{2069}";
+    assert_eq!(
+        clean(&format!("a{hidden}b\u{2027}\u{202F}\u{2065}\u{206A}")),
+        "a??????b\u{2027}\u{202F}\u{2065}\u{206A}"
+    );
     let at = "x".repeat(MAX_LINE);
     assert_eq!(clean(&at), at);
     assert_eq!(clean(&format!("{at}y")), format!("{at}…"));

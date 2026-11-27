@@ -32,7 +32,9 @@ there, and writes nothing in the repo.
   leading zeros, then an optional `-pre` and an optional `+build`, each a non-empty run of
   ASCII letters, digits, `.` and `-`; at most 64 bytes). A range (`^1.2.3`, `=1.2.3`, `1.2`,
   `1.2.*`) is refused: rule 5 pins the version, and the probe asks for `=<version>`. Neither
-  character set can leave the manifest's TOML key or string.
+  character set can leave the manifest's TOML key or string. This is a shape check, not full
+  semver: `1.0.0-a..b`, `1.0.0-01` and parts too large for 64 bits pass it, and cargo then
+  rejects them in `probe` (exit 1, not 2).
 - `--work DIR` (required): where the probe package is created. It must be an absolute path that
   doesn't exist yet (not even as a dangling symlink) and doesn't end in `..`; its parent must
   be an existing directory; and no ancestor of the parent, after resolving symlinks, may be a
@@ -80,13 +82,16 @@ this order, records each as a `steps::Outcome` under its name, and the exit code
    code) fails the step.
 3. **`unsafe`**: runs the judge's own scan, not a copy of it: `<python> -I -c <snippet>
    <repo>/ops/judge DIR`. The snippet imports `ops/judge/policy.py` and calls
-   `check_deps(Path(DIR), Report())`, which runs `cargo metadata --locked` in `DIR`, scans every
-   registry package's `.rs` files for `unsafe` outside comments and strings, and applies
+   `check_deps(Path(DIR), Report())`, which runs `cargo metadata --locked` in `DIR`, scans the
+   `.rs` files of every package with a `source` (registry and git; it skips the directories in
+   `policy.py`'s `SKIP_DIRS`, such as `target` and `build`) for `unsafe` outside comments and
+   strings, and applies
    `ops/judge/unsafe-allowlist.txt` with its repository prefixes; then it prints the violation
    list as JSON on its last stdout line. `-I` keeps the working directory and `PYTHON*`
    variables out of the import path. An empty list passes; violations are a **rejection**, one
    detail line each. A non-zero exit, a last line that isn't a JSON list of strings, or a
-   `cargo metadata failed` entry (the judge's scan couldn't run) fails the step.
+   `cargo metadata failed` entry (the judge's scan couldn't run) fails the step; a quoted line
+   that names `tomllib` adds the hint to pass a Python 3.11+ `--python`.
 
 `deny` and `unsafe` each run whatever the other found, so one run shows every rule a candidate
 breaks. A command that can't start (`cargo deny` not installed, a wrong `--python`) fails its
@@ -96,14 +101,15 @@ own step only.
 On stdout, one line per step that ran, `admit: <step>: ok`, `admit: <step>: rejected` or
 `admit: <step>: failed: <why>`, each followed by its detail lines indented by two spaces (at
 most 40, then `  … <n> more`), and a last line:
-- `admit: <crate>@<version>: admitted by the checks run (cargo vet is #413)` (exit 0),
+- `admit: <crate>@<version>: admitted by the license and unsafe checks (cargo vet, build-time code and features: #413)` (exit 0),
 - `admit: <crate>@<version>: rejected by <steps>` (exit 4; the rejecting steps in order),
 - `admit: <crate>@<version>: not decided: a step failed` (exit 1).
 
 A failure reason is also printed on stderr as `xtask: admit: <why>` when its step ends. Every
-line taken from tool output goes through `clean`: control characters (ANSI escapes, CR, LF)
-become `?` and the line is cut at 300 bytes with `…`, so crate data can't forge or hide a
-report line. A failure reason quotes one stderr line: the first that starts with `error:` or
+line taken from tool output goes through `clean`: control characters (ANSI escapes, CR, LF),
+U+2028, U+2029 and the bidi embeddings, overrides and isolates (U+202A-U+202E,
+U+2066-U+2069) become `?`, and the line is cut at 300 bytes with `…`, so crate data can't
+start a new report line or reorder one in a terminal or a pasted copy. A failure reason quotes one stderr line: the first that starts with `error:` or
 `error[` (cargo's own message), else the last non-blank one (a Python exception).
 
 ## Persistence
@@ -146,8 +152,12 @@ both fail `probe` (exit 1); cargo's quoted message says which.
 - **What it can't see.** Cargo also reads `.cargo/config.toml` from `DIR`'s ancestors and
   `CARGO_HOME` (a registry replacement, say). The tool doesn't check them: it is a session
   pre-check, and the judge, on its own checkout, is the gate. It adds no check the judge doesn't
-  run; a pass here can still fail the judge if the adapter enables other features (#413) or
-  adds other crates.
+  run; a pass here can still fail the judge if the adapter enables other features (#413), adds
+  other crates, or lands in a different resolution: the probe resolves the candidate's
+  dependencies fresh, to the newest compatible versions, while the judge reads the repo's
+  `Cargo.lock`, where a shared dependency unifies with the version already pinned there (the
+  probe's `foo 1.9` may pass where the repo's `foo 1.2` has `unsafe`). Re-run the judge's
+  checks on the PR that adds the crate; this tool doesn't replace them.
 - **Crate data is data** (CONSTITUTION 1): tool output is matched and printed through `clean`,
   never executed or used as a path. Only the validated `<crate>` and `<version>` reach the
   manifest.
@@ -160,7 +170,7 @@ both fail `probe` (exit 1); cargo's quoted message says which.
     step that passed on a non-zero exit or a `cargo metadata failed` entry fails
     `judge_scan_results`. A driver that stopped after the first rejection, kept going after a
     failed probe, or let a rejection outrank a failure fails the driver tests. Hand mutants of
-    each of these (17, listed in the PR) were all caught.
+    each of these (17, listed in the PR description) were all caught.
   - Each rule has a should-reject and a near-miss should-accept case: names, versions
     (`1.0.0-a-b+c-d` against `1.2.3-a_b`), the work directory (a checkout at the parent, above
     it, and behind a symlinked parent, against the same paths with no checkout), each tool's
