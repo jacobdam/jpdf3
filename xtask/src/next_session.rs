@@ -25,6 +25,10 @@ const DESIGN_LABEL: &str = "design";
 const DESIGN_WINDOW: i64 = 86_400;
 /// The timeline event of a draft PR marked ready.
 const READY_EVENT: &str = "ready_for_review";
+/// How a review triage comment starts (ops/TICK.md §4 step 4). An `ai-review` success whose
+/// `targetUrl` names such a comment on the same PR starts the design window at that comment's
+/// time, so a success re-posted after a record-only update keeps the window (#373).
+const TRIAGE_HEAD: &str = "🤖 jpdf-agent **AI review triage";
 /// What a Design: technical session loads besides the PR or issue (ops/TICK.md §8 step 2).
 const DESIGN_LOAD: [&str; 6] = [
     "ops/TICK.md §8",
@@ -561,9 +565,9 @@ struct Pr {
     auto_merge: bool,
     /// `createdAt`, GitHub's `YYYY-MM-DDTHH:MM:SSZ`.
     created: String,
-    /// The newest `startedAt` of an `ai-review` status context in state `SUCCESS` on the head
-    /// (read for an open PR labeled `design` only).
-    review: Option<String>,
+    /// The newest `ai-review` status context in state `SUCCESS` on the head (read for an open
+    /// PR labeled `design` only).
+    review: Option<Review>,
     /// Open and on the owner's `/hold` (`held_prs`), set by `decide`.
     held: bool,
 }
@@ -595,13 +599,21 @@ impl Pr {
     }
 }
 
-/// The newest `startedAt` of an `ai-review` status context in state `SUCCESS` (#314).
-fn review_time(rollup: &Value, what: &str) -> Result<Option<String>, String> {
+/// An `ai-review` success on a PR's head: when the status was posted, and the comment it
+/// links (`targetUrl`, `None` when null or absent).
+#[derive(Clone)]
+struct Review {
+    started: String,
+    target: Option<String>,
+}
+
+/// The newest `ai-review` status context in state `SUCCESS` (#314), by `startedAt`.
+fn review_time(rollup: &Value, what: &str) -> Result<Option<Review>, String> {
     let entries = match rollup {
         Value::Null => &[][..],
         v => list(v, what)?,
     };
-    let mut newest: Option<&str> = None;
+    let mut newest: Option<(&str, Option<&str>)> = None;
     for e in entries {
         if e.get("__typename").and_then(Value::as_str) != Some("StatusContext")
             || text(e, "context", what)? != "ai-review"
@@ -615,11 +627,23 @@ fn review_time(rollup: &Value, what: &str) -> Result<Option<String>, String> {
                 "{what}: startedAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
             ));
         }
-        if newest.is_none_or(|t| at > t) {
-            newest = Some(at);
+        let target = match e.get("targetUrl") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(u)) => Some(u.as_str()),
+            Some(_) => {
+                return Err(format!(
+                    "{what}: field \"targetUrl\" is not a string or null"
+                ));
+            }
+        };
+        if newest.is_none_or(|(t, _)| at > t) {
+            newest = Some((at, target));
         }
     }
-    Ok(newest.map(str::to_owned))
+    Ok(newest.map(|(at, target)| Review {
+        started: at.to_owned(),
+        target: target.map(str::to_owned),
+    }))
 }
 
 fn failing(rollup: &Value, what: &str) -> Result<bool, String> {
@@ -771,6 +795,35 @@ fn newest_commands(text_: &str) -> Result<Vec<(u64, String, bool)>, String> {
         }
         if let Some((at, hold)) = newest {
             out.push((n, at.to_owned(), hold));
+        }
+    }
+    Ok(out)
+}
+
+/// For each PR in `holds.json`, the `createdAt` of each of its triage comments by URL: an
+/// owner-account comment (the account the agent shares) whose body starts with `TRIAGE_HEAD`
+/// (#373). Such a comment needs a string `url`; other comments need none.
+fn triage_times(text_: &str) -> Result<std::collections::BTreeMap<(u64, String), String>, String> {
+    let what = "holds.json";
+    let v = parse_list(text_, what)?;
+    let mut out = std::collections::BTreeMap::new();
+    for p in list(&v, what)? {
+        let n = number(p, "number", what)?;
+        for c in list(field(p, "comments", what)?, what)? {
+            let login = match field(c, "author", what)? {
+                Value::Null => None,
+                a => Some(text(a, "login", what)?),
+            };
+            if login != Some(OWNER) || !text(c, "body", what)?.starts_with(TRIAGE_HEAD) {
+                continue;
+            }
+            let at = text(c, "createdAt", what)?;
+            if !valid_floor(at) {
+                return Err(format!(
+                    "{what}: createdAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                ));
+            }
+            out.insert((n, text(c, "url", what)?.to_owned()), at.to_owned());
         }
     }
     Ok(out)
@@ -1552,6 +1605,7 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     }
     let commands = newest_commands(&inp.holds)?;
     let ready_at = ready_times(&inp.design_ready)?;
+    let triaged = triage_times(&inp.holds)?;
     let issues = parse_issues(&inp.issues)?;
     let red = main_red(&inp.runs)?;
     let now = unix(&inp.now, "now.txt")?;
@@ -1636,6 +1690,9 @@ fn decide(inp: &Inputs) -> Result<String, String> {
     if chosen.is_none() {
         // ADR 0011 §7: the window starts at the latest of the PR marked ready, its last
         // `ai-review` success and the owner's last `/release`; at exactly 24 hours it has passed.
+        // The success counts from the triage comment it links when that is one of this PR's
+        // (#373): a success re-posted on a record-only update links the same comment, so the
+        // window keeps its start; else from the status itself (the safe side: a restart).
         // `now` is in the years 1970–9999 (`unix`), so this can't overflow; before 1970-01-02
         // the cutoff is the epoch, which no GitHub time precedes.
         let cutoff = iso(now.saturating_sub(DESIGN_WINDOW).max(0));
@@ -1670,7 +1727,13 @@ fn decide(inp: &Inputs) -> Result<String, String> {
                 // Not failing implies an `ai-review` success on the head; `review` is checked
                 // anyway, so a PR without its time is never picked.
                 p.review.as_ref().is_some_and(|review| {
-                    [Some(ready), Some(review.clone()), release]
+                    let reviewed = review
+                        .target
+                        .as_ref()
+                        .and_then(|u| triaged.get(&(p.number, u.clone())))
+                        .unwrap_or(&review.started)
+                        .clone();
+                    [Some(ready), Some(reviewed), release]
                         .into_iter()
                         .flatten()
                         .all(|t| t <= cutoff)
