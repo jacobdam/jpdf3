@@ -52,7 +52,7 @@ Read-only commands, run from the current directory (the repo root):
   larger `databaseId`), at most 7 (`MAX_NIGHTLY_TRIES`): `gh run download <id> -n gates-report
   -D <repo>/target/dashboard-gates/<id>` until one succeeds, then `gates.json` from that
   directory → `gates-<id>.json`. A failed download (the artifact expired, the gate step didn't
-  run, or a network error) prints `dashboard: run <id>: no gates-report (<first stderr line>)`
+  run, or a network error) prints `dashboard: run <id>: no gates-report (<first line of the error>)`
   on stderr and tries the next run; the directory `target/dashboard-gates/` is removed before
   and after. With `--from`, `nightly-runs.json` is optional (missing → the history's source is
   `missing`), and a missing `gates-<id>.json` is a failed download.
@@ -190,7 +190,7 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
   (test). The snapshot of 2026-11-25 is under 3 KB.
 - The page renders at most what the snapshot holds (twelve weeks, at most 1000 issues); a
   snapshot over 1 MiB never reaches it.
-- Arithmetic: counts use `saturating_add`; the forecast is ⌈open × 28 / closed_28d⌉ with
+- Arithmetic: counts use `saturating_add` (the page's journey counts are bounded by the report's 4 MiB); the forecast is ⌈open × 28 / closed_28d⌉ with
   `checked_mul` (open ≤ 1000 by the list limit, so the product fits), and a forecast past
   9999-12-31 is `null`. Week starts are day numbers in `i64` from validated dates.
 
@@ -268,7 +268,7 @@ a regular file, no snapshot).
 - `xtask/src/dashboard.rs` judge history tests: run choice per week (newest first, ties by
   id, the 7-run cap, runs outside every week and after `--until` ignored), a failed download
   falling back to the next run, missing keys as `null`, `smoke_*` not `exam_*`, bad
-  `gates.json` shapes (no `metrics`, a rate 1.5, NaN-like text, a negative count), the 1 MiB
+  `gates.json` shapes (no `metrics`, a rate 1.5, -0.1 or 1e400 (not finite), a count -1, 1.5 or `true`), the 1 MiB
   read cap, `nightly-runs` truncation at 199/200, a `--from` run without `nightly-runs.json`
   (`source` `missing`) and with a partial history, and the pinned `gh run list` and
   `gh run download` arguments.
