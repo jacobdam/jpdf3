@@ -725,8 +725,9 @@ specs/tooling/design-technical.md.
    record paths (§4 step 6's post-cap terms), re-post `ai-review` success on the new head with
    the same `target_url` (the last triage comment), so the window keeps its start, and leave
    auto-merge as it was. If the window, counted that way, has already passed, the PR is not a
-   draft, the owner's newest `/hold` or `/release` on it is not a `/hold`, and its issue carries
-   neither `blocked` nor `deferred` (the `design-window` pick's terms), enable auto-merge and
+   draft, the owner's newest `/hold` or `/release` on it is not a `/hold`, the PR carries no
+   `owner-todo`, `blocked` or `deferred` label, and its issue carries neither `blocked` nor
+   `deferred` (the `design-window` pick's terms), enable auto-merge and
    remove `owner-todo` from the design issue in the same session, so the next merge on main
    can't conflict it again. **Any other push to a PR
    labeled `design`** (a fix, a merge resolution that edits another file) starts with
