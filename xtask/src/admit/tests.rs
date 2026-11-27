@@ -1,5 +1,5 @@
 //! specs/tooling/admit.md "Tests". Tool output fixtures are shaped like the real tools' output
-//! (cargo 1.100, cargo-deny 0.21.0, cargo-vet 0.10.3), trimmed to the fields that matter.
+//! (cargo 1.100, cargo-deny 0.21.0, the judge's `check_deps`), trimmed to what matters.
 
 use super::*;
 
@@ -26,20 +26,6 @@ fn cap(code: i32, stdout: &str, stderr: &str) -> Captured {
     }
 }
 
-fn pkg(name: &str, build_time: bool) -> Package {
-    let (name, version, license) = (name.to_owned(), "1.0.0".to_owned(), Some("MIT".to_owned()));
-    Package {
-        name,
-        version,
-        license,
-        build_time,
-    }
-}
-
-fn lines(c: &Checked) -> String {
-    c.details.join("\n")
-}
-
 fn failed(c: &Checked) -> bool {
     matches!(c.outcome, Outcome::Failed(_))
 }
@@ -50,30 +36,31 @@ fn failed(c: &Checked) -> bool {
 fn parses_target_and_flags() {
     let (work, python) = (PathBuf::from("/w/probe"), "python3".to_owned());
     let (name, version) = ("miniz_oxide".to_owned(), "0.8.9".to_owned());
-    let want = Options {
-        name,
-        version,
-        work,
-        features: Vec::new(),
-        no_default_features: false,
-        python,
-    };
-    assert_eq!(opts(), want);
-    let o = p("--features std,simd-adler32 --no-default-features zune-jpeg@0.5.0-rc.1+b.2 --python /opt/py --work /w/x")
-        .unwrap();
     assert_eq!(
-        (o.name.as_str(), o.version.as_str()),
-        ("zune-jpeg", "0.5.0-rc.1+b.2")
+        opts(),
+        Options {
+            name,
+            version,
+            work,
+            python
+        }
+    );
+    let o = p("--python /opt/py zune-jpeg@0.5.0-rc.1+b.2 --work /w/x").unwrap();
+    let got = (
+        o.name.as_str(),
+        o.version.as_str(),
+        o.python.as_str(),
+        o.work,
     );
     assert_eq!(
+        got,
         (
-            o.features.join(","),
-            o.no_default_features,
-            o.python.as_str()
-        ),
-        ("std,simd-adler32".to_owned(), true, "/opt/py")
+            "zune-jpeg",
+            "0.5.0-rc.1+b.2",
+            "/opt/py",
+            PathBuf::from("/w/x")
+        )
     );
-    assert_eq!(o.work, PathBuf::from("/w/x"));
 }
 
 #[test]
@@ -85,10 +72,10 @@ fn rejects_missing_repeated_and_unknown_arguments() {
         "a@1.0.0 b@1.0.0 --work /w",
         "a --work /w",
         "a@1.0.0 --work /w --work /v",
-        "a@1.0.0 --work /w --features x --features y",
         "a@1.0.0 --work /w --python p --python q",
+        "a@1.0.0 --work /w --python",
         "a@1.0.0 --work /w --offline",
-        "a@1.0.0 --work /w --no-default-features --no-default-features",
+        "a@1.0.0 --work /w --features x",
     ] {
         assert!(p(args).is_err(), "{args}");
     }
@@ -108,6 +95,7 @@ fn crate_names() {
         "_a",
         "a b",
         "a\"b",
+        "a=b",
         "a.b",
         "a/b",
         "é",
@@ -136,46 +124,13 @@ fn exact_versions_only() {
     }
 }
 
-#[test]
-fn feature_lists() {
-    let f = |list: &str| parse(&["a@1.0.0", "--work", "/w", "--features", list].map(str::to_owned));
-    let (at_len, at_count) = ("f".repeat(MAX_FEATURE), vec!["f"; MAX_FEATURES].join(","));
-    for good in ["std", "a_b-c+d.e", &at_len, &at_count] {
-        assert!(f(good).is_ok(), "{good}");
-    }
-    let (past_len, past_count) = (
-        "f".repeat(MAX_FEATURE + 1),
-        vec!["f"; MAX_FEATURES + 1].join(","),
-    );
-    for bad in [
-        "",
-        "a,,b",
-        "a,",
-        "dep:x",
-        "a/b",
-        "a\"b",
-        "a b",
-        &past_len,
-        &past_count,
-    ] {
-        assert!(f(bad).is_err(), "{bad:?}");
-    }
-}
-
 // ---- probe ----
 
 #[test]
 fn manifest_pins_the_one_dependency() {
     let want = "[package]\nname = \"jpdf-admit-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
-                [dependencies.miniz_oxide]\nversion = \"=0.8.9\"\ndefault-features = true\nfeatures = []\n\n[workspace]\n";
+                [dependencies]\nminiz_oxide = \"=0.8.9\"\n\n[workspace]\n";
     assert_eq!(manifest(&opts()), want);
-    let mut o = opts();
-    (o.features, o.no_default_features) = (vec!["std".to_owned(), "a+b".to_owned()], true);
-    let m = manifest(&o);
-    assert!(
-        m.contains("default-features = false\nfeatures = [\"std\", \"a+b\"]\n"),
-        "{m}"
-    );
 }
 
 fn scratch(tag: &str) -> PathBuf {
@@ -245,25 +200,21 @@ fn has_git_sees_dirs_and_worktree_files() {
 fn write_probe_creates_new_files_only() {
     let base = scratch("write");
     let (repo, probe) = (base.join("repo"), base.join("probe"));
-    fs::create_dir_all(repo.join("supply-chain")).unwrap();
-    for rel in COPIED {
-        fs::write(repo.join(rel), format!("# {rel}\n")).unwrap();
-    }
+    fs::create_dir(&repo).unwrap();
+    fs::write(repo.join(TOOLCHAIN), "[toolchain]\nchannel = \"1.2.3\"\n").unwrap();
     write_probe(&probe, &repo, &opts()).unwrap();
     assert_eq!(
         fs::read_to_string(probe.join("Cargo.toml")).unwrap(),
         manifest(&opts())
     );
     assert_eq!(fs::read(probe.join("src/lib.rs")).unwrap(), b"");
-    for rel in COPIED {
-        assert_eq!(
-            fs::read_to_string(probe.join(rel)).unwrap(),
-            format!("# {rel}\n")
-        );
-    }
+    assert_eq!(
+        fs::read(probe.join(TOOLCHAIN)).unwrap(),
+        fs::read(repo.join(TOOLCHAIN)).unwrap()
+    );
     // A second run into the same directory fails rather than reusing it; so does a missing file.
     assert!(write_probe(&probe, &repo, &opts()).is_err());
-    fs::remove_file(repo.join("rust-toolchain.toml")).unwrap();
+    fs::remove_file(repo.join(TOOLCHAIN)).unwrap();
     assert!(write_probe(&base.join("probe2"), &repo, &opts()).is_err());
 }
 
@@ -272,17 +223,9 @@ fn commands_are_pinned() {
     let (probe, repo) = (Path::new("/w/p"), Path::new("/r"));
     let line = |c: Cmd| format!("{} {}", c.program, c.args.join(" "));
     assert_eq!(line(lock_cmd()), "cargo generate-lockfile --color never");
-    assert_eq!(
-        line(metadata_cmd()),
-        "cargo metadata --format-version 1 --locked --color never"
-    );
     let deny =
         "cargo deny --color never --manifest-path /w/p/Cargo.toml --config /r/deny.toml check";
     assert_eq!(line(deny_cmd(probe, repo)), deny);
-    assert_eq!(
-        line(vet_cmd(probe)),
-        "cargo vet --manifest-path /w/p/Cargo.toml --output-format json"
-    );
     let scan = unsafe_cmd("py", probe, repo);
     assert_eq!(scan.program, "py");
     assert_eq!(
@@ -292,59 +235,9 @@ fn commands_are_pinned() {
     assert!(UNSAFE_SNIPPET.contains("policy.check_deps(Path(sys.argv[2]), r)"));
     // A path with a space stays one argument.
     assert_eq!(
-        vet_cmd(Path::new("/a b")).args.get(2).unwrap(),
+        deny_cmd(Path::new("/a b"), repo).args.get(4).unwrap(),
         "/a b/Cargo.toml"
     );
-}
-
-// ---- cargo metadata ----
-
-const META: &str = r#"{"packages":[
- {"name":"adler2","version":"2.0.1","license":"0BSD OR MIT OR Apache-2.0","source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["lib"]},{"kind":["bench"]}]},
- {"name":"jpdf-admit-probe","version":"0.0.0","license":null,"source":null,"targets":[{"kind":["lib"]}]},
- {"name":"libc","version":"0.2.170","license":"MIT OR Apache-2.0","source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["lib"]},{"kind":["custom-build"]}]},
- {"name":"serde_derive","version":"1.0.219","license":null,"source":"registry+https://github.com/rust-lang/crates.io-index","targets":[{"kind":["proc-macro"]}]}
-],"resolve":null,"version":1}"#;
-
-#[test]
-fn metadata_lists_registry_packages() {
-    let got = parse_metadata(META).unwrap();
-    let text: Vec<String> = got
-        .iter()
-        .map(|p| format!("{}@{} {} {:?}", p.name, p.version, p.build_time, p.license))
-        .collect();
-    assert_eq!(
-        text.join("\n"),
-        "adler2@2.0.1 false Some(\"0BSD OR MIT OR Apache-2.0\")\nlibc@0.2.170 true Some(\"MIT OR Apache-2.0\")\n\
-         serde_derive@1.0.219 true None"
-    );
-}
-
-#[test]
-fn metadata_shapes_it_does_not_know_are_errors() {
-    let probe = r#"{"name":"jpdf-admit-probe","version":"0.0.0","source":null,"targets":[{"kind":["lib"]}]}"#;
-    let dep =
-        r#"{"name":"a","version":"1.0.0","source":"registry+x","targets":[{"kind":["lib"]}]}"#;
-    let doc = |items: &[&str]| format!(r#"{{"packages":[{}]}}"#, items.join(","));
-    assert!(parse_metadata(&doc(&[probe, dep])).is_ok());
-    let edit = |from: &str, to: &str| doc(&[probe, &dep.replace(from, to)]);
-    for bad in [
-        "not json".to_owned(),
-        r#"{"packages":{}}"#.to_owned(),
-        doc(&[dep]),
-        doc(&[probe]),
-        doc(&[probe, probe, dep]),
-        edit(r#""source":"registry+x""#, r#""source":null"#),
-        edit(r#""source":"registry+x""#, r#""source":7"#),
-        edit(r#""name":"a","#, ""),
-        edit(r#""version":"1.0.0","#, ""),
-        edit(r#","targets":[{"kind":["lib"]}]"#, ""),
-        edit(r#"{"kind":["lib"]}"#, "{}"),
-        edit(r#"["lib"]"#, "[1]"),
-        edit(r#""source""#, r#""license":5,"source""#),
-    ] {
-        assert!(parse_metadata(&bad).is_err(), "{bad}");
-    }
 }
 
 // ---- deny ----
@@ -361,20 +254,17 @@ error[vulnerability]: something
 #[test]
 fn deny_pass_and_rejection() {
     assert_eq!(
-        deny_result(&cap(0, DENY_OK, ""), &[]),
+        deny_result(&cap(0, DENY_OK, "")),
         checked(Outcome::Ok, Vec::new())
     );
-    let bad = deny_result(
-        &cap(
-            4,
-            "advisories FAILED, bans ok, licenses FAILED, sources ok\n",
-            DENY_FAIL,
-        ),
-        &[],
-    );
+    let bad = deny_result(&cap(
+        4,
+        "advisories FAILED, bans ok, licenses FAILED, sources ok\n",
+        DENY_FAIL,
+    ));
     assert_eq!(bad.outcome, Outcome::Finding);
     assert_eq!(
-        lines(&bad),
+        bad.details.join("\n"),
         "failed: advisories, licenses\nerror[rejected]: failed to satisfy license requirements\n  \
          ┌─ /home/u/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ffmpeg-next-7.1.0/Cargo.toml:35:12\n\
          error[vulnerability]: something"
@@ -395,28 +285,22 @@ fn deny_without_a_matching_summary_fails() {
         cap(4, "advisories ok, bans ok, licenses FAILED\n", DENY_FAIL),
         cap(
             4,
-            "advisories ok, bans ok, sources FAILED, licenses ok\n",
+            "advisories FAILED, bans ok, sources FAILED, licenses ok\n",
             DENY_FAIL,
         ),
         cap(
             4,
-            "advisories ok, bans ok, licenses failed, sources ok\n",
+            "advisories FAILED, bans ok, licenses failed, sources ok\n",
+            DENY_FAIL,
+        ),
+        cap(
+            4,
+            "advisories ok, bans ok, licenses FAILED, sources ok, extra ok\n",
             DENY_FAIL,
         ),
     ] {
-        assert!(failed(&deny_result(&c, &[])), "{c:?}");
+        assert!(failed(&deny_result(&c)), "{c:?}");
     }
-}
-
-#[test]
-fn deny_notes_ofl_licenses() {
-    let mut font = pkg("font-data", false);
-    font.license = Some("OFL-1.1 OR MIT".to_owned());
-    let c = deny_result(&cap(0, DENY_OK, ""), &[pkg("a", false), font]);
-    assert_eq!(c.outcome, Outcome::Ok);
-    let note = "note: font-data@1.0.0 is licensed OFL-1.1 OR MIT: OFL-1.1 is allowed for fonts only \
-                (CONSTITUTION 10), check it by hand";
-    assert_eq!(lines(&c), note);
 }
 
 // ---- the judge's dependency scan ----
@@ -443,120 +327,6 @@ fn judge_scan_results() {
     }
 }
 
-// ---- vet ----
-
-const VET_OK: &str = r#"{"conclusion":"success","vetted_fully":[{"name":"adler2","version":"2.0.1"}],"vetted_partially":[],"vetted_with_exemptions":[]}"#;
-const VET_FAIL: &str = r#"{
-  "conclusion": "fail (vetting)",
-  "failures": [
-    {"name": "libc", "version": "0.2.170", "missing_criteria": ["safe-to-deploy"]},
-    {"name": "r-efi", "version": "5.2.0", "missing_criteria": ["safe-to-deploy"]}
-  ],
-  "suggest": {"suggestions": []}
-}"#;
-
-fn set(items: &[(&str, &str)]) -> Unvetted {
-    Some(
-        items
-            .iter()
-            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
-            .collect(),
-    )
-}
-
-#[test]
-fn vet_pass_and_rejection() {
-    assert_eq!(
-        vet_result(&cap(0, VET_OK, "")),
-        (checked(Outcome::Ok, Vec::new()), set(&[]))
-    );
-    let (c, unvetted) = vet_result(&cap(255, VET_FAIL, ""));
-    assert_eq!(c.outcome, Outcome::Finding);
-    assert_eq!(
-        lines(&c),
-        "libc@0.2.170: no imported audit for safe-to-deploy\nr-efi@5.2.0: no imported audit for safe-to-deploy"
-    );
-    assert_eq!(unvetted, set(&[("libc", "0.2.170"), ("r-efi", "5.2.0")]));
-    let violation = vet_result(&cap(255, r#"{"conclusion":"fail (violation)"}"#, ""));
-    assert_eq!(
-        violation,
-        (
-            checked(
-                Outcome::Finding,
-                vec!["conclusion: fail (violation)".to_owned()]
-            ),
-            None
-        )
-    );
-}
-
-#[test]
-fn vet_results_it_cannot_read_fail() {
-    let store = r#"{"error": {"message": "Couldn't acquire the store","severity": "error"}}"#;
-    let why = Outcome::Failed("cargo vet: Couldn't acquire the store".to_owned());
-    assert_eq!(
-        vet_result(&cap(255, store, "")),
-        (checked(why, Vec::new()), None)
-    );
-    for c in [
-        cap(0, VET_FAIL, ""),
-        cap(255, VET_OK, ""),
-        cap(255, r#"{"conclusion":"fail (vetting)"}"#, ""),
-        cap(255, r#"{"conclusion":"fail (vetting)","failures":[]}"#, ""),
-        cap(
-            255,
-            r#"{"conclusion":"fail (vetting)","failures":[{"name":"a"}]}"#,
-            "",
-        ),
-        cap(255, r#"{"conclusion":"broken"}"#, ""),
-        cap(0, "", ""),
-        cap(0, "success", ""),
-    ] {
-        let (r, unvetted) = vet_result(&c);
-        assert!(failed(&r) && unvetted.is_none(), "{c:?}");
-    }
-}
-
-// ---- build-time code ----
-
-#[test]
-fn build_time_needs_an_audit() {
-    let libc = set(&[("libc", "1.0.0")]);
-    // No build-time crate: nothing to check, whatever vet said.
-    assert_eq!(
-        build_time_result(&[pkg("a", false)], &None),
-        checked(Outcome::Ok, Vec::new())
-    );
-    assert_eq!(
-        build_time_result(&[pkg("libc", false)], &libc),
-        checked(Outcome::Ok, Vec::new())
-    );
-    // Covered: not in vet's failures (the same name at another version doesn't count), or vet
-    // passed.
-    assert_eq!(
-        lines(&build_time_result(&[pkg("serde_derive", true)], &libc)),
-        "serde_derive@1.0.0: audited"
-    );
-    assert_eq!(
-        build_time_result(&[pkg("libc", true)], &set(&[("libc", "2.0.0")])).outcome,
-        Outcome::Ok
-    );
-    assert_eq!(
-        build_time_result(&[pkg("libc", true)], &set(&[])).outcome,
-        Outcome::Ok
-    );
-    let bad = build_time_result(&[pkg("serde_derive", true), pkg("libc", true)], &libc);
-    assert_eq!(bad.outcome, Outcome::Finding);
-    assert_eq!(
-        lines(&bad),
-        "serde_derive@1.0.0: audited\nlibc@1.0.0: not audited"
-    );
-    // Vet didn't decide: a build-time crate can't be cleared.
-    let unknown = build_time_result(&[pkg("libc", true)], &None);
-    assert!(failed(&unknown));
-    assert_eq!(lines(&unknown), "libc@1.0.0");
-}
-
 // ---- driver ----
 
 /// A fake runner: answers by the command's first argument and records each call.
@@ -569,10 +339,8 @@ impl Fake {
     fn passing() -> Fake {
         let answers = vec![
             ("generate-lockfile", Ok(cap(0, "", ""))),
-            ("metadata", Ok(cap(0, META, ""))),
             ("deny", Ok(cap(0, DENY_OK, ""))),
             ("-I", Ok(cap(0, "[]\n", ""))),
-            ("vet", Ok(cap(0, VET_OK, ""))),
         ];
         Fake {
             calls: Vec::new(),
@@ -618,7 +386,7 @@ impl Fake {
     }
 }
 
-const ALL: [&str; 5] = ["probe", "deny", "unsafe", "vet", "build-time"];
+const ALL: [&str; 3] = ["probe", "deny", "unsafe"];
 
 fn steps_where(report: &Report, pick: fn(&Checked) -> bool) -> Vec<&'static str> {
     report
@@ -632,51 +400,43 @@ fn steps_where(report: &Report, pick: fn(&Checked) -> bool) -> Vec<&'static str>
 fn driver_runs_every_check_in_order() {
     let mut f = Fake::passing();
     let (log, report) = f.drive(true);
-    assert_eq!(
-        f.calls,
-        ["generate-lockfile", "metadata", "deny", "-I", "vet"]
-    );
+    assert_eq!(f.calls, ["generate-lockfile", "deny", "-I"]);
     assert_eq!((log.names(), steps::exit_code(&log)), (ALL.to_vec(), 0));
     assert_eq!(steps_where(&report, |c| c.outcome == Outcome::Ok), ALL);
     assert_eq!(
         render(&opts(), &report, 0),
-        "admit: probe: ok\nadmit: deny: ok\nadmit: unsafe: ok\nadmit: vet: ok\nadmit: build-time: ok\n  \
-         libc@0.2.170: audited\n  serde_derive@1.0.219: audited\nadmit: miniz_oxide@0.8.9: admitted\n"
+        "admit: probe: ok\nadmit: deny: ok\nadmit: unsafe: ok\n\
+         admit: miniz_oxide@0.8.9: admitted by the checks run (cargo vet is #413)\n"
     );
 }
 
 #[test]
 fn driver_keeps_going_after_a_rejection_or_failure() {
-    // Each check rejects on its own; the others still run.
+    // Each check rejects on its own, or both; the other still runs.
     let deny = Ok(cap(
         4,
         "advisories ok, bans ok, licenses FAILED, sources ok\n",
         DENY_FAIL,
     ));
     let scan = Ok(cap(0, &format!("[{LIBC:?}]\n"), ""));
-    let vet = Ok(cap(
-        255,
-        &VET_FAIL
-            .replace("r-efi", "serde_derive")
-            .replace("5.2.0", "1.0.219"),
-        "",
-    ));
-    for (key, answer, rejected) in [
-        ("deny", deny, "deny"),
-        ("-I", scan, "unsafe"),
-        ("vet", vet, "vet, build-time"),
+    let both = Fake::passing()
+        .set("deny", deny.clone())
+        .set("-I", scan.clone());
+    for (fake, rejected) in [
+        (Fake::passing().set("deny", deny), "deny"),
+        (Fake::passing().set("-I", scan), "unsafe"),
+        (both, "deny, unsafe"),
     ] {
-        let mut f = Fake::passing().set(key, answer);
+        let mut f = fake;
         let (log, report) = f.drive(true);
         assert_eq!(
             (log.names(), f.calls.len(), steps::exit_code(&log)),
-            (ALL.to_vec(), 5, 4),
-            "{key}"
+            (ALL.to_vec(), 3, 4),
+            "{rejected}"
         );
         assert_eq!(
             steps_where(&report, |c| c.outcome == Outcome::Finding).join(", "),
-            rejected,
-            "{key}"
+            rejected
         );
         let text = render(&opts(), &report, 4);
         assert!(
@@ -686,20 +446,39 @@ fn driver_keeps_going_after_a_rejection_or_failure() {
             "{text}"
         );
     }
-    // A check that can't start fails its step only; vet failing to run fails build-time too.
-    for (key, broken) in [
-        ("deny", "deny"),
-        ("-I", "unsafe"),
-        ("vet", "vet, build-time"),
+    // A check that can't start fails its step only, and outranks the other's rejection.
+    let scan_hit = Ok(cap(0, &format!("[{LIBC:?}]\n"), ""));
+    for (fake, broken, rejected) in [
+        (
+            Fake::passing().set("deny", Err("cannot run".to_owned())),
+            "deny",
+            "",
+        ),
+        (
+            Fake::passing().set("-I", Err("cannot run".to_owned())),
+            "unsafe",
+            "",
+        ),
+        (
+            Fake::passing()
+                .set("deny", Err("cannot run".to_owned()))
+                .set("-I", scan_hit),
+            "deny",
+            "unsafe",
+        ),
     ] {
-        let mut f = Fake::passing().set(key, Err("cannot run".to_owned()));
+        let mut f = fake;
         let (log, report) = f.drive(true);
         assert_eq!(
             (log.names(), steps::exit_code(&log)),
             (ALL.to_vec(), 1),
-            "{key}"
+            "{broken}"
         );
-        assert_eq!(steps_where(&report, failed).join(", "), broken, "{key}");
+        assert_eq!(steps_where(&report, failed).join(", "), broken);
+        assert_eq!(
+            steps_where(&report, |c| c.outcome == Outcome::Finding).join(", "),
+            rejected
+        );
         assert!(
             render(&opts(), &report, 1)
                 .ends_with("admit: miniz_oxide@0.8.9: not decided: a step failed\n")
@@ -714,7 +493,6 @@ fn driver_stops_when_the_probe_fails() {
         "",
         "error: no matching package named `nope` found\n",
     ));
-    let meta_fail = Ok(cap(101, "", "error: the lock file needs to be updated\n"));
     for (fake, write_ok, calls) in [
         (Fake::passing(), false, ""),
         (
@@ -726,16 +504,6 @@ fn driver_stops_when_the_probe_fails() {
             Fake::passing().set("generate-lockfile", Err("no cargo".into())),
             true,
             "generate-lockfile",
-        ),
-        (
-            Fake::passing().set("metadata", meta_fail),
-            true,
-            "generate-lockfile metadata",
-        ),
-        (
-            Fake::passing().set("metadata", Ok(cap(0, "{}", ""))),
-            true,
-            "generate-lockfile metadata",
         ),
     ] {
         let mut f = fake;

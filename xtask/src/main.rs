@@ -26,7 +26,7 @@ const USAGE: &str = "usage: cargo xtask ci <linux|macos> --out DIR \
      | dashboard [--until YYYY-MM-DD] [--out FILE] [--from DIR] [--index FILE] \
      | metrics [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--out DIR] [--from DIR] [--index FILE] \
      | next-session [--from DIR] | status [--from DIR] | issue-lint [--from DIR] \
-     | admit <crate>@<version> --work DIR [--features A,B] [--no-default-features] [--python PATH]";
+     | admit <crate>@<version> --work DIR [--python PATH]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
