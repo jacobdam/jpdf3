@@ -4,7 +4,7 @@
 use super::super::*;
 
 /// Every step in the spec's order (item 15), as the log names them.
-const FULL: [&str; 13] = [
+const FULL: [&str; 14] = [
     "previous",
     "build",
     "executable",
@@ -18,6 +18,7 @@ const FULL: [&str; 13] = [
     "results",
     "diff",
     "extra",
+    "issues",
 ];
 
 /// A recording fake of the nightly's steps: each step in `bad` returns its outcome there,
@@ -27,6 +28,8 @@ struct Fake {
     jobs: Vec<Job>,
     /// What the `memory` step returns.
     mem: bool,
+    /// The cases the `limits` step returns (whatever its outcome).
+    cases: Vec<CaseResult>,
     calls: Vec<String>,
 }
 
@@ -77,6 +80,7 @@ impl Fake {
             bad: Vec::new(),
             jobs,
             mem: true,
+            cases: Vec::new(),
             calls: Vec::new(),
         }
     }
@@ -125,8 +129,9 @@ impl Steps for Fake {
         self.outcome("watchdog".into())
     }
 
-    fn limits(&mut self, cli: &Path, mem: bool) -> Step {
-        self.outcome(format!("limits {} {mem}", cli.display()))
+    fn limits(&mut self, cli: &Path, mem: bool) -> (Step, Vec<CaseResult>) {
+        let o = self.outcome(format!("limits {} {mem}", cli.display()));
+        (o, self.cases.clone())
     }
 
     fn corpus(&mut self) -> Result<Corpus, Step> {
@@ -192,6 +197,35 @@ impl Steps for Fake {
     fn extra(&mut self, jobs: &[Job], mem: bool) -> Step {
         self.outcome(format!("extra {} {mem}", job_blobs(jobs)))
     }
+
+    fn issues(
+        &mut self,
+        limits: &[CaseResult],
+        previous: &Previous,
+        files: Option<&[FileResult]>,
+    ) -> Step {
+        let p = match previous {
+            Previous::Nothing(n) => n.as_str(),
+            Previous::Loaded(p, _) => p.as_str(),
+        };
+        let cases: Vec<&str> = limits.iter().map(|c| c.id).collect();
+        let files = files.map_or("none".into(), |f| {
+            blobs(f.iter().map(|f| (f.blob.as_str(), f.runs.is_some())))
+        });
+        self.outcome(format!("issues [{}] {p} {files}", cases.join(",")))
+    }
+}
+
+fn case(id: &'static str, status: &'static str) -> CaseResult {
+    CaseResult {
+        id,
+        bytes: 1,
+        status,
+        exit: None,
+        signal: None,
+        ms: None,
+        stderr: None,
+    }
 }
 
 fn names(calls: &[String]) -> Vec<&str> {
@@ -226,6 +260,7 @@ fn every_step_runs_once_in_the_spec_order_with_its_data() {
             "results a,b- complete=false true",
             "diff fake-previous a,b-",
             "extra a,b- true",
+            "issues [] fake-previous a,b-",
         ]
     );
 }
@@ -261,16 +296,23 @@ fn a_failing_step_stops_exactly_what_the_spec_says() {
         "workdir",
         "results",
     ];
+    let limits = FULL.iter().position(|s| *s == "limits").unwrap();
     for step in stops {
         let at = FULL.iter().position(|s| *s == step).unwrap();
         let mut f = Fake::new(two()).with(step, failed());
         let log = drive(&mut f, Log::default());
-        assert_eq!(log.names(), FULL[..=at], "{step}");
+        // Item 16: after a stop, `issues` still runs once the limits part has run.
+        let want = if at > limits {
+            [&FULL[..=at], &["issues"]].concat()
+        } else {
+            FULL[..=at].to_vec()
+        };
+        assert_eq!(log.names(), want, "{step}");
         assert_eq!(log.entries()[at].1, failed(), "{step}");
         assert_eq!(
             names(&f.calls),
-            FULL[..=at],
-            "{step}: nothing called after it"
+            want,
+            "{step}: nothing but issues called after it"
         );
         assert_eq!(steps::exit_code(&log), 1, "{step}");
     }
@@ -288,6 +330,7 @@ fn a_failing_step_stops_exactly_what_the_spec_says() {
         ("runs", failed(), 1),
         ("diff", failed(), 1),
         ("extra", failed(), 1),
+        ("issues", failed(), 1),
     ];
     for (step, o, code) in goes_on.clone() {
         let mut f = Fake::new(two()).with(step, o.clone());
@@ -315,17 +358,26 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
     let to_fetch = &FULL[..=7];
     let mut f = Fake::new(none());
     let log = drive(&mut f, Log::default());
-    assert_eq!(log.names(), [to_fetch, &["files"]].concat());
+    assert_eq!(log.names(), [to_fetch, &["files", "issues"]].concat());
     assert_eq!(
         log.entries()[8].1,
         Step::Failed("no regress file to run (2 rows missing)".into())
     );
-    assert_eq!(names(&f.calls), to_fetch, "no workdir, runs or extra");
+    assert_eq!(
+        names(&f.calls),
+        [to_fetch, &["issues"]].concat(),
+        "no workdir, runs or extra"
+    );
+    assert_eq!(
+        f.calls.last().unwrap(),
+        "issues [] fake-previous none",
+        "no regress files"
+    );
     assert_eq!(steps::exit_code(&log), 1);
     // No rows at all.
     let log = drive(&mut Fake::new(Vec::new()), Log::default());
     assert_eq!(
-        log.entries().last().unwrap().1,
+        log.entries()[8].1,
         Step::Failed("no regress file to run (0 rows missing)".into())
     );
     // The fetch's integrity failure: both entries, exit 1.
@@ -333,7 +385,7 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
         &mut Fake::new(none()).with("fetch", failed()),
         Log::default(),
     );
-    assert_eq!(log.names(), [to_fetch, &["files"]].concat());
+    assert_eq!(log.names(), [to_fetch, &["files", "issues"]].concat());
     assert_eq!(
         log.entries()[8].1,
         Step::Failed("no regress file to run (2 rows missing)".into())
@@ -342,8 +394,9 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
     // No network: the fetch's 75 alone, with the marker.
     let mut f = Fake::new(none()).with("fetch", infra());
     let log = drive(&mut f, Log::default());
-    assert_eq!(log.names(), to_fetch);
-    assert_eq!(names(&f.calls), to_fetch);
+    let to_issues = [to_fetch, &["issues"]].concat();
+    assert_eq!(log.names(), to_issues);
+    assert_eq!(names(&f.calls), to_issues);
     assert_eq!(steps::exit_code(&log), 75);
     assert_eq!(
         steps::infra_line(&log).as_deref(),
@@ -404,4 +457,46 @@ fn exit_codes_with_the_limits_cases() {
             );
         }
     }
+}
+
+/// Item 16: `issues` gets the limits step's cases (a failed case, a tool failure's empty list),
+/// the previous night and this night's files, or `None` when the night stopped before the runs.
+#[test]
+fn the_issues_step_gets_what_the_night_found() {
+    let mut f = Fake::new(two()).with("limits", Step::Finding);
+    f.cases = vec![case("deep-nesting", "crash"), case("big-xref", "pass")];
+    let log = drive(&mut f, Log::default());
+    assert_eq!(log.names(), FULL);
+    assert_eq!(
+        f.calls.last().unwrap(),
+        "issues [deep-nesting,big-xref] fake-previous a,b-"
+    );
+    assert_eq!(steps::exit_code(&log), 4);
+    // A stop after the runs (a failed `regress.json` write) still hands over the files.
+    let mut f = Fake::new(two()).with("results", failed());
+    f.cases = vec![case("deep-nesting", "crash")];
+    drive(&mut f, Log::default());
+    assert_eq!(
+        f.calls.last().unwrap(),
+        "issues [deep-nesting] fake-previous a,b-"
+    );
+    // A stop before the runs: no files.
+    let mut f = Fake::new(two()).with("corpus", failed());
+    f.cases = vec![case("deep-nesting", "crash")];
+    drive(&mut f, Log::default());
+    assert_eq!(
+        f.calls.last().unwrap(),
+        "issues [deep-nesting] fake-previous none"
+    );
+    // A stop before the limits part: no `issues` call at all.
+    let mut f = Fake::new(two()).with("watchdog", failed());
+    drive(&mut f, Log::default());
+    assert!(!names(&f.calls).contains(&"issues"));
+    // A failed `issues` step is a tool failure, after the night's 4.
+    let mut f = Fake::new(two())
+        .with("limits", Step::Finding)
+        .with("issues", failed());
+    let log = drive(&mut f, Log::default());
+    assert_eq!(log.entries().last().unwrap(), &("issues", failed()));
+    assert_eq!(steps::exit_code(&log), 1);
 }

@@ -7,16 +7,18 @@ Phase: bootstrap (pilot)
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
 - #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
   comments. Follow-up #377 (wording, `Ops`, without `ready`).
-- #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
-  #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
+- #302 (nightly 3/3 part 1, the `issues` step: limits cases, regress crashes and timeouts, regressions; `--file-issues`):
+  PR #384 (`ai-review` success, auto-merge on). It adds ops/proposals/nightly-file-issues.md (the CI job's flag): once
+  it merges, a session labels an owner issue for it `owner-todo` (TICK §0; #302 closes with the PR). Part 2 (fuzz and
+  bench findings) is #383, without `ready`, depending on #302 and #361.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
 - #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
   milestone-work issues are all closed.
 - #323 (nightly exec check): PR #364 merged (bc6c053).
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
-- ADR 0013 (#357, PR #359) merged (ecc89a0). Task 1 #360: PR #382 merged (f51a2b9). Task 2 #361 (`ready`) is next;
-  #302 also depended on #360. #322 merged (PR #362).
+- ADR 0013 (#357, PR #359) merged (ecc89a0). Task 1 #360 merged (PR #382, f51a2b9). Task 2
+  #361 (`ready`) is next. #322 merged (PR #362).
 - #334 (journeys J-PC-09, J-PC-10, the four languages): PR #379 owner-`/approve`d, auto-merge on; "done:" posted.
   Follow-up #380 (wording).
 - Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
@@ -30,7 +32,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361, lowest first).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i (#361), or rule c for PR #384; the session after
+   PR #384's merge files the owner issue for its proposal (above).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
