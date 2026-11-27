@@ -135,7 +135,7 @@ Each promise points to what enforces it; this file doesn't restate the rules.
 | **Fast, without trading away safety.** A first page in under 200 ms for a typical 10 MB file, 60 fps scrolling | PLAN R2, §5; PLAN §8 rows M4 and M10 |
 | **The web app works offline.** It is to install as a PWA and work with no network | PLAN §8 row M10; J-PC-08 |
 | **Open source.** MIT, with only permissively licensed dependencies | PLAN R10; CONSTITUTION 10 |
-| **In four languages.** The apps' text in English, Vietnamese, Japanese and Simplified Chinese at v1.0 | owner decisions ([languages](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945), [Simplified](https://github.com/jacobdam/jpdf3/issues/335)); PLAN §8 row M10; no journey yet: #334 |
+| **In four languages.** The apps' text in English, Vietnamese, Japanese and Simplified Chinese at v1.0 | owner decisions ([languages](https://github.com/jacobdam/jpdf3/pull/332#issuecomment-7140050945), [Simplified](https://github.com/jacobdam/jpdf3/issues/335)); PLAN §8 row M10; J-PC-09 (the system or browser language), J-PC-10 (choosing one in Preferences) |
 
 ## 5. Platforms
 
