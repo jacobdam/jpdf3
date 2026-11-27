@@ -1,37 +1,39 @@
 # QUEUE: the Planner's plan for the current milestone (ops/TICK.md §9, ADR 0011 §1)
 
 Milestone: M0
-Planned: 2026-11-26 (Planner run, session 2026-11-26T23:04Z)
+Planned: 2026-11-27 (Planner run, session 2026-11-27T00:05Z)
 
 `cargo xtask next-session` reads only the `Milestone:` line (step 8: a milestone with no plan
 makes the Planner due). The rest is for sessions and the owner; GitHub labels and `Depends on:`
 lines stay the source of truth, and step 10 picks from them, not from this list.
 
 ## Design queue (step 6, before the ready list)
-- #357 Design: xtask nightly steps, their order and per-step failures are not testable (filed
-  today, step 2a: 6 open issues on `cargo xtask nightly`, #19, #302, #322, #323, #350, #352,
-  with no design issue or ADR covering them).
+- #357 Design: xtask nightly steps (6 open issues on `cargo xtask nightly` when filed). Its ADR
+  0013 PR #359 is in its 24-hour window (`owner-todo` on #357), then `worker design-window #359`.
+  Its tasks are #360 and #361; it folded #350 and #352 (closed) and added #360 to #302's
+  `Depends on:` line.
 
 ## Ready, in pick order (step 10: lowest number first, dependencies closed)
 No `area:` labels exist yet (#308, M1), so no issue counts as a product issue and step 10 picks
 lowest number first.
 1. #303 Backend selection 1/2: `cargo xtask admit`.
-2. #322 nightly: keep the tail of `jpdf-cli`'s stderr, not the head (PR #321 R1.5).
-3. #323 nightly: check that the runner can execute `jpdf-cli` (PR #321 R3.1).
-4. #344 Driver worktree proposal test: the 200-PR read bound, exactly (PR #343 R3.1).
-5. #350 nightly: test the limits part's order (PR #349 R1.4; readied today, #25 is closed).
-6. #352 nightly: pin the stale `nightly.json` removal failure (PR #351 R2.1; readied today).
-7. #353 Dashboard 1b/2: the static page in the Pages site (readied today, #305 is closed; the
-   finished work is on branch `t/353-dashboard-page`, 75d990f).
+2. #323 nightly: check that the runner can execute `jpdf-cli` (PR #321 R3.1; ADR 0013 keeps it).
+3. #344 Driver worktree proposal test: the 200-PR read bound, exactly (PR #343 R3.1).
+4. #353 Dashboard 1b/2: the static page in the Pages site (the finished work is on branch
+   `t/353-dashboard-page`, 75d990f).
 
 ## Waiting (labeled `ready`, a dependency still open)
-- #302 (nightly 3/3) on #322.
+- #360 (ADR 0013 task 1, nightly steps 1/2; readied today) on #357.
+- #361 (ADR 0013 task 2, nightly steps 2/2; readied today) on #360.
+- #302 (nightly 3/3) on #322 and #360.
 - #304 (backend selection 2/2) on #303.
-- #306 (dashboard 2/2) on #353 (added today: it extends the page, which split off from #305).
+- #306 (dashboard 2/2) on #353.
 - #21 (pilot fire drill) on #19, which closes after #302; it also needs the owner's drill steps
   (#208).
 
 ## In flight
+- PR #362 (#322, the stderr tail; `in-progress`).
+- PR #359 (#357, ADR 0013; in its 24-hour window).
 - PR #347 (#331, a `design-product` journey; not an M0 issue).
 
 ## Not workable now
@@ -43,8 +45,8 @@ lowest number first.
 
 ## Critical path
 The judge's M0 gate passes (nightly 45179218903, 2026-11-23). The `m0` tag waits for an empty
-M0 backlog. The longest chain is #322 → #302 → #19 → #21, which also needs the owner's #208
-steps. #303 → #304 and #353 → #306 run beside it.
+M0 backlog. The longest chain is #357 → #360 → #302 → #19 → #21 (#302 also waits on #322), which also
+needs the owner's #208 steps. #303 → #304 and #353 → #306 run beside it.
 
 ## Design ahead (ADR 0011 §6)
 None yet. The Planner lists the next milestone's cross-cutting concerns when it opens that
