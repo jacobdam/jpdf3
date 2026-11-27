@@ -102,7 +102,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
 - Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
   use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
-  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)).
+  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)). Both forms are GNU-only: macOS `touch` rejects
+  them, so a driver test (the driver runs on the Mac mini) must also run there; to run one now, put a `touch -d` →
+  `touch -t` shim first on PATH (#366, [journal](journal/2026-11-27/0030-344-limit-bound.md)).
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
@@ -139,6 +141,11 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   files and directories), and diff both side by side on probe trees before review
   ([journal](journal/2026-11-20.md), PR #27). A Rust check that mirrors a GitHub Actions `if:` expression → fold case:
   `startsWith`/`contains` there ignore case (PR #296 R1.1: [journal](journal/2026-11-24/0150-295-hold-skip.md)).
+- Reading a judge output (report.json, gates.json) in a tool or page → read the writer in ops/judge/ for every value
+  each field can take, not one downloaded sample: verdict.py writes journey `pass: None` when a platform has no e2e
+  results (push runs without macOS), and nightlies also run on `workflow_dispatch` (PR #370 R1.1, R1.6). A "rejects
+  over the cap" test must use otherwise valid input, or the parse error passes it (R2.1)
+  ([journal](journal/2026-11-27/0106-306-judge-metrics.md)).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
@@ -214,6 +221,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   ([journal](journal/2026-11-20.md), PR #51).
 
 ## Engine & security
+- A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
+  can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
+  of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
 - Parsing hostile input: per-object caps don't bound a document (overlapping objects/xref
   sections re-parse the same bytes quadratically; several capped objects alive at once exceed
   2 GiB) → design it in from the start: charge a per-document lexing budget per byte, keep a per-document object budget, reject overlapping

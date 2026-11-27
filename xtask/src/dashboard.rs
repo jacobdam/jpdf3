@@ -1,5 +1,5 @@
-//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders (the page is
-//! #353). Spec: specs/tooling/dashboard.md.
+//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders, and the
+//! `ci linux` step that copies it next to the page. Spec: specs/tooling/dashboard.md.
 //!
 //! GitHub text (comments, titles) is data: this module only counts review headers in it, as
 //! `cargo xtask metrics` does, and escapes issue titles with the shared `json_str`.
@@ -18,8 +18,18 @@ use std::path::{Path, PathBuf};
 pub const WEEKS: i64 = 12;
 /// The forecast's trailing window (ops/TICK.md §7 step 5: the trailing 4-week rate).
 pub const RATE_DAYS: i64 = 28;
+/// Largest snapshot `ci linux` copies into the site.
+pub const MAX_SNAPSHOT_BYTES: u64 = 1 << 20;
 /// The committed snapshot, relative to the repo root.
 pub const SNAPSHOT: &str = "ops/metrics/dashboard.json";
+/// Nightly runs listed (about 28 weeks of daily nightlies, newest first).
+pub const NIGHTLY_LIMIT: usize = 200;
+/// Nightly runs tried per week before the week counts as missing.
+pub const MAX_NIGHTLY_TRIES: usize = 7;
+/// Largest `gates.json` read from a downloaded artifact.
+pub const MAX_GATES_BYTES: u64 = 1 << 20;
+/// Where `gh run download` writes, relative to the repo root (removed before and after).
+pub const GATES_DIR: &str = "target/dashboard-gates";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
@@ -99,6 +109,41 @@ pub const JOURNAL_LOG_ARGS: &[&str] = &[
     "ops/journal/",
 ];
 
+/// The events whose `ci` runs are nightlies (`.github/workflows/ci.yml`'s `NIGHTLY`).
+pub const NIGHTLY_EVENTS: [&str; 2] = ["schedule", "workflow_dispatch"];
+
+/// The gh arguments for one event's nightly runs (no spaces inside an argument).
+pub fn nightly_runs_args(event: &str) -> String {
+    format!(
+        "run list --workflow ci.yml --event {event} --branch main --status completed --limit {NIGHTLY_LIMIT} --json databaseId,createdAt"
+    )
+}
+
+/// Every listed nightly run, from the `(name, text)` lists.
+fn nightly_runs(lists: &[(String, String)]) -> Result<Vec<Value>, String> {
+    let mut all = Vec::new();
+    for (name, text) in lists {
+        let list = parse_list(text, name)?;
+        all.extend(array(&list, name)?.iter().cloned());
+    }
+    Ok(all)
+}
+
+/// The gh arguments that download one run's `gates-report` artifact into `dir`.
+pub fn download_args(run: u64, dir: &str) -> Vec<String> {
+    [
+        "run",
+        "download",
+        &run.to_string(),
+        "-n",
+        "gates-report",
+        "-D",
+        dir,
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
 /// Every input, as fetched or read with `--from`.
 #[derive(Debug, Default, Clone)]
 pub struct Inputs {
@@ -107,6 +152,129 @@ pub struct Inputs {
     pub issues: String,
     pub journal_log: String,
     pub index_tsv: Option<String>,
+    /// `(file name, text)` of each `runs-<event>.json`; `None` only for a `--from` directory
+    /// with neither file.
+    pub nightly_runs: Option<Vec<(String, String)>>,
+    /// `gates.json` text by run id, for the runs whose download succeeded.
+    pub gates: BTreeMap<u64, String>,
+}
+
+/// Each week's nightly runs to try, newest first (ties: the larger id), at most
+/// [`MAX_NIGHTLY_TRIES`]; one list per entry of `weeks`.
+pub fn candidates(runs: &[Value], weeks: &[(i64, i64)]) -> Result<Vec<Vec<u64>>, String> {
+    let what = "nightly-runs.json";
+    let mut dated = Vec::new();
+    for r in runs {
+        dated.push((
+            day_of(r, "createdAt", what)?,
+            string(r, "createdAt", what)?,
+            num(r, "databaseId", what)?,
+        ));
+    }
+    // Newest first: the timestamp text sorts as time (one fixed shape, checked by day_of).
+    dated.sort_by(|a, b| b.1.cmp(a.1).then(b.2.cmp(&a.2)));
+    Ok(weeks
+        .iter()
+        .map(|&(start, end)| {
+            dated
+                .iter()
+                .filter(|(day, _, _)| (start..=end).contains(day))
+                .map(|&(_, _, id)| id)
+                .take(MAX_NIGHTLY_TRIES)
+                .collect()
+        })
+        .collect())
+}
+
+/// The judge's smoke metrics of one week (all `None` without a report).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct JudgeWeek {
+    pub start: i64,
+    pub run: Option<u64>,
+    pub day: Option<i64>,
+    pub open_rate: Option<f64>,
+    pub render_match: Option<f64>,
+    pub text_f1: Option<f64>,
+    pub crashes: Option<u64>,
+    pub journeys_passing: Option<u64>,
+    pub journeys: Option<u64>,
+}
+
+/// A rate from 0 to 1; absent or `null` is `None`.
+fn rate(m: &Value, key: &str, what: &str) -> Result<Option<f64>, String> {
+    match m.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n
+            .parse::<f64>()
+            .ok()
+            .filter(|x| x.is_finite() && (0.0..=1.0).contains(x))
+            .map(Some)
+            .ok_or_else(|| format!("{what}: `{key}` is not a rate from 0 to 1")),
+        Some(_) => Err(format!("{what}: `{key}` is not a number")),
+    }
+}
+
+/// A count; absent or `null` is `None`.
+fn count(m: &Value, key: &str, what: &str) -> Result<Option<u64>, String> {
+    match m.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => num(m, key, what).map(Some),
+    }
+}
+
+/// Reads the six smoke metrics of one `gates.json`.
+pub fn gate_metrics(text: &str, what: &str) -> Result<JudgeWeek, String> {
+    let v = parse_list(text, what)?;
+    let m = match v.get("metrics") {
+        Some(m @ Value::Object(_)) => m,
+        _ => return Err(format!("{what}: no `metrics` object")),
+    };
+    Ok(JudgeWeek {
+        open_rate: rate(m, "smoke_open_rate", what)?,
+        render_match: rate(m, "smoke_render_match", what)?,
+        text_f1: rate(m, "smoke_text_f1", what)?,
+        crashes: count(m, "smoke_crashes", what)?,
+        journeys_passing: count(m, "smoke_journeys_passing", what)?,
+        journeys: count(m, "smoke_journeys", what)?,
+        ..JudgeWeek::default()
+    })
+}
+
+/// The judge history: per week, the newest run whose `gates.json` is in `inp.gates`.
+fn judge_history(inp: &Inputs, weeks: &[(i64, i64)]) -> Result<Option<Vec<JudgeWeek>>, String> {
+    let Some(lists) = &inp.nightly_runs else {
+        return Ok(None);
+    };
+    let all = nightly_runs(lists)?;
+    let runs = all.as_slice();
+    let days: BTreeMap<u64, i64> = runs
+        .iter()
+        .map(|r| {
+            Ok((
+                num(r, "databaseId", "nightly-runs.json")?,
+                day_of(r, "createdAt", "nightly-runs.json")?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let mut out = Vec::new();
+    for (&(start, _), ids) in weeks.iter().zip(candidates(runs, weeks)?) {
+        let found = ids
+            .into_iter()
+            .find_map(|id| inp.gates.get(&id).map(|t| (id, t)));
+        out.push(match found {
+            Some((id, t)) => JudgeWeek {
+                start,
+                run: Some(id),
+                day: days.get(&id).copied(),
+                ..gate_metrics(t, &format!("gates-{id}.json"))?
+            },
+            None => JudgeWeek {
+                start,
+                ..JudgeWeek::default()
+            },
+        });
+    }
+    Ok(Some(out))
 }
 
 /// `ops/journal/YYYY-MM-DD/<name>.md`: one session's entry (ops/TICK.md §5).
@@ -192,7 +360,7 @@ pub struct Milestone {
     pub forecast: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub generated: i64,
     pub until: i64,
@@ -203,6 +371,8 @@ pub struct Snapshot {
     /// (number, title, age in days)
     pub blocked: Vec<(u64, String, i64)>,
     pub milestones: Vec<Milestone>,
+    /// `None`: no nightly run list (`source` `missing`).
+    pub judge: Option<Vec<JudgeWeek>>,
     pub truncated: Vec<String>,
     pub malformed_index_rows: u64,
 }
@@ -318,6 +488,11 @@ pub fn compute(inp: &Inputs, until: i64, generated: i64) -> Result<Snapshot, Str
     if issues.len() >= LIST_LIMIT {
         truncated.push("issues".to_owned());
     }
+    for (name, text) in inp.nightly_runs.iter().flatten() {
+        if array(&parse_list(text, name)?, name)?.len() >= NIGHTLY_LIMIT {
+            truncated.push(name.trim_end_matches(".json").to_owned());
+        }
+    }
     let mut blocked = Vec::new();
     for issue in issues {
         let what = "issues.json";
@@ -350,6 +525,7 @@ pub fn compute(inp: &Inputs, until: i64, generated: i64) -> Result<Snapshot, Str
         entries,
         blocked,
         milestones: milestones(issues, until)?,
+        judge: judge_history(inp, &weeks_list)?,
         truncated,
         malformed_index_rows,
     })
@@ -433,6 +609,44 @@ pub fn render(s: &Snapshot) -> String {
         })
         .collect();
     let _ = writeln!(o, "  \"milestones\": [{}],", wrap(&ms));
+    let empty: Vec<JudgeWeek> = s
+        .weeks
+        .iter()
+        .map(|w| JudgeWeek {
+            start: w.start,
+            ..JudgeWeek::default()
+        })
+        .collect();
+    let jw: Vec<String> = s
+        .judge
+        .as_ref()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|w| {
+            format!(
+                "    {{\"start\": {}, \"run\": {}, \"day\": {}, \"open_rate\": {}, \"render_match\": {}, \"text_f1\": {}, \"crashes\": {}, \"journeys_passing\": {}, \"journeys\": {}}}",
+                json_str(&fmt_day(w.start)),
+                opt(w.run),
+                opt_day(w.day),
+                opt(w.open_rate),
+                opt(w.render_match),
+                opt(w.text_f1),
+                opt(w.crashes),
+                opt(w.journeys_passing),
+                opt(w.journeys)
+            )
+        })
+        .collect();
+    let source = if s.judge.is_some() {
+        "nightly"
+    } else {
+        "missing"
+    };
+    let _ = writeln!(
+        o,
+        "  \"judge\": {{\"source\": \"{source}\", \"weeks\": [{}]}},",
+        wrap(&jw)
+    );
     let tr: Vec<String> = s.truncated.iter().map(|t| json_str(t)).collect();
     let _ = writeln!(o, "  \"truncated\": [{}],", tr.join(", "));
     let _ = writeln!(o, "  \"malformed_index_rows\": {}", s.malformed_index_rows);
@@ -478,12 +692,137 @@ pub fn inputs(repo: &Path, opts: &Options, until: i64) -> Result<Inputs, String>
         (Some(dir), None) => read_optional(&dir.join("index.tsv"))?,
         (None, None) => read_optional(&repo.join("ops/logs/index.tsv"))?,
     };
+    let mut lists = Vec::new();
+    for event in NIGHTLY_EVENTS {
+        let name = format!("runs-{event}.json");
+        let text = match from {
+            Some(dir) => read_optional(&dir.join(&name))?,
+            None => Some(gh(&nightly_runs_args(event))?),
+        };
+        if let Some(t) = text {
+            lists.push((name, t));
+        }
+    }
+    let nightly_runs = (!lists.is_empty()).then_some(lists);
+    let mut gates = BTreeMap::new();
+    if let Some(lists) = &nightly_runs {
+        let ids = candidates(&self::nightly_runs(lists)?, &weeks(until))?;
+        let scratch = repo.join(GATES_DIR);
+        if from.is_none() {
+            remove_tree(&scratch)?;
+        }
+        // The tree is removed after an error too (a bad artifact), then the error returned.
+        let fetched = fetch_gates(from, &scratch, ids, &mut gates);
+        if from.is_none() {
+            remove_tree(&scratch)?;
+        }
+        fetched?;
+    }
     Ok(Inputs {
         prs,
         issues,
         journal_log,
         index_tsv,
+        nightly_runs,
+        gates,
     })
+}
+
+/// For each week, the first candidate whose `gates.json` can be had: read from `--from`
+/// (`gates-<id>.json`, a missing file counting as a failed download) or downloaded.
+fn fetch_gates(
+    from: Option<&Path>,
+    scratch: &Path,
+    ids: Vec<Vec<u64>>,
+    gates: &mut BTreeMap<u64, String>,
+) -> Result<(), String> {
+    for week in ids {
+        for id in week {
+            let got = match from {
+                Some(dir) => match read_gates(&dir.join(format!("gates-{id}.json"))) {
+                    Ok(t) => Some(t),
+                    Err(GatesError::Missing) => None,
+                    Err(GatesError::Bad(e)) => return Err(e),
+                },
+                None => download(scratch, id)?,
+            };
+            if let Some(t) = got {
+                gates.insert(id, t);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remove_tree(p: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {e}", p.display())),
+    }
+}
+
+/// Downloads run `id`'s `gates-report` into `scratch/<id>` and reads its `gates.json`; a
+/// failed download is `None` (reported on stderr).
+fn download(scratch: &Path, id: u64) -> Result<Option<String>, String> {
+    let dir = scratch.join(id.to_string());
+    let args = download_args(id, &dir.to_string_lossy());
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if let Err(e) = crate::macos::capture("gh", &args, None) {
+        eprintln!(
+            "dashboard: run {id}: no gates-report ({})",
+            e.lines().next().unwrap_or("")
+        );
+        return Ok(None);
+    }
+    match read_gates(&dir.join("gates.json")) {
+        Ok(t) => Ok(Some(t)),
+        // The download succeeded, so a missing file is a bad artifact.
+        Err(GatesError::Missing) => Err(format!("run {id}: the gates-report has no gates.json")),
+        Err(GatesError::Bad(e)) => Err(e),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatesError {
+    /// No file at the path.
+    Missing,
+    Bad(String),
+}
+
+/// Reads a `gates.json`: a regular file (not a symlink, and the opened file regular too) of
+/// at most [`MAX_GATES_BYTES`].
+pub fn read_gates(p: &Path) -> Result<String, GatesError> {
+    use std::io::Read as _;
+    let bad = |what: &str, e: &dyn std::fmt::Display| {
+        GatesError::Bad(format!("{what} {}: {e}", p.display()))
+    };
+    let meta = match fs::symlink_metadata(p) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(GatesError::Missing),
+        Err(e) => return Err(bad("read", &e)),
+    };
+    let not_regular = || GatesError::Bad(format!("{}: not a regular file", p.display()));
+    if !meta.is_file() {
+        return Err(not_regular());
+    }
+    let file = jpdf_fsio::open_nonblocking(p).map_err(|e| bad("open", &e))?;
+    // The path could have changed between the two calls: check what was opened.
+    if !file.metadata().map_err(|e| bad("read", &e))?.is_file() {
+        return Err(not_regular());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_GATES_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| bad("read", &e))?;
+    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_GATES_BYTES) {
+        return Err(GatesError::Bad(format!(
+            "{}: larger than {MAX_GATES_BYTES} bytes",
+            p.display()
+        )));
+    }
+    String::from_utf8(bytes).map_err(|_| GatesError::Bad(format!("{}: not UTF-8", p.display())))
 }
 
 /// Writes the snapshot to `opts.out`; returns its path.
@@ -498,6 +837,51 @@ pub fn run(repo: &Path, opts: &Options) -> Result<PathBuf, String> {
     fs::write(&opts.out, render(&snap))
         .map_err(|e| format!("write {}: {e}", opts.out.display()))?;
     Ok(opts.out.clone())
+}
+
+/// What [`copy_into_site`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Copied {
+    Yes,
+    /// No `site/dashboard/` (the web build failed or didn't run).
+    NoPage,
+    /// No committed snapshot.
+    NoSnapshot,
+}
+
+/// The `ci linux` step: copies the committed snapshot to `site/dashboard/data.json` when the
+/// web build wrote `site/dashboard/`.
+pub fn copy_into_site(repo: &Path, site: &Path) -> Result<Copied, String> {
+    use std::io::Read as _;
+    let dir = site.join("dashboard");
+    if !dir.is_dir() {
+        return Ok(Copied::NoPage);
+    }
+    let src = repo.join(SNAPSHOT);
+    let file = match jpdf_fsio::open_nonblocking(&src) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Copied::NoSnapshot),
+        Err(e) => return Err(format!("open {}: {e}", src.display())),
+    };
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("open {}: {e}", src.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", src.display()));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_SNAPSHOT_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read {}: {e}", src.display()))?;
+    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_SNAPSHOT_BYTES) {
+        return Err(format!(
+            "{}: larger than {MAX_SNAPSHOT_BYTES} bytes",
+            src.display()
+        ));
+    }
+    let dst = dir.join("data.json");
+    fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
+    Ok(Copied::Yes)
 }
 
 #[cfg(test)]
@@ -563,6 +947,7 @@ mod tests {
             issues: format!("[{}]", issues.join(",")),
             journal_log: journal.to_owned(),
             index_tsv: index.map(str::to_owned),
+            ..Inputs::default()
         }
     }
 
@@ -712,6 +1097,7 @@ mod tests {
             entries: vec![1, 2, 2, 5, 4, 3],
             blocked: Vec::new(),
             milestones: Vec::new(),
+            judge: None,
             truncated: Vec::new(),
             malformed_index_rows: 0,
         };
@@ -851,6 +1237,7 @@ mod tests {
                 issues: many(n, &issue_n),
                 journal_log: String::new(),
                 index_tsv: None,
+                ..Inputs::default()
             };
             let snap = compute(&inp, until, until).unwrap_or_else(|e| panic!("{e}"));
             let want: Vec<String> = if flagged {
@@ -872,6 +1259,7 @@ mod tests {
                     issues: issues.to_owned(),
                     journal_log: String::new(),
                     index_tsv: None,
+                    ..Inputs::default()
                 },
                 until,
                 until,
@@ -943,6 +1331,478 @@ mod tests {
         );
         let text = fs::read_to_string(&out).unwrap_or_default();
         assert!(text.contains(r#"{"start": "2026-11-23", "end": "2026-11-25", "merged_prs": 1, "median_rounds": 3, "sessions": null}"#), "{text}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn copies_the_snapshot_up_to_one_mib() {
+        let base =
+            std::env::temp_dir().join(format!("xtask-dashboard-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (repo, site) = (base.join("repo"), base.join("site"));
+        assert!(fs::create_dir_all(repo.join("ops/metrics")).is_ok());
+        let snap = repo.join(SNAPSHOT);
+        assert!(fs::write(&snap, "{}").is_ok());
+        assert_eq!(
+            copy_into_site(&repo, &site),
+            Ok(Copied::NoPage),
+            "no page: nothing copied"
+        );
+        assert!(fs::create_dir_all(site.join("dashboard")).is_ok());
+        let data = site.join("dashboard/data.json");
+        let limit = usize::try_from(MAX_SNAPSHOT_BYTES).unwrap_or(0);
+        assert!(fs::write(&snap, vec![b' '; limit]).is_ok());
+        assert_eq!(copy_into_site(&repo, &site), Ok(Copied::Yes));
+        assert_eq!(
+            fs::metadata(&data).map(|m| m.len()).ok(),
+            Some(MAX_SNAPSHOT_BYTES)
+        );
+        assert!(fs::write(&snap, vec![b' '; limit + 1]).is_ok());
+        let r = copy_into_site(&repo, &site);
+        assert!(
+            r.as_ref()
+                .is_err_and(|e| e.contains("larger than 1048576 bytes")),
+            "{r:?}"
+        );
+        assert!(fs::remove_file(&snap).is_ok() && fs::create_dir_all(&snap).is_ok());
+        let r = copy_into_site(&repo, &site);
+        assert!(
+            r.as_ref().is_err_and(|e| e.contains("not a regular file")),
+            "{r:?}"
+        );
+        assert!(fs::remove_dir_all(&snap).is_ok());
+        assert_eq!(
+            copy_into_site(&repo, &site),
+            Ok(Copied::NoSnapshot),
+            "no snapshot: nothing copied"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // ---- judge history (#306)
+
+    fn run_json(id: u64, created: &str) -> String {
+        format!(r#"{{"databaseId": {id}, "createdAt": "{created}"}}"#)
+    }
+
+    /// A gates.json whose smoke metrics are `open` etc., with exam values that differ.
+    fn gates_json(open: &str, passing: &str) -> String {
+        format!(
+            r#"{{"current_milestone": "M1", "gates": {{}}, "metrics": {{"exam_open_rate": 0.25, "exam_crashes": 9, "smoke_open_rate": {open}, "smoke_render_match": 0.0, "smoke_text_f1": 1, "smoke_crashes": 2, "smoke_journeys_passing": {passing}, "smoke_journeys": 129}}}}"#
+        )
+    }
+
+    fn judge_inputs(runs: &[String], gates: &[(u64, String)]) -> Inputs {
+        Inputs {
+            prs: prs_for(d(UNTIL), &[]),
+            issues: "[]".to_owned(),
+            nightly_runs: Some(vec![(
+                "runs-schedule.json".to_owned(),
+                format!("[{}]", runs.join(",")),
+            )]),
+            gates: gates.iter().cloned().collect(),
+            ..Inputs::default()
+        }
+    }
+
+    #[test]
+    fn nightly_candidates_are_newest_first_and_capped() {
+        let until = d(UNTIL);
+        let mut runs = vec![
+            run_json(10, "2026-11-24T12:00:00Z"),
+            run_json(11, "2026-11-25T01:00:00Z"),
+            run_json(12, "2026-11-26T01:00:00Z"), // after --until
+            run_json(20, "2026-11-17T05:00:00Z"),
+            run_json(21, "2026-11-17T05:00:00Z"), // same time: the larger id first
+            run_json(30, "2026-11-22T23:59:59Z"), // Sunday: week 2026-11-16
+            run_json(40, "2026-08-01T00:00:00Z"), // before every week
+        ];
+        // Week 2026-11-09: eight runs, one a day plus one; only seven are tried.
+        for i in 0..8u64 {
+            runs.push(run_json(
+                100 + i,
+                &format!("2026-11-{:02}T0{}:00:00Z", 9 + i.min(6), i),
+            ));
+        }
+        let list = parse_list(&format!("[{}]", runs.join(",")), "t").unwrap_or(Value::Null);
+        let c = candidates(list.as_array().unwrap_or_default(), &weeks(until))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.len(), 12);
+        assert_eq!(c[11], vec![11, 10]);
+        assert_eq!(c[10], vec![30, 21, 20]);
+        assert_eq!(
+            c[9],
+            vec![107, 106, 105, 104, 103, 102, 101],
+            "the 8th (oldest) isn't tried"
+        );
+        assert!(c[..9].iter().all(Vec::is_empty), "{c:?}");
+        let bad = parse_list(r#"[{"databaseId": 1, "createdAt": "2026-11-24"}]"#, "t")
+            .unwrap_or(Value::Null);
+        assert!(candidates(bad.as_array().unwrap_or_default(), &weeks(until)).is_err());
+        let bad =
+            parse_list(r#"[{"createdAt": "2026-11-24T00:00:00Z"}]"#, "t").unwrap_or(Value::Null);
+        assert!(candidates(bad.as_array().unwrap_or_default(), &weeks(until)).is_err());
+    }
+
+    #[test]
+    fn judge_history_takes_each_weeks_newest_report() {
+        let until = d(UNTIL);
+        let mut runs = vec![
+            run_json(10, "2026-11-24T12:00:00Z"),
+            run_json(11, "2026-11-25T01:00:00Z"),
+            run_json(12, "2026-11-26T01:00:00Z"),
+            run_json(20, "2026-11-17T05:00:00Z"),
+            run_json(21, "2026-11-17T05:00:00Z"),
+        ];
+        for i in 0..8u64 {
+            runs.push(run_json(
+                100 + i,
+                &format!("2026-11-{:02}T0{}:00:00Z", 9 + i.min(6), i),
+            ));
+        }
+        for i in 0..7u64 {
+            runs.push(run_json(200 + i, &format!("2026-11-0{}T00:00:00Z", 2 + i)));
+        }
+        let gates = vec![
+            (10, gates_json("0.5935", "3")),
+            // 11 (newer) failed to download; 12 is after --until.
+            (12, gates_json("0.9", "9")),
+            (20, gates_json("0.1", "1")),
+            (21, gates_json("0.2", "2")),
+            // Only the 8th run of week 2026-11-09 has a report: past the cap.
+            (100, gates_json("0.3", "3")),
+            // Only the 7th (oldest) run of week 2026-11-02: tried.
+            (200, gates_json("0.4", "null")),
+        ];
+        let snap =
+            compute(&judge_inputs(&runs, &gates), until, until).unwrap_or_else(|e| panic!("{e}"));
+        let j = snap.judge.clone().unwrap_or_default();
+        assert_eq!(j.len(), 12);
+        assert_eq!(
+            j[11],
+            JudgeWeek {
+                start: d("2026-11-23"),
+                run: Some(10),
+                day: Some(d("2026-11-24")),
+                open_rate: Some(0.5935),
+                render_match: Some(0.0),
+                text_f1: Some(1.0),
+                crashes: Some(2),
+                journeys_passing: Some(3),
+                journeys: Some(129),
+            }
+        );
+        assert_eq!((j[10].run, j[10].open_rate), (Some(21), Some(0.2)));
+        assert_eq!(
+            j[9],
+            JudgeWeek {
+                start: d("2026-11-09"),
+                ..JudgeWeek::default()
+            }
+        );
+        assert_eq!(
+            (j[8].run, j[8].journeys_passing, j[8].open_rate),
+            (Some(200), None, Some(0.4))
+        );
+        assert!(
+            j[..8]
+                .iter()
+                .all(|w| w.run.is_none() && w.open_rate.is_none())
+        );
+        assert!(j.iter().zip(weeks(until)).all(|(w, (s, _))| w.start == s));
+
+        let json = render(&snap);
+        assert!(
+            json.contains(r#""judge": {"source": "nightly", "weeks": ["#),
+            "{json}"
+        );
+        assert!(json.contains(r#"{"start": "2026-11-23", "run": 10, "day": "2026-11-24", "open_rate": 0.5935, "render_match": 0, "text_f1": 1, "crashes": 2, "journeys_passing": 3, "journeys": 129}"#), "{json}");
+        assert!(json.contains(r#"{"start": "2026-11-09", "run": null, "day": null, "open_rate": null, "render_match": null, "text_f1": null, "crashes": null, "journeys_passing": null, "journeys": null}"#), "{json}");
+        assert!(json_parses(&json));
+
+        // No run list: source missing, twelve null weeks.
+        let none = compute(
+            &Inputs {
+                nightly_runs: None,
+                ..judge_inputs(&[], &[])
+            },
+            until,
+            until,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(none.judge, None);
+        let json = render(&none);
+        assert!(
+            json.contains(r#""judge": {"source": "missing", "weeks": ["#),
+            "{json}"
+        );
+        assert_eq!(json.matches(r#""run": null, "day": null"#).count(), 12);
+        assert!(json_parses(&json));
+        // An empty run list: nightly, every week null.
+        let empty =
+            compute(&judge_inputs(&[], &[]), until, until).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            empty.judge.map(|j| j.iter().all(|w| w.run.is_none())),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn gate_metrics_reads_smoke_values_and_rejects_bad_shapes() {
+        let m = |metrics: &str| gate_metrics(&format!(r#"{{"metrics": {{{metrics}}}}}"#), "g");
+        assert_eq!(m(""), Ok(JudgeWeek::default()), "absent keys are null");
+        let all_null = m(
+            r#""smoke_open_rate": null, "smoke_render_match": null, "smoke_text_f1": null, "smoke_crashes": null, "smoke_journeys_passing": null, "smoke_journeys": null"#,
+        );
+        assert_eq!(all_null, Ok(JudgeWeek::default()));
+        assert_eq!(
+            m(r#""exam_open_rate": 0.5, "exam_crashes": 3"#),
+            Ok(JudgeWeek::default()),
+            "exam values are never read"
+        );
+        assert_eq!(
+            m(r#""smoke_open_rate": 0"#).map(|w| w.open_rate),
+            Ok(Some(0.0))
+        );
+        assert_eq!(
+            m(r#""smoke_open_rate": 1"#).map(|w| w.open_rate),
+            Ok(Some(1.0))
+        );
+        assert_eq!(m(r#""smoke_crashes": 0"#).map(|w| w.crashes), Ok(Some(0)));
+        for bad in [
+            r#""smoke_open_rate": 1.5"#,
+            r#""smoke_render_match": -0.1"#,
+            r#""smoke_text_f1": 1e400"#,
+            r#""smoke_open_rate": "0.5""#,
+            r#""smoke_crashes": -1"#,
+            r#""smoke_journeys": 1.5"#,
+            r#""smoke_journeys_passing": true"#,
+        ] {
+            assert!(m(bad).is_err(), "{bad}");
+        }
+        assert!(gate_metrics("{}", "g").is_err(), "no metrics");
+        assert!(
+            gate_metrics(r#"{"metrics": []}"#, "g").is_err(),
+            "metrics not an object"
+        );
+        assert!(gate_metrics("{", "g").is_err());
+        // A bad file fails the run only when it is the one chosen.
+        let until = d(UNTIL);
+        let runs = [
+            run_json(10, "2026-11-24T12:00:00Z"),
+            run_json(11, "2026-11-25T01:00:00Z"),
+        ];
+        let bad = (11, r#"{"metrics": {"smoke_open_rate": 2}}"#.to_owned());
+        assert!(
+            compute(
+                &judge_inputs(&runs, std::slice::from_ref(&bad)),
+                until,
+                until
+            )
+            .is_err()
+        );
+        assert!(
+            compute(
+                &judge_inputs(&runs[..1], &[(10, gates_json("0.5", "1")), bad]),
+                until,
+                until
+            )
+            .is_ok(),
+            "run 11 isn't listed, so its file is never read"
+        );
+    }
+
+    #[test]
+    fn nightly_runs_at_the_limit_are_flagged() {
+        let until = d(UNTIL);
+        for (n, flagged) in [(NIGHTLY_LIMIT - 1, false), (NIGHTLY_LIMIT, true)] {
+            let runs: Vec<String> = (0..n)
+                .map(|i| run_json(u64::try_from(i).unwrap_or(0), "2026-08-01T00:00:00Z"))
+                .collect();
+            let list = format!("[{}]", runs.join(","));
+            // The dispatch list as the second of two, after an empty schedule list.
+            let inp = Inputs {
+                nightly_runs: Some(vec![
+                    ("runs-schedule.json".to_owned(), "[]".to_owned()),
+                    ("runs-workflow_dispatch.json".to_owned(), list.clone()),
+                ]),
+                ..judge_inputs(&[], &[])
+            };
+            let snap = compute(&inp, until, until).unwrap_or_else(|e| panic!("{e}"));
+            let want: Vec<String> = if flagged {
+                vec!["runs-workflow_dispatch".to_owned()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(snap.truncated, want, "{n} dispatched runs");
+            // The schedule list as the first of two, as in a live run.
+            let inp = Inputs {
+                nightly_runs: Some(vec![
+                    ("runs-schedule.json".to_owned(), list.clone()),
+                    ("runs-workflow_dispatch.json".to_owned(), "[]".to_owned()),
+                ]),
+                ..judge_inputs(&[], &[])
+            };
+            let snap = compute(&inp, until, until).unwrap_or_else(|e| panic!("{e}"));
+            let want: Vec<String> = if flagged {
+                vec!["runs-schedule".to_owned()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(snap.truncated, want, "{n} scheduled runs");
+        }
+    }
+
+    #[test]
+    fn judge_command_arguments_are_pinned() {
+        assert_eq!(NIGHTLY_EVENTS, ["schedule", "workflow_dispatch"]);
+        assert_eq!(
+            nightly_runs_args("schedule"),
+            "run list --workflow ci.yml --event schedule --branch main --status completed --limit 200 --json databaseId,createdAt"
+        );
+        assert_eq!(
+            nightly_runs_args("workflow_dispatch"),
+            "run list --workflow ci.yml --event workflow_dispatch --branch main --status completed --limit 200 --json databaseId,createdAt"
+        );
+        assert_eq!(
+            download_args(45822452567, "/r/target/dashboard-gates/45822452567"),
+            [
+                "run",
+                "download",
+                "45822452567",
+                "-n",
+                "gates-report",
+                "-D",
+                "/r/target/dashboard-gates/45822452567"
+            ]
+        );
+        assert_eq!(GATES_DIR, "target/dashboard-gates");
+    }
+
+    #[test]
+    fn reads_downloaded_gates_up_to_one_mib() {
+        let base =
+            std::env::temp_dir().join(format!("xtask-dashboard-gates-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        assert!(fs::create_dir_all(&base).is_ok());
+        let f = base.join("gates.json");
+        assert_eq!(read_gates(&f), Err(GatesError::Missing));
+        let limit = usize::try_from(MAX_GATES_BYTES).unwrap_or(0);
+        assert!(fs::write(&f, vec![b' '; limit]).is_ok());
+        assert_eq!(read_gates(&f).map(|t| t.len()), Ok(limit), "exactly 1 MiB");
+        assert!(fs::write(&f, vec![b' '; limit + 1]).is_ok());
+        assert!(
+            matches!(read_gates(&f), Err(GatesError::Bad(_))),
+            "1 MiB + 1"
+        );
+        assert!(fs::write(base.join("real.json"), "{}").is_ok());
+        assert!(fs::remove_file(&f).is_ok());
+        #[cfg(unix)]
+        {
+            assert!(std::os::unix::fs::symlink(base.join("real.json"), &f).is_ok());
+            assert!(
+                matches!(read_gates(&f), Err(GatesError::Bad(_))),
+                "a symlink"
+            );
+            assert!(fs::remove_file(&f).is_ok());
+        }
+        assert!(fs::create_dir(&f).is_ok());
+        assert!(
+            matches!(read_gates(&f), Err(GatesError::Bad(_))),
+            "a directory"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn from_dir_judge_history_missing_then_partial() {
+        let base =
+            std::env::temp_dir().join(format!("xtask-dashboard-judge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let raw = base.join("raw");
+        assert!(fs::create_dir_all(&raw).is_ok());
+        let until = d(UNTIL);
+        for ((start, _), text) in weeks(until).iter().zip(prs_for(until, &[])) {
+            assert!(fs::write(raw.join(format!("prs-{}.json", fmt_day(*start))), text).is_ok());
+        }
+        assert!(fs::write(raw.join("issues.json"), "[]").is_ok());
+        assert!(fs::write(raw.join("journal-log.txt"), "").is_ok());
+        let out = base.join("dashboard.json");
+        let opts = Options {
+            until: Some(until),
+            out: out.clone(),
+            from: Some(raw.clone()),
+            index: None,
+        };
+        assert_eq!(run(&base, &opts), Ok(out.clone()));
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(text.contains(r#""judge": {"source": "missing""#), "{text}");
+        let runs = [
+            run_json(10, "2026-11-24T12:00:00Z"),
+            run_json(11, "2026-11-25T01:00:00Z"),
+            run_json(20, "2026-11-17T00:00:00Z"),
+        ];
+        assert!(
+            fs::write(
+                raw.join("runs-schedule.json"),
+                format!("[{}]", runs.join(","))
+            )
+            .is_ok()
+        );
+        // Run 11 has no file (a failed download); run 20's week has none at all.
+        assert!(fs::write(raw.join("gates-10.json"), gates_json("0.5935", "0")).is_ok());
+        assert_eq!(run(&base, &opts), Ok(out.clone()));
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(text.contains(r#""judge": {"source": "nightly""#), "{text}");
+        assert!(
+            text.contains(
+                r#"{"start": "2026-11-23", "run": 10, "day": "2026-11-24", "open_rate": 0.5935"#
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"{"start": "2026-11-16", "run": null"#),
+            "{text}"
+        );
+        // A dispatched nightly (a manual rerun) counts too: the newest of week 2026-11-16.
+        assert!(
+            fs::write(
+                raw.join("runs-workflow_dispatch.json"),
+                format!("[{}]", run_json(30, "2026-11-18T09:00:00Z"))
+            )
+            .is_ok()
+        );
+        assert!(fs::write(raw.join("gates-30.json"), gates_json("0.25", "1")).is_ok());
+        assert_eq!(run(&base, &opts), Ok(out.clone()));
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(
+            text.contains(
+                r#"{"start": "2026-11-16", "run": 30, "day": "2026-11-18", "open_rate": 0.25"#
+            ),
+            "{text}"
+        );
+        // With --from, a chosen gates file still has the 1 MiB cap.
+        let limit = usize::try_from(MAX_GATES_BYTES).unwrap_or(0);
+        let padded = |len: usize| {
+            let mut t = gates_json("0.75", "0").into_bytes();
+            t.resize(len, b' ');
+            t
+        };
+        assert!(fs::write(raw.join("gates-10.json"), padded(limit)).is_ok());
+        assert_eq!(
+            run(&base, &opts),
+            Ok(out.clone()),
+            "exactly 1 MiB, valid JSON"
+        );
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(
+            text.contains(r#""run": 10, "day": "2026-11-24", "open_rate": 0.75"#),
+            "{text}"
+        );
+        assert!(fs::write(raw.join("gates-10.json"), padded(limit + 1)).is_ok());
+        let err = run(&base, &opts).err().unwrap_or_default();
+        assert!(err.contains("larger than 1048576 bytes"), "{err}");
+        assert!(!base.join(GATES_DIR).exists(), "--from downloads nothing");
         let _ = fs::remove_dir_all(&base);
     }
 }

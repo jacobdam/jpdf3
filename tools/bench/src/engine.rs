@@ -1,10 +1,12 @@
 //! Engines, operations and timed runs of external programs (spec items 4–7).
 
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -197,7 +199,18 @@ pub fn probe(
     limit: Duration,
     stderr_cap: u64,
 ) -> Option<(Status, Duration, Vec<u8>)> {
-    run_child(bin, args, limit, stderr_cap).map(|o| (o.status, o.took, o.stderr))
+    run_child(bin, args, limit, stderr_cap, Keep::Head).map(|o| (o.status, o.took, o.stderr))
+}
+
+/// Which part of a child's stderr [`run_child`] keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keep {
+    /// The first `stderr_cap` bytes; the pipe is closed at the cap, so later writes get EPIPE
+    /// (engine probes, specs/tooling/bench.md item 2).
+    Head,
+    /// The last `stderr_cap` bytes; the pipe is drained to its end through a bounded buffer,
+    /// so a panic message after a long log is kept (specs/tooling/nightly.md item 5).
+    Tail,
 }
 
 /// How one [`run_child`] ended.
@@ -210,7 +223,7 @@ pub struct Outcome {
     pub signal: Option<i32>,
     /// Wall time from spawn to exit (or to the kill).
     pub took: Duration,
-    /// The first `stderr_cap` bytes of stderr.
+    /// At most `stderr_cap` bytes of stderr: the first or the last ones, by [`Keep`].
     pub stderr: Vec<u8>,
 }
 
@@ -222,13 +235,20 @@ pub struct Outcome {
 /// While it runs, the watchdog holds its group id, so a bench killed by a signal doesn't
 /// leave it running either (spec item 7). The watchdog holds one group, so runs must not
 /// overlap (the bench runs them one at a time). Captured stderr goes
-/// through a pipe read on a helper thread that stops reading at the cap (later writes get
-/// EPIPE), so a flooding program costs neither memory nor disk.
+/// through a pipe read on a helper thread. [`Keep::Head`] stops reading at the cap (later
+/// writes get EPIPE); [`Keep::Tail`] reads to the end and keeps only the last `stderr_cap`
+/// bytes. Either way a flooding program costs no disk, and memory for the cap (a tail reader:
+/// a buffer reserved once for the cap, plus one read chunk); a tail reader costs CPU until the child's group is killed (at exit or at the
+/// limit), and stops at its next read once the run is collected. A tail reader whose pipe is
+/// still open when the run is collected (a writer that escaped the group) loses what it
+/// drained: the run records no stderr. [`Keep::Head`] loses its bytes the same way unless they
+/// filled the cap before the collection timeout.
 pub fn run_child(
     bin: &Path,
     args: &[OsString],
     limit: Duration,
     stderr_cap: u64,
+    keep: Keep,
 ) -> Option<Outcome> {
     let mut cmd = Command::new(bin);
     cmd.args(args)
@@ -250,12 +270,22 @@ pub fn run_child(
     let group = child.id();
     watch(Some(group));
     let (tx, rx) = mpsc::channel();
+    // Set once the run is collected, so a tail reader whose pipe an escaped grandchild holds
+    // open stops at its next read instead of draining forever.
+    let stop = Arc::new(AtomicBool::new(false));
     if let Some(pipe) = child.stderr.take() {
+        let stop = Arc::clone(&stop);
         // A thread that can't be created means nothing is captured (the pipe is dropped,
         // the child gets EPIPE), never a panic.
         let _ = thread::Builder::new().spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.take(stderr_cap).read_to_end(&mut buf);
+            let buf = match keep {
+                Keep::Head => {
+                    let mut buf = Vec::new();
+                    let _ = pipe.take(stderr_cap).read_to_end(&mut buf);
+                    buf
+                }
+                Keep::Tail => read_tail(pipe, stderr_cap, &stop),
+            };
             // The read end is dropped here; the receiver may be gone already.
             let _ = tx.send(buf);
         });
@@ -291,6 +321,7 @@ pub fn run_child(
     };
     // A grandchild may hold the pipe open; don't wait for it longer than a moment.
     let stderr = rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
+    stop.store(true, Ordering::Relaxed);
     Some(Outcome {
         status,
         code: exit.and_then(|st| st.code()),
@@ -298,6 +329,46 @@ pub fn run_child(
         took,
         stderr,
     })
+}
+
+/// Bytes read from a stderr pipe at a time by [`read_tail`].
+const TAIL_CHUNK: usize = 8192;
+
+/// Reads `r` to its end (or a read error, or until `stop` is set) and returns its last `cap`
+/// bytes. Its buffers are the deque reserved up front for `cap` bytes plus one chunk,
+/// whatever the reader yields. If the deque can't be reserved (a cap too large for memory),
+/// it keeps nothing but still reads `r` until its end, a read error or `stop`, as when the cap
+/// is reserved.
+fn read_tail(mut r: impl std::io::Read, cap: u64, stop: &AtomicBool) -> Vec<u8> {
+    let mut kept: VecDeque<u8> = VecDeque::new();
+    // Reserved once: `kept` never holds more than `cap` bytes, so it never reallocates and
+    // its allocation stays at the reserved size. A failed reservation makes the cap 0.
+    let cap = match usize::try_from(cap) {
+        Ok(c) if kept.try_reserve_exact(c).is_ok() => c,
+        _ => 0,
+    };
+    // On the stack, so a failed reservation needs no other heap allocation to keep draining.
+    let mut chunk = [0u8; TAIL_CHUNK];
+    while !stop.load(Ordering::Relaxed) {
+        let n = match r.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let got = chunk.get(..n).unwrap_or_default();
+        // Only the chunk's last `cap` bytes can survive.
+        let got = got.get(got.len().saturating_sub(cap)..).unwrap_or_default();
+        // Make room first, so `kept` never holds more than `cap` bytes.
+        let over = kept
+            .len()
+            .saturating_add(got.len())
+            .saturating_sub(cap)
+            .min(kept.len());
+        kept.drain(..over);
+        kept.extend(got);
+    }
+    kept.into()
 }
 
 #[cfg(unix)]
@@ -518,8 +589,9 @@ mod tests {
         // `cargo xtask nightly` records these (specs/tooling/nightly.md item 5).
         let sh = Path::new("/bin/sh");
         let limit = Duration::from_secs(20);
-        let run =
-            |script: &str, limit| run_child(sh, &["-c".into(), script.into()], limit, 64).unwrap();
+        let run = |script: &str, limit| {
+            run_child(sh, &["-c".into(), script.into()], limit, 64, Keep::Head).unwrap()
+        };
         let o = run("exit 0", limit);
         assert_eq!((o.status, o.code, o.signal), (Status::Ok, Some(0), None));
         let o = run("echo oops >&2; exit 7", limit);
@@ -536,7 +608,135 @@ mod tests {
         // Our own kill at the limit is a timeout, not a signal.
         let o = run("exec sleep 10", Duration::from_millis(100));
         assert_eq!((o.status, o.code, o.signal), (Status::Timeout, None, None));
-        assert!(run_child(Path::new("/nonexistent/x"), &[], limit, 0).is_none());
+        assert!(run_child(Path::new("/nonexistent/x"), &[], limit, 0, Keep::Head).is_none());
+    }
+
+    #[test]
+    fn read_tail_keeps_the_last_cap_bytes() {
+        // specs/tooling/nightly.md item 5: the panic message after a long log survives.
+        let go = AtomicBool::new(false);
+        let tail = |input: &[u8], cap| read_tail(input, cap, &go);
+        let mut log = vec![b'w'; 3 * TAIL_CHUNK + 17];
+        log.extend_from_slice(b"panicked at the end\n");
+        let t = tail(&log, 64);
+        assert_eq!(t.len(), 64);
+        assert!(t.ends_with(b"panicked at the end\n"), "{t:?}");
+        assert_eq!(t, log.get(log.len() - 64..).unwrap());
+        // Exactly the cap is kept whole; one byte more drops the first byte.
+        let exact: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        assert_eq!(tail(&exact, 4096), exact);
+        let mut more = vec![b'!'];
+        more.extend_from_slice(&exact);
+        assert_eq!(tail(&more, 4096), exact);
+        // Less than the cap, nothing, and a zero cap.
+        assert_eq!(tail(b"short", 4096), b"short");
+        assert_eq!(tail(b"", 4096), b"");
+        assert_eq!(tail(b"abc", 0), b"");
+        // A cap larger than one chunk keeps bytes across chunks, in order.
+        let big: Vec<u8> = (0..=255u8).cycle().take(5 * TAIL_CHUNK).collect();
+        let t = tail(&big, 2 * TAIL_CHUNK as u64 + 3);
+        assert_eq!(t, big.get(big.len() - (2 * TAIL_CHUNK + 3)..).unwrap());
+        // A cap that can't be reserved keeps nothing, and the reader is still drained.
+        let mut left = &log[..];
+        assert_eq!(read_tail(&mut left, u64::MAX, &go), b"");
+        assert!(left.is_empty());
+        // A set stop flag reads nothing more.
+        let stopped = AtomicBool::new(true);
+        assert_eq!(read_tail(&log[..], 64, &stopped), b"");
+    }
+
+    #[test]
+    fn read_tail_stops_draining_an_endless_pipe_once_told() {
+        // A writer that never stops (a grandchild that escaped the group): the flag, set
+        // after the third read here, ends the loop (a regression hangs this test).
+        struct Endless<'a> {
+            reads: u32,
+            stop: &'a AtomicBool,
+        }
+        impl std::io::Read for Endless<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                if self.reads == 3 {
+                    self.stop.store(true, Ordering::Relaxed);
+                }
+                buf.fill(b'y');
+                Ok(buf.len())
+            }
+        }
+        let stop = AtomicBool::new(false);
+        let r = Endless {
+            reads: 0,
+            stop: &stop,
+        };
+        assert_eq!(read_tail(r, 100, &stop), vec![b'y'; 100]);
+    }
+
+    #[test]
+    fn read_tail_survives_interrupts_and_stops_at_an_error() {
+        // A reader that yields one byte per call, an `Interrupted` error in between, then a
+        // hard error: the bytes before the error are kept, in order.
+        struct Flaky(Vec<std::io::Result<u8>>);
+        impl std::io::Read for Flaky {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() {
+                    return Ok(0);
+                }
+                match self.0.remove(0) {
+                    Ok(b) => {
+                        buf[0] = b;
+                        Ok(1)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
+        use std::io::{Error, ErrorKind};
+        let r = Flaky(vec![
+            Ok(b'a'),
+            Err(Error::from(ErrorKind::Interrupted)),
+            Ok(b'b'),
+            Ok(b'c'),
+            Err(Error::from(ErrorKind::BrokenPipe)),
+            Ok(b'x'),
+        ]);
+        assert_eq!(read_tail(r, 2, &AtomicBool::new(false)), b"bc");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_child_keeps_the_head_or_the_tail_of_a_flood() {
+        // 20 000 bytes of warnings, then the panic line: the tail keeps it, the head doesn't.
+        let sh = Path::new("/bin/sh");
+        let script =
+            "head -c 20000 /dev/zero | tr '\\0' w >&2; echo 'panicked: last' >&2; exit 101";
+        let run = |keep| {
+            run_child(
+                sh,
+                &["-c".into(), script.into()],
+                Duration::from_secs(20),
+                4096,
+                keep,
+            )
+            .unwrap()
+        };
+        let t = run(Keep::Tail);
+        assert_eq!((t.status, t.code), (Status::Crash, Some(101)));
+        assert_eq!(t.stderr.len(), 4096);
+        let mut want = vec![b'w'; 4096 - 15];
+        want.extend_from_slice(b"panicked: last\n");
+        assert_eq!(t.stderr, want);
+        let h = run(Keep::Head);
+        assert_eq!(h.stderr, vec![b'w'; 4096]);
+        // A run with no stderr at all keeps nothing in either mode.
+        let o = run_child(
+            sh,
+            &["-c".into(), "exit 0".into()],
+            Duration::from_secs(20),
+            4096,
+            Keep::Tail,
+        )
+        .unwrap();
+        assert_eq!((o.status, o.stderr.len()), (Status::Ok, 0));
     }
 
     #[cfg(unix)]

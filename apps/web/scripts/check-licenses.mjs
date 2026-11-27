@@ -27,9 +27,16 @@ for (const path of Object.keys(lock.packages ?? {})) {
   if (existsSync(url)) manifests.set(path, readJson(url));
 }
 
-// Everything Vite bundles: src/ (recursively) and index.html.
+// Everything Vite bundles: src/ (recursively), index.html and dashboard/index.html.
 const sourceProblems = [];
 const sources = [{ file: "index.html", text: readFileSync(new URL("index.html", root), "utf8") }];
+// The dashboard page, the second entry of the one allowed multi-page input (ALLOWED_INPUT).
+if (existsSync(new URL("dashboard/index.html", root))) {
+  sources.push({
+    file: "dashboard/index.html",
+    text: readFileSync(new URL("dashboard/index.html", root), "utf8"),
+  });
+}
 const appDir = fileURLToPath(root);
 const realSrc = realpathSync(join(appDir, "src"));
 for (const entry of readdirSync(new URL("src/", root), { recursive: true, withFileTypes: true })) {
@@ -71,8 +78,9 @@ problems.push(...sourceProblems);
 
 // Ways into the bundle that the import scan can't see: Vite copies `public/` verbatim;
 // aliases, another root, public directory or input, and plugin hooks that resolve, load or
-// transform modules remap what is bundled. None is used; refuse them until #99 checks the
-// real module graph. This guard is a text match, so it is advisory (specs/tooling/licenses.md).
+// transform modules remap what is bundled. None is used except the one `input` naming the
+// two pages (ALLOWED_INPUT below); refuse them until #99 checks the real module graph. This
+// guard is a text match, so it is advisory (specs/tooling/licenses.md).
 if (existsSync(new URL("public", root))) {
   problems.push(
     "public/: Vite copies it into the bundle unchecked; extend the license check first",
@@ -125,7 +133,10 @@ const guardRe = new RegExp(String.raw`\b(${GUARDED.join("|")})\b["'\`\]]{0,2}\s*
 // Quoted strings closed by their own quote kind, so `"./csp'/../plugin"` is one specifier.
 const importRe = /\b(?:from|import)\s*\(?\s*(?:"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`)/g;
 const spec = (m) => m[1] ?? m[2] ?? m[3];
-for (const m of viteConfig.matchAll(guardRe)) {
+// The one input the scan follows (specs/tooling/dashboard.md): exactly these two pages, both
+// scanned above. Only its first copy is exempt; any other `input` is still refused.
+const ALLOWED_INPUT = 'input: { app: "index.html", dashboard: "dashboard/index.html" },';
+for (const m of viteConfig.replace(ALLOWED_INPUT, "").matchAll(guardRe)) {
   problems.push(
     `vite.config.ts: uses ${m[1]}, which the import scan can't follow; extend the check first`,
   );

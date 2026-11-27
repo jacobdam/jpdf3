@@ -51,6 +51,22 @@ fn main() -> ExitCode {
                     ExitCode::from(1)
                 }
             };
+            // specs/tooling/dashboard.md: the committed snapshot next to the dashboard page.
+            let dash = match dashboard::copy_into_site(Path::new("."), &out.join("site")) {
+                Ok(dashboard::Copied::Yes) => ExitCode::SUCCESS,
+                Ok(dashboard::Copied::NoPage) => {
+                    eprintln!("xtask: dashboard: no page, nothing copied");
+                    ExitCode::SUCCESS
+                }
+                Ok(dashboard::Copied::NoSnapshot) => {
+                    eprintln!("xtask: dashboard: no snapshot, nothing copied");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("xtask: dashboard: {e}");
+                    ExitCode::from(1)
+                }
+            };
             let specs = check_specs(Path::new("."));
             // PLAN §6.3: a short fuzz run on every PR (specs/tooling/fuzz.md).
             let fuzz = match fuzz::ci(Path::new(".")) {
@@ -65,7 +81,7 @@ fn main() -> ExitCode {
             };
             // specs/tooling/arlington.md: the vendored model still matches the pins, parses, checks and compiles (offline).
             let arl = arlington_cmd(Path::new("."));
-            [web, specs, fuzz, arl]
+            [web, dash, specs, fuzz, arl]
                 .into_iter()
                 .find(|c| *c != ExitCode::SUCCESS)
                 .unwrap_or(ExitCode::SUCCESS)
