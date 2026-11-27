@@ -383,62 +383,114 @@ fn no_build() -> Result<PathBuf, String> {
     panic!("no build")
 }
 
+fn bench(status: &'static str, error: Option<&str>) -> BenchResult {
+    BenchResult {
+        status,
+        files: 2,
+        exit: None,
+        signal: None,
+        ms: None,
+        report: false,
+        error: error.map(str::to_string),
+    }
+}
+
+/// The `bench` step's outcome (items 10, 12): only `failed` is a tool failure, with its error;
+/// a `timeout` is recorded, not a failure.
 #[test]
-fn run_writes_the_summary_and_reports_tool_failures() {
-    let d = scratch("run");
+fn the_bench_step_fails_only_for_a_failed_bench() {
+    for st in ["ok", "timeout", "skipped"] {
+        assert_eq!(bench_outcome(&bench(st, None)), Step::Ok, "{st}");
+    }
+    assert_eq!(
+        bench_outcome(&bench("failed", Some("cannot start /r/jpdf-bench"))),
+        Step::Failed("bench: cannot start /r/jpdf-bench".into())
+    );
+    assert_eq!(
+        bench_line(&bench("timeout", None)),
+        "xtask: nightly: bench: timeout (2 files)"
+    );
+    // Through the real bench: exit 1 is `failed`, a kill at the limit `timeout`.
+    let d = scratch("bench-step");
     let js = jobs(&d, 2, &[]);
     let out = d.join("out");
     std::fs::create_dir_all(&out).unwrap();
-    std::fs::write(out.join("nightly.json"), b"an earlier night").unwrap();
-    let with = |bench: u64, fuzz_s: u64, st: Option<(Status, Option<i32>)>| {
-        let mut exec = |_: &Path, _: &[OsString], _| st.map(|(s, c)| outcome(s, c));
-        let mut build = || Ok(d.clone());
-        let failed = run(
-            &d,
-            &out,
-            &js,
-            bench,
-            fuzz_s,
-            Hooks {
-                build: &mut build,
-                exec: &mut exec,
-                pass: &mut no_pass,
-            },
-        );
+    for (st, code, want) in [
+        (Status::Ok, Some(0), Step::Ok),
+        (Status::Timeout, None, Step::Ok),
         (
-            failed,
-            std::fs::read_to_string(out.join("nightly.json")).unwrap(),
-        )
+            Status::Crash,
+            Some(1),
+            Step::Failed("bench: jpdf-bench ended with \"crash\"".into()),
+        ),
+    ] {
+        let mut build = || Ok(d.clone());
+        let b = run_bench(&out, &js, 1, &mut build, &mut |_, _, _| {
+            Some(outcome(st, code))
+        });
+        assert_eq!(bench_outcome(&b), want, "{st:?}");
+    }
+}
+
+/// The `fuzz` step's outcome (items 10, 13): only `failed` is a tool failure; a `crash` is
+/// what the engine did, recorded, not a failure.
+#[test]
+fn the_fuzz_step_fails_only_for_a_failed_pass() {
+    let pass = |status, error: Option<&str>| FuzzResult {
+        status,
+        seconds: 5,
+        targets: vec![TargetResult {
+            name: "a".into(),
+            ok: false,
+            artifacts: vec!["fuzz/a/crash-1".into(), "fuzz/a/crash-2".into()],
+        }],
+        error: error.map(str::to_string),
     };
-    let (failed, s) = with(1, 0, Some((Status::Ok, Some(0))));
-    assert!(!failed);
-    assert!(s.contains("\"bench\":{\"status\":\"ok\",\"minutes\":1,\"files\":2,"));
-    assert!(s.contains("\"fuzz\":{\"status\":\"skipped\""));
-    // A bench that ends with exit 1 is a tool failure, recorded too.
-    let (failed, s) = with(1, 0, Some((Status::Crash, Some(1))));
-    assert!(failed);
-    assert!(s.contains("\"bench\":{\"status\":\"failed\""));
-    // A timeout is recorded and is not a tool failure.
-    let (failed, s) = with(1, 0, Some((Status::Timeout, None)));
-    assert!(!failed);
-    assert!(s.contains("\"bench\":{\"status\":\"timeout\""));
-    // Nothing to do: no failure.
-    let mut never = |_: &Path, _: &[OsString], _| -> Option<Outcome> { panic!("no run") };
-    let hooks = Hooks {
-        build: &mut no_build,
-        exec: &mut never,
-        pass: &mut no_pass,
-    };
-    assert!(!run(&d, &out, &js, 0, 0, hooks));
+    for st in ["ok", "crash", "skipped"] {
+        assert_eq!(fuzz_outcome(&pass(st, None)), Step::Ok, "{st}");
+    }
+    assert_eq!(
+        fuzz_outcome(&pass("failed", Some("cannot run a"))),
+        Step::Failed("fuzz: cannot run a".into())
+    );
+    assert_eq!(
+        fuzz_line(&pass("crash", None)),
+        "xtask: nightly: fuzz: crash (1 targets, 5 s each, 2 artifacts)"
+    );
     // A fuzz pass that can't run (no fuzz/ here) is a tool failure.
-    let hooks = Hooks {
-        build: &mut no_build,
-        exec: &mut never,
-        pass: &mut no_pass,
+    let d = scratch("fuzz-step");
+    let f = run_fuzz(&d, &d.join("out"), 1, &mut no_pass);
+    assert_eq!(f.status, "failed");
+    assert!(matches!(fuzz_outcome(&f), Step::Failed(e) if e.starts_with("fuzz: ")));
+    // Zero seconds skips it: no failure.
+    assert_eq!(
+        fuzz_outcome(&run_fuzz(&d, &d.join("out"), 0, &mut no_pass)),
+        Step::Ok
+    );
+}
+
+/// The `summary` step (item 14) writes this night's `nightly.json` over an earlier one.
+#[test]
+fn the_summary_step_writes_nightly_json() {
+    let d = scratch("summary");
+    std::fs::write(d.join("nightly.json"), b"an earlier night").unwrap();
+    let f = FuzzResult {
+        status: "skipped",
+        seconds: 0,
+        targets: Vec::new(),
+        error: None,
     };
-    assert!(run(&d, &out, &js, 0, 1, hooks));
-    let s = std::fs::read_to_string(out.join("nightly.json")).unwrap();
-    assert!(s.contains("\"fuzz\":{\"status\":\"failed\",\"seconds_per_target\":1,"));
+    assert_eq!(write_summary(&d, &bench("ok", None), &f, 7), Step::Ok);
+    let s = std::fs::read_to_string(d.join("nightly.json")).unwrap();
+    assert!(s.contains("\"bench\":{\"status\":\"ok\",\"minutes\":7,\"files\":2,"));
+    assert!(s.contains("\"fuzz\":{\"status\":\"skipped\""));
+    // A directory in its place: the write fails, a tool failure.
+    let e = d.join("e");
+    std::fs::create_dir_all(e.join("nightly.json/x")).unwrap();
+    assert!(matches!(
+        write_summary(&e, &bench("ok", None), &f, 7),
+        Step::Failed(_)
+    ));
 }
 
 #[test]
@@ -545,11 +597,17 @@ fn a_stale_summary_that_cannot_be_removed_is_a_tool_failure() {
     // A directory in the file's place can't be removed as a file.
     std::fs::create_dir_all(d.join("nightly.json/x")).unwrap();
     assert!(remove_file(&d.join("nightly.json")).is_err());
-    let mut never = |_: &Path, _: &[OsString], _| -> Option<Outcome> { panic!("no run") };
-    let hooks = Hooks {
-        build: &mut no_build,
-        exec: &mut never,
-        pass: &mut no_pass,
-    };
-    assert!(run(&d, &d, &[], 0, 0, hooks));
+    // The `stale-summary` step: absent is fine, a removed file is gone, a directory in its
+    // place is a tool failure (its own entry in the log: driver.rs, #352).
+    assert_eq!(remove_summary(&d.join("none")), Step::Ok);
+    std::fs::write(d.join("f.json"), b"x").unwrap();
+    std::fs::rename(d.join("f.json"), d.join("g")).unwrap();
+    std::fs::create_dir_all(d.join("s")).unwrap();
+    std::fs::rename(d.join("g"), d.join("s/nightly.json")).unwrap();
+    assert_eq!(remove_summary(&d.join("s")), Step::Ok);
+    assert!(!d.join("s/nightly.json").exists());
+    assert!(matches!(
+        remove_summary(&d),
+        Step::Failed(e) if e.starts_with("cannot remove ")
+    ));
 }

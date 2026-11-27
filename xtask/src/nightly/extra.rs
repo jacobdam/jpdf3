@@ -1,5 +1,6 @@
 //! The bench and the extra fuzz time after the regress runs, and `nightly.json`
-//! (specs/tooling/nightly.md items 12–15).
+//! (specs/tooling/nightly.md items 12–15): the functions the nightly's `stale-summary`,
+//! `bench`, `fuzz` and `summary` steps wrap, and each step's outcome (ADR 0013 task 2).
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -9,6 +10,7 @@ use std::time::Duration;
 use jpdf_bench::engine::{Outcome, Status};
 
 use super::Job;
+use crate::steps::Outcome as Step;
 use crate::{bench, fuzz};
 
 /// `--bench-minutes` range and default (spec item 1); 0 skips the bench.
@@ -279,13 +281,6 @@ pub fn real_pass(root: &Path, seconds: u32) -> Result<fuzz::Report, String> {
     )
 }
 
-/// What `run` calls out to: the bench build, a limited run, the fuzz pass.
-pub struct Hooks<'a> {
-    pub build: Build<'a>,
-    pub exec: Exec<'a>,
-    pub pass: Pass<'a>,
-}
-
 /// Runs every fuzz target for `seconds` each and copies what they found (spec item 13).
 pub fn run_fuzz(root: &Path, out: &Path, seconds: u64, pass: Pass) -> FuzzResult {
     let mut r = FuzzResult {
@@ -397,49 +392,57 @@ pub fn nightly_json(b: &BenchResult, f: &FuzzResult, bench_minutes: u64) -> Stri
     s
 }
 
-/// The bench, the fuzz pass and `nightly.json` (spec items 12–14). Returns whether any of
-/// them was a tool failure (spec item 10).
-pub fn run(
-    root: &Path,
-    out: &Path,
-    jobs: &[Job],
-    bench_minutes: u64,
-    fuzz_seconds: u64,
-    hooks: Hooks,
-) -> bool {
-    let Hooks { build, exec, pass } = hooks;
-    let path = out.join("nightly.json");
-    // An earlier night's summary must not stand next to this night's regress results.
-    let mut failed = remove_file(&path)
-        .map_err(|e| eprintln!("xtask: nightly: {e}"))
-        .is_err();
-    let b = run_bench(out, jobs, bench_minutes, build, exec);
-    eprintln!(
-        "xtask: nightly: bench: {} ({} files){}",
-        b.status,
-        b.files,
-        b.error
-            .as_deref()
-            .map(|e| format!(": {e}"))
-            .unwrap_or_default()
-    );
-    let f = run_fuzz(root, out, fuzz_seconds, pass);
+/// The `stale-summary` step (spec item 14): removes an earlier `DIR/nightly.json`, so it can't
+/// stand next to this night's regress results; a failed removal is a tool failure.
+pub fn remove_summary(out: &Path) -> Step {
+    remove_file(&out.join("nightly.json")).map_or_else(Step::Failed, |()| Step::Ok)
+}
+
+/// The bench's stderr line (spec "Errors"): `bench: <status> (<n> files)`.
+pub fn bench_line(b: &BenchResult) -> String {
+    format!("xtask: nightly: bench: {} ({} files)", b.status, b.files)
+}
+
+/// The `bench` step's outcome (spec items 10, 12): `failed` is a tool failure with its error;
+/// `ok`, `timeout` and `skipped` are `Ok` (a timeout is recorded, not a failure).
+pub fn bench_outcome(b: &BenchResult) -> Step {
+    if b.tool_failure() {
+        Step::Failed(format!("bench: {}", b.error.as_deref().unwrap_or("failed")))
+    } else {
+        Step::Ok
+    }
+}
+
+/// The fuzz pass's stderr line (spec "Errors"):
+/// `fuzz: <status> (<t> targets, <S> s each, <a> artifacts)`.
+pub fn fuzz_line(f: &FuzzResult) -> String {
     let found: usize = f.targets.iter().map(|t| t.artifacts.len()).sum();
-    eprintln!(
-        "xtask: nightly: fuzz: {} ({} targets, {fuzz_seconds} s each, {found} artifacts){}",
+    format!(
+        "xtask: nightly: fuzz: {} ({} targets, {} s each, {found} artifacts)",
         f.status,
         f.targets.len(),
-        f.error
-            .as_deref()
-            .map(|e| format!(": {e}"))
-            .unwrap_or_default()
-    );
-    failed |= b.tool_failure() || f.tool_failure();
-    if let Err(e) = super::write(&path, &nightly_json(&b, &f, bench_minutes)) {
-        eprintln!("xtask: nightly: {e}");
-        failed = true;
+        f.seconds
+    )
+}
+
+/// The `fuzz` step's outcome (spec items 10, 13): `failed` is a tool failure with its error;
+/// `crash` (what the engine did), `ok` and `skipped` are `Ok`.
+pub fn fuzz_outcome(f: &FuzzResult) -> Step {
+    if f.tool_failure() {
+        Step::Failed(format!("fuzz: {}", f.error.as_deref().unwrap_or("failed")))
+    } else {
+        Step::Ok
     }
-    failed
+}
+
+/// The `summary` step (spec item 14): this night's `DIR/nightly.json`, tmp and rename; a
+/// failed write is a tool failure.
+pub fn write_summary(out: &Path, b: &BenchResult, f: &FuzzResult, bench_minutes: u64) -> Step {
+    super::write(
+        &out.join("nightly.json"),
+        &nightly_json(b, f, bench_minutes),
+    )
+    .map_or_else(Step::Failed, |()| Step::Ok)
 }
 
 #[cfg(test)]

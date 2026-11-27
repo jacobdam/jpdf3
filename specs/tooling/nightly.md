@@ -232,9 +232,11 @@ files here (item 16), the fuzz pass and the bench in #383)
     created, or an artifact that couldn't be copied is `failed`, a tool failure; else any
     target that crashed, hung or ran out of memory makes it `crash` (what the engine did:
     recorded, not a tool failure); else `ok`.
-14. **Summary** `DIR/nightly.json`. An earlier one is removed before the bench (a failed
-    removal is a tool failure), and this night's is written after the fuzz pass (tmp and
-    rename, as in item 8), keys in this order:
+14. **Summary** `DIR/nightly.json`. An earlier one is removed before the bench (the
+    `stale-summary` step, item 15; a failed removal is a tool failure, its own `Failed` entry
+    whatever the write does: #352), and this night's is written after the fuzz pass (the
+    `summary` step; tmp and rename, as in item 8; a failed write is a tool failure), keys in
+    this order:
     ```json
     {"schema":1,"regress":"regress.json",
      "bench":{"status":"ok","minutes":20,"files":20,"exit":0,"signal":null,"ms":174,
@@ -254,14 +256,20 @@ files here (item 16), the fuzz pass and the bench in #383)
     step's outcome (`Ok`, `Finding`, `Infra`, `Failed`) under its name, in this order:
     `previous` (item 9), `build` (item 2), `executable` (item 10), `memory` (item 6),
     `watchdog`, `limits` (item 11), `corpus` (the cache and the manifest, item 3), `fetch`,
-    `workdir`, `runs` (items 4–7), `results` (`regress.json`, item 8), `diff` (item 9), `extra`
-    (the bench, the fuzz pass and `nightly.json`, items 12–14; one step with one outcome until
-    ADR 0013 task 2, #361), then `issues` (item 16). What a failure stops:
+    `workdir`, `runs` (items 4–7), `results` (`regress.json`, item 8), `diff` (item 9),
+    `stale-summary` (the earlier `nightly.json` removed, item 14), `bench` (item 12), `fuzz`
+    (item 13), `summary` (this night's `nightly.json`, item 14; it gets the bench's and the
+    fuzz pass's results from the driver), then `issues` (item 16). The `bench` and `fuzz`
+    steps are `Failed` only for status `failed` (with `bench: <error>` or `fuzz: <error>`);
+    `ok`, `timeout`, `crash` and `skipped` are `Ok` (ADR 0013 task 2, #361). What a failure
+    stops:
     - any outcome but `Ok` of `previous`, `build`, `executable`, `memory`, `watchdog`,
       `corpus`, `workdir` or `results` stops the night: no later step runs;
-    - `limits`, `fetch`, `runs` and `diff` never stop it (a failed limits case or limits tool
-      failure, a fetch integrity or infrastructure failure, a run that could not start, a diff
-      that can't be written: the later steps run);
+    - `limits`, `fetch`, `runs`, `diff`, `stale-summary`, `bench`, `fuzz` and `summary` never
+      stop it (a failed limits case or limits tool failure, a fetch integrity or infrastructure
+      failure, a run that could not start, a diff that can't be written, a stale `nightly.json`
+      that can't be removed, a failed bench or fuzz pass, a `nightly.json` that can't be
+      written: the later steps run);
     - `issues` runs last, after a stop too, whenever the `limits` step ran (so not after a stop
       at `previous` … `watchdog`): it gets the limits cases, the previous night and this night's
       files, or no files when the night stopped before the runs. Its failure is a 1, which beats
@@ -347,14 +355,15 @@ the corpus tool's manifest or cache error, `cannot start the engine watchdog (/b
 `no regress file to run (<N> rows missing)`, `no executable jpdf-cli at <path> after the build`,
 `<N> runs could not start <path>` (and `cannot remove <path>: <io error>` when a stale diff
 can't be removed), `fetch: <N> rows failed the integrity check` (after the fetch's own lines),
-`limits: <problem>`, `the bench, the fuzz pass or nightly.json failed (above)` after the
-bench's and the fuzz pass's lines, and `issues: <problem> (<c> filed, <u> updated before it)`
+`limits: <problem>`, `bench: <error>` and `fuzz: <error>` (each after its step's line below),
+`cannot remove <path>/nightly.json: <io error>`, and `issues: <problem> (<c> filed, <u> updated before it)`
 (item 16: `cannot start gh: <io error>`, `gh issue <cmd>: <exit status>`, `gh issue <cmd>: no
 answer in 120 s`, `gh issue list --label <label>: <problem>`). Each tool failure is printed when its step ends (the step
 log prints each `Failed` reason as it is recorded); `JUDGE-INFRA-FAILURE` is printed last
 (item 10). The bench and the fuzz pass each print one line,
-`xtask: nightly: bench: <status> (<n> files)[: <error>]` and
-`xtask: nightly: fuzz: <status> (<t> targets, <S> s each, <a> artifacts)[: <error>]`; the
+`xtask: nightly: bench: <status> (<n> files)` and
+`xtask: nightly: fuzz: <status> (<t> targets, <S> s each, <a> artifacts)`; when the status is
+`failed`, the step's tool failure line follows (`bench: <error>`, `fuzz: <error>`), whose
 error is the same text as in `nightly.json` (`release build failed (<status>)`,
 `cannot copy <path>: <io error>`, `cannot start <path>`, `jpdf-bench ended with "<status>"`,
 `fuzz/Cargo.toml not found …`, the fuzz tool's messages). A usage error prints the problem and the usage line.
@@ -464,7 +473,9 @@ Self-check:
     `steps::exit_code` has a table test over every pair of outcome kinds, and the
     `JUDGE-INFRA-FAILURE` line a test for a 75 log and its near miss (`Infra` in a log whose
     code is 1). What still passes: a real adapter that maps an error to the wrong outcome (each
-    is one expression, checked by the reviewer against items 10–13), and a `run` that calls a
+    is one expression, checked by the reviewer against items 10–13; the bench's, the fuzz
+    pass's and `nightly.json`'s mappings are functions in `extra.rs` with their own tests:
+    `bench_outcome`, `fuzz_outcome`, `remove_summary`, `write_summary`), and a `run` that calls a
     real step outside the driver (it only builds `Real` and calls `drive`).
   - An issue step that files duplicates, misses one, or matches the wrong issue: a repeat
     night on a fake `gh` (which acts on its real arguments: lists filter by state and label,
@@ -480,7 +491,6 @@ Self-check:
     shape is checked strictly, so a change fails the step loudly).
 - Not covered by tests: the real build, the real fetch (network), the CI wiring, the real
   adapters (`Real` in `xtask/src/nightly.rs`; the functions they wrap have their own tests);
-  the order inside the `extra` step (removal, bench, fuzz pass, write: ADR 0013 task 2, #361);
   a real fuzz pass (the nightly toolchain and minutes of fuzzing:
   `run_fuzz` with real targets runs only in the local run and the nightly job, its parts are
   unit-tested in `fuzz.rs` and here); the real jpdf-bench under the memory wrapper (a local
@@ -514,8 +524,9 @@ statuses with a fake exec and build, the stale `bench.json` and `nightly.json` r
 artifact copy and its cap (and a copy that fails midway), the fuzz pass with a fake
 `fuzz::run_report` (the snapshot before the pass, only started targets, each target's `ok`),
 a bench sample that can't be copied, a stale `nightly.json` that can't be removed, the fuzz
-statuses, a tree without `fuzz/`, `nightly.json`'s shape,
-the exit decision), `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
+statuses, a tree without `fuzz/`, `nightly.json`'s shape, and the outcomes of the
+`stale-summary`, `bench`, `fuzz` and `summary` steps: only a `failed` bench or fuzz pass, a
+failed removal or a failed write is `Failed`), `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
 and memory wrapper with fake `jpdf-cli` scripts, missing files, the results JSON, the previous-file
 validator, the diff), `tools/bench/src/engine.rs`
 `run_child_reports_the_exit_code_or_the_signal`, `tools/corpus/tests/corpus.rs`
@@ -523,7 +534,9 @@ validator, the diff), `tools/bench/src/engine.rs`
 (specs/tooling/limits.md "Tests"). The order and the exit code (items 10, 11, 12 and 15):
 `xtask/src/nightly/tests/driver.rs` (a recording fake of the steps: the full order with each
 step's data, one run per failing step, the no-file stop, the limits part's codes, item 10's
-4, in `exit_codes_with_the_limits_cases`) and `xtask/src/steps.rs` (the `exit_code` table, the
+4, in `exit_codes_with_the_limits_cases`; item 14's order, the removal before the bench and the
+write after the fuzz pass, with the bench's and fuzz pass's results handed to `summary`; and
+#352's case, a failed removal as its own entry when the write succeeds) and `xtask/src/steps.rs` (the `exit_code` table, the
 `JUDGE-INFRA-FAILURE` line, the log). The `issues` step (item 16): `xtask/src/nightly/issues/tests.rs`
 (the findings, the bodies, the fake `gh`'s repeat night and near misses, both caps, a `gh`
 failure mid-way, the night label, and the real runner with fake `gh` scripts: arguments,

@@ -638,9 +638,14 @@ trait Steps {
     fn results(&mut self, ran: &Ran, mem: bool) -> Step;
     /// Item 9: `regress-diff.json`.
     fn diff(&mut self, previous: &Previous, ran: &Ran) -> Step;
-    /// Items 12–14: the bench, the fuzz pass and `nightly.json`, one step until ADR 0013
-    /// task 2 (#361) splits it.
-    fn extra(&mut self, jobs: &[Job], mem: bool) -> Step;
+    /// Item 14: an earlier `nightly.json` removed (before the bench).
+    fn stale_summary(&mut self) -> Step;
+    /// Item 12: the bench on the first verified files (`Failed` only for status `failed`).
+    fn bench(&mut self, jobs: &[Job], mem: bool) -> (Step, extra::BenchResult);
+    /// Item 13: the extra fuzz pass (`Failed` only for status `failed`).
+    fn fuzz(&mut self) -> (Step, extra::FuzzResult);
+    /// Item 14: this night's `nightly.json` from the bench's and the fuzz pass's results.
+    fn summary(&mut self, bench: &extra::BenchResult, fuzz: &extra::FuzzResult) -> Step;
     /// Item 16: issues for the night's findings; `files` is `None` when the night stopped
     /// before the regress runs.
     fn issues(
@@ -711,7 +716,14 @@ fn sequence(s: &mut dyn Steps, log: &mut Log, night: &mut Night) -> Option<()> {
     // Item 12: a failed `regress.json` write stops the night; a failed diff doesn't.
     log.proceed("results", s.results(ran, mem)).then_some(())?;
     log.push("diff", s.diff(previous, ran));
-    log.push("extra", s.extra(&jobs, mem));
+    // Items 12–14: none of these stops the night; the removal comes before the bench and the
+    // write after the fuzz pass, each with its own outcome.
+    log.push("stale-summary", s.stale_summary());
+    let (benched, bench) = s.bench(&jobs, mem);
+    log.push("bench", benched);
+    let (fuzzed, fuzz) = s.fuzz();
+    log.push("fuzz", fuzzed);
+    log.push("summary", s.summary(&bench, &fuzz));
     Some(())
 }
 
@@ -872,26 +884,34 @@ impl Steps for Real<'_> {
         Step::Failed(e)
     }
 
-    fn extra(&mut self, jobs: &[Job], mem: bool) -> Step {
+    fn stale_summary(&mut self) -> Step {
+        extra::remove_summary(&self.opts.out)
+    }
+
+    fn bench(&mut self, jobs: &[Job], mem: bool) -> (Step, extra::BenchResult) {
         let root = self.root;
-        let failed = extra::run(
-            root,
+        let b = extra::run_bench(
             &self.opts.out,
             jobs,
             self.opts.bench_minutes,
-            self.opts.fuzz_seconds,
-            extra::Hooks {
-                build: &mut || crate::bench::build(root),
-                exec: &mut |bin, args, limit| exec(bin, mem, args, limit),
-                pass: &mut |secs| extra::real_pass(root, secs),
-            },
+            &mut || crate::bench::build(root),
+            &mut |bin, args, limit| exec(bin, mem, args, limit),
         );
-        // `extra::run`'s one `bool`, the fold ADR 0013 allows until task 2 (#361).
-        if failed {
-            Step::Failed("the bench, the fuzz pass or nightly.json failed (above)".into())
-        } else {
-            Step::Ok
-        }
+        eprintln!("{}", extra::bench_line(&b));
+        (extra::bench_outcome(&b), b)
+    }
+
+    fn fuzz(&mut self) -> (Step, extra::FuzzResult) {
+        let root = self.root;
+        let f = extra::run_fuzz(root, &self.opts.out, self.opts.fuzz_seconds, &mut |secs| {
+            extra::real_pass(root, secs)
+        });
+        eprintln!("{}", extra::fuzz_line(&f));
+        (extra::fuzz_outcome(&f), f)
+    }
+
+    fn summary(&mut self, bench: &extra::BenchResult, fuzz: &extra::FuzzResult) -> Step {
+        extra::write_summary(&self.opts.out, bench, fuzz, self.opts.bench_minutes)
     }
 
     fn issues(
