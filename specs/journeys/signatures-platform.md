@@ -589,9 +589,10 @@ typed permission errors → enter the owner password (J-RD-29) → both are enab
   being the tag's own or else its CLDR likely script: `vi-VN` is `vi`; `zh`, `zh-CN` and `zh-SG`
   are `zh-Hans`; `zh-TW`, `zh-HK`, `zh-Hant` and `zh-Hant-CN` match none. If none matches,
   English.
-- **Spot strings** (fixed, so a catalog can't pass by copying English): the File menu title is
-  "File", "Tệp", "ファイル", "文件", and the Open command is "Open", "Mở", "開く", "打开" (en, vi,
-  ja, zh-Hans).
+- **Spot strings** (fixed, so a catalog can't pass by copying English), two labels the app
+  draws itself on both platforms: the sidebar's Thumbnails tab is "Thumbnails", "Hình thu nhỏ",
+  "サムネイル", "缩略图", and the toolbar's Highlight tool is "Highlight", "Tô sáng",
+  "ハイライト", "高亮" (en, vi, ja, zh-Hans), compared exactly.
 
 ## J-PC-01: Unsaved changes when closing and quitting
 - milestone: M6
@@ -830,8 +831,10 @@ Steps: launch with the system (web: browser) locale `en-US` → Preferences > La
 Tiếng Việt, 日本語, 简体中文); on macOS a note under it says that system menus and dialogs
 change at the next launch → open `languages.pdf` (J-PC-09's fixture), go to page 2, set the
 zoom to 150%, add a highlight without saving; web: set a sentinel property on `window` →
-choose Tiếng Việt → the app's own text (the command registry's items, the sidebar, the
-inspector, Preferences) switches to Vietnamese at once, with no relaunch (macOS: the same
+choose Tiếng Việt → the app's own text (the command registry's items the app draws, the spot strings, the
+sidebar, the inspector, Preferences) switches to Vietnamese at once (on macOS the menu items the
+system supplies, the File menu's document commands among them, keep the launch language until
+the relaunch), with no relaunch (macOS: the same
 process) and no page reload (web: the sentinel is still set, and Playwright records no `load`
 or main-frame `framenavigated` event); web: `<html lang>` is `vi` → the document is still open
 on page 2 at 150%, the highlight is there, the document is marked edited, and Undo removes the
