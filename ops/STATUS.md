@@ -9,6 +9,8 @@ Phase: bootstrap (pilot)
   on), #391 (part 2, pending lesson files) and #392 (part 3, delete STATUS.md and its rules; its PR carries the "done:"
   for the owner comment). Rule a keeps picking the owner comment until part 3 merges. Follow-up #394 (R4.1, `Ops`).
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
+- #179 (owner-comment tracking, test step 3): the owner's `/approve` closed it (2026-11-27); `owner-todo` removed,
+  "done:" posted.
 - #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
   comments. Follow-up #377 (wording, `Ops`, without `ready`).
 - #302 (nightly 3/3 part 1, the `issues` step: limits cases, regress crashes and timeouts, regressions; `--file-issues`):
@@ -55,8 +57,6 @@ Phase: bootstrap (pilot)
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
-- #179: test step 3 of ops/proposals/owner-comment-tracking.md: the agent replied to both test comments on PR #318;
-  your check of the feed is left.
 - #176, #126: driver usage-limit pause; the Codex second-reviewer trial (live).
 - The security-gates proposal (AC.2, AS.56) needs an owner decision.
 - #208: owner fire-drill step left: the `/hold` re-run (#266's T1–T4 on PR #324 passed; check whether that covers it).
