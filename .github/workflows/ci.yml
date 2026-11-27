@@ -315,6 +315,7 @@ jobs:
     permissions:
       contents: read
       actions: write   # read baselines; delete the exam results artifact after grading
+      issues: read     # count open sev:* issues for the ADR 0009 gates (nightly)
     steps:
       - name: All upstream jobs must have succeeded (skipped/cancelled = fail; macOS only nightly)
         env:
@@ -390,6 +391,16 @@ jobs:
             corpus/exam
             ref/exam
           key: exam-${{ github.run_id }}
+      - name: Count open security issues (nightly)
+        if: always() && env.NIGHTLY == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh issue list --state open --limit 1000 --json number,labels > open-issues.json
+          python3 judge/ops/judge/sev_counts.py open-issues.json > sev-counts.json
       - name: Grade exam (aggregate only) and evaluate gates (nightly)
         if: always() && env.NIGHTLY == 'true'
         env:
@@ -399,7 +410,8 @@ jobs:
             --corpus corpus/exam --out exam-report || true
           fuzz=$(python3 -c "import json;print(json.load(open('exam-results/fuzz.json'))['result'])" 2>/dev/null || echo none)
           python3 judge/ops/judge/gate.py --smoke report/report.json --exam exam-report/report.json \
-            --repo pr --prev prev-gates/gates.json --fuzz "$fuzz" --selftest pass --out gates
+            --repo pr --prev prev-gates/gates.json --fuzz "$fuzz" --selftest pass \
+            --sev-counts sev-counts.json --out gates
           cat exam-report/summary.md gates/summary.md >> "$GITHUB_STEP_SUMMARY"
           # Seal the exam: per-file results never outlive grading (CONSTITUTION 13).
           for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" -q '.artifacts[] | select(.name=="results-exam") | .id'); do

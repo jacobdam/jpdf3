@@ -1,6 +1,7 @@
 # PROTECTED. Mechanical milestone exit criteria (AUTOMATION.md §9, PLAN.md §8).
 # Gates are cumulative: passing Mn requires every criterion of M0..Mn.
-# Metric prefixes: smoke_* (pdf.js corpus), exam_* (held-out corpus, aggregate only).
+# Metric prefixes: smoke_* (pdf.js corpus), exam_* (held-out corpus, aggregate only);
+# open_sev_* are open security issue counts from sev_counts.py (missing = fail).
 # Every gate also requires: judge self-test green, 0 crashes on smoke and exam, and every
 # non-superseded journey with milestone <= Mn passing.
 
@@ -18,7 +19,8 @@ max = { smoke_bench_ratio = 2.0 }
 [M3]   # text
 min = { smoke_text_f1 = 0.92, exam_text_f1 = 0.88 }
 
-[M4]   # engine API + reader apps: journeys only
+[M4]   # engine API + reader apps; owner preview: no open sev:critical/high (ADR 0009)
+max = { open_sev_critical = 0, open_sev_high = 0, open_sev_unlabeled = 0 }
 
 [M5]   # annotations + basic incremental save
 min = { smoke_probe_annotate = 0.95 }
@@ -38,4 +40,4 @@ min = { smoke_probe_sign = 0.95, smoke_probe_verify = 0.95 }
 
 [M10]  # hardening + 1.0
 min = { smoke_render_match = 0.97, exam_render_match = 0.95, fuzz_clean_nights = 30 }
-max = { smoke_bench_ratio = 1.5 }
+max = { smoke_bench_ratio = 1.5, open_sev_medium = 0 }

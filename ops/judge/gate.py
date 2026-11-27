@@ -2,7 +2,7 @@
 """Evaluate milestone gates from nightly judge reports. PROTECTED.
 
 usage: gate.py --smoke REPORT --exam REPORT --repo TREE [--prev GATES_JSON] [--fuzz clean|crash|none]
-               [--selftest pass|fail] --out DIR
+               [--selftest pass|fail] [--sev-counts FILE] --out DIR
 Writes DIR/gates.json and DIR/summary.md. Always exits 0 (a report, not a check),
 unless inputs are missing (infra).
 """
@@ -27,6 +27,7 @@ def main() -> None:
     ap.add_argument("--prev", type=Path)
     ap.add_argument("--fuzz", choices=["clean", "crash", "none"], default="none")
     ap.add_argument("--selftest", choices=["pass", "fail"], default="fail")
+    ap.add_argument("--sev-counts", type=Path)
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     smoke, exam = C.load(a.smoke), C.load(a.exam)
@@ -40,6 +41,14 @@ def main() -> None:
     m.update({f"exam_{k}": v for k, v in exam["metrics"].items()})
     m["fuzz_clean_nights"] = nights
     m["journeys"] = smoke["metrics"].get("journeys", 0)
+    # ADR 0009 gates. Missing, malformed or partial counts leave the metrics unset (fail closed).
+    try:
+        sev = C.load(a.sev_counts, {}) if a.sev_counts else {}
+    except (OSError, ValueError):
+        sev = {}
+    keys = ("open_sev_critical", "open_sev_high", "open_sev_medium", "open_sev_unlabeled")
+    if isinstance(sev, dict) and all(type(sev.get(k)) is int and sev[k] >= 0 for k in keys):
+        m.update({k: sev[k] for k in keys})
     flags = {
         "binary_present": smoke["metrics"].get("binary") == "present",
         "ui_spec_present": any((a.repo / "specs" / "ui").glob("*.md")) if (a.repo / "specs" / "ui").exists() else False,

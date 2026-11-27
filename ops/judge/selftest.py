@@ -101,6 +101,84 @@ def unit(tmp: Path) -> None:
                   '<testcase name="c"><flakyFailure/></testcase><testcase name="d"><skipped/></testcase></testsuite></testsuites>')
     expect(V.parse_junit(ju) == {"passed": 2, "failed": 1, "flaky": 1, "present": True}, "junit parsing")
     policy_unit(tmp)
+    gate_unit(tmp)
+
+
+SEV_KEYS = ("open_sev_critical", "open_sev_high", "open_sev_medium", "open_sev_unlabeled")
+
+
+def gate_unit(tmp: Path) -> None:
+    """ADR 0009 security gates (proposal security-gates-in-gate-tool.md, #402)."""
+    import tomllib
+    print("gate (ADR 0009 security gates):")
+    d = tmp / "gate"
+    (d / "repo" / "specs" / "ui").mkdir(parents=True)
+    (d / "repo" / "specs" / "ui" / "a.md").write_text("# ui\n")
+    # A synthetic report in which every metric of every gate passes, so the only failures are the new ones.
+    smoke = {"binary": "present", "crashes": 0}
+    exam = {"crashes": 0}
+    for g in tomllib.loads((HERE / "gates.toml").read_text()).values():
+        for kind, val in (("min", lambda v: max(v, 1.0)), ("max", lambda v: 0)):
+            for k, v in g.get(kind, {}).items():
+                for pre, rep in (("smoke_", smoke), ("exam_", exam)):
+                    if k.startswith(pre):
+                        rep[k[len(pre):]] = val(v)
+                if k == "journeys":
+                    smoke["journeys"] = v
+    C.dump(d / "smoke.json", {"metrics": smoke, "journeys": {}})
+    C.dump(d / "exam.json", {"metrics": exam})
+    C.dump(d / "prev.json", {"fuzz_clean_nights": 1000})
+
+    def run(content=None, arg=True, name="sev.json"):
+        out = d / "out"
+        shutil.rmtree(out, ignore_errors=True)
+        f = d / name
+        f.unlink(missing_ok=True)
+        if content is not None:
+            f.write_text(content if isinstance(content, str) else json.dumps(content))
+        cmd = [sys.executable, str(HERE / "gate.py"), "--smoke", str(d / "smoke.json"), "--exam", str(d / "exam.json"),
+               "--repo", str(d / "repo"), "--prev", str(d / "prev.json"), "--fuzz", "clean", "--selftest", "pass",
+               "--out", str(out)] + (["--sev-counts", str(f)] if arg else [])
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = C.load(out / "gates.json")
+        return r.returncode, ({g: v["failing"] for g, v in res["gates"].items()} if res else None)
+
+    zero = dict.fromkeys(SEV_KEYS, 0)
+    code, f = run(zero)
+    expect(code == 0 and f is not None and all(v == [] for v in f.values()), "gate: counts all 0, every gate passes (no failing criteria)")
+    for k in ("open_sev_critical", "open_sev_high", "open_sev_unlabeled"):
+        _, f = run({**zero, k: 1})
+        expect(f is not None and f["M4"] == [f"{k} = 1 > 0"] and f["M10"] == [], f"gate: {k} = 1 fails M4 exactly")
+    _, f = run({**zero, "open_sev_medium": 1})
+    expect(f is not None and not any("open_sev_" in s for s in f["M4"]) and f["M10"] == ["open_sev_medium = 1 > 0"],
+           "gate: open_sev_medium = 1 passes M4, fails M10 exactly")
+    want = [f"{k} = None > 0" for k in ("open_sev_critical", "open_sev_high", "open_sev_unlabeled")]
+    partial = dict(zero)
+    del partial["open_sev_medium"]
+    bad = [("no --sev-counts", None, False), ("a missing file", None, True), ("an empty file", "", True),
+           ("not JSON", "{", True), ("a JSON list", [], True), ('open_sev_high = ""', {**zero, "open_sev_high": ""}, True),
+           ("a negative count", {**zero, "open_sev_high": -1}, True), ("a boolean count", {**zero, "open_sev_high": True}, True),
+           ("a float count", {**zero, "open_sev_high": 0.0}, True), ("a missing key", partial, True)]
+    for what, content, arg in bad:
+        code, f = run(content, arg)
+        expect(code == 0 and f is not None and f["M4"] == want and f["M10"] == ["open_sev_medium = None > 0"],
+               f"gate: {what} fails closed (M4 {want[1]}), exits 0, gates.json written")
+    # sev_counts.py
+    def issue(n, *labels):
+        return {"number": n, "labels": [{"name": x} for x in labels]}
+    fx = [issue(1, "sev:high"), issue(2, "security"), issue(3, "security", "sev:high", "sev:medium"),
+          issue(4, "security", "sev:critical"), issue(5, "bug"), issue(6, "sev:low", "security")]
+    (d / "issues.json").write_text(json.dumps(fx))
+    r = subprocess.run([sys.executable, str(HERE / "sev_counts.py"), str(d / "issues.json")], capture_output=True, text=True)
+    got = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    expect(got == {"open_sev_critical": 1, "open_sev_high": 2, "open_sev_medium": 1, "open_sev_unlabeled": 2},
+           "sev_counts: by sev:* label alone; security with none or two sev:* labels is unlabeled")
+    (d / "many.json").write_text(json.dumps([issue(i) for i in range(1000)]))
+    r = subprocess.run([sys.executable, str(HERE / "sev_counts.py"), str(d / "many.json")], capture_output=True, text=True)
+    expect(r.returncode != 0 and r.stdout == "", "sev_counts: a list of 1000 (possibly truncated) exits non-zero, prints nothing")
+    (d / "999.json").write_text(json.dumps([issue(i) for i in range(999)]))
+    r = subprocess.run([sys.executable, str(HERE / "sev_counts.py"), str(d / "999.json")], capture_output=True, text=True)
+    expect(r.returncode == 0 and json.loads(r.stdout) == dict.fromkeys(SEV_KEYS, 0), "sev_counts: a list of 999 is counted")
 
 
 def policy_unit(tmp: Path) -> None:
