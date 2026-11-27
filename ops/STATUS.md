@@ -4,32 +4,31 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- main is green: ci run 45669593183 for 6daac8e (PR #349's merge) passed.
-- #301 (nightly 2/3) merged (PR #351); its R2.1 is #352 (no `ready`). Then #302 (part 3, files issues; depends on
-  #322) reads `nightly.json` and `limits.json` as well as `regress.json`.
-- #305 (dashboard 1/2): PR #354, `cargo xtask dashboard` writes the committed snapshot `ops/metrics/dashboard.json`
-  (the site's CI job has no token or history); 3 review rounds, `ai-review` success, auto-merge on. The page split
-  off as #353 (no `ready`; Depends on #305): finished work on branch `t/353-dashboard-page` (75d990f), merge
-  origin/main into it once #354 merges. #306 (judge metrics) follows #353.
-- Planner 2026-11-25 (PR #346): `ready` on #322, #323, #344; #302 now depends on #322; #345 filed
-  (`owner-todo`) for the owner to apply ops/proposals/driver-keep-open-worktrees.md (PR #343, #342).
-- Work mix 0 of 20: every open M0 issue is `xtask/`, `ops/` or owner work, so it rises only once M0 closes and M1
+- #373 (owner: a record-only update keeps a design PR's 24-hour window): PR #374 merged (4d56f1b); "done:" posted.
+- main: ci run 45972704663 for 4d56f1b was in progress at 09:22 UTC.
+- #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
+  #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
+- #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
+- #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
+  milestone-work issues are all closed.
+- #323 (nightly exec check): PR #364 merged (bc6c053).
+- #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
+  macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
+- ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
+  2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
+- Work mix 0 of 20: after #306 no open M0 issue counts as milestone work; the mix rises once M0 closes and M1
   opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
   and PLAN §8's pilot fire drill (#21, owner steps #208) is still open.
 - #187 part 2: #231 (sev:high, M2, `deferred`). #236 (memory ADR, `deferred`) is the first design queue item; #146
   stays `deferred`.
-- Design #357 (nightly steps): PR #359, ADR 0013 and principle P4 (one driver per multi-step xtask tool, per-step
-  `Outcome`s, exit code from the log); 2 review rounds, `ai-review` success, in its 24-hour `/hold` window
-  (`owner-todo` on #357); then `worker design-window #359`. Its tasks fold #350 and #352 (closed); #302 depends on task 1.
-- #25 (PR #349, merged): `cargo xtask limits`, run by the nightly (exit 4 on a failed case). Its deferral #350 is folded into ADR 0013's task 1.
-- #21 waits on #19 (#301–#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
+- #21 waits on #19 (#302) and the owner's drills (#208); AC.4 goes into docs/retros/0000-pilot.md with them.
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule i, the next lowest M0 `ready` issue with its dependencies
-   closed (#322 or #323), else `idle` today (the Planner ran).
+0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` or `#347` once its window
+   passes, then rule i (#303, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -41,8 +40,6 @@ Phase: bootstrap (pilot)
   #263; low #83, #122, #132, #134, #136, #137, #166, #193, #203, #218, #262.
 
 ## Blockers / owner-todo
-- #345: applied in the owner's PR #355 (auto-merge on); after it merges, `ops/driver/driver.sh --pilot` on the Mac
-  mini and `grep "keeping worktree" ops/logs/driver.log`.
 - #257: drop the Playwright cache step in ci.yml (protected).
 - #263: decide the two owner-feed rules (edited review bodies; what an endorsing comment pins).
 - #196: applied on main (5fdb119, T1–T2 pass); the machine-specific Homebrew tests on the Mac mini are left.
@@ -55,4 +52,7 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-(none)
+- A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant ([journal](journal/2026-11-27/0901-373-design-window.md)).
+- A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
+  call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
+  in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).

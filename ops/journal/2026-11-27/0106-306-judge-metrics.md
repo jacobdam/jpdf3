@@ -1,0 +1,9 @@
+## 01:06 UTC #306 Dashboard 2/2: judge product metrics and their weekly trend
+- Session: worker ready #306
+- Picked: rule i because #306 was the lowest-numbered ready M0 issue with its dependencies closed (#353 merged in PR #368 at 01:06); no ready product issue, so the work-mix order didn't apply. The first `cargo xtask next-session` run failed on a `gh` network timeout (exit 2); the rerun printed this pick.
+- Did: PR #370 (strict lane). The deployed `site/judge/` holds only the push run's smoke `report/report.json` (the `pages` job runs on pushes, and push runs have no gates or exam report), so the page reads that report live (smoke metrics, journeys passing per milestone) and `cargo xtask dashboard` builds the weekly trend from the nightly `gates-report` artifacts (`schedule` and `workflow_dispatch` runs, 90-day retention, six `smoke_*` aggregates only, CONSTITUTION 13) into the snapshot's new `judge` field. specs/tooling/dashboard.md updated; `ops/metrics/dashboard.json` regenerated live (two weeks of nightlies, ten `null`). Filed #371 (R2.2, `Ops`). LESSONS: a Judge & CI entry on reading judge outputs. Removed the merged worktree `353-page` (the brief's note).
+- Result: `ai-review` success posted on this commit, auto-merge on. Local: workspace clippy clean, nextest 635 passed, Playwright dashboard suite 55 passed, typecheck and lint clean.
+- Cost: about 55% of the context; review rounds 4/4 plus a clean final check (round 5); regraded 0, overturned 0; deferred: #371
+- Codex: skipped (no `crates/` or `tools/` path)
+- Lesson: the round 1 majors came from reading one downloaded artifact instead of verdict.py: `pass: None` for a platform without results, and nightlies on `workflow_dispatch` (LESSONS, Judge & CI). A cap test built from invalid input passes on the parse error (R2.1).
+- Ignored: none

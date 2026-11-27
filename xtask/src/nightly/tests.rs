@@ -365,7 +365,7 @@ fn fake_cli(dir: &Path) -> PathBuf {
          info:) echo '{\"pages\": 1}'; exit 0;;\n\
          render:1) exit 3;;\n\
          render:2) echo 'page 2 of 1' >&2; exit 2;;\n\
-         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; exit 101;;\n\
+         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; echo 'panicked: tail' >&2; exit 101;;\n\
          text:2) kill -s ABRT $$;;\n\
          ulimit:) ulimit -v; exit 0;;\n\
          esac\n\
@@ -426,6 +426,13 @@ fn real_runs_are_classified_with_exit_signal_and_stderr() {
             ("crash", None, Some(6), Some(0)),
         ]
     );
+    // The kept 4096 bytes are the tail: the panic line after 5000 bytes of log (item 5).
+    let crash = files[0].runs.as_ref().unwrap()[3]
+        .stderr
+        .as_deref()
+        .unwrap();
+    assert!(crash.ends_with("xpanicked: tail\n"), "{crash:?}");
+    assert_eq!(crash.len(), 4096);
     // A hang past the limit is a timeout, with no exit code or signal.
     let o = exec(
         Path::new("/bin/sh"),
@@ -936,5 +943,45 @@ fn only_an_executable_cli_is_accepted() {
     std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o100)).unwrap();
     assert!(is_executable_file(&f), "owner execute bit alone");
     assert!(!is_executable_file(&d), "a directory");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// #323: the execute bit must be one the runner's class can use. The test owns the file, so
+/// the kernel checks only the owner bits: 0o610 (group x) and 0o601 (other x) can't be
+/// exec'd, though `mode & 0o111` is set. Root may exec a file with any execute bit, so the
+/// oracle is what `/bin/sh` makes of the file, and the fixed answers hold for a non-root run
+/// (so a root-only runner checks agreement with exec, not the #323 table). Only the owner
+/// class is covered: the test can't create a file owned by another user, so an owner-bit-only
+/// check (`mode & 0o100`) would still pass here (R1.1 of PR #364).
+#[cfg(unix)]
+#[test]
+fn only_a_cli_the_runner_can_exec_is_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = scratch("exe-class");
+    let f = d.join("jpdf-cli");
+    std::fs::write(&f, "#!/bin/sh\nexit 0\n").unwrap();
+    let uid = Command::new("id").arg("-u").output().unwrap();
+    let root = String::from_utf8_lossy(&uid.stdout).trim() == "0";
+    for (mode, non_root) in [
+        (0o610, false),
+        (0o601, false),
+        (0o611, false),
+        (0o500, true),
+        (0o710, true),
+        (0o755, true),
+    ] {
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(mode)).unwrap();
+        let st = Command::new("/bin/sh")
+            .args(["-c", "exec \"$0\""])
+            .arg(&f)
+            .status()
+            .unwrap();
+        let execs = st.code() != Some(126);
+        assert_eq!(is_executable_file(&f), execs, "mode {mode:o}: matches exec");
+        if !root {
+            assert_eq!(execs, non_root, "mode {mode:o}: exec as the owner");
+            assert_eq!(is_executable_file(&f), non_root, "mode {mode:o}");
+        }
+    }
     std::fs::remove_dir_all(&d).unwrap();
 }

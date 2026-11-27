@@ -91,15 +91,17 @@ for, applies the `-q` filter, marks fork PRs
 | no open PRs: every old one removed | ok | ok |
 | open PRs `t/1`, `t/13-nopr`, `t/12-open-x`: those stay, `t/12-open` goes | ok | FAIL |
 | 31 open PRs, `t/12-open` last: `open` stays | ok | FAIL (`open` deleted) |
+| 200 open PRs, `t/12-open` last: `open` stays | ok | FAIL (`open` deleted) |
+| 201 open PRs, `t/12-open` last (past the 200 read): `open` goes | ok | ok |
 | open PR `t/12-open` and a fork's PR on `t/13-nopr`: `t/13-nopr` goes | ok | FAIL (`open` deleted) |
 | `git worktree prune` ran (no prunable entries) | ok | ok |
 
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
 `-x`), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
 detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
-`--state all`, `--limit 1`, `--limit 30` or no `--limit`, dropping the fork filter or its
-`isCrossRepository` field, and `-mtime +0`, `+1` or `+3` for `+2`. A `--limit` from 31 to 199
-still passes (#344).
+`--state all`, `--limit 1`, `--limit 30`, `--limit 199`, `--limit 201` or no `--limit` (any
+`--limit` but 200 fails the 200 or the 201 case, #344), dropping the fork filter or its
+`isCrossRepository` field, and `-mtime +0`, `+1` or `+3` for `+2`.
 
 After applying: `ops/driver/driver.sh --pilot`, then `grep 'keeping worktree' ops/logs/driver.log`
 lists the open PRs' worktrees older than 2 days, if any.

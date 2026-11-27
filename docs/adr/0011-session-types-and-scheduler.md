@@ -250,7 +250,9 @@ records).
 - `docs/PRODUCT.md` v1 needs the owner's explicit approval (an owner comment), with no timeout.
   Later `PRODUCT.md` changes and design ADRs get `owner-todo` and merge after 24 hours unless the
   owner comments `/hold`. The 24 hours start at the latest of: the PR marked ready, its last
-  `ai-review` success, and the owner's last `/release`. The first session that sees the window
+  `ai-review` success, and the owner's last `/release`. That success counts from the triage
+  comment it links, so one re-posted after a record-only update (record commits, merges of
+  origin/main whose remerge-diff is empty or touches only record paths) keeps the start (#373). The first session that sees the window
   passed with `ai-review` success on the head and no `/hold` after the last `/release` enables
   auto-merge and removes `owner-todo` (precedence step 3).
 - Only scope, taste or money questions go to the owner. Technical questions go to design.

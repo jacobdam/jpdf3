@@ -185,7 +185,7 @@ pub fn run_bench(out: &Path, jobs: &[Job], minutes: u64, build: Build, exec: Exe
         && !o.stderr.is_empty()
     {
         eprintln!(
-            "xtask: nightly: bench stderr (first 4 KiB):\n{}",
+            "xtask: nightly: bench stderr (last 4 KiB):\n{}",
             String::from_utf8_lossy(&o.stderr)
         );
     }

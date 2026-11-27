@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use jpdf_bench::engine::{self, Outcome, Status};
+use jpdf_bench::engine::{self, Keep, Outcome, Status};
 use jpdf_corpus::{Tier, fetch, manifest};
 use jpdf_testgen::json::{self, Value};
 
@@ -26,7 +26,7 @@ const MEM_PROBE: &str = "ulimit -v 2097152 && ulimit -v";
 /// Sets the limit, then becomes `jpdf-cli` (`$0`) with its arguments (`$@`), never
 /// interpolated. A failed `ulimit` exits 125: a crash, never a run without the limit.
 const MEM_WRAPPER: &str = "ulimit -v 2097152 || exit 125; exec \"$0\" \"$@\"";
-/// stderr bytes kept per run.
+/// stderr bytes kept per run: the last ones (spec item 5).
 const STDERR_CAP: u64 = 4096;
 /// Largest previous results file read.
 const MAX_PREVIOUS: u64 = 64 * 1024 * 1024;
@@ -269,9 +269,9 @@ pub(crate) fn exec(cli: &Path, mem: bool, args: &[OsString], limit: Duration) ->
     if mem {
         let mut a: Vec<OsString> = vec!["-c".into(), MEM_WRAPPER.into(), cli.into()];
         a.extend_from_slice(args);
-        engine::run_child(Path::new("/bin/sh"), &a, limit, STDERR_CAP)
+        engine::run_child(Path::new("/bin/sh"), &a, limit, STDERR_CAP, Keep::Tail)
     } else {
-        engine::run_child(cli, args, limit, STDERR_CAP)
+        engine::run_child(cli, args, limit, STDERR_CAP, Keep::Tail)
     }
 }
 
@@ -763,14 +763,27 @@ pub(crate) fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, S
     Ok(false)
 }
 
-/// A regular file with an execute bit set (unix). Through the memory wrapper `/bin/sh`
+/// A regular file that this process may execute (unix). Through the memory wrapper `/bin/sh`
 /// always starts, so a `jpdf-cli` it can't exec would look like a crash (126) per run: it is
-/// refused before the runs instead (spec item 10).
+/// refused before the runs instead (spec item 10). The execute bit alone isn't enough: the
+/// kernel checks only the caller's class (owner, else group, else other), so a runner-owned
+/// file with mode 0o610 or 0o601 can't be exec'd (#323). The shell's `test -x` applies the same
+/// permission rule for the effective ids (POSIX `test`; for root, any execute bit), with no new
+/// crate. Some shells decide it from `stat` rather than the kernel, so ACLs or a `noexec` mount
+/// may not be seen. A shell that can't start counts as "not executable", so the nightly stops
+/// with a tool failure.
 pub(crate) fn is_executable_file(p: &Path) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        std::fs::metadata(p).is_ok_and(|m| m.is_file())
+            && std::process::Command::new("/bin/sh")
+                .args(["-c", "test -x \"$0\""])
+                .arg(p)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|st| st.success())
     }
     #[cfg(not(unix))]
     {
