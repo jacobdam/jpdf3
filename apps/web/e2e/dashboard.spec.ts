@@ -129,10 +129,21 @@ function report(over: Record<string, unknown> = {}): Record<string, unknown> {
       "J-ANN-03": { milestone: "M5", pass: true, superseded: true },
       "J-PC-01": { milestone: "M10", pass: false, superseded: false },
       "J-PC-02": { milestone: "M1", pass: true, superseded: false },
+      // Unknown (no macOS results in a push run): counted, not passing.
+      "J-PC-03": { milestone: "M1", pass: null, superseded: false },
       "J-X-01": { milestone: "Later", pass: false, superseded: false },
     },
     ...over,
   };
+}
+
+/** The report padded with an extra string field to exactly `length` characters. */
+function padded(length: number): string {
+  const base = JSON.stringify(report());
+  const pad = length - base.length - '"pad": "",'.length;
+  const body = base.replace("{", `{"pad": "${"x".repeat(pad)}",`);
+  if (body.length !== length) throw new Error(`padded: ${body.length} != ${length}`);
+  return body;
 }
 
 async function serveReport(page: Page, body: unknown, status = 200): Promise<void> {
@@ -387,6 +398,10 @@ for (const [name, body] of [
   ["a judge rate past 1", withJudgeWeek({ open_rate: 1.5 })],
   ["a negative judge rate", withJudgeWeek({ render_match: -0.1 })],
   ["a fractional judge run", withJudgeWeek({ run: 1.5 })],
+  ["a negative judge crash count", withJudgeWeek({ crashes: -1 })],
+  ["a fractional judge journeys passing count", withJudgeWeek({ journeys_passing: 1.5 })],
+  ["a judge journeys count that is text", withJudgeWeek({ journeys: "129" })],
+  ["a judge rate that is text", withJudgeWeek({ text_f1: "0.5" })],
   ["a judge day that isn't a date", withJudgeWeek({ day: "today" })],
   ["a judge field that is an array", snapshot({ judge: [] })],
 ] as const) {
@@ -483,7 +498,7 @@ test("the latest judge report shows its smoke metrics and journeys per milestone
     .getByRole("row")
     .allTextContents();
   // M1, M5, M10 by number, then other titles; the superseded J-ANN-03 isn't counted.
-  expect(rows).toEqual(["MilestonePassingJourneys", "M111", "M512", "M1001", "Later01"]);
+  expect(rows).toEqual(["MilestonePassingJourneys", "M112", "M512", "M1001", "Later01"]);
 });
 
 for (const [name, body, status, message] of [
@@ -514,8 +529,26 @@ for (const [name, body, status, message] of [
   ],
   ["text that isn't JSON", "{", 200, "Invalid: the judge report doesn't have the expected format."],
   [
-    "a body over 4 MiB",
-    JSON.stringify(report()).replace("{", `{"pad": "${"x".repeat(4 * 1024 * 1024)}",`),
+    "a milestone that isn't text",
+    report({ journeys: { "J-1": { milestone: 5, pass: true, superseded: false } } }),
+    200,
+    "Invalid: the judge report doesn't have the expected format.",
+  ],
+  [
+    "a superseded flag that isn't a boolean",
+    report({ journeys: { "J-1": { milestone: "M1", pass: true, superseded: null } } }),
+    200,
+    "Invalid: the judge report doesn't have the expected format.",
+  ],
+  [
+    "a pass that is text",
+    report({ journeys: { "J-1": { milestone: "M1", pass: "yes", superseded: false } } }),
+    200,
+    "Invalid: the judge report doesn't have the expected format.",
+  ],
+  [
+    "a body of 4 MiB + 1",
+    padded(4 * 1024 * 1024 + 1),
     200,
     "Invalid: the judge report doesn't have the expected format.",
   ],
@@ -536,11 +569,7 @@ for (const [name, body, status, message] of [
 }
 
 test("a judge report of exactly 4 MiB is read", async ({ page }) => {
-  const base = JSON.stringify(report());
-  const pad = 4 * 1024 * 1024 - base.length - '"pad": "",'.length;
-  const body = base.replace("{", `{"pad": "${"x".repeat(pad)}",`);
-  expect(body.length).toBe(4 * 1024 * 1024);
-  await serveReport(page, body);
+  await serveReport(page, padded(4 * 1024 * 1024));
   await serve(page, snapshot());
   await page.goto("./dashboard/");
   await expect(page.getByRole("table", { name: "Smoke corpus, latest run" })).toBeVisible();

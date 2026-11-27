@@ -46,16 +46,20 @@ Read-only commands, run from the current directory (the repo root):
   → `issues.json`.
 - `git log --first-parent --diff-filter=A --name-only --format=@@%ct%x09%s origin/main -- ops/journal/`
   → `journal-log.txt` (the local `origin/main`, so `git fetch` first).
-- `gh run list --workflow ci.yml --event schedule --branch main --status completed --limit 200 --json databaseId,createdAt`
-  → `nightly-runs.json` (`NIGHTLY_LIMIT`, 200: about 28 weeks of daily nightlies, newest first).
+- For each nightly event, `schedule` and `workflow_dispatch` (`NIGHTLY_EVENTS`: the events
+  `.github/workflows/ci.yml` runs as `NIGHTLY`, so a manual rerun counts):
+  `gh run list --workflow ci.yml --event <event> --branch main --status completed --limit 200 --json databaseId,createdAt`
+  → `runs-<event>.json` (`NIGHTLY_LIMIT`, 200: about 28 weeks of daily nightlies, newest
+  first). The two lists are merged before the runs are chosen.
 - For each week, its nightly runs newest first (`createdAt` UTC day in the week; ties by the
   larger `databaseId`), at most 7 (`MAX_NIGHTLY_TRIES`): `gh run download <id> -n gates-report
   -D <repo>/target/dashboard-gates/<id>` until one succeeds, then `gates.json` from that
   directory → `gates-<id>.json`. A failed download (the artifact expired, the gate step didn't
   run, or a network error) prints `dashboard: run <id>: no gates-report (<first line of the error>)`
   on stderr and tries the next run; the directory `target/dashboard-gates/` is removed before
-  and after. With `--from`, `nightly-runs.json` is optional (missing → the history's source is
-  `missing`), and a missing `gates-<id>.json` is a failed download.
+  and after, after an error too. With `--from`, each `runs-<event>.json` is optional (both
+  missing → the history's source is `missing`), and a missing `gates-<id>.json` is a failed
+  download; a present one is read with the same checks and cap as a downloaded `gates.json`.
 - the driver's session index, `--index FILE` (default `ops/logs/index.tsv`; with `--from`,
   `DIR/index.tsv`). Missing → no session data.
 
@@ -99,11 +103,11 @@ every file but the index must exist. Live runs don't save their inputs.
   `journeys_passing`, `journeys` (`smoke_crashes`, `smoke_journeys_passing`, `smoke_journeys`:
   counts). A key that is absent or `null` in `gates.json` (an older `gate.py`, a metric the
   judge couldn't measure) is `null`, never 0; every value is `null` in a week with `run`
-  `null`. `source` is `missing` (every week `null`) only for a `--from` directory without
-  `nightly-runs.json`. A snapshot written before #306 has no `judge` field; the page treats
+  `null`. `source` is `missing` (every week `null`) only for a `--from` directory with
+  neither `runs-<event>.json`. A snapshot written before #306 has no `judge` field; the page treats
   that as `missing` too.
 - `truncated`: the names of the lists that returned exactly their limit (`prs-<monday>` or
-  `issues` at 1000, `nightly-runs` at 200), which may be cut off. The page shows a warning listing them.
+  `issues` at 1000, `runs-schedule` or `runs-workflow_dispatch` at 200), which may be cut off. The page shows a warning listing them.
 - `malformed_index_rows`: index rows metrics would skip as malformed (0 without an index).
 
 Strings are escaped as in metrics.json (the shared `json_str`).
@@ -138,8 +142,10 @@ anything else makes the whole snapshot invalid, as for the other fields.
 *Judge metrics, latest main run* reads `../judge/report/report.json` (the deployed judge
 report of the newest push to main). It accepts only an object with `tier` `smoke`, a `metrics`
 object whose `open_rate`, `render_match`, `text_f1` are numbers from 0 to 1 or `null` and whose
-`crashes` is a count, and a `journeys` object whose every value has a string `milestone` and
-booleans `pass` and `superseded`; a response over 4 MiB (4 194 304 UTF-16 code units of text)
+`crashes` is a count, and a `journeys` object whose every value has a string `milestone`, a
+boolean `superseded` and a `pass` that is a boolean or `null` (verdict.py's "unknown": a
+platform with no e2e results in that run, as in a push run whose macOS job didn't finish; like
+the judge's `journeys_passing`, only `true` counts as passing); a response over 4 MiB (4 194 304 UTF-16 code units of text)
 is not parsed. It shows a table *Smoke corpus, latest run* (Metric, Value: open rate, render
 match, text F1, crashes; `null` as `missing`) and a table *Journeys passing per milestone*
 (Milestone, Passing, Journeys), counting journeys that aren't superseded, `M<n>` by number
@@ -164,9 +170,10 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
   metrics parses them), a `journal-log.txt` header line isn't `@@<digits>\t<subject>`, or the
   output can't be written. A `milestone` that isn't an object with a string `title` counts as no
   milestone.
-- `cargo xtask dashboard`, judge history: exit 1 when `nightly-runs.json` doesn't parse or an
+- `cargo xtask dashboard`, judge history: exit 1 when a `runs-<event>.json` doesn't parse or an
   entry lacks `databaseId` or a `createdAt` timestamp; when a downloaded artifact has no
-  `gates.json`, it is not a regular file or it is larger than 1 MiB (`MAX_GATES_BYTES`); or when
+  `gates.json` (a `--from` file that is present: the same checks), it is not a regular file
+  or it is larger than 1 MiB (`MAX_GATES_BYTES`); or when
   a `gates.json` doesn't parse, has no `metrics` object, or has one of the six keys with
   another type (a rate outside 0..1 or not finite, a count that isn't a non-negative integer).
   A failed download is not an error (see Snapshot inputs).
@@ -211,10 +218,11 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
   the judge already publishes on the site. Neither reads exam results per file.
 - **Downloads**: `gh run download` writes only under `<repo>/target/dashboard-gates/<id>`, a
   directory removed first, so a stale or planted file there can't be read as a run's report;
-  the file read is `gates.json` in it, checked to be a regular file (not a symlink) and size-
-  capped before reading.
-- **Commands**: fixed argument lists, no shell; the only interpolated values are validated
-  dates.
+  the file read is `gates.json` in it, checked to be a regular file (not a symlink) by path
+  and again on the opened file, and size-capped while reading.
+- **Commands**: fixed argument lists, no shell; the interpolated values are validated dates,
+  the fixed event names, and for `gh run download` a run id (a `u64` parsed from the run list)
+  and the directory built from it, each one argv entry.
 - Self-check:
   - Arithmetic: above (Limits).
   - What broken implementation still passes? A snapshot that counts every PR in every week:
@@ -255,7 +263,10 @@ checked by the Playwright test from computed colors. Headings are in order (h1, 
 The snapshot: any machine with `gh` and `git` (a session's). The page: web (GitHub Pages).
 
 ## Performance
-Thirteen `gh` calls and one `git log`, about 20 s live (2026-11-25). The page: not measured
+Fifteen `gh` list calls (twelve weeks of PRs, the issues, two nightly run lists), one
+`git log`, and one `gh run download` per week that has a nightly run (more after a failed
+download, at most 84). The lists took about 20 s on 2026-11-25; the run with downloads (two
+weeks of nightlies on 2026-11-27) was not timed. The page: not measured
 (twelve bars per chart, at most 1000 table rows).
 
 ## Tests
@@ -268,10 +279,11 @@ a regular file, no snapshot).
 - `xtask/src/dashboard.rs` judge history tests: run choice per week (newest first, ties by
   id, the 7-run cap, runs outside every week and after `--until` ignored), a failed download
   falling back to the next run, missing keys as `null`, `smoke_*` not `exam_*`, bad
-  `gates.json` shapes (no `metrics`, a rate 1.5, -0.1 or 1e400 (not finite), a count -1, 1.5 or `true`), the 1 MiB
-  read cap, `nightly-runs` truncation at 199/200, a `--from` run without `nightly-runs.json`
-  (`source` `missing`) and with a partial history, and the pinned `gh run list` and
-  `gh run download` arguments.
+  `gates.json` shapes (no `metrics`, a rate 1.5, -0.1 or 1e400 (not finite), a count -1,
+  1.5 or `true`), the 1 MiB read cap (also for a `--from` file), missing versus bad files,
+  `runs-schedule` truncation at 199/200, a `--from` run without run lists (`source`
+  `missing`), with a partial history and with a dispatched nightly, and the pinned
+  `gh run list` (both events) and `gh run download` arguments.
 - `apps/web/scripts/licenses.test.mjs`: the license check follows the dashboard page (the one
   allowed Vite `input`, specs/tooling/licenses.md item 5) and still refuses any other `input`.
 - `apps/web/e2e/dashboard.spec.ts` (Playwright, no journey ID: the run as a whole still fails
@@ -282,10 +294,15 @@ a regular file, no snapshot).
   thirteen weeks, a repeated start; a histogram with three objects, a repeated `entries`, an
   `entries` past 4 and a fractional count; a `null` blocked age; a milestone forecast that isn't
   a date and a fractional count; in `judge` an unknown source, eleven weeks, a `start` that
-  differs from `weeks`, a rate 1.5 and a fractional `run`) and a 404, the judge history (full,
+  differs from `weeks`, a rate 1.5 or −0.1 or text, a fractional `run`, a
+  negative `crashes`, a fractional `journeys_passing`, a `journeys` that is text, a `day` that
+  isn't a date, an array) and a 404, the judge history (full,
   partial with `missing` bars, absent, `source` `missing`), the latest judge report (metrics,
   journeys per milestone with a superseded journey left out, a `null` rate as `missing`, a 404,
-  an invalid report: wrong tier, a rate 1.5, a journey without `pass`, a body over 4 MiB), the committed `ops/metrics/dashboard.json`
+  a journey with `pass` `null` counted as not passing, an invalid report: wrong tier, a rate
+1.5, a negative crash count, a journey without `pass`, a `pass` that is text, a milestone
+that isn't text, a `superseded` that isn't a boolean, text that isn't JSON, a body of exactly
+4 MiB read and one of 4 MiB + 1 refused), the committed `ops/metrics/dashboard.json`
   rendering without the invalid state (so the writer and the validator agree), contrast in
   light and dark mode, and the shared fixture checks (no console errors, CSP violations or
   foreign requests).

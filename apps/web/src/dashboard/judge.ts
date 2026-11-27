@@ -50,7 +50,9 @@ export function parseReport(body: string): JudgeReport | null {
     for (const j of Object.values(obj(o.journeys))) {
       const x = obj(j);
       const title = text(x.milestone);
-      const pass = boolean(x.pass);
+      // verdict.py writes null ("unknown") when a platform had no e2e results in the run;
+      // like its journeys_passing, only true counts as passing.
+      const pass = x.pass === null ? false : boolean(x.pass);
       if (boolean(x.superseded)) continue;
       const c = counts.get(title) ?? { title, passing: 0, journeys: 0 };
       c.journeys += 1;

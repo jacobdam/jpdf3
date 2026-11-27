@@ -109,11 +109,24 @@ pub const JOURNAL_LOG_ARGS: &[&str] = &[
     "ops/journal/",
 ];
 
-/// The gh arguments for the nightly runs (no spaces inside an argument).
-pub fn nightly_runs_args() -> String {
+/// The events whose `ci` runs are nightlies (`.github/workflows/ci.yml`'s `NIGHTLY`).
+pub const NIGHTLY_EVENTS: [&str; 2] = ["schedule", "workflow_dispatch"];
+
+/// The gh arguments for one event's nightly runs (no spaces inside an argument).
+pub fn nightly_runs_args(event: &str) -> String {
     format!(
-        "run list --workflow ci.yml --event schedule --branch main --status completed --limit {NIGHTLY_LIMIT} --json databaseId,createdAt"
+        "run list --workflow ci.yml --event {event} --branch main --status completed --limit {NIGHTLY_LIMIT} --json databaseId,createdAt"
     )
+}
+
+/// Every listed nightly run, from the `(name, text)` lists.
+fn nightly_runs(lists: &[(String, String)]) -> Result<Vec<Value>, String> {
+    let mut all = Vec::new();
+    for (name, text) in lists {
+        let list = parse_list(text, name)?;
+        all.extend(array(&list, name)?.iter().cloned());
+    }
+    Ok(all)
 }
 
 /// The gh arguments that download one run's `gates-report` artifact into `dir`.
@@ -139,8 +152,9 @@ pub struct Inputs {
     pub issues: String,
     pub journal_log: String,
     pub index_tsv: Option<String>,
-    /// `nightly-runs.json`; `None` only for a `--from` directory without it.
-    pub nightly_runs: Option<String>,
+    /// `(file name, text)` of each `runs-<event>.json`; `None` only for a `--from` directory
+    /// with neither file.
+    pub nightly_runs: Option<Vec<(String, String)>>,
     /// `gates.json` text by run id, for the runs whose download succeeded.
     pub gates: BTreeMap<u64, String>,
 }
@@ -228,11 +242,11 @@ pub fn gate_metrics(text: &str, what: &str) -> Result<JudgeWeek, String> {
 
 /// The judge history: per week, the newest run whose `gates.json` is in `inp.gates`.
 fn judge_history(inp: &Inputs, weeks: &[(i64, i64)]) -> Result<Option<Vec<JudgeWeek>>, String> {
-    let Some(text) = &inp.nightly_runs else {
+    let Some(lists) = &inp.nightly_runs else {
         return Ok(None);
     };
-    let list = parse_list(text, "nightly-runs.json")?;
-    let runs = array(&list, "nightly-runs.json")?;
+    let all = nightly_runs(lists)?;
+    let runs = all.as_slice();
     let days: BTreeMap<u64, i64> = runs
         .iter()
         .map(|r| {
@@ -474,11 +488,10 @@ pub fn compute(inp: &Inputs, until: i64, generated: i64) -> Result<Snapshot, Str
     if issues.len() >= LIST_LIMIT {
         truncated.push("issues".to_owned());
     }
-    if let Some(text) = &inp.nightly_runs
-        && array(&parse_list(text, "nightly-runs.json")?, "nightly-runs.json")?.len()
-            >= NIGHTLY_LIMIT
-    {
-        truncated.push("nightly-runs".to_owned());
+    for (name, text) in inp.nightly_runs.iter().flatten() {
+        if array(&parse_list(text, name)?, name)?.len() >= NIGHTLY_LIMIT {
+            truncated.push(name.trim_end_matches(".json").to_owned());
+        }
     }
     let mut blocked = Vec::new();
     for issue in issues {
@@ -679,33 +692,31 @@ pub fn inputs(repo: &Path, opts: &Options, until: i64) -> Result<Inputs, String>
         (Some(dir), None) => read_optional(&dir.join("index.tsv"))?,
         (None, None) => read_optional(&repo.join("ops/logs/index.tsv"))?,
     };
-    let nightly_runs = match from {
-        Some(dir) => read_optional(&dir.join("nightly-runs.json"))?,
-        None => Some(gh(&nightly_runs_args())?),
-    };
+    let mut lists = Vec::new();
+    for event in NIGHTLY_EVENTS {
+        let name = format!("runs-{event}.json");
+        let text = match from {
+            Some(dir) => read_optional(&dir.join(&name))?,
+            None => Some(gh(&nightly_runs_args(event))?),
+        };
+        if let Some(t) = text {
+            lists.push((name, t));
+        }
+    }
+    let nightly_runs = (!lists.is_empty()).then_some(lists);
     let mut gates = BTreeMap::new();
-    if let Some(text) = &nightly_runs {
-        let list = parse_list(text, "nightly-runs.json")?;
-        let ids = candidates(array(&list, "nightly-runs.json")?, &weeks(until))?;
+    if let Some(lists) = &nightly_runs {
+        let ids = candidates(&self::nightly_runs(lists)?, &weeks(until))?;
         let scratch = repo.join(GATES_DIR);
         if from.is_none() {
             remove_tree(&scratch)?;
         }
-        for week in ids {
-            for id in week {
-                let got = match from {
-                    Some(dir) => read_optional(&dir.join(format!("gates-{id}.json")))?,
-                    None => download(&scratch, id)?,
-                };
-                if let Some(t) = got {
-                    gates.insert(id, t);
-                    break;
-                }
-            }
-        }
+        // The tree is removed after an error too (a bad artifact), then the error returned.
+        let fetched = fetch_gates(from, &scratch, ids, &mut gates);
         if from.is_none() {
             remove_tree(&scratch)?;
         }
+        fetched?;
     }
     Ok(Inputs {
         prs,
@@ -715,6 +726,33 @@ pub fn inputs(repo: &Path, opts: &Options, until: i64) -> Result<Inputs, String>
         nightly_runs,
         gates,
     })
+}
+
+/// For each week, the first candidate whose `gates.json` can be had: read from `--from`
+/// (`gates-<id>.json`, a missing file counting as a failed download) or downloaded.
+fn fetch_gates(
+    from: Option<&Path>,
+    scratch: &Path,
+    ids: Vec<Vec<u64>>,
+    gates: &mut BTreeMap<u64, String>,
+) -> Result<(), String> {
+    for week in ids {
+        for id in week {
+            let got = match from {
+                Some(dir) => match read_gates(&dir.join(format!("gates-{id}.json"))) {
+                    Ok(t) => Some(t),
+                    Err(GatesError::Missing) => None,
+                    Err(GatesError::Bad(e)) => return Err(e),
+                },
+                None => download(scratch, id)?,
+            };
+            if let Some(t) = got {
+                gates.insert(id, t);
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn remove_tree(p: &Path) -> Result<(), String> {
@@ -738,29 +776,53 @@ fn download(scratch: &Path, id: u64) -> Result<Option<String>, String> {
         );
         return Ok(None);
     }
-    read_gates(&dir.join("gates.json")).map(Some)
+    match read_gates(&dir.join("gates.json")) {
+        Ok(t) => Ok(Some(t)),
+        // The download succeeded, so a missing file is a bad artifact.
+        Err(GatesError::Missing) => Err(format!("run {id}: the gates-report has no gates.json")),
+        Err(GatesError::Bad(e)) => Err(e),
+    }
 }
 
-/// Reads a downloaded `gates.json`: a regular file (not a symlink) of at most
-/// [`MAX_GATES_BYTES`].
-pub fn read_gates(p: &Path) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatesError {
+    /// No file at the path.
+    Missing,
+    Bad(String),
+}
+
+/// Reads a `gates.json`: a regular file (not a symlink, and the opened file regular too) of
+/// at most [`MAX_GATES_BYTES`].
+pub fn read_gates(p: &Path) -> Result<String, GatesError> {
     use std::io::Read as _;
-    let meta = fs::symlink_metadata(p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    let bad = |what: &str, e: &dyn std::fmt::Display| {
+        GatesError::Bad(format!("{what} {}: {e}", p.display()))
+    };
+    let meta = match fs::symlink_metadata(p) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(GatesError::Missing),
+        Err(e) => return Err(bad("read", &e)),
+    };
+    let not_regular = || GatesError::Bad(format!("{}: not a regular file", p.display()));
     if !meta.is_file() {
-        return Err(format!("{}: not a regular file", p.display()));
+        return Err(not_regular());
     }
-    let file = jpdf_fsio::open_nonblocking(p).map_err(|e| format!("open {}: {e}", p.display()))?;
+    let file = jpdf_fsio::open_nonblocking(p).map_err(|e| bad("open", &e))?;
+    // The path could have changed between the two calls: check what was opened.
+    if !file.metadata().map_err(|e| bad("read", &e))?.is_file() {
+        return Err(not_regular());
+    }
     let mut bytes = Vec::new();
     file.take(MAX_GATES_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("read {}: {e}", p.display()))?;
+        .map_err(|e| bad("read", &e))?;
     if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_GATES_BYTES) {
-        return Err(format!(
+        return Err(GatesError::Bad(format!(
             "{}: larger than {MAX_GATES_BYTES} bytes",
             p.display()
-        ));
+        )));
     }
-    String::from_utf8(bytes).map_err(|_| format!("{}: not UTF-8", p.display()))
+    String::from_utf8(bytes).map_err(|_| GatesError::Bad(format!("{}: not UTF-8", p.display())))
 }
 
 /// Writes the snapshot to `opts.out`; returns its path.
@@ -1334,7 +1396,10 @@ mod tests {
         Inputs {
             prs: prs_for(d(UNTIL), &[]),
             issues: "[]".to_owned(),
-            nightly_runs: Some(format!("[{}]", runs.join(","))),
+            nightly_runs: Some(vec![(
+                "runs-schedule.json".to_owned(),
+                format!("[{}]", runs.join(",")),
+            )]),
             gates: gates.iter().cloned().collect(),
             ..Inputs::default()
         }
@@ -1557,7 +1622,7 @@ mod tests {
             let snap =
                 compute(&judge_inputs(&runs, &[]), until, until).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(
-                snap.truncated.contains(&"nightly-runs".to_owned()),
+                snap.truncated.contains(&"runs-schedule".to_owned()),
                 flagged,
                 "{n} runs"
             );
@@ -1566,9 +1631,14 @@ mod tests {
 
     #[test]
     fn judge_command_arguments_are_pinned() {
+        assert_eq!(NIGHTLY_EVENTS, ["schedule", "workflow_dispatch"]);
         assert_eq!(
-            nightly_runs_args(),
+            nightly_runs_args("schedule"),
             "run list --workflow ci.yml --event schedule --branch main --status completed --limit 200 --json databaseId,createdAt"
+        );
+        assert_eq!(
+            nightly_runs_args("workflow_dispatch"),
+            "run list --workflow ci.yml --event workflow_dispatch --branch main --status completed --limit 200 --json databaseId,createdAt"
         );
         assert_eq!(
             download_args(45822452567, "/r/target/dashboard-gates/45822452567"),
@@ -1592,22 +1662,31 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
         assert!(fs::create_dir_all(&base).is_ok());
         let f = base.join("gates.json");
-        assert!(read_gates(&f).is_err(), "missing");
+        assert_eq!(read_gates(&f), Err(GatesError::Missing));
         let limit = usize::try_from(MAX_GATES_BYTES).unwrap_or(0);
         assert!(fs::write(&f, vec![b' '; limit]).is_ok());
         assert_eq!(read_gates(&f).map(|t| t.len()), Ok(limit), "exactly 1 MiB");
         assert!(fs::write(&f, vec![b' '; limit + 1]).is_ok());
-        assert!(read_gates(&f).is_err(), "1 MiB + 1");
+        assert!(
+            matches!(read_gates(&f), Err(GatesError::Bad(_))),
+            "1 MiB + 1"
+        );
         assert!(fs::write(base.join("real.json"), "{}").is_ok());
         assert!(fs::remove_file(&f).is_ok());
         #[cfg(unix)]
         {
             assert!(std::os::unix::fs::symlink(base.join("real.json"), &f).is_ok());
-            assert!(read_gates(&f).is_err(), "a symlink");
+            assert!(
+                matches!(read_gates(&f), Err(GatesError::Bad(_))),
+                "a symlink"
+            );
             assert!(fs::remove_file(&f).is_ok());
         }
         assert!(fs::create_dir(&f).is_ok());
-        assert!(read_gates(&f).is_err(), "a directory");
+        assert!(
+            matches!(read_gates(&f), Err(GatesError::Bad(_))),
+            "a directory"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1641,7 +1720,7 @@ mod tests {
         ];
         assert!(
             fs::write(
-                raw.join("nightly-runs.json"),
+                raw.join("runs-schedule.json"),
                 format!("[{}]", runs.join(","))
             )
             .is_ok()
@@ -1661,6 +1740,27 @@ mod tests {
             text.contains(r#"{"start": "2026-11-16", "run": null"#),
             "{text}"
         );
+        // A dispatched nightly (a manual rerun) counts too: the newest of week 2026-11-16.
+        assert!(
+            fs::write(
+                raw.join("runs-workflow_dispatch.json"),
+                format!("[{}]", run_json(30, "2026-11-18T09:00:00Z"))
+            )
+            .is_ok()
+        );
+        assert!(fs::write(raw.join("gates-30.json"), gates_json("0.25", "1")).is_ok());
+        assert_eq!(run(&base, &opts), Ok(out.clone()));
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(
+            text.contains(
+                r#"{"start": "2026-11-16", "run": 30, "day": "2026-11-18", "open_rate": 0.25"#
+            ),
+            "{text}"
+        );
+        // With --from, a chosen gates file still has the 1 MiB cap.
+        let limit = usize::try_from(MAX_GATES_BYTES).unwrap_or(0);
+        assert!(fs::write(raw.join("gates-10.json"), vec![b' '; limit + 1]).is_ok());
+        assert!(run(&base, &opts).is_err(), "gates-10.json over 1 MiB");
         assert!(!base.join(GATES_DIR).exists(), "--from downloads nothing");
         let _ = fs::remove_dir_all(&base);
     }
