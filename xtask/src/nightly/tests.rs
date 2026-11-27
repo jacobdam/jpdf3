@@ -945,3 +945,40 @@ fn only_an_executable_cli_is_accepted() {
     assert!(!is_executable_file(&d), "a directory");
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+/// #323: the execute bit must be one the runner's class can use. The test owns the file, so
+/// the kernel checks only the owner bits: 0o610 (group x) and 0o601 (other x) can't be
+/// exec'd, though `mode & 0o111` is set. Root may exec a file with any execute bit, so the
+/// oracle is what `/bin/sh` makes of the file, and the fixed answers hold for a non-root run.
+#[cfg(unix)]
+#[test]
+fn only_a_cli_the_runner_can_exec_is_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = scratch("exe-class");
+    let f = d.join("jpdf-cli");
+    std::fs::write(&f, "#!/bin/sh\nexit 0\n").unwrap();
+    let uid = Command::new("id").arg("-u").output().unwrap();
+    let root = String::from_utf8_lossy(&uid.stdout).trim() == "0";
+    for (mode, non_root) in [
+        (0o610, false),
+        (0o601, false),
+        (0o611, false),
+        (0o500, true),
+        (0o710, true),
+        (0o755, true),
+    ] {
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(mode)).unwrap();
+        let st = Command::new("/bin/sh")
+            .args(["-c", "exec \"$0\""])
+            .arg(&f)
+            .status()
+            .unwrap();
+        let execs = st.code() != Some(126);
+        assert_eq!(is_executable_file(&f), execs, "mode {mode:o}: matches exec");
+        if !root {
+            assert_eq!(execs, non_root, "mode {mode:o}: exec as the owner");
+            assert_eq!(is_executable_file(&f), non_root, "mode {mode:o}");
+        }
+    }
+    std::fs::remove_dir_all(&d).unwrap();
+}

@@ -214,6 +214,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   ([journal](journal/2026-11-20.md), PR #51).
 
 ## Engine & security
+- A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
+  can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
+  of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
 - Parsing hostile input: per-object caps don't bound a document (overlapping objects/xref
   sections re-parse the same bytes quadratically; several capped objects alive at once exceed
   2 GiB) → design it in from the start: charge a per-document lexing budget per byte, keep a per-document object budget, reject overlapping

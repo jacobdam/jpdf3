@@ -763,14 +763,25 @@ pub(crate) fn memory_limit_allowed(applies: bool, linux: bool) -> Result<bool, S
     Ok(false)
 }
 
-/// A regular file with an execute bit set (unix). Through the memory wrapper `/bin/sh`
+/// A regular file that this process may execute (unix). Through the memory wrapper `/bin/sh`
 /// always starts, so a `jpdf-cli` it can't exec would look like a crash (126) per run: it is
-/// refused before the runs instead (spec item 10).
+/// refused before the runs instead (spec item 10). The execute bit alone isn't enough: the
+/// kernel checks only the caller's class (owner, else group, else other), so a runner-owned
+/// file with mode 0o610 or 0o601 can't be exec'd (#323). The shell's `test -x` asks the kernel
+/// the same question for the effective ids (POSIX `test`), with no new crate; a shell that
+/// can't start counts as "not executable", so the nightly stops with a tool failure.
 pub(crate) fn is_executable_file(p: &Path) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        std::fs::metadata(p).is_ok_and(|m| m.is_file())
+            && std::process::Command::new("/bin/sh")
+                .args(["-c", "test -x \"$0\""])
+                .arg(p)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|st| st.success())
     }
     #[cfg(not(unix))]
     {
