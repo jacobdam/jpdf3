@@ -2,7 +2,8 @@
 
 Area: tooling
 ISO 32000-2 clauses: none (project tooling)
-Journeys: none (AUTOMATION §2, §3, §5.4; ops/judge/CONTRACT.md §2; #15 part 1, #305 (snapshot), #353 (page))
+Journeys: none (AUTOMATION §2, §3, §5.4; ops/judge/CONTRACT.md §2; #15 part 1; #305, the
+snapshot; #353, the page)
 Status: implemented
 
 ## Behavior
@@ -189,5 +190,6 @@ a regular file, no snapshot).
   thirteen weeks, a repeated start; a histogram with three objects, a repeated `entries`, an
   `entries` past 4 and a fractional count; a `null` blocked age; a milestone forecast that isn't
   a date and a fractional count) and a 404, the committed `ops/metrics/dashboard.json`
-  rendering without the invalid state (so the writer and the validator agree), contrast in light and dark
-  mode, and the shared fixture checks (no console errors, CSP violations or foreign requests).
+  rendering without the invalid state (so the writer and the validator agree), contrast in
+  light and dark mode, and the shared fixture checks (no console errors, CSP violations or
+  foreign requests).
