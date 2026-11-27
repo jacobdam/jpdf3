@@ -280,8 +280,9 @@ a regular file, no snapshot).
   id, the 7-run cap, runs outside every week and after `--until` ignored), a failed download
   falling back to the next run, missing keys as `null`, `smoke_*` not `exam_*`, bad
   `gates.json` shapes (no `metrics`, a rate 1.5, -0.1 or 1e400 (not finite), a count -1,
-  1.5 or `true`), the 1 MiB read cap (also for a `--from` file), missing versus bad files,
-  `runs-schedule` truncation at 199/200, a `--from` run without run lists (`source`
+  1.5 or `true`), the 1 MiB read cap (also for a `--from` file: a valid file of exactly 1 MiB
+  is read, 1 MiB + 1 fails with the size error), missing versus bad files, truncation of each
+  run list at 199/200 under its own name (`runs-schedule`, `runs-workflow_dispatch`), a `--from` run without run lists (`source`
   `missing`), with a partial history and with a dispatched nightly, and the pinned
   `gh run list` (both events) and `gh run download` arguments.
 - `apps/web/scripts/licenses.test.mjs`: the license check follows the dashboard page (the one

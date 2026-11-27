@@ -1619,13 +1619,30 @@ mod tests {
             let runs: Vec<String> = (0..n)
                 .map(|i| run_json(u64::try_from(i).unwrap_or(0), "2026-08-01T00:00:00Z"))
                 .collect();
+            let list = format!("[{}]", runs.join(","));
+            // Either list alone, as the second of two, at the limit is flagged by its own name.
+            let inp = Inputs {
+                nightly_runs: Some(vec![
+                    ("runs-schedule.json".to_owned(), "[]".to_owned()),
+                    ("runs-workflow_dispatch.json".to_owned(), list.clone()),
+                ]),
+                ..judge_inputs(&[], &[])
+            };
+            let snap = compute(&inp, until, until).unwrap_or_else(|e| panic!("{e}"));
+            let want: Vec<String> = if flagged {
+                vec!["runs-workflow_dispatch".to_owned()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(snap.truncated, want, "{n} dispatched runs");
             let snap =
                 compute(&judge_inputs(&runs, &[]), until, until).unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(
-                snap.truncated.contains(&"runs-schedule".to_owned()),
-                flagged,
-                "{n} runs"
-            );
+            let want: Vec<String> = if flagged {
+                vec!["runs-schedule".to_owned()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(snap.truncated, want, "{n} scheduled runs");
         }
     }
 
@@ -1759,8 +1776,25 @@ mod tests {
         );
         // With --from, a chosen gates file still has the 1 MiB cap.
         let limit = usize::try_from(MAX_GATES_BYTES).unwrap_or(0);
-        assert!(fs::write(raw.join("gates-10.json"), vec![b' '; limit + 1]).is_ok());
-        assert!(run(&base, &opts).is_err(), "gates-10.json over 1 MiB");
+        let padded = |len: usize| {
+            let mut t = gates_json("0.75", "0").into_bytes();
+            t.resize(len, b' ');
+            t
+        };
+        assert!(fs::write(raw.join("gates-10.json"), padded(limit)).is_ok());
+        assert_eq!(
+            run(&base, &opts),
+            Ok(out.clone()),
+            "exactly 1 MiB, valid JSON"
+        );
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        assert!(
+            text.contains(r#""run": 10, "day": "2026-11-24", "open_rate": 0.75"#),
+            "{text}"
+        );
+        assert!(fs::write(raw.join("gates-10.json"), padded(limit + 1)).is_ok());
+        let err = run(&base, &opts).err().unwrap_or_default();
+        assert!(err.contains("larger than 1048576 bytes"), "{err}");
         assert!(!base.join(GATES_DIR).exists(), "--from downloads nothing");
         let _ = fs::remove_dir_all(&base);
     }
