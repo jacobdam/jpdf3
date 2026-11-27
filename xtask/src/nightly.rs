@@ -1,6 +1,7 @@
-//! `cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]`,
-//! part 1: the regress tier through `jpdf-cli` under the judge's limits, per-file results and a
-//! diff against the previous night. Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
+//! `cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]
+//! [--bench-minutes B] [--fuzz-seconds S]`: the regress tier through `jpdf-cli` under the judge's
+//! limits, per-file results and a diff against the previous night (part 1), then the bench and
+//! extra fuzz time (part 2, `extra`). Spec: specs/tooling/nightly.md (ops/judge/CONTRACT.md §2).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use jpdf_bench::engine::{self, Outcome, Status};
+use jpdf_bench::engine::{self, Keep, Outcome, Status};
 use jpdf_corpus::{Tier, fetch, manifest};
 use jpdf_testgen::json::{self, Value};
 
@@ -25,7 +26,7 @@ const MEM_PROBE: &str = "ulimit -v 2097152 && ulimit -v";
 /// Sets the limit, then becomes `jpdf-cli` (`$0`) with its arguments (`$@`), never
 /// interpolated. A failed `ulimit` exits 125: a crash, never a run without the limit.
 const MEM_WRAPPER: &str = "ulimit -v 2097152 || exit 125; exec \"$0\" \"$@\"";
-/// stderr bytes kept per run.
+/// stderr bytes kept per run: the last ones (spec item 5).
 const STDERR_CAP: u64 = 4096;
 /// Largest previous results file read.
 const MAX_PREVIOUS: u64 = 64 * 1024 * 1024;
@@ -104,6 +105,10 @@ pub struct Options {
     pub limit: Option<usize>,
     pub previous: Option<PathBuf>,
     pub max_minutes: u64,
+    /// The bench's time limit in minutes; 0 skips it (spec item 12).
+    pub bench_minutes: u64,
+    /// The fuzz time per target in seconds; 0 skips it (spec item 13).
+    pub fuzz_seconds: u64,
 }
 
 /// A plain decimal number in `lo..=hi` (no sign, no leading `+`).
@@ -119,6 +124,7 @@ pub(crate) fn number(flag: &str, v: &str, lo: u64, hi: u64) -> Result<u64, Strin
 /// Parses the arguments after `nightly` (spec item 1).
 pub fn parse(args: &[String]) -> Result<Options, String> {
     let (mut out, mut cache, mut limit, mut previous, mut minutes) = (None, None, None, None, None);
+    let (mut bench, mut fuzz) = (None, None);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -133,6 +139,12 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
                 limit.replace(n).is_some()
             }
             "--max-minutes" => minutes.replace(number(flag, v, 1, MAX_MINUTES)?).is_some(),
+            "--bench-minutes" => bench
+                .replace(number(flag, v, 0, extra::MAX_BENCH_MINUTES)?)
+                .is_some(),
+            "--fuzz-seconds" => fuzz
+                .replace(number(flag, v, 0, extra::MAX_FUZZ_SECONDS)?)
+                .is_some(),
             other => return Err(format!("unknown argument {other:?}")),
         };
         if dup {
@@ -145,6 +157,8 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         limit,
         previous,
         max_minutes: minutes.unwrap_or(DEFAULT_MINUTES),
+        bench_minutes: bench.unwrap_or(extra::DEFAULT_BENCH_MINUTES),
+        fuzz_seconds: fuzz.unwrap_or(extra::DEFAULT_FUZZ_SECONDS),
     })
 }
 
@@ -255,9 +269,9 @@ pub(crate) fn exec(cli: &Path, mem: bool, args: &[OsString], limit: Duration) ->
     if mem {
         let mut a: Vec<OsString> = vec!["-c".into(), MEM_WRAPPER.into(), cli.into()];
         a.extend_from_slice(args);
-        engine::run_child(Path::new("/bin/sh"), &a, limit, STDERR_CAP)
+        engine::run_child(Path::new("/bin/sh"), &a, limit, STDERR_CAP, Keep::Tail)
     } else {
-        engine::run_child(cli, args, limit, STDERR_CAP)
+        engine::run_child(cli, args, limit, STDERR_CAP, Keep::Tail)
     }
 }
 
@@ -588,7 +602,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<u8, String> {
     if let Err(e) = &limits {
         eprintln!("xtask: nightly: limits: {e}");
     }
-    let code = regress(opts, &previous, &cli, mem)?;
+    let code = regress(root, opts, &previous, &cli, mem)?;
     Ok(with_limits(code, &limits))
 }
 
@@ -603,8 +617,15 @@ pub(crate) fn with_limits(regress: u8, limits: &Result<bool, String>) -> u8 {
     }
 }
 
-/// The regress part of the nightly (spec items 3–10).
-fn regress(opts: &Options, previous: &Previous, cli: &Path, mem: bool) -> Result<u8, String> {
+/// The regress part of the nightly (spec items 3–10), then the bench and the fuzz pass
+/// (items 12–15).
+fn regress(
+    root: &Path,
+    opts: &Options,
+    previous: &Previous,
+    cli: &Path,
+    mem: bool,
+) -> Result<u8, String> {
     let cache = jpdf_corpus::resolve_cache(
         opts.cache.clone(),
         std::env::var_os("JPDF_CORPUS_CACHE").map(PathBuf::from),
@@ -676,6 +697,19 @@ fn regress(opts: &Options, previous: &Previous, cli: &Path, mem: bool) -> Result
         eprintln!("xtask: nightly: {n} runs could not start {}", cli.display());
         failed = true;
     }
+    // The bench and the fuzz pass run after the regress results are on disk (spec item 12).
+    failed |= extra::run(
+        root,
+        &opts.out,
+        &jobs,
+        opts.bench_minutes,
+        opts.fuzz_seconds,
+        extra::Hooks {
+            build: &mut || crate::bench::build(root),
+            exec: &mut |bin, args, limit| exec(bin, mem, args, limit),
+            pass: &mut |secs| extra::real_pass(root, secs),
+        },
+    );
     let code = exit_code(failed, report.exit_code());
     if code == 75 {
         infra();
@@ -749,6 +783,8 @@ pub(crate) fn is_executable_file(p: &Path) -> bool {
 fn exit_code(failed: bool, fetch_code: u8) -> u8 {
     if failed { 1 } else { fetch_code }
 }
+
+mod extra;
 
 #[cfg(test)]
 mod tests;

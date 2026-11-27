@@ -1,15 +1,16 @@
-# Nightly regress run (`cargo xtask nightly`, part 1: the regress tier)
+# Nightly run (`cargo xtask nightly`: the regress tier, the bench, extra fuzz time)
 
 Area: tooling
 ISO 32000-2 clauses: none (development tool; it never parses PDF bytes, `jpdf-cli` does)
-Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300)
-Status: implemented (part 1 of 3: the regress tier and the diff; bench and fuzz time are #301,
-filing issues is #302)
+Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300, #301)
+Status: implemented (parts 1 and 2 of 3: the regress tier and the diff (#300), the bench and
+extra fuzz time (#301); filing issues is #302)
 
 ## Behavior
 1. **Usage.**
    ```
    cargo xtask nightly [--out DIR] [--cache DIR] [--limit N] [--previous FILE] [--max-minutes M]
+                       [--bench-minutes B] [--fuzz-seconds S]
    ```
    - `--out DIR`: where the results go (default `target/xtask-out`, like the other tasks). The
      judge's CI runs `cargo xtask nightly --out ../nightly` (CONTRACT §2).
@@ -19,7 +20,11 @@ filing issues is #302)
    - `--limit N` (1 ≤ N ≤ 200 000): only the first N manifest rows in blob-id order
      (`jpdf_corpus::fetch::select`, the same rows `jpdf-corpus fetch regress --limit N` takes).
    - `--previous FILE`: the `regress.json` of an earlier night, for the diff (item 7).
-   - `--max-minutes M` (1 ≤ M ≤ 1440, default 120): the time budget for the runs (item 6).
+   - `--max-minutes M` (1 ≤ M ≤ 1440, default 120): the time budget for the runs (item 7).
+   - `--bench-minutes B` (0 ≤ B ≤ 120, default 20): the bench's time limit (item 12); 0 skips
+     the bench.
+   - `--fuzz-seconds S` (0 ≤ S ≤ 3600, the cap of `cargo xtask fuzz --seconds`; default 1200):
+     the fuzz time per target (item 13); 0 skips the fuzz pass.
    - Each flag at most once; an unknown flag, a missing value, a value out of range or not a
      plain decimal number is a usage error (exit 2) before anything runs.
 2. **Build.** `$CARGO build --release --locked -p jpdf-cli` (the judge's build, CONTRACT §1), then
@@ -58,14 +63,26 @@ filing issues is #302)
    `jpdf_bench::engine::run_child`: stdin and stdout on the null device, its own process
    group killed at exit and at the limit, the bench watchdog (started first; if it can't start
    the nightly is a tool failure) killing it if xtask dies (specs/tooling/bench.md item 7), and
-   at most 4 KiB of stderr kept.
+   the **last** 4 KiB of stderr kept (item 5).
 5. **Classification** (CONTRACT §1): exit 0 `ok`, 2 `error`, 3 `not_implemented`, a kill at
    the time limit `timeout`, any other code, a signal or a spawn failure `crash`. Each run
    records `exit` (the code, or `null`), `signal` (the signal number on unix when the child
    was ended by one that was not our time-limit kill, else `null`) and `ms` (wall time from
    spawn to exit or kill, rounded down; `null` for a run that could not start). Only `crash` and `timeout` runs keep `stderr` (lossy
-   UTF-8, the **first** 4 KiB; the judge keeps the last 8 KiB, so a long log can push the panic
-   message out: #322 keeps the tail instead).
+   UTF-8, the **last** 4 KiB, as the judge keeps the last 8 KiB, so a panic message or abort
+   reason after a long log is kept, #322). `run_child`'s tail mode (`Keep::Tail`) reads the
+   pipe to its end through a deque reserved once for the cap, plus one 8 KiB read chunk (room
+   is made before each chunk is added, so the kept bytes never exceed the cap and the deque
+   never reallocates; if the reservation fails, nothing is kept and the pipe is still
+   read until its end, a read error or the stop below, with the chunk on the reader's stack
+   (no other heap allocation), so the run records no stderr but is classified as usual); a flood costs
+   CPU until the run's group is killed (at exit or at the time limit). Once the run is
+   collected (at most 1 s after exit, as before), the reader stops at its next read, so a
+   grandchild that escaped the group and holds the pipe can't keep it draining; such a run
+   records no stderr (what the reader drained is dropped). The head mode loses its bytes the
+   same way, unless they filled the 4 KiB cap before the 1 s collection timeout. No nightly child is known to do this (jpdf-bench gives its
+   children their own pipe or the null device, never its stderr). The bench's
+   engine probes keep the head (`Keep::Head`, specs/tooling/bench.md item 2).
 6. **Memory limit.** Before the runs (and since #25 before the fetch: the limits cases of
    item 11 use it too), `/bin/sh -c 'ulimit -v 2097152 && ulimit -v'` must print
    exactly `2097152` (2 GiB in KiB, the judge's `RLIMIT_AS`). If it does, every run is
@@ -121,7 +138,8 @@ filing issues is #302)
     (item 11), never for what `jpdf-cli` did with a regress file (part 3, #302, files issues for
     crashes):
     - 2: usage (item 1);
-    - 1: a tool failure: an unreadable or invalid previous file, the build (or no `jpdf-cli`
+    - 1: a tool failure: a bench or fuzz pass with status `failed` (items 12 and 13), a
+      `nightly.json` that can't be removed or written (item 14), an unreadable or invalid previous file, the build (or no `jpdf-cli`
       file where the build should have put it), the manifest, the cache, the watchdog, the
       memory probe on Linux, removing or writing the results, an integrity failure in the
       fetch, no executable `jpdf-cli` after the build (checked before the runs: a regular file
@@ -163,9 +181,74 @@ filing issues is #302)
     there is logged as `xtask: nightly: limits: <problem>` and gives exit 1; the regress part
     runs either way.
 
+12. **Bench** (after `regress.json` and the diff are written, whatever their outcome; skipped
+    when `--bench-minutes` is 0). The sample is the first 20 files with a verified copy
+    (item 3), in blob-id order: they are copied, as `<blob>.pdf`, into `DIR/bench-corpus/`,
+    which is emptied first, so the bench never sees a file that failed the blob check or one
+    left from an earlier night. An earlier `DIR/bench.json` is removed before the bench runs.
+    Then `$CARGO build --release --locked -p jpdf-cli -p jpdf-bench` (`cargo xtask bench`'s
+    build, specs/tooling/bench.md item 11) and
+    `jpdf-bench --cli <release>/jpdf-cli --out DIR/bench.json --corpus DIR/bench-corpus --sample <n>`
+    (absolute paths; the engines' defaults: mutool and pdfium_test are used when found on
+    `PATH`), run like a regress run (item 4: its own process group, the watchdog, stdout on
+    the null device, the last 4 KiB of stderr kept and printed when it didn't end `ok`)
+    and through the memory wrapper when it applies (item 6), so jpdf-bench and every program
+    it starts run under the 2 GiB limit. Its time limit is `--bench-minutes`; at the limit its
+    group is killed (jpdf-bench's own watchdog then kills the groups of its children,
+    specs/tooling/bench.md item 7). Status: exit 0 `ok`; the kill at the limit `timeout`;
+    anything else (exit 1 or 2, a signal, no start, a build or copy failure) `failed`. Only an
+    `ok` bench that left `DIR/bench.json` has a report. `timeout` is recorded, not a tool
+    failure: it is usually what `jpdf-cli` (or a reference engine) did, but a jpdf-bench that
+    hangs on its own bug ends the same way, so a `timeout` every night may also be a broken
+    bench. `failed` is a tool failure (item 10).
+13. **Extra fuzz time** (after the bench; skipped when `--fuzz-seconds` is 0). This is fuzz
+    time on top of the judge's own fuzz step (CONTRACT §3, 300 s per target). `DIR/fuzz/` is
+    emptied first, then `fuzz/Cargo.toml` must exist (checked before anything is installed),
+    then with `CI` set the missing tools are installed exactly as `cargo xtask fuzz` on CI
+    does (the pinned nightly and cargo-fuzz), then `cargo xtask fuzz --seconds S`'s pass runs
+    every target from `cargo fuzz list` (specs/tooling/fuzz.md: the judge's 2048 MB RSS limit,
+    10 s per input, one target per core at a time). The file names in each
+    `fuzz/artifacts/<target>/` are noted before the pass; after it, the regular files (no
+    symlinks, no directories) that are new there are copied to `DIR/fuzz/<target>/`, at most
+    100 per target by name order (more are counted on stderr and left in `fuzz/artifacts/`),
+    for each target whose run started (the fuzz pass can stop before later targets start: a
+    target that can't start ends it, after the started ones end; those not started are not
+    listed). A copy that fails stops that target's copies; the ones made before it stay
+    listed.
+    Status: a failure before any target ran (no project, a failed install, list or build, a
+    seed that can't be written), a target that couldn't start, a log that couldn't be
+    created, or an artifact that couldn't be copied is `failed`, a tool failure; else any
+    target that crashed, hung or ran out of memory makes it `crash` (what the engine did:
+    recorded, not a tool failure); else `ok`.
+14. **Summary** `DIR/nightly.json`. An earlier one is removed before the bench (a failed
+    removal is a tool failure), and this night's is written after the fuzz pass (tmp and
+    rename, as in item 8), keys in this order:
+    ```json
+    {"schema":1,"regress":"regress.json",
+     "bench":{"status":"ok","minutes":20,"files":20,"exit":0,"signal":null,"ms":174,
+              "report":"bench.json","error":null},
+     "fuzz":{"status":"crash","seconds_per_target":1200,
+             "targets":[{"name":"engine_open","ok":false,"artifacts":["fuzz/engine_open/crash-…"]}],
+             "error":null}}
+    ```
+    `bench.status` is `ok`, `timeout`, `failed` or `skipped`; `files` the sample size; `exit`,
+    `signal` and `ms` as in item 5 (`null` when it didn't start or was skipped); `report` is
+    `"bench.json"` or `null`; `error` says why it `failed`. `fuzz.status` is `ok`, `crash`,
+    `failed` or `skipped`; `targets` lists the targets whose run started, in `cargo fuzz list` order, each
+    with `ok` and the copied artifacts (paths relative to `DIR`); `error` the tool failure.
+    Strings are JSON-escaped (artifact names are read lossily as UTF-8).
+15. **Order.** Regress runs, `regress.json`, the diff, then the bench, the fuzz pass and
+    `nightly.json` (the limits part, item 11, runs before all of them). A nightly that stops
+    before the regress runs (item 10) runs neither the
+    bench nor the fuzz pass and writes no `nightly.json`. The exit code is item 10's: a bench
+    or fuzz tool failure makes it 1, which beats 75 and 4.
+
 ## Persistence
-No document persistence. `regress.json`, `regress-diff.json`, `limits.json` (item 11) and `work/` under `DIR` (and their
-`.tmp` names after a failed rename, item 10); nothing in the repository. The previous night's file is passed in by the caller: the CI step that downloads
+No document persistence. `regress.json`, `regress-diff.json`, `limits.json` (item 11),
+`nightly.json`, `bench.json` (and jpdf-bench's `bench.json.work/`), `bench-corpus/`, `fuzz/` and
+`work/` under `DIR` (and the `.tmp` names after a failed rename, item 10). In the repository's
+ignored paths: the fuzz pass's seeds and corpus under `fuzz/corpus/`, its artifacts under
+`fuzz/artifacts/`, its logs under `target/fuzz-logs/` (specs/tooling/fuzz.md). The previous night's file is passed in by the caller: the CI step that downloads
 it is part 3 (#302) and needs the owner (`.github/` is protected).
 
 ## Undo
@@ -178,11 +261,16 @@ the corpus tool's manifest or cache error, `cannot start the engine watchdog (/b
 `fetch: <url>: <problem>` lines then `fetch: <summary>`, `previous results <path>: <problem>`,
 `no regress file to run (<N> rows missing)`, `no executable jpdf-cli at <path> after the build`,
 `<N> runs could not start <path>` (and `cannot remove <path>: <io error>` when a stale diff
-can't be removed). A usage error prints the problem and the usage line.
+can't be removed). The bench and the fuzz pass each print one line,
+`xtask: nightly: bench: <status> (<n> files)[: <error>]` and
+`xtask: nightly: fuzz: <status> (<t> targets, <S> s each, <a> artifacts)[: <error>]`; the
+error is the same text as in `nightly.json` (`release build failed (<status>)`,
+`cannot copy <path>: <io error>`, `cannot start <path>`, `jpdf-bench ended with "<status>"`,
+`fuzz/Cargo.toml not found …`, the fuzz tool's messages). A usage error prints the problem and the usage line.
 
 ## Limits
 - Per run: CONTRACT §1 time limits (item 4) and the 2 GiB address-space limit where the OS
-  enforces it (item 6); stderr kept ≤ 4 KiB per run, stdout never read.
+  enforces it (item 6); stderr kept ≤ 4 KiB per run (the last bytes; the reader's buffers: a deque reserved once for 4 KiB and one 8 KiB chunk), stdout never read.
 - Whole run: the limits part (item 11: seven generated files of ≤ 512 MiB, each run ≤ 20 s, so
   at most 140 s of runs plus the writes; about 15 s locally), then `--max-minutes` (≤ 1440) plus
   at most one run's limit for the regress part, whose clock starts after the limits part; `--limit` ≤ 200 000 rows
@@ -193,11 +281,16 @@ can't be removed). A usage error prints the problem and the usage line.
   `jpdf_fsio::OPEN_FLAGS` is set (a FIFO is refused, not waited on).
 - Memory of the nightly itself: the results of ≤ 200 000 files × 5 runs (each run ≤ 4 KiB of
   stderr, only for crashes and timeouts) and the previous file (≤ 64 MiB).
+- Bench: `--bench-minutes` ≤ 120 of wall time, killed at the limit; a sample of ≤ 20 files.
+- Fuzz: `--fuzz-seconds` ≤ 3600 per target (libFuzzer's `-max_total_time`), so the pass takes
+  ⌈targets / cores⌉ × S plus the build; ≤ 100 artifacts copied per target.
 - Exact-boundary tests: `--limit` 200 000 passes and 200 001 fails, 0 fails; `--max-minutes`
-  1440 passes, 1441 and 0 fail; a run at elapsed = budget − 1 ns runs, at elapsed = budget
+  1440 passes, 1441 and 0 fail; `--bench-minutes` 0 and 120 pass, 121 fails, and 1 gives a
+  60 s limit; `--fuzz-seconds` 0 and 3600 pass, 3601 fails; a bench sample of exactly 20
+  verified files, and 21 give 20; exactly 100 new artifacts are copied and a 101st is not; a run at elapsed = budget − 1 ns runs, at elapsed = budget
   it is `not_run`; a previous file of exactly the cap is read and one byte more fails, and
   a file list of exactly the cap passes and one more fails (both caps passed in small by the
-  tests, which also pin the real values); stderr is cut at exactly 4096 bytes.
+  tests, which also pin the real values); stderr is cut at exactly 4096 bytes: a tail of exactly the cap is kept whole and one byte more drops the first byte, and a 5000-byte log ending in a panic line keeps that line.
 - No panics: no `unwrap`, `expect` or indexing on input-derived data (workspace lints);
   counts use saturating arithmetic; `ms` is `u128` milliseconds written as a JSON number.
 
@@ -207,12 +300,16 @@ can't be removed). A usage error prints the problem and the usage line.
 - **Hostile bytes:** the nightly never parses PDF bytes. `jpdf-cli` runs as a separate process
   under the judge's limits, in its own group, with the watchdog. Only files that pass the blob
   check run (item 3). Paths given to it are absolute.
-- **Hostile output:** `jpdf-cli`'s stderr is data (CONSTITUTION 1). It is cut at 4 KiB, decoded
+- **Hostile output:** `jpdf-cli`'s stderr is data (CONSTITUTION 1). It is cut to its last 4 KiB, decoded
   lossily and JSON-escaped (`jpdf_bench::json::string`) before it is written, so it can't
   break the results file. The previous results file is untrusted input: bounded, strictly
   parsed, every value checked (item 9); its blob ids and URLs are only compared and escaped.
 - **Shell:** the memory wrapper is a fixed script; the program and its arguments are passed as
   `$0` and `$@`, never interpolated.
+- **Bench and fuzz:** the bench reads only files that passed the blob check (copies, item 12)
+  and runs under the memory wrapper and a time limit; the fuzz pass is `cargo xtask fuzz`'s,
+  with its limits. Artifacts are copied, never opened or parsed; their names are escaped.
+  Only regular files are copied (a symlink planted in `fuzz/artifacts/` is not followed).
 - **CONSTITUTION 8–11:** no new crates; xtask gains path dependencies on the workspace's own
   `jpdf-bench` and `jpdf-corpus`.
 
@@ -232,15 +329,36 @@ Self-check:
     added, removed and missing files, each status change direction for `new_failures` and
     `fixed`, an unchanged pair (not listed) and the sort order.
   - A deadline off by one: the boundary test in "Limits".
+  - A stderr reader that keeps the head, drops the end of the last read, or keeps one byte too
+    many or too few: the fake `jpdf-cli`'s 5000-byte log ends in a panic line that must be the
+    end of the kept 4096 bytes (it fails with `Keep::Head`), and `read_tail`'s unit tests cover
+    the exact cap, one byte past it, a cap across several read chunks, an `Interrupted` read
+    (retried), a hard read error (stops, keeps what it read) and an endless reader that the
+    stop flag ends mid-drain. Not tested: that `run_child` sets the flag after collecting
+    the run (one line after `recv_timeout`; no hook observes the reader thread), and the
+    memory bound (stated, not measured).
   - A validator that accepts anything: one test per rejected shape of the previous file
     (schema 2, a string schema, no `files`, a bad blob, a repeated blob, an unknown op, a
     repeated op, an unknown status, a missing file with runs, too many files, too large), each
     with a near-miss that is accepted (extra members, `missing:false` with runs).
+  - A bench that reports an earlier night's numbers: the test writes a stale `bench.json` and
+    checks it is gone when the fake bench starts and absent after a `timeout` or `failed`
+    end; a stale `nightly.json` is replaced.
+  - A bench that sees unverified or leftover files: the test stages a sample with a missing
+    row next to a stale file and checks the staged names and bytes.
+  - A bench or fuzz status that never fails the nightly, or always does: tests check each
+    status's `tool_failure` and `run`'s result for `ok`, `timeout`, `failed`, `skipped`, and a
+    fuzz pass with no `fuzz/` (`failed`).
+  - An artifact copy that copies old, linked or unbounded files: tests with an old file, a
+    symlink, a directory and the 100/101 cap.
 - Not covered by tests: the real build, the real fetch (network), the CI wiring, and the order
   of steps inside `run` (the previous file loaded before `regress.json` is written: the test
-  checks that the loaded copy is held in memory, not where `run` calls it); a local run on the
-  cached tier, including `--previous` naming the output's own `regress.json`, is recorded in
-  the PR.
+  checks that the loaded copy is held in memory, not where `run` calls it; the bench and fuzz
+  pass called after the diff); a real fuzz pass (the nightly toolchain and minutes of fuzzing:
+  `run_fuzz` with real targets runs only in the local run and the nightly job, its parts are
+  unit-tested in `fuzz.rs` and here); the real jpdf-bench under the memory wrapper (a local
+  run). Local runs on the cached tier, including `--previous` naming the output's own
+  `regress.json` and the bench and fuzz pass, are recorded in the PRs (#300's, #301's).
 
 ## Accessibility
 Not applicable (command-line tool).
@@ -251,11 +369,26 @@ like the judge's own helper.
 
 ## Performance
 Today `jpdf-cli` answers `info` and exits 3 for the rest, so the 5250-file tier takes a few
-minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are implemented; part 2 (#301) adds
-bench and fuzz time to the same CI job (240 min). The limits part (item 11) adds about 15 s before the regress runs.
+minutes (2 min 39 s on a local run). The budget (item 7) bounds the run once commands are
+implemented. The limits part (item 11) adds about 15 s before the regress runs (at most 140 s of
+runs). The CI job has 240 min (`timeout-minutes`). With the defaults the worst case of the
+budgeted parts is 120 + 1 (one run past the budget) + 20 (bench) + ⌈3 targets × 1200 s / 60⌉ =
+60 (fuzz on one core; 20 on the 4-core runner) = 201 min. A test checks that this sum, for the
+number of fuzz targets in `fuzz/fuzz_targets/`, leaves at least 30 min of the 240 for the rest:
+the limits part, the fetch, the release builds, the cargo-fuzz install (built from source on
+CI: this job has no cache for it) and the fuzz targets' build. That 30 min is an estimate; none
+of those steps has been timed in the CI job yet (the first nightly run will show it). A local
+run with `--limit 30 --bench-minutes 5 --fuzz-seconds 10` took 58 s (before the limits part
+was added).
 
 ## Tests
-`xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
+`xtask/src/nightly/extra/tests.rs` (the budget sum, the bench sample and its staging, the bench
+statuses with a fake exec and build, the stale `bench.json` and `nightly.json` removal, the
+artifact copy and its cap (and a copy that fails midway), the fuzz pass with a fake
+`fuzz::run_report` (the snapshot before the pass, only started targets, each target's `ok`),
+a bench sample that can't be copied, a stale `nightly.json` that can't be removed, the fuzz
+statuses, a tree without `fuzz/`, `nightly.json`'s shape,
+the exit decision), `xtask/src/nightly.rs` unit tests (argument parsing and boundaries, the deadline, the classifier
 and memory wrapper with fake `jpdf-cli` scripts, missing files, the results JSON, the previous-file
 validator, the diff), `tools/bench/src/engine.rs`
 `run_child_reports_the_exit_code_or_the_signal`, `tools/corpus/tests/corpus.rs`

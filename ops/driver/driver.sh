@@ -40,6 +40,27 @@ free_gb() {
   df -P -k "$REPO_DIR" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print int($4 / 1048576)}'
 }
 
+# Remove worktree directories older than 2 days, except one whose branch has an open PR
+# (a PR waiting on the owner or a review can sit for days; its worktree holds the session's
+# scratch briefs and an unpushed fix). Only PRs from this repo count: anyone can open a fork PR
+# with any head branch name. If the open-PR list can't be read, remove nothing.
+prune_worktrees() {
+  local open d b
+  open=$(gh pr list -R "$GH_REPO" --state open --limit 200 --json headRefName,isCrossRepository \
+    -q '.[] | select(.isCrossRepository | not) | .headRefName' 2>/dev/null) \
+    || { log "worktree cleanup skipped (gh error)"; return 0; }
+  for d in "$REPO_DIR"/.claude/worktrees/*/; do
+    d="${d%/}"
+    [[ -d "$d" && -n "$(find "$d" -maxdepth 0 -mtime +2 2>/dev/null)" ]] || continue
+    b=$(git -C "$d" symbolic-ref -q --short HEAD 2>/dev/null)
+    if [[ -n "$b" ]] && grep -qxF -- "$b" <<<"$open"; then
+      log "keeping worktree ${d##*/} (open PR on $b)"; continue
+    fi
+    rm -rf "$d"
+  done
+  git worktree prune
+}
+
 disk_ok() {
   local free
   free=$(free_gb)
@@ -48,8 +69,7 @@ disk_ok() {
   [[ -n "$free" ]] || { log "disk check failed (df gave no number); not starting a session"; return 1; }
   if (( free < MIN_FREE_GB )); then
     log "low disk (${free} GB < ${MIN_FREE_GB} GB): cleaning"
-    find "$REPO_DIR/.claude/worktrees" -maxdepth 1 -mindepth 1 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null
-    git worktree prune
+    prune_worktrees
     cargo clean -q 2>/dev/null
     free=$(free_gb)
     [[ -n "$free" ]] && (( free >= MIN_FREE_GB )) || { log "still low disk (${free} GB)"; return 1; }
@@ -65,7 +85,7 @@ sync_main() {
   git fetch -q origin && git checkout -q main && git pull -q --ff-only origin main
   git worktree prune
   mkdir -p "$REPO_DIR/.claude/worktrees"
-  find "$REPO_DIR/.claude/worktrees" -maxdepth 1 -mindepth 1 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null || true
+  prune_worktrees
 }
 
 slow_mode() {  # judge broken > 7 days: 1 session/day (AUTOMATION.md §6.2)

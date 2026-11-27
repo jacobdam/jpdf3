@@ -1,5 +1,5 @@
-//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders, and the copy of
-//! it into the site that `cargo xtask ci linux` builds. Spec: specs/tooling/dashboard.md.
+//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders (the page is
+//! #353). Spec: specs/tooling/dashboard.md.
 //!
 //! GitHub text (comments, titles) is data: this module only counts review headers in it, as
 //! `cargo xtask metrics` does, and escapes issue titles with the shared `json_str`.
@@ -18,8 +18,6 @@ use std::path::{Path, PathBuf};
 pub const WEEKS: i64 = 12;
 /// The forecast's trailing window (ops/TICK.md §7 step 5: the trailing 4-week rate).
 pub const RATE_DAYS: i64 = 28;
-/// Largest snapshot `ci linux` copies into the site.
-pub const MAX_SNAPSHOT_BYTES: u64 = 1 << 20;
 /// The committed snapshot, relative to the repo root.
 pub const SNAPSHOT: &str = "ops/metrics/dashboard.json";
 
@@ -502,41 +500,6 @@ pub fn run(repo: &Path, opts: &Options) -> Result<PathBuf, String> {
     Ok(opts.out.clone())
 }
 
-/// The `ci linux` step: copies the committed snapshot to `site/dashboard/data.json` when the
-/// web build wrote `site/dashboard/`. Ok(false): nothing copied (no snapshot, or no page).
-pub fn copy_into_site(repo: &Path, site: &Path) -> Result<bool, String> {
-    use std::io::Read as _;
-    let dir = site.join("dashboard");
-    if !dir.is_dir() {
-        return Ok(false);
-    }
-    let src = repo.join(SNAPSHOT);
-    let file = match jpdf_fsio::open_nonblocking(&src) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(format!("open {}: {e}", src.display())),
-    };
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("open {}: {e}", src.display()))?;
-    if !meta.is_file() {
-        return Err(format!("{}: not a regular file", src.display()));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_SNAPSHOT_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("read {}: {e}", src.display()))?;
-    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_SNAPSHOT_BYTES) {
-        return Err(format!(
-            "{}: larger than {MAX_SNAPSHOT_BYTES} bytes",
-            src.display()
-        ));
-    }
-    let dst = dir.join("data.json");
-    fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,6 +626,7 @@ mod tests {
                         pr(2, "2026-11-22", Some(4)),
                         pr(3, "2026-11-22", None),
                         pr(4, "2026-11-23", Some(9)),
+                        pr(7, "2026-11-15", Some(9)), // the Sunday before: the week before's
                     ],
                 ),
                 // The last week: --until is in, the day after is out.
@@ -719,7 +683,7 @@ mod tests {
         let log = "@@1795651200\tthree sessions (#30)\n\nops/journal/2026-11-25/0100-30-a.md\nops/journal/2026-11-25/0200-30-b.md\nops/journal/2026-11-26/0300-30-c.md\n\
 @@1795564800\tday file only (#29)\n\nops/journal/2026-11-24.md\n\
 @@1795564800\tnot a squash subject (#28) more\n\nops/journal/2026-11-24/x.md\n\
-@@1795564800\tone (#27)\n\nops/journal/2026-11-24/x.md\nops/journal/2026-11-24/sub/y.md\n\
+@@1795564800\tone (#27)\n\nops/journal/2026-11-24/x.md\nops/journal/2026-11-24/sub/y.md\nops/journal/notes/z.md\n\
 @@1788739200\tbefore the first week (#26)\n\nops/journal/2026-09-07/x.md\n\
 @@1788652800\ttoo old (#25)\n\nops/journal/2026-09-06/x.md\n";
         // 1795651200 = 2026-11-26 (after --until), 1795564800 = 2026-11-25, 1788739200 = 2026-09-07.
@@ -729,7 +693,7 @@ mod tests {
         assert_eq!(
             got,
             vec![1, 1],
-            "#27 (sub/ is no entry) and #26 (first Monday) count"
+            "#27 (sub/ and a non-date directory are no entries) and #26 (first Monday) count"
         );
         let later = journal_entries(log, first, d("2026-11-26")).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(later, vec![3, 1, 1]);
@@ -770,6 +734,7 @@ mod tests {
     fn blocked_issues_and_milestone_forecast() {
         let until = d(UNTIL);
         let issues = [
+            issue(12, "OPEN", "2026-11-20", None, &["blocked"], None), // same age as #1, listed first (gh is newest first): sorted by number
             issue(1, "OPEN", "2026-11-20", None, &["blocked"], Some("M1")),
             issue(
                 2,
@@ -811,7 +776,7 @@ mod tests {
         let blocked: Vec<(u64, i64)> = snap.blocked.iter().map(|b| (b.0, b.2)).collect();
         assert_eq!(
             blocked,
-            vec![(5, 15), (1, 5), (6, 0)],
+            vec![(5, 15), (1, 5), (12, 5), (6, 0)],
             "oldest first; closed and blocked-x left out"
         );
         let ms: Vec<(&str, u64, u64, u64, Option<i64>)> = snap
@@ -978,51 +943,6 @@ mod tests {
         );
         let text = fs::read_to_string(&out).unwrap_or_default();
         assert!(text.contains(r#"{"start": "2026-11-23", "end": "2026-11-25", "merged_prs": 1, "median_rounds": 3, "sessions": null}"#), "{text}");
-        let _ = fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn copies_the_snapshot_up_to_one_mib() {
-        let base =
-            std::env::temp_dir().join(format!("xtask-dashboard-copy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&base);
-        let (repo, site) = (base.join("repo"), base.join("site"));
-        assert!(fs::create_dir_all(repo.join("ops/metrics")).is_ok());
-        let snap = repo.join(SNAPSHOT);
-        assert!(fs::write(&snap, "{}").is_ok());
-        assert_eq!(
-            copy_into_site(&repo, &site),
-            Ok(false),
-            "no page: nothing copied"
-        );
-        assert!(fs::create_dir_all(site.join("dashboard")).is_ok());
-        let data = site.join("dashboard/data.json");
-        let limit = usize::try_from(MAX_SNAPSHOT_BYTES).unwrap_or(0);
-        assert!(fs::write(&snap, vec![b' '; limit]).is_ok());
-        assert_eq!(copy_into_site(&repo, &site), Ok(true));
-        assert_eq!(
-            fs::metadata(&data).map(|m| m.len()).ok(),
-            Some(MAX_SNAPSHOT_BYTES)
-        );
-        assert!(fs::write(&snap, vec![b' '; limit + 1]).is_ok());
-        let r = copy_into_site(&repo, &site);
-        assert!(
-            r.as_ref()
-                .is_err_and(|e| e.contains("larger than 1048576 bytes")),
-            "{r:?}"
-        );
-        assert!(fs::remove_file(&snap).is_ok() && fs::create_dir_all(&snap).is_ok());
-        let r = copy_into_site(&repo, &site);
-        assert!(
-            r.as_ref().is_err_and(|e| e.contains("not a regular file")),
-            "{r:?}"
-        );
-        assert!(fs::remove_dir_all(&snap).is_ok());
-        assert_eq!(
-            copy_into_site(&repo, &site),
-            Ok(false),
-            "no snapshot: nothing copied"
-        );
         let _ = fs::remove_dir_all(&base);
     }
 }

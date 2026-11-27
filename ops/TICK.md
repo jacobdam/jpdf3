@@ -601,7 +601,7 @@ session.
    count the ones that were real bugs that should have blocked their merge.
    `git fetch`, then `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv` prints the
    throughput, review-round, stuck and audit/retro-lag numbers (specs/tooling/metrics.md); count
-   the rest by hand. Refresh the Pages dashboard's snapshot in the retro PR:
+   the rest by hand. Refresh the metrics dashboard's snapshot in the retro PR:
    `cargo xtask dashboard --index <main checkout>/ops/logs/index.tsv` rewrites
    `ops/metrics/dashboard.json` (specs/tooling/dashboard.md).
 2. Write `docs/retros/NNNN.md`:

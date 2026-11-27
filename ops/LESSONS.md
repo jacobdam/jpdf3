@@ -100,6 +100,25 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   their own group; test the guard with the kill command textually swapped for `echo` (assert the swap happened). Prove
   each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
   4 rounds running ([journal](journal/2026-11-21.md), PR #133).
+- Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
+  use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
+  ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)). Both forms are GNU-only: macOS `touch` rejects
+  them, so a driver test (the driver runs on the Mac mini) must also run there; to run one now, put a `touch -d` →
+  `touch -t` shim first on PATH (#366, [journal](journal/2026-11-27/0030-344-limit-bound.md)).
+- GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
+  retry in one loop that first checks whether the comment already exists, so nothing is posted twice
+  ([journal](journal/2026-11-25/1600-311-done-reply.md)).
+- Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
+  `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
+- Running apps/web checks on the Linux host (no Node, Chromium exits 127, text boxes "hidden") → fetch the Node 24
+  tarball and its SHASUMS256.txt from nodejs.org into `target/scratch/` and check the sum; `apt-get download` the
+  libraries `ldd` reports missing plus `fonts-dejavu-core`, `dpkg-deb -x` them there, and run Playwright with
+  `LD_LIBRARY_PATH` and a `FONTCONFIG_FILE` naming that font directory; without fonts every visibility assertion
+  fails ([journal](journal/2026-11-25/1830-305-dashboard.md)).
+- Sizing a Rust tool before claiming → its in-module tests come out about as long as the code after rustfmt (a
+  540-line module grew to 1028), and a React page adds a validator and a Playwright suite: estimate code × 2 plus
+  the web part, and split before writing, not after (#305's work reached 2091 lines and was split into PR #354 and #353)
+  ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
@@ -111,7 +130,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   change. Don't rerun: one rerun worked (#39), another hit "Multiple artifacts named
   github-pages" and could never deploy (#59). The next push to main redeploys. If the upload
   step failed or was skipped, it's a real bug. Durable fix proposed in
-  `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63).
+  `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63). Exception: deploy-pages got
+  HTTP 500 and main's head has no newer push → `gh run rerun --failed` worked (run 45649071740)
+  ([journal](journal/2026-11-25/1620-main-red-pages.md)).
 - main red on an infra job while a newer main `ci` run is in progress → don't `rerun --failed`: it queues in the main
   concurrency group, and a later push before it starts cancels it (run 45249100863 attempt 2 ran no job). Read the newer run's result
   for the same job instead, and record the run's state after acting ([journal](journal/2026-11-23.md), PR #271).
@@ -273,6 +294,15 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
+- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
+  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
+  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
+- Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check
+  → choose a state that fails only X, or have the function say which step failed
+  ([journal](journal/2026-11-25/1750-301-nightly-bench.md), PR #351 R2.1).
+- Building something for the Pages site from CI data → the `project-linux` job that runs `cargo xtask ci linux` has
+  no GitHub token and a shallow checkout (no `persist-credentials`, no `fetch-depth`): compute GitHub or git numbers
+  in a session and commit them, as `ops/metrics/dashboard.json` does ([journal](journal/2026-11-25/1830-305-dashboard.md)).
 - Filtering GitHub lists by "the agent's own" (`--author @me`, comment authors) → the account is shared with the
   owner, so the author proves nothing: filter by the tag at the start of the body, and treat owner PRs in the owner
   feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269 R1.2, R1.3).
@@ -307,6 +337,9 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   window) → also walk each §8 output (split labels, output 2's fold, step 6's auto-merge) and what the scheduler reads
   of the kept or refiled issue; PR #312's routing fixes drew R2.1 and R3.1–R3.3
   ([journal](journal/2026-11-24/0346-249-design-product.md)).
+- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
+  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
+  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
 - Creating numbered issues that reference each other: re-creating a blocked issue after later
   ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
   ([journal](journal/2026-11-20.md)).

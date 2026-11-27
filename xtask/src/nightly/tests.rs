@@ -27,6 +27,8 @@ fn parses_flags_and_defaults() {
             limit: None,
             previous: None,
             max_minutes: 120,
+            bench_minutes: 20,
+            fuzz_seconds: 1200,
         }
     );
     let o = p(&[
@@ -40,6 +42,10 @@ fn parses_flags_and_defaults() {
         "prev.json",
         "--max-minutes",
         "1440",
+        "--bench-minutes",
+        "120",
+        "--fuzz-seconds",
+        "3600",
     ])
     .unwrap();
     assert_eq!(
@@ -50,8 +56,13 @@ fn parses_flags_and_defaults() {
             limit: Some(200_000),
             previous: Some(PathBuf::from("prev.json")),
             max_minutes: 1440,
+            bench_minutes: 120,
+            fuzz_seconds: 3600,
         }
     );
+    // 0 skips the bench or the fuzz pass (spec items 12 and 13).
+    let o = p(&["--bench-minutes", "0", "--fuzz-seconds", "0"]).unwrap();
+    assert_eq!((o.bench_minutes, o.fuzz_seconds), (0, 0));
     assert_eq!(
         p(&["--limit", "1", "--max-minutes", "1"]).unwrap().limit,
         Some(1)
@@ -72,6 +83,18 @@ fn usage_errors() {
         (
             &["--max-minutes", "99999999999999999999999"][..],
             "bad --max-minutes",
+        ),
+        (&["--bench-minutes", "121"][..], "bad --bench-minutes"),
+        (&["--bench-minutes", "-1"][..], "bad --bench-minutes"),
+        (&["--fuzz-seconds", "3601"][..], "bad --fuzz-seconds"),
+        (&["--fuzz-seconds", "+1"][..], "bad --fuzz-seconds"),
+        (
+            &["--fuzz-seconds", "1", "--fuzz-seconds", "1"][..],
+            "given twice",
+        ),
+        (
+            &["--bench-minutes", "1", "--bench-minutes", "1"][..],
+            "given twice",
         ),
         (&["--limit"][..], "needs a value"),
         (&["--out", "a", "--out", "b"][..], "given twice"),
@@ -342,7 +365,7 @@ fn fake_cli(dir: &Path) -> PathBuf {
          info:) echo '{\"pages\": 1}'; exit 0;;\n\
          render:1) exit 3;;\n\
          render:2) echo 'page 2 of 1' >&2; exit 2;;\n\
-         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; exit 101;;\n\
+         text:1) head -c 5000 /dev/zero | tr '\\0' x >&2; echo 'panicked: tail' >&2; exit 101;;\n\
          text:2) kill -s ABRT $$;;\n\
          ulimit:) ulimit -v; exit 0;;\n\
          esac\n\
@@ -403,6 +426,13 @@ fn real_runs_are_classified_with_exit_signal_and_stderr() {
             ("crash", None, Some(6), Some(0)),
         ]
     );
+    // The kept 4096 bytes are the tail: the panic line after 5000 bytes of log (item 5).
+    let crash = files[0].runs.as_ref().unwrap()[3]
+        .stderr
+        .as_deref()
+        .unwrap();
+    assert!(crash.ends_with("xpanicked: tail\n"), "{crash:?}");
+    assert_eq!(crash.len(), 4096);
     // A hang past the limit is a timeout, with no exit code or signal.
     let o = exec(
         Path::new("/bin/sh"),
