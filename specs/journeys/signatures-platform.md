@@ -591,7 +591,8 @@ typed permission errors → enter the owner password (J-RD-29) → both are enab
   English.
 - **Spot strings** (fixed, so a catalog can't pass by copying English), two labels the app
   draws itself on both platforms: the sidebar's Thumbnails tab is "Thumbnails", "Hình thu nhỏ",
-  "サムネイル", "缩略图", and the toolbar's Highlight tool is "Highlight", "Tô sáng",
+  "サムネイル", "缩略图", and the Annotate mode tool row's Highlight tool
+  ([information-architecture.md](../ui/information-architecture.md) §3) is "Highlight", "Tô sáng",
   "ハイライト", "高亮" (en, vi, ja, zh-Hans), compared exactly.
 
 ## J-PC-01: Unsaved changes when closing and quitting
@@ -805,9 +806,9 @@ sticky note with the text "Ghi chú tiếng Việt", author "Lan" and a modifica
 Steps, run once per language `en`, `vi`, `ja`, `zh-Hans` (macOS: launch with
 `-AppleLanguages (<lang>)`; web: a Playwright context with `locale` `en-US`, `vi-VN`, `ja-JP`,
 `zh-CN`): launch → the start screen, and every menu item and toolbar control from the app's
-command registry (J-PC-06) that the app draws itself (not the ones macOS supplies), equal that catalog's entries; the spot strings are that
-language's; web: `<html lang>` is the language tag → open `languages.pdf` → the page
-indicator, the outline ("Chapter One" and "Open", untranslated), the annotation list (the
+command registry (J-PC-06) that the app draws itself (not the ones macOS supplies), equal
+that catalog's entries; web: `<html lang>` is the language tag → open `languages.pdf` and
+choose Annotate mode → the spot strings are that language's → the page indicator, the outline ("Chapter One" and "Open", untranslated), the annotation list (the
 note's text and author unchanged, its date in the formatter's output) and Document Properties
 (title "Save" and author "Lan" unchanged; the creation date and the file size in the
 formatter's output) → open the shortcuts list (J-PC-06) → every command name and group
@@ -843,6 +844,7 @@ formatter's output for `vi` with the region US, not for `en-US` → quit (J-PC-0
 unsaved-changes prompt; discard) → launch again → the app is in Vietnamese while the system
 locale is still `en-US`; on macOS the platform-supplied text is too: add a highlight to
 `languages.pdf` and close it → the unsaved-changes alert's text equals that alert's text in a
-launch with `-AppleLanguages (vi)`; discard → choose 日本語, then 简体中文 → each applies at
+launch with `-AppleLanguages (vi)`; discard → open `languages.pdf` again and choose Annotate
+mode → choose 日本語, then 简体中文 → each applies at
 once (its spot strings) → choose "Follow system" → English again, at once; after a relaunch,
 still English → launch with the system locale `vi-VN` and "Follow system" → Vietnamese.
