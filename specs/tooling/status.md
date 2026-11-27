@@ -92,9 +92,11 @@ the open PRs per in-progress issue (at most 200 × 1000).
     text of `status_prints_each_section_from_the_inputs` lacks (#299 merged, #320 the owner's,
     #314's `blocked-ish`, `in-progress-x`, `owner-todo `; #330's `blocked-ish`). Each state
     word has an open PR that shows it and one that doesn't, and no two words appear on exactly
-    the same PRs (#300 auto-merge on and ready; #330 a draft with auto-merge off; #340
-    conflicting with a green rollup, and labeled `blocked`, which also gives it a
-    Blockers / owner-todo line), so a swapped field fails.
+    the same set of open PRs (draft: #310, #330; auto-merge on: #300, #310; conflicting: #310,
+    #340; not green: #310; on the owner's /hold: #330; the owner's branch: #340, #350;
+    needs-design: #310, #330; design: #340; owner-todo: #300, #310; blocked: #330, #340), so a
+    word printed from another word's field fails. The PR labels also give the Blockers /
+    owner-todo lines (#300, #310, #330, #340).
   - A run where nothing was checked: a failing `gh` exits 2 with empty stdout
     (`status_fails_closed`, a fake `gh` on `PATH`), never an empty status.
   - Parsers of other tools' output: none new; the JSON is read by the scheduler's functions.
