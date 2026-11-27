@@ -53,7 +53,8 @@ Rule: <the scheduler's Rule: text>
 - **Blockers / owner-todo** lists every open issue labeled `blocked` or `owner-todo` (exact
   label names), lowest first, then every open agent PR with either label.
 - An empty section prints `- none`. Every title and milestone name is printed on one line:
-  each control character (a newline, say) becomes a space, so issue text (data, CONSTITUTION 1)
+  each control character (a newline, say) and U+2028 and U+2029 (the Unicode line and paragraph
+  separators) become a space, so issue text (data, CONSTITUTION 1)
   can't start a line or section of its own.
 
 Labels are matched exactly (`blocked-ish` is not `blocked`).
@@ -89,8 +90,11 @@ the open PRs per in-progress issue (at most 200 × 1000).
     (planner, owner comment, own PR, the sections fixture). A PR filter that kept merged or
     untagged PRs, or a label filter that matched by prefix, prints a line the exact expected
     text of `status_prints_each_section_from_the_inputs` lacks (#299 merged, #320 the owner's,
-    #314's `blocked-ish`, `in-progress-x`, `owner-todo `). Each state word has a PR that shows
-    it and one that doesn't (the expected text pins both).
+    #314's `blocked-ish`, `in-progress-x`, `owner-todo `; #330's `blocked-ish`). Each state
+    word has an open PR that shows it and one that doesn't, and no two words appear on exactly
+    the same PRs (#300 auto-merge on and ready; #330 a draft with auto-merge off; #340
+    conflicting with a green rollup, and labeled `blocked`, which also gives it a
+    Blockers / owner-todo line), so a swapped field fails.
   - A run where nothing was checked: a failing `gh` exits 2 with empty stdout
     (`status_fails_closed`, a fake `gh` on `PATH`), never an empty status.
   - Parsers of other tools' output: none new; the JSON is read by the scheduler's functions.

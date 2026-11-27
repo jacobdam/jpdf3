@@ -14,11 +14,18 @@ const BLOCKER_LABELS: [&str; 2] = ["blocked", "owner-todo"];
 const IN_PROGRESS: &str = "in-progress";
 const NONE: &str = "- none\n";
 
-/// The text on one line: every control character (a newline in data, say) becomes a space,
-/// so no value can start a line or a section of its own.
+/// The text on one line: every control character (a newline in data, say) and the Unicode
+/// line and paragraph separators (U+2028, U+2029) become a space, so no value can start a line
+/// or a section of its own.
 fn one_line(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -152,6 +159,7 @@ mod tests {
     #[test]
     fn one_line_drops_control_characters() {
         assert_eq!(one_line("a\nb\r\tc"), "a b  c");
+        assert_eq!(one_line("a\u{2028}b\u{2029}c\u{85}d"), "a b c d");
         assert_eq!(one_line("plain — ünïcode"), "plain — ünïcode");
     }
 

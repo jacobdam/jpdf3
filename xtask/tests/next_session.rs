@@ -5064,17 +5064,36 @@ fn status_fixture() -> Changes {
         r#""autoMergeRequest":{"enabledAt":"2026-11-23T00:00:00Z"}"#,
     );
     let draft = set_mergeable(&draft, r#""CONFLICTING""#);
+    // Each state word on its own too (R1.2): auto-merge on a ready PR, a draft with auto-merge
+    // off, a conflict with a green rollup.
+    let auto = pr(300, "OPEN", "Closes #301", "t/301-y", &[], GREEN).replace(
+        r#""autoMergeRequest":null"#,
+        r#""autoMergeRequest":{"enabledAt":"2026-11-23T00:00:00Z"}"#,
+    );
+    let held_draft = pr(330, "OPEN", "no link", "t/330-w", &["blocked-ish"], GREEN)
+        .replace(r#""isDraft":false"#, r#""isDraft":true"#);
+    let conflicted = set_mergeable(
+        &pr(
+            340,
+            "OPEN",
+            "Closes #999",
+            "owner/y",
+            &["design", "blocked"],
+            GREEN,
+        ),
+        r#""CONFLICTING""#,
+    );
     vec![
         set(
             "prs.json",
             format!(
                 "[{},{},{},{},{},{}]",
-                pr(300, "OPEN", "Closes #301", "t/301-y", &[], GREEN),
+                auto,
                 draft,
                 // The owner's own PR (untagged): not the agent's, not listed.
                 raw_pr(320, "OPEN", "Closes #312", "owner/x", &[], GREEN),
-                pr(330, "OPEN", "no link", "t/330-w", &["blocked-ish"], GREEN),
-                pr(340, "OPEN", "Closes #999", "owner/y", &["design"], GREEN),
+                held_draft,
+                conflicted,
                 // Merged: not in flight.
                 pr(
                     299,
@@ -5125,10 +5144,10 @@ fn status_prints_each_section_from_the_inputs() {
          Milestone: M0\n\
          \n\
          ## In flight\n\
-         - PR #300: closes #301 r: ready, auto-merge off, green\n\
+         - PR #300: closes #301 r: ready, auto-merge on, green\n\
          - PR #310: closes #311 two lines: draft, auto-merge on, conflicting, not green (a failing check or no ai-review success), needs-design, owner-todo\n\
-         - PR #330: no Closes line: ready, auto-merge off, green, on the owner's /hold\n\
-         - PR #340: closes #999 (not an open issue): ready, auto-merge off, green, the owner's branch, design\n\
+         - PR #330: no Closes line: draft, auto-merge off, green, on the owner's /hold\n\
+         - PR #340: closes #999 (not an open issue): ready, auto-merge off, conflicting, green, the owner's branch, design, blocked\n\
          - #301 in-progress: r (PR #300)\n\
          - #311 in-progress: two lines (PR #310)\n\
          - #312 in-progress: dead claim (no open agent PR closes it)\n\
@@ -5140,7 +5159,8 @@ fn status_prints_each_section_from_the_inputs() {
          ## Blockers / owner-todo\n\
          - #311 blocked: two lines\n\
          - #313 blocked, owner-todo: owner turn\n\
-         - PR #310 owner-todo\n"
+         - PR #310 owner-todo\n\
+         - PR #340 blocked\n"
     );
     assert_eq!(status_of(&fixture), expected);
 }
@@ -5227,7 +5247,8 @@ fn status_fails_closed() {
     }
     // Live, with a feed script that works and a `gh` that fails: exit 2, nothing printed.
     use std::os::unix::fs::PermissionsExt as _;
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("status-live");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("status-live-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     let bin = dir.join("bin");
     let driver = dir.join("ops/driver");

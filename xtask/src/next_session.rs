@@ -587,7 +587,7 @@ struct Pr {
     /// The newest `ai-review` status context in state `SUCCESS` on the head (read for an open
     /// PR labeled `design` only).
     review: Option<Review>,
-    /// Open and on the owner's `/hold` (`held_prs`), set by `decide`.
+    /// Open and on the owner's `/hold` (`held_prs`), set by `choose` and `status::render`.
     held: bool,
     /// Open and `mergeable` is `CONFLICTING` (part of `failing`).
     conflict: bool,
