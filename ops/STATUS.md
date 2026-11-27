@@ -4,8 +4,9 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- #373 (owner: a record-only update keeps a design PR's 24-hour window): PR #374 merged (4d56f1b); "done:" posted.
-- main: ci run 45972704663 for 4d56f1b was in progress at 09:22 UTC.
+- #331 (journey J-PC-08, the web app offline): the owner approved PR #347 ("Look ok to me", 12:27 UTC); record-only
+  update since the round-4 check, `ai-review` success re-posted, auto-merge on. "done:" on #331 waits for the merge.
+- #373: PR #374 merged (4d56f1b); "done:" posted. main ci for 6bbfd59 passed.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
@@ -27,7 +28,7 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` or `#347` once its window
+0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window
    passes, then rule i (#303, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
