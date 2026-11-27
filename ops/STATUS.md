@@ -5,8 +5,8 @@ Phase: bootstrap (pilot)
 
 ## In flight
 - #331 (journey J-PC-08): PR #347 merged (702bf84); "done:" posted.
-- #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 at the 4-round cap, `ai-review` success,
-  auto-merge on. "done:" on #372 waits for the merge. Follow-up #377 (wording, `Ops`, without `ready`).
+- #372 (owner `/approve` on design PRs; the rule c deadlock): PR #376 merged (f93bc51); "done:" posted for both owner
+  comments. Follow-up #377 (wording, `Ops`, without `ready`).
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
@@ -28,8 +28,7 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: rule a's "done:" on #372 once PR #376 merges, then rule i
-   (#303, lowest first).
+0. `cargo xtask next-session` (TICK §2). Expected: rule i (#303, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
