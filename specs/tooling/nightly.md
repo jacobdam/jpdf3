@@ -144,7 +144,7 @@ extra fuzz time (#301); filing issues is #302)
       memory probe on Linux, removing or writing the results, an integrity failure in the
       fetch, no executable `jpdf-cli` after the build (checked before the runs: a regular file
       that the runner may execute, by the shell's `test -x`, which checks the bit of the
-      runner's own class, so a runner-owned mode like 0o610 or 0o601 is refused here instead
+      runner's own class (for root, any execute bit), so a runner-owned mode like 0o610 or 0o601 is refused here instead
       of failing each run with 126: #323), a run that could not start (without the memory wrapper, a spawn
       failure), or no file to run at all when the fetch was not an
       infrastructure failure (every selected row missing: a run that checked nothing must not

@@ -949,7 +949,10 @@ fn only_an_executable_cli_is_accepted() {
 /// #323: the execute bit must be one the runner's class can use. The test owns the file, so
 /// the kernel checks only the owner bits: 0o610 (group x) and 0o601 (other x) can't be
 /// exec'd, though `mode & 0o111` is set. Root may exec a file with any execute bit, so the
-/// oracle is what `/bin/sh` makes of the file, and the fixed answers hold for a non-root run.
+/// oracle is what `/bin/sh` makes of the file, and the fixed answers hold for a non-root run
+/// (so a root-only runner checks agreement with exec, not the #323 table). Only the owner
+/// class is covered: the test can't create a file owned by another user, so an owner-bit-only
+/// check (`mode & 0o100`) would still pass here (R1.1 of PR #364).
 #[cfg(unix)]
 #[test]
 fn only_a_cli_the_runner_can_exec_is_accepted() {
