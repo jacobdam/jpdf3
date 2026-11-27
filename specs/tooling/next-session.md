@@ -657,7 +657,7 @@ of inputs where no step before 11 applies (→ `planner`):
   `design-window #N` is a PR for the work mix; and (#373) the `ai-review` success counts from
   the triage comment its `targetUrl` names: a success re-posted after the window passed that
   links a triage at exactly 24 hours is picked and one a second later isn't, also with the
-  status earlier than the comment; an owner `/release` after the triage still restarts it; near
+  status earlier than the comment; with two triage comments, the linked one counts in either list order (the new one linked: a restart, as after a non-record push and a new round; the old one linked: kept, as after a record-only re-post); an owner `/release` after the triage still restarts it; near
   misses (the status time counts): no such comment, a null or absent `targetUrl`, a link to
   another comment, another author, a review comment (not a triage), an untagged or indented
   header, the triage listed under another PR; a triage comment without `url` or with a

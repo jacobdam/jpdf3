@@ -4409,6 +4409,53 @@ fn step3_design_window_starts_at_the_linked_triage() {
             "triage {at}, status early"
         );
     }
+    // Two triage comments (an earlier round and a later one): the linked one counts. A new
+    // round after a non-record push links the new triage, so the window restarts; a record-only
+    // re-post links the old one, so it keeps the start (R1.1).
+    let old_url = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-5";
+    let old = |at: &str| {
+        comment(
+            "jacobdam",
+            &format!("{TAG} **AI review triage, round 1**\n\nR1.1: fixed"),
+            at,
+            old_url,
+        )
+    };
+    for order in [false, true] {
+        let pair = |old_at: &str, new_at: &str| {
+            if order {
+                vec![triage(new_at), old(old_at)]
+            } else {
+                vec![old(old_at), triage(new_at)]
+            }
+        };
+        // Non-record push: the new triage (AFTER_24H) is linked → not picked.
+        assert_eq!(
+            go(
+                &reviewed_to(AFTER_24H, &linked),
+                &pair(EARLY, AFTER_24H),
+                &[]
+            ),
+            "planner",
+            "new linked, order {order}"
+        );
+        // Record-only re-post linking the old triage (EARLY) → picked.
+        assert_eq!(
+            go(
+                &reviewed_to(AFTER_24H, &format!("{old_url:?}")),
+                &pair(EARLY, AFTER_24H),
+                &[]
+            ),
+            "worker design-window #320",
+            "old linked, order {order}"
+        );
+        // And the latest triage linked at exactly 24 hours, with an older one listed: picked.
+        assert_eq!(
+            go(&reviewed_to(AFTER_24H, &linked), &pair(EARLY, AT_24H), &[]),
+            "worker design-window #320",
+            "new linked at 24h, order {order}"
+        );
+    }
     // A `/release` after the triage still restarts the window.
     for (at, want) in [
         (AT_24H, "worker design-window #320"),
