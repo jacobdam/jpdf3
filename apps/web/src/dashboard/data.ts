@@ -89,10 +89,19 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
     const sessions = text(o.sessions);
     if (sessions !== "index" && sessions !== "missing") return null;
     const j = obj(o.journal_entries);
-    return {
+    const weeks = list(o.weeks);
+    // The writer emits twelve consecutive weeks and four histogram objects, entries 1..4 in order
+    // (specs/tooling/dashboard.md); the charts key their bars by those labels.
+    if (weeks.length !== 12) return null;
+    const histogram = list(j.histogram).map((h) => {
+      const x = obj(h);
+      return { entries: count(x.entries), prs: count(x.prs) };
+    });
+    if (histogram.length !== 4 || histogram.some((h, i) => h.entries !== i + 1)) return null;
+    const parsed = {
       generated: day(o.generated),
       until: day(o.until),
-      weeks: list(o.weeks).map((w) => {
+      weeks: weeks.map((w) => {
         const x = obj(w);
         return {
           start: day(x.start),
@@ -107,10 +116,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
         prs: count(j.prs),
         median: countOrNull(j.median),
         max: countOrNull(j.max),
-        histogram: list(j.histogram).map((h) => {
-          const x = obj(h);
-          return { entries: count(x.entries), prs: count(x.prs) };
-        }),
+        histogram,
       },
       blocked: list(o.blocked).map((b) => {
         const x = obj(b);
@@ -129,6 +135,9 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
       truncated: list(o.truncated).map(text),
       malformedIndexRows: count(o.malformed_index_rows),
     };
+    const starts = new Set(parsed.weeks.map((w) => w.start));
+    if (starts.size !== parsed.weeks.length) return null;
+    return parsed;
   } catch (e) {
     if (e instanceof Invalid) return null;
     throw e;

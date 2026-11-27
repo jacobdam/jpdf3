@@ -64,8 +64,9 @@ every file but the index must exist. Live runs don't save their inputs.
   (closed issues whose `closedAt` day is in the 28 days ending at `--until`) and `forecast`: with
   `open` > 0 and `closed_28d` > 0, `--until` plus ⌈open × 28 / closed_28d⌉ days (the trailing
   4-week rate, ops/TICK.md §7 step 5); else `null` (nothing open, or no closures in 28 days:
-  `open` and `closed_28d` tell which; the page shows `done` for `open` = 0 and
-  `no closures in 4 weeks` for `closed_28d` = 0). Issues without a milestone are left out.
+  `open` and `closed_28d` tell which; the page shows `done` for `open` = 0,
+  `no closures in 4 weeks` for `closed_28d` = 0, and `missing` for a `null` forecast with
+  both above 0, the past-9999-12-31 case). Issues without a milestone are left out.
   The weekly digest's "slip > 25%" needs a target date, which no milestone has yet; the digest
   keeps it.
 - `truncated`: the names of the lists that returned exactly 1000 entries (`prs-<monday>` or
@@ -85,8 +86,9 @@ a missing or invalid snapshot (the page says `No metrics snapshot: data.json is 
 invalid.` and shows no section).
 
 The page validates `data.json` before rendering: `version` must be 1 and every field has its
-type (counts are non-negative integers, dates match `YYYY-MM-DD`); any other document is the
-"missing or invalid" state. Text from the snapshot (issue titles) is rendered as React text
+type (counts are non-negative integers, dates match `YYYY-MM-DD`), with exactly twelve weeks of
+distinct `start` dates and four histogram objects whose `entries` are 1, 2, 3, 4 in order; any
+other document is the "missing or invalid" state. Text from the snapshot (issue titles) is rendered as React text
 nodes only.
 
 ## Persistence
@@ -106,8 +108,8 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
   output can't be written. A `milestone` that isn't an object with a string `title` counts as no
   milestone.
 - `ci linux`: a missing snapshot or a missing `site/dashboard/` (the web build failed; that
-  failure is already reported) copies nothing and prints `dashboard: no snapshot or no page,
-  nothing copied`; the page then shows its missing state. A snapshot that isn't a regular file,
+  failure is already reported) copies nothing and prints `dashboard: no snapshot, nothing copied`
+  or `dashboard: no page, nothing copied`; the page then shows its missing state. A snapshot that isn't a regular file,
   is larger than 1 MiB or can't be copied fails `ci linux` (exit 1).
 
 ## Limits
@@ -183,6 +185,8 @@ a regular file, no snapshot).
   `ci linux` when it fails): a full snapshot (every section, values, the partial week label,
   the truncation warning), `null` values as `missing`, a snapshot without an index, an invalid
   snapshot (version, negative or fractional count, bad dates, an unknown sessions source, a
-  non-text title, an array) and a 404, the committed `ops/metrics/dashboard.json` rendering
+  non-text title, an array; in `weeks[]` a negative, a `null` count and a bad date, eleven weeks,
+  a repeated start; a histogram `entries` past 4 and a fractional count; a `null` blocked age; a
+  milestone forecast that isn't a date and a fractional count) and a 404, the committed `ops/metrics/dashboard.json` rendering
   without the invalid state (so the writer and the validator agree), contrast in light and dark
   mode, and the shared fixture checks (no console errors, CSP violations or foreign requests).

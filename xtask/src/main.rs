@@ -53,9 +53,13 @@ fn main() -> ExitCode {
             };
             // specs/tooling/dashboard.md: the committed snapshot next to the dashboard page.
             let dash = match dashboard::copy_into_site(Path::new("."), &out.join("site")) {
-                Ok(true) => ExitCode::SUCCESS,
-                Ok(false) => {
-                    eprintln!("xtask: dashboard: no snapshot or no page, nothing copied");
+                Ok(dashboard::Copied::Yes) => ExitCode::SUCCESS,
+                Ok(dashboard::Copied::NoPage) => {
+                    eprintln!("xtask: dashboard: no page, nothing copied");
+                    ExitCode::SUCCESS
+                }
+                Ok(dashboard::Copied::NoSnapshot) => {
+                    eprintln!("xtask: dashboard: no snapshot, nothing copied");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {

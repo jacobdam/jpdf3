@@ -78,8 +78,9 @@ problems.push(...sourceProblems);
 
 // Ways into the bundle that the import scan can't see: Vite copies `public/` verbatim;
 // aliases, another root, public directory or input, and plugin hooks that resolve, load or
-// transform modules remap what is bundled. None is used; refuse them until #99 checks the
-// real module graph. This guard is a text match, so it is advisory (specs/tooling/licenses.md).
+// transform modules remap what is bundled. None is used except the one `input` naming the
+// two pages (ALLOWED_INPUT below); refuse them until #99 checks the real module graph. This
+// guard is a text match, so it is advisory (specs/tooling/licenses.md).
 if (existsSync(new URL("public", root))) {
   problems.push(
     "public/: Vite copies it into the bundle unchecked; extend the license check first",

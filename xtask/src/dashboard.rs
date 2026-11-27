@@ -502,18 +502,28 @@ pub fn run(repo: &Path, opts: &Options) -> Result<PathBuf, String> {
     Ok(opts.out.clone())
 }
 
+/// What [`copy_into_site`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Copied {
+    Yes,
+    /// No `site/dashboard/` (the web build failed or didn't run).
+    NoPage,
+    /// No committed snapshot.
+    NoSnapshot,
+}
+
 /// The `ci linux` step: copies the committed snapshot to `site/dashboard/data.json` when the
-/// web build wrote `site/dashboard/`. Ok(false): nothing copied (no snapshot, or no page).
-pub fn copy_into_site(repo: &Path, site: &Path) -> Result<bool, String> {
+/// web build wrote `site/dashboard/`.
+pub fn copy_into_site(repo: &Path, site: &Path) -> Result<Copied, String> {
     use std::io::Read as _;
     let dir = site.join("dashboard");
     if !dir.is_dir() {
-        return Ok(false);
+        return Ok(Copied::NoPage);
     }
     let src = repo.join(SNAPSHOT);
     let file = match jpdf_fsio::open_nonblocking(&src) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Copied::NoSnapshot),
         Err(e) => return Err(format!("open {}: {e}", src.display())),
     };
     let meta = file
@@ -534,7 +544,7 @@ pub fn copy_into_site(repo: &Path, site: &Path) -> Result<bool, String> {
     }
     let dst = dir.join("data.json");
     fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
-    Ok(true)
+    Ok(Copied::Yes)
 }
 
 #[cfg(test)]
@@ -994,14 +1004,14 @@ mod tests {
         assert!(fs::write(&snap, "{}").is_ok());
         assert_eq!(
             copy_into_site(&repo, &site),
-            Ok(false),
+            Ok(Copied::NoPage),
             "no page: nothing copied"
         );
         assert!(fs::create_dir_all(site.join("dashboard")).is_ok());
         let data = site.join("dashboard/data.json");
         let limit = usize::try_from(MAX_SNAPSHOT_BYTES).unwrap_or(0);
         assert!(fs::write(&snap, vec![b' '; limit]).is_ok());
-        assert_eq!(copy_into_site(&repo, &site), Ok(true));
+        assert_eq!(copy_into_site(&repo, &site), Ok(Copied::Yes));
         assert_eq!(
             fs::metadata(&data).map(|m| m.len()).ok(),
             Some(MAX_SNAPSHOT_BYTES)
@@ -1022,7 +1032,7 @@ mod tests {
         assert!(fs::remove_dir_all(&snap).is_ok());
         assert_eq!(
             copy_into_site(&repo, &site),
-            Ok(false),
+            Ok(Copied::NoSnapshot),
             "no snapshot: nothing copied"
         );
         let _ = fs::remove_dir_all(&base);

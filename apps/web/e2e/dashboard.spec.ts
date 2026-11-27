@@ -64,6 +64,14 @@ function snapshot(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
+/** The snapshot with week 0's fields replaced by `over`. */
+function withWeek(over: Record<string, unknown>): Record<string, unknown> {
+  const s = snapshot();
+  const weeks = s.weeks as Record<string, unknown>[];
+  weeks[0] = { ...weeks[0], ...over };
+  return s;
+}
+
 const INVALID = "No metrics snapshot: data.json is missing or invalid.";
 
 async function serve(page: Page, body: unknown, status = 200): Promise<void> {
@@ -182,6 +190,66 @@ for (const [name, body] of [
   ["an unknown sessions source", snapshot({ sessions: "guess" })],
   ["a title that isn't text", snapshot({ blocked: [{ number: 1, title: 7, age_days: 0 }] })],
   ["an array", [snapshot()]],
+  ["a week with a negative count", withWeek({ merged_prs: -1 })],
+  ["a week with a bad end date", withWeek({ end: "x" })],
+  ["a week with a null merged count", withWeek({ merged_prs: null })],
+  ["eleven weeks", snapshot({ weeks: (snapshot().weeks as unknown[]).slice(1) })],
+  [
+    "two weeks with one start",
+    snapshot({
+      weeks: (snapshot().weeks as Record<string, unknown>[]).map((w, i) =>
+        i === 1 ? { ...w, start: MONDAYS[0] } : w,
+      ),
+    }),
+  ],
+  [
+    "a histogram entries value past 4",
+    snapshot({
+      journal_entries: {
+        prs: 1,
+        median: 1,
+        max: 5,
+        histogram: [
+          { entries: 1, prs: 0 },
+          { entries: 2, prs: 0 },
+          { entries: 3, prs: 0 },
+          { entries: 5, prs: 1 },
+        ],
+      },
+    }),
+  ],
+  [
+    "a histogram count that isn't an integer",
+    snapshot({
+      journal_entries: {
+        prs: 1,
+        median: 1,
+        max: 1,
+        histogram: [
+          { entries: 1, prs: 0.5 },
+          { entries: 2, prs: 0 },
+          { entries: 3, prs: 0 },
+          { entries: 4, prs: 0 },
+        ],
+      },
+    }),
+  ],
+  [
+    "a blocked age that is null",
+    snapshot({ blocked: [{ number: 1, title: "x", age_days: null }] }),
+  ],
+  [
+    "a forecast that isn't a date",
+    snapshot({
+      milestones: [{ title: "M0", open: 1, closed: 0, closed_28d: 1, forecast: "soon" }],
+    }),
+  ],
+  [
+    "a fractional milestone count",
+    snapshot({
+      milestones: [{ title: "M0", open: 1.5, closed: 0, closed_28d: 1, forecast: null }],
+    }),
+  ],
 ] as const) {
   test(`an invalid snapshot (${name}) shows the invalid state`, async ({ page }) => {
     await serve(page, body);
