@@ -14,6 +14,7 @@ use jpdf_bench::engine::{self, Keep, Outcome, Status};
 use jpdf_corpus::{Tier, fetch, manifest};
 use jpdf_testgen::json::{self, Value};
 
+use crate::limits::CaseResult;
 use crate::steps::{self, Log, Outcome as Step};
 
 /// Most `--limit` rows and most files in a previous results file (the corpus manifest's cap).
@@ -111,6 +112,8 @@ pub struct Options {
     pub bench_minutes: u64,
     /// The fuzz time per target in seconds; 0 skips it (spec item 13).
     pub fuzz_seconds: u64,
+    /// `--file-issues`: the `issues` step files with `gh` (spec item 16); off by default.
+    pub file_issues: bool,
 }
 
 /// A plain decimal number in `lo..=hi` (no sign, no leading `+`).
@@ -126,9 +129,16 @@ pub(crate) fn number(flag: &str, v: &str, lo: u64, hi: u64) -> Result<u64, Strin
 /// Parses the arguments after `nightly` (spec item 1).
 pub fn parse(args: &[String]) -> Result<Options, String> {
     let (mut out, mut cache, mut limit, mut previous, mut minutes) = (None, None, None, None, None);
-    let (mut bench, mut fuzz) = (None, None);
+    let (mut bench, mut fuzz, mut file_issues) = (None, None, false);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
+        if flag == "--file-issues" {
+            if file_issues {
+                return Err(format!("{flag} given twice"));
+            }
+            file_issues = true;
+            continue;
+        }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
         let twice = format!("{flag} given twice");
         let dup = match flag.as_str() {
@@ -161,6 +171,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         max_minutes: minutes.unwrap_or(DEFAULT_MINUTES),
         bench_minutes: bench.unwrap_or(extra::DEFAULT_BENCH_MINUTES),
         fuzz_seconds: fuzz.unwrap_or(extra::DEFAULT_FUZZ_SECONDS),
+        file_issues,
     })
 }
 
@@ -611,8 +622,8 @@ trait Steps {
     fn memory(&mut self) -> Result<bool, Step>;
     /// Item 4: the engine watchdog.
     fn watchdog(&mut self) -> Step;
-    /// Item 11: the limits cases (`Finding` when one failed).
-    fn limits(&mut self, cli: &Path, mem: bool) -> Step;
+    /// Item 11: the limits cases (`Finding` when one failed) and their results.
+    fn limits(&mut self, cli: &Path, mem: bool) -> (Step, Vec<CaseResult>);
     /// Item 3: the cache and the manifest's selected rows.
     fn corpus(&mut self) -> Result<Corpus, Step>;
     /// Item 3: the fetch and its rows as jobs (`Infra` by the judge's rule, `Failed` for an
@@ -629,18 +640,41 @@ trait Steps {
     /// Items 12–14: the bench, the fuzz pass and `nightly.json`, one step until ADR 0013
     /// task 2 (#361) splits it.
     fn extra(&mut self, jobs: &[Job], mem: bool) -> Step;
+    /// Item 16: issues for the night's findings; `files` is `None` when the night stopped
+    /// before the regress runs.
+    fn issues(
+        &mut self,
+        limits: &[CaseResult],
+        previous: &Previous,
+        files: Option<&[FileResult]>,
+    ) -> Step;
+}
+
+/// What the steps produced that the `issues` step reads (spec item 16).
+#[derive(Default)]
+struct Night {
+    previous: Option<Previous>,
+    limits: Option<Vec<CaseResult>>,
+    ran: Option<Ran>,
 }
 
 /// The nightly's order (spec items 10, 11 and 15): which steps run, and what a failure stops.
 /// Returns `log` with every step that ran, in order.
 fn drive(s: &mut dyn Steps, mut log: Log) -> Log {
-    let _ = sequence(s, &mut log);
+    let mut night = Night::default();
+    let _ = sequence(s, &mut log, &mut night);
+    // Item 16: last, after a stop too, once the limits part ran (the previous file was read
+    // before it).
+    if let (Some(previous), Some(limits)) = (&night.previous, &night.limits) {
+        let files = night.ran.as_ref().map(|r| r.files.as_slice());
+        log.push("issues", s.issues(limits, previous, files));
+    }
     log
 }
 
-/// [`drive`]'s body; `None` is a stop.
-fn sequence(s: &mut dyn Steps, log: &mut Log) -> Option<()> {
-    let previous = log.take("previous", s.previous())?;
+/// [`drive`]'s body; `None` is a stop. What later steps (and `issues`) read goes into `night`.
+fn sequence(s: &mut dyn Steps, log: &mut Log, night: &mut Night) -> Option<()> {
+    let previous = &*night.previous.insert(log.take("previous", s.previous())?);
     let cli = log.take("build", s.build())?;
     log.proceed("executable", s.executable(&cli))
         .then_some(())?;
@@ -648,7 +682,9 @@ fn sequence(s: &mut dyn Steps, log: &mut Log) -> Option<()> {
     log.proceed("watchdog", s.watchdog()).then_some(())?;
     // Item 11: before the fetch, so a night without network still runs them; whatever their
     // outcome, the regress part runs.
-    log.push("limits", s.limits(&cli, mem));
+    let (limited, cases) = s.limits(&cli, mem);
+    log.push("limits", limited);
+    night.limits = Some(cases);
     let corpus = log.take("corpus", s.corpus())?;
     let (fetched, jobs) = s.fetch(&corpus);
     let infra = matches!(fetched, Step::Infra(_));
@@ -670,9 +706,10 @@ fn sequence(s: &mut dyn Steps, log: &mut Log) -> Option<()> {
     let png = log.take("workdir", s.workdir())?;
     let (ran_outcome, ran) = s.runs(&jobs, &png, &cli, mem);
     log.push("runs", ran_outcome);
+    let ran = &*night.ran.insert(ran);
     // Item 12: a failed `regress.json` write stops the night; a failed diff doesn't.
-    log.proceed("results", s.results(&ran, mem)).then_some(())?;
-    log.push("diff", s.diff(&previous, &ran));
+    log.proceed("results", s.results(ran, mem)).then_some(())?;
+    log.push("diff", s.diff(previous, ran));
     log.push("extra", s.extra(&jobs, mem));
     Some(())
 }
@@ -726,12 +763,12 @@ impl Steps for Real<'_> {
         engine::start_watchdog().map_or_else(Step::Failed, |()| Step::Ok)
     }
 
-    fn limits(&mut self, cli: &Path, mem: bool) -> Step {
+    fn limits(&mut self, cli: &Path, mem: bool) -> (Step, Vec<CaseResult>) {
         let target = crate::limits::DEFAULT_MIB.saturating_mul(1024 * 1024);
-        match crate::limits::run_with(cli, mem, &self.opts.out, target) {
-            Ok(true) => Step::Ok,
-            Ok(false) => Step::Finding,
-            Err(e) => Step::Failed(format!("limits: {e}")),
+        match crate::limits::run_results(cli, mem, &self.opts.out, target) {
+            Ok(cases) if cases.iter().all(|c| c.status == "pass") => (Step::Ok, cases),
+            Ok(cases) => (Step::Finding, cases),
+            Err(e) => (Step::Failed(format!("limits: {e}")), Vec::new()),
         }
     }
 
@@ -855,6 +892,26 @@ impl Steps for Real<'_> {
             Step::Ok
         }
     }
+
+    fn issues(
+        &mut self,
+        limits: &[CaseResult],
+        previous: &Previous,
+        files: Option<&[FileResult]>,
+    ) -> Step {
+        let found = issues::findings(limits, Some(previous), files);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let run_id = std::env::var("GITHUB_RUN_ID").ok();
+        let night = issues::night_label(now, run_id.as_deref());
+        issues::step(
+            self.opts.file_issues,
+            &mut issues::RealGh::new(),
+            &found,
+            &night,
+        )
+    }
 }
 
 /// The rows as jobs: a row whose cached file fails the blob check is missing (spec item 3).
@@ -916,6 +973,7 @@ pub(crate) fn is_executable_file(p: &Path) -> bool {
 }
 
 mod extra;
+mod issues;
 
 #[cfg(test)]
 mod tests;

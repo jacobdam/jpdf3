@@ -29,6 +29,7 @@ fn parses_flags_and_defaults() {
             max_minutes: 120,
             bench_minutes: 20,
             fuzz_seconds: 1200,
+            file_issues: false,
         }
     );
     let o = p(&[
@@ -46,6 +47,7 @@ fn parses_flags_and_defaults() {
         "120",
         "--fuzz-seconds",
         "3600",
+        "--file-issues",
     ])
     .unwrap();
     assert_eq!(
@@ -58,8 +60,13 @@ fn parses_flags_and_defaults() {
             max_minutes: 1440,
             bench_minutes: 120,
             fuzz_seconds: 3600,
+            file_issues: true,
         }
     );
+    // `--file-issues` takes no value: the next argument is the next flag (spec item 16).
+    let o = p(&["--file-issues", "--limit", "3"]).unwrap();
+    assert!(o.file_issues);
+    assert_eq!(o.limit, Some(3));
     // 0 skips the bench or the fuzz pass (spec items 12 and 13).
     let o = p(&["--bench-minutes", "0", "--fuzz-seconds", "0"]).unwrap();
     assert_eq!((o.bench_minutes, o.fuzz_seconds), (0, 0));
@@ -106,6 +113,8 @@ fn usage_errors() {
             "given twice",
         ),
         (&["--manifest", "x"][..], "unknown argument"),
+        (&["--file-issues", "--file-issues"][..], "given twice"),
+        (&["--file-issues=yes"][..], "needs a value"),
         (&["--tier", "smoke"][..], "unknown argument"),
         (&["regress", "x"][..], "unknown argument"),
     ] {
