@@ -6,7 +6,7 @@ finish **one** unit of work, record it, and exit. The next session starts fresh,
 except files and GitHub.
 
 Repo: `jacobdam/jpdf3` (cwd). Owner: GitHub user `jacobdam`.
-Read **CONSTITUTION.md** first and obey it exactly. Then `ops/STATUS.md`, **`ops/LESSONS.md`**
+Read **CONSTITUTION.md** first and obey it exactly. Then the output of `cargo xtask status`, **`ops/LESSONS.md`**
 (what earlier sessions learned the hard way) and `ops/lessons/pending/` (lessons not yet moved into it), then the newest `ops/journal/` entries (§1). Reference docs: AUTOMATION.md (the system), PLAN.md (scope and
 milestones), ops/judge/CONTRACT.md (what the judge checks).
 
@@ -108,7 +108,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
 
 ## 1. Orient (keep it short)
 ```sh
-cat ops/STATUS.md ops/LESSONS.md ops/lessons/pending/*.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
+cargo xtask status  # milestone, in flight, next step, blockers (specs/tooling/status.md); any non-zero exit: no status, do no work, exit
+cat ops/LESSONS.md ops/lessons/pending/*.md; ls -d ops/journal/*.md ops/journal/*/*.md | sort | tail -3  # read these
 ops/driver/owner-issues.sh
 # owner issues (untagged) closed in the last 14 days: one with a "picked up" reply and no
 # "done:" reply needs the "done:" reply (§0)
@@ -413,10 +414,11 @@ Each round K runs in this order:
      `git log --first-parent --no-merges <round-4 sha>..HEAD` (first-parent only, so commits brought in by
      merging origin/main don't count), plus `git show --remerge-diff <m>` for each merge commit
      (it shows only what you changed while merging, conflict resolutions included). A **record
-     commit** (one that changes only files under `ops/journal/` and `ops/STATUS.md` and, under
+     commit** (one that changes only files under `ops/journal/` and, under
      `ops/lessons/pending/`, adds or edits only `.md` pending lesson files that aren't on
      origin/main, never its `README.md`; changing or deleting one that is on main is not a
-     record change) and a merge whose remerge-diff
+     record change; changing or deleting `ops/STATUS.md`, which #392 removed from main and a
+     branch opened before it may still carry, is a record change, but adding it back is not) and a merge whose remerge-diff
      is empty or touches only those paths that way are left out (ADR 0011 §3); a commit
      touching any other file counts, `ops/LESSONS.md` included;
    - if the post-cap diff is empty and no blocker or major from any round is open, disputed or
@@ -523,7 +525,7 @@ session.
   `/hold`. CI (`judge-verdict`) is the real
   gate. Read its summary on failure:
   `gh run view <id> --log-failed`, artifact `judge-report`.
-- **Records go into the work PR** (ADR 0011 §3): the journal entry, the STATUS rewrite and the
+- **Records go into the work PR** (ADR 0011 §3): the journal entry and the
   session's pending lesson file, if it has one (Lessons, below), are one record commit on your work PR (the task PR, the audit or retro PR, or the PR you worked
   under rule c), pushed before `ai-review` (§4). Its `Result:` line says what was known then
   ("`ai-review` success posted on this commit, auto-merge on", "parked for the owner"). Only a
@@ -535,7 +537,7 @@ session.
   start time of the entry, `<slug>` = issue or PR number plus a word or two, e.g.
   `2132-279-retro.md`); never edit another session's file. Separate files don't conflict when
   two PRs carrying records merge in either order (retro 0002: 4 sessions on 2026-11-23 did
-  nothing but merge journal/STATUS conflicts). Entries written before retro 0002 stay in
+  nothing but merge journal/STATUS conflicts; #392 deleted the shared `ops/STATUS.md`). Entries written before retro 0002 stay in
   the single `ops/journal/YYYY-MM-DD.md` files, so 2026-11-23 has both. Use this template:
   ```
   ## <HH:MM UTC> <issue/PR> <one-line title>
@@ -560,11 +562,14 @@ session.
   the file in the same commit. Skip a file that an open agent PR already deletes
   (`git diff --name-status origin/main...origin/<branch> -- ops/lessons/pending/`), so two
   open PRs never add it twice.
-- **STATUS:** rewrite `ops/STATUS.md` (≤ 1 page): milestone, in-flight work, next intended
-  step, blockers. It has no "last session" section (the journal files are that record). A merge
-  of origin/main that conflicts in `ops/STATUS.md` takes main's copy and then rewrites it (ADR
-  0011 §3), dropping lines about PRs that have merged since. It has no `Pending lessons` list
-  (they are files, Lessons above).
+- **State lives where it is true** (#386): open PRs, labels (`in-progress`, `blocked`,
+  `owner-todo`) and the scheduler, which `cargo xtask status` prints; there is no shared status
+  file to rewrite. A note a later session needs that none of those shows (a step left to do, why
+  an issue waits, a standing decision) goes on the issue it is about as a comment (file one,
+  as Discoveries below says, if there is none; one the owner can act on gets `owner-todo`, §0);
+  a lasting decision goes into PLAN.md or an ADR. A branch opened before #392 may still change
+  `ops/STATUS.md`: a merge of origin/main that conflicts on it takes main's side (`git rm
+  ops/STATUS.md`), a record-only resolution (§4 step 6).
 - **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
@@ -606,7 +611,7 @@ session.
   `Lane: light` against the strict list (§4 Lanes, read from origin/main's `ops/areas.toml` at
   its merge); one that should have been strict is a finding.
 - **Housekeeping:** revisit `blocked` issues and `ops/proposals/`; check every `owner-todo` label
-  against §0 (add or remove it); reconcile PLAN/STATUS/issues
+  against §0 (add or remove it); reconcile PLAN/issues/labels
   with reality; remove dead or duplicated code; refresh deps through admission; update
   `rust-toolchain.toml` to the latest stable.
 - **Record:** write `docs/audits/NNNN.md`.
@@ -713,7 +718,7 @@ specs/tooling/design-technical.md.
       reviewed commit adds ≤ 100 lines and no new file; otherwise take output 4. That diff is
       computed as §4 step 6 computes the post-cap diff (first-parent commits, `--remerge-diff`
       for merges of origin/main), leaving out record commits (commits touching only
-      `ops/journal/` and `ops/STATUS.md` and adding or editing pending lesson files not on origin/main, §4 step 6). The check's brief: that diff, the ledger, the
+      `ops/journal/` and adding or editing pending lesson files not on origin/main, or changing or deleting the retired `ops/STATUS.md` but never adding it, §4 step 6). The check's brief: that diff, the ledger, the
       rulings, the rubric, CONSTITUTION.md and the principles cited. The reviewer gives each
       ruling one line, `<ID>: ruling accepted` or `<ID>: ruling rejected` (a missing line counts
       as rejected), and reports any blocker or major the diff adds. Clean and every ruling
@@ -879,7 +884,7 @@ gate them.
    skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
-   record commits skip review: journal, STATUS and pending lesson files not on origin/main, §4 step 6); the brief adds this section and ADR 0011 §1, and
+   record commits skip review: journal and pending lesson files not on origin/main, and changes or deletes of the retired `ops/STATUS.md`, §4 step 6); the brief adds this section and ADR 0011 §1, and
    asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where

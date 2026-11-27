@@ -337,7 +337,7 @@ signature from the native layer is rejected.
 4. **Review:** every PR gets an automated code review + security review pass before merge.
 5. **No human gate.** Escalations are replaced by mechanical checks and fixed decision
    rules. The full loop, guardrails and discovery handling are in [AUTOMATION.md](AUTOMATION.md).
-6. **Progress tracking:** GitHub Issues as the task queue, `ops/STATUS.md` + `ops/journal/`
+6. **Progress tracking:** GitHub Issues as the task queue, labels, `cargo xtask status` and `ops/journal/`
    for agent state, `docs/adr/` for decisions.
 
 ---
