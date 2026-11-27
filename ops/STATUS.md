@@ -11,6 +11,9 @@ Phase: bootstrap (pilot)
   PR #384 (`ai-review` success, auto-merge on). It adds ops/proposals/nightly-file-issues.md (the CI job's flag): once
   it merges, a session labels an owner issue for it `owner-todo` (TICK §0; #302 closes with the PR). Part 2 (fuzz and
   bench findings) is #383, without `ready`, depending on #302 and #361.
+- #334 (journeys J-PC-09, J-PC-10, the four app languages, Design: product): PR #379, 4 rounds, `ai-review` success;
+  the owner's `/approve` ended its window, auto-merge on. Merged origin/main again (STATUS conflict only, record-only
+  merge, `ai-review` re-posted). Follow-up #380 (specs/ui Preferences Language row, R4.1), M10 without `ready`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
 - #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
   milestone-work issues are all closed.
@@ -58,3 +61,6 @@ Phase: bootstrap (pilot)
 - A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
   old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
   R1.1).
+- A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
+  (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
+  ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1).
