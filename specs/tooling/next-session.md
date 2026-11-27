@@ -176,7 +176,10 @@ PR that fails in its window.
        from it counts as pending with no labels;
      - an owner comment (feed kinds `comment`, `review_comment`, `review`) created at or after
        the floor (earlier ones need no reply, TICK §0), whose URL appears in no open PR body
-       that isn't failing, is held or needs design. Oldest `created_at` first, then by URL;
+       that isn't failing, is held or needs design, and that isn't the `url` of an owner
+       `/approve` step 3's window term picks its PR by (#372, PR #376 R1.1: else rule a would
+       pick it first every run; the design-window session posts both replies). Oldest
+       `created_at` first, then by URL;
      - a closed owner issue in `owner-closed.json`, untagged, with an owner reply starting
        `🤖 jpdf-agent picked up <its URL>` and none starting `🤖 jpdf-agent done: <its URL>`
        (both exact, as above; a reply for a comment on the issue doesn't count)
@@ -411,7 +414,7 @@ PR that fails in its window.
   `YYYY-MM-DDTHH:MM:SSZ`, and its `targetUrl`, if present, is a string or null). In
   `holds.json`, a comment by `jacobdam` whose body starts `🤖 jpdf-agent **AI review triage`
   also needs a string `url` and a `createdAt` in that form (#373); an owner `/approve` needs
-  that `createdAt` too (#372); other comments need neither
+  that `createdAt` and a string `url` too (#372); other comments need neither
   `url` nor, unless they are an owner command, `createdAt`. Every PR in `prs.json` needs `isDraft` (a boolean),
   `autoMergeRequest` (null or an object) and `createdAt` (`YYYY-MM-DDTHH:MM:SSZ`).
   `design-ready.json`: objects with a number `number` (each at most once) and an array `events`
@@ -716,9 +719,14 @@ of inputs where no step before 11 applies (→ `planner`):
   and a new round's later triage end it, an unreviewed push is `own-pr`; a draft, auto-merge
   on, a skip label on the PR, no label, an `owner/` branch, `blocked` or `deferred` on the
   issue, no `design-ready.json` entry (none picked); an approval with an empty or malformed
-  `createdAt` exits 1. Hand mutants of the review-time comparison (`>` and dropped), the
+  `createdAt` or no `url` exits 1. Step 1 (R1.1): with the approval in the feed, one that
+  counts is step 3's pick, while one before the review, after a `/hold`, followed by a
+  `/release`, on a draft PR, or older than the review of a PR picked by its window is
+  `worker owner-comment <url>`, and another owner comment on the PR stays rule a's, also next
+  to a newer approval that counts. Hand mutants of the review-time comparison (`>` and dropped), the
   newest-command rule, the draft exemption, the issue-label rule, the word boundary, the tag,
-  author and case checks and the hold/release counting each fail a test;
+  author and case checks, the hold/release counting, step 1's skip and its approval-only
+  filter each fail a test;
 - step 3's `owner/` branch (#298): a failing PR on `owner/<x>` or the bare `owner/` is not
   picked, its linked issue stays in flight, and the brief notes it once without the branch
   name; near misses: `t/301-y`, `owner`, `owners/x`, `Owner/x`, `t/owner/x`, ` owner/x`,

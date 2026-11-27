@@ -4656,6 +4656,7 @@ fn step3_design_pr_failing_in_its_window() {
 const REVIEW_AT: &str = "2026-11-24T05:00:00Z";
 const BEFORE_REVIEW: &str = "2026-11-24T04:59:59Z";
 const AFTER_REVIEW: &str = "2026-11-24T05:30:00Z";
+const APPROVE_URL: &str = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-77";
 
 #[test]
 fn step3_design_window_owner_approve() {
@@ -4673,7 +4674,7 @@ fn step3_design_window_owner_approve() {
             holds(&[(320, comments)]),
         ])
     };
-    let a = |body: &str, at: &str| cmd("jacobdam", body, at);
+    let a = |body: &str, at: &str| comment("jacobdam", body, at, APPROVE_URL);
     const PICKED: &str = "worker design-window #320";
     // No command: the window runs.
     assert_eq!(on(&fresh, &[]), "planner");
@@ -4888,6 +4889,92 @@ fn step3_design_window_owner_approve() {
         ]),
         "planner"
     );
+    // Step 1 (R1.1): the feed lists the `/approve` as a pending owner comment. One that
+    // counts is left to this term (its session posts both replies); one that doesn't count
+    // stays rule a's, and so does any other owner comment.
+    let feed = |url: &str| feed_plus(&[feed_comment("comment", url, AFTER_REVIEW)]);
+    let with_feed = |comments: &[String], url: &str| {
+        pick(&[
+            with_pr(&fresh),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, comments)]),
+            feed(url),
+        ])
+    };
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], APPROVE_URL),
+        PICKED
+    );
+    let owner_pick = format!("worker owner-comment {APPROVE_URL}");
+    for (comments, why) in [
+        (vec![a("/approve", BEFORE_REVIEW)], "before the review"),
+        (
+            vec![a("/hold", REVIEW_AT), a("/approve", AFTER_REVIEW)],
+            "held",
+        ),
+        (
+            vec![a("/approve", REVIEW_AT), a("/release", AFTER_REVIEW)],
+            "released after",
+        ),
+    ] {
+        assert_eq!(with_feed(&comments, APPROVE_URL), owner_pick, "{why}");
+    }
+    // A PR past its window, with an approval older than its review: the window term picks it,
+    // but not by that approval, so step 1 keeps the comment.
+    let old = design_pr(320, EARLY, &reviewed(EARLY), &[]);
+    let stale = comment("jacobdam", "/approve", "2026-11-20T23:59:59Z", APPROVE_URL);
+    assert_eq!(
+        pick(&[
+            with_pr(&old),
+            design_ready(&[(320, &[])]),
+            issue_todo.clone(),
+            holds(&[(320, std::slice::from_ref(&stale))]),
+        ]),
+        PICKED
+    );
+    assert_eq!(
+        pick(&[
+            with_pr(&old),
+            design_ready(&[(320, &[])]),
+            issue_todo.clone(),
+            holds(&[(320, &[stale])]),
+            feed(APPROVE_URL),
+        ]),
+        owner_pick
+    );
+    // A draft PR's approval doesn't count either.
+    assert_eq!(
+        pick(&[
+            with_pr(&fresh.replace(r#""isDraft":false"#, r#""isDraft":true"#)),
+            ready.clone(),
+            issue_todo.clone(),
+            holds(&[(320, &[a("/approve", AFTER_REVIEW)])]),
+            feed(APPROVE_URL),
+        ]),
+        owner_pick
+    );
+    // Another owner comment on the PR: still rule a's.
+    let other = "https://github.com/jacobdam/jpdf3/pull/320#issuecomment-78";
+    assert_eq!(
+        with_feed(&[a("/approve", AFTER_REVIEW)], other),
+        format!("worker owner-comment {other}")
+    );
+    // An older approval, no longer the newest command, isn't skipped even if a newer one is.
+    let older = comment("jacobdam", "/approve", REVIEW_AT, other);
+    assert_eq!(
+        with_feed(&[older, a("/approve", AFTER_REVIEW)], other),
+        format!("worker owner-comment {other}")
+    );
+    // An approval needs a `url` (step 1 matches it); other commands don't.
+    let o = run_with(&[
+        with_pr(&fresh),
+        ready.clone(),
+        holds(&[(320, &[cmd("jacobdam", "/approve", AFTER_REVIEW)])]),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8(o.stderr).unwrap().contains("holds.json"));
     // An approval's `createdAt` must be GitHub's form (it is compared as time).
     for at in ["", "2026-11-24 05:30:00"] {
         let o = run_with(&[

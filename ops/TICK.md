@@ -38,8 +38,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
     later change's 24-hour window).
   - Remove `owner-todo` once the owner's part is done (a merge on main applying it, which for a
     protected path needs the owner's signed commits, or the owner comment it waited for), or,
-    for a design ADR PR, once its window has passed with no `/hold` or the owner's `/approve`
-    on it stands (§8 step 5; the owner's turn was to object, and silence is the answer). The
+    for a design ADR PR, once its window has passed with no `/hold`, or once the owner's
+    `/approve` on it stands (§8 step 5; the owner's turn was to object, and silence is the answer). The
     owner may also remove it.
   - Rules d and i skip issues labeled `owner-todo`: it is the owner's turn.
 - **Every owner instruction gets two replies** (owner, #173): an owner issue, a comment on an
@@ -732,7 +732,11 @@ specs/tooling/design-technical.md.
    The scheduler then picks `worker design-window #N` as if the window had passed (the PR not a
    draft, no `/hold` after the last `/release`, the same label terms), and its `Rule:` line
    names the approval. A `/release` or `/hold` after it ends it; it never releases a `/hold`.
-   It gets §0's replies: "done:" once auto-merge is on (or the PR merged).
+   It gets §0's replies: while it counts, the scheduler leaves it out of rule a (#372), so the
+   `design-window` session posts "picked up" and, once auto-merge is on, "done:". One that
+   doesn't count (given before the latest review, after a `/hold`, followed by a `/release`, on
+   a draft) stays rule a's: reply "done:" with why it doesn't count (`waiting on owner: a new
+   /approve` when the owner can give one) and move nothing.
    **A record-only update keeps the window** (#373) and the approval (#372): when every commit since the last reviewed
    one is a record commit or a merge of origin/main whose remerge-diff is empty or touches only
    record paths (§4 step 6's post-cap terms), re-post `ai-review` success on the new head with
