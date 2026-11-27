@@ -4,15 +4,14 @@ Milestone: M0
 Phase: bootstrap (pilot)
 
 ## In flight
-- #373 (owner: a record-only update keeps a design PR's 24-hour window): PR #374, 2 rounds, `ai-review` success, auto-merge on; post "done:" on #373 after it merges.
-- main: ci run 45918554776 for c105253 passed; run 45920627986 (PR #368's merge, 4cf0fdb) was in progress at 01:06 UTC.
+- #373 (owner: a record-only update keeps a design PR's 24-hour window): PR #374 merged (4d56f1b); "done:" posted.
+- main: ci run 45972704663 for 4d56f1b was in progress at 09:22 UTC.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
 - #353 (dashboard page) merged (PR #368). Follow-up #369 (R1.3, R1.4), M0 without `ready`.
 - #306 (dashboard 2/2, judge metrics) merged (PR #370). Follow-up #371 (R2.2, `Ops`, without `ready`). M0's
   milestone-work issues are all closed.
-- #323 (nightly exec check): PR #364, round 1 clean after fixes, `ai-review` success, auto-merge on (merged main twice
-  more for STATUS conflicts).
+- #323 (nightly exec check): PR #364 merged (bc6c053).
 - #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
@@ -28,8 +27,8 @@ Phase: bootstrap (pilot)
   Scratch branch `t/21-drill-crash` stays (the guard blocks deletes).
 
 ## Next step
-0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window passes,
-   then rule i (#303, #323, lowest first).
+0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` or `#347` once its window
+   passes, then rule i (#303, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
