@@ -8,10 +8,13 @@ Status: implemented
 ## Behavior
 `ops/STATUS.md` is one file nearly every session rewrites, so any two open PRs collide on it,
 and three of its four sections copy state that GitHub and the scheduler already hold (#386).
-This is part 1 of 3 (#390): the command that prints those three sections. Part 2 (#391) moves
-the fourth, pending lessons, into one file per session; part 3 (#392) deletes `ops/STATUS.md`
-and makes sessions read this command's output instead. Until part 3 merges, sessions keep
-writing the file as ops/TICK.md §5 says.
+Part 1 of 3 (#390) is the command that prints those three sections. Part 2 (#391) moved the
+fourth, pending lessons, into one file per session (`ops/lessons/pending/`); part 3 (#392)
+deleted `ops/STATUS.md` and the rules that wrote it: sessions read this command's output at
+ops/TICK.md §1, and a record commit touches only files new in its session (a journal entry, a
+pending lesson file; ADR 0011 §3), so two PRs' records merge in either order without a conflict
+(the drill in PR #392's description). A note GitHub and the scheduler don't show goes on the
+issue it is about (ops/TICK.md §5).
 
 `cargo xtask status [--from DIR]` loads exactly the inputs of `cargo xtask next-session`
 (specs/tooling/next-session.md: the same live commands, or the same fixture files with

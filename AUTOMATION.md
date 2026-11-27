@@ -55,7 +55,6 @@ GitHub (public repo jacobdam/jpdf3)
 | `specs/**` | feature specs, UI spec | agent |
 | `specs/TRACE.md` | requirement → journeys → specs → tests | agent; judge checks completeness |
 | `ops/TICK.md` | the per-session protocol | agent (process may improve) |
-| `ops/STATUS.md` | current state, ≤ 1 page, rewritten by each session's record commit (ADR 0011 §3) | agent |
 | `ops/lessons/pending/YYYY-MM-DD-HHMM-<slug>.md` | one file per session holding the lessons it found after its PR's last review round, moved into `ops/LESSONS.md` by the next work PR (format in the directory's `README.md`; ADR 0011 §3) | agent |
 | `ops/journal/YYYY-MM-DD/HHMM-<slug>.md` | one file per session (since retro 0002; earlier entries in `ops/journal/YYYY-MM-DD.md`), each with a `Session:` line; committed to the session's work PR, or a records PR when there is none (ADR 0011 §3) | agent |
 | `ops/areas.toml` | the areas behind the `area:` labels: name, product or process, the paths each owns (ADR 0011 §4; checked by `cargo xtask issue-lint`) | agent |
@@ -72,7 +71,7 @@ GitHub (public repo jacobdam/jpdf3)
 ## 4. The session protocol (`ops/TICK.md`)
 
 ```
-0. Sync main. Read STATUS.md, CONSTITUTION.md, today's journal.
+0. Sync main. Read `cargo xtask status` (the current state from GitHub and the scheduler), CONSTITUTION.md, today's journal.
 1. Fetch issues/comments **authored by the owner only** (script filters by author).
 2. PICK (strict priority):
    a. owner issues labeled `human` (direct instructions; they override ADRs)
@@ -101,7 +100,7 @@ GitHub (public repo jacobdam/jpdf3)
    on the PR → posts commit status `ai-review`.
 8. MERGE: `gh pr merge --auto --squash`. An owner `/hold` turns the PR into a draft (workflow
    `owner-commands`), which GitHub refuses to merge, until the owner's `/release`.
-9. RECORD: journal, STATUS.md, a pending lesson file if any, new issues for discoveries. Exit. The journal, STATUS and pending lesson file go
+9. RECORD: journal, a pending lesson file if any, new issues for discoveries. Exit. The journal and pending lesson file go
    into the work PR as a record commit pushed before step 7's `ai-review` post (ADR 0011 §3),
    so in time this step runs between the review rounds and that post.
 ```
@@ -430,7 +429,7 @@ These run every 10 product merges (ADR 0011 §3) or 7 days and do no feature wor
   weak spots become issues
 - completeness audit (§5.3)
 - revisiting blocked issues and `ops/proposals/`
-- PLAN/STATUS/issues reconciled with reality
+- PLAN/issues/labels reconciled with reality
 - duplicated and dead code
 - dependency refresh through admission
 
@@ -473,7 +472,7 @@ wording for the worker and reviewer, test-infra improvements, PLAN.md task order
 | What | Where |
 |---|---|
 | overall progress | GitHub Milestones (progress bars) |
-| current state | `ops/STATUS.md` on main |
+| current state | `cargo xtask status` (open PRs, labels and the scheduler's next step; specs/tooling/status.md) |
 | quality trends | metrics dashboard on GitHub Pages |
 | **the product** | web app on GitHub Pages (every merge); macOS nightly build download |
 | reasoning | PRs, `docs/adr/`, `ops/journal/` |

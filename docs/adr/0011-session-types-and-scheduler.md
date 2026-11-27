@@ -119,10 +119,11 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   is compiled into `jpdf-cli`, audit 0006 AC.1), whatever else it changes.
   Audit, QC and planner cadences count product merges only. The 7-day fallback still runs an
   audit in a week with none.
-- **Records go into the work PR.** The journal and STATUS update is committed to the work PR
+- **Records go into the work PR.** The journal entry (and the session's pending lesson file, if
+  any) is committed to the work PR
   before `ai-review` is posted, on the head commit that includes it (its `Result:` line
   says what was known then: "auto-merge on", "parked"). A commit that changes only files under
-  `ops/journal/` and `ops/STATUS.md`, and adds or edits only pending lesson files
+  `ops/journal/`, and adds or edits only pending lesson files
   not on origin/main (`ops/lessons/pending/*.md`, not its `README.md`; changing or deleting one on
   origin/main counts; #391), is
   a **record commit**: it doesn't count as "changed after
@@ -134,8 +135,11 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   goes into the session's own file in `ops/lessons/pending/` (one file per session, so two open
   PRs never collide on it, as with journal entries; #386, #391); the next session that opens a
   work PR moves its lines into `ops/LESSONS.md` before that PR's round 1 and deletes the file,
-  and the retro that curates LESSONS folds and deletes any left. A
-  merge of origin/main that conflicts in `ops/STATUS.md` takes main's copy and rewrites it.
+  and the retro that curates LESSONS folds and deletes any left. Every record file is new in
+  its session (a journal entry, a pending lesson file), so two PRs' record commits never touch
+  the same file. (`ops/STATUS.md`, a shared file every record commit rewrote, was one until
+  #392 deleted it: three of its sections copied GitHub's state, which `cargo xtask status`
+  prints, specs/tooling/status.md, and its conflicts cost whole sessions; #386.)
 - **Sessions without a work PR** (a Gardener run, a "done:" reply, a Planner run with nothing
   to change in `ops/QUEUE.md`) still record themselves: one
   records PR with only record files, which is never a product merge. Record PRs exist only for
@@ -318,7 +322,7 @@ still carried one on 2026-11-22). Each gets the `design` label when it is queued
   scheduler's own bug issue (§2), so the loop repairs it or reaches the owner after 3 sessions.
 - Record commits skip the final check by path (and by a pending lesson file's presence on
   origin/main) only; they hold only `.md` text, so a record commit can't carry code. The
-  journal, STATUS and pending lesson text after the last review is no longer reviewed (a
+  journal and pending lesson text after the last review is no longer reviewed (a
   pending lesson is reviewed when a work PR moves it into LESSONS) (today record PRs are:
   PR #233's round 1 found a false tally in a journal entry). A false line there is caught only
   by the owner, the next session or an audit.
