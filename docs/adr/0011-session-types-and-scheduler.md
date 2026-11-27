@@ -125,7 +125,8 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   says what was known then: "auto-merge on", "parked"). A commit that changes only files under
   `ops/journal/`, and adds or edits only pending lesson files
   not on origin/main (`ops/lessons/pending/*.md`, not its `README.md`; changing or deleting one on
-  origin/main counts; #391), is
+  origin/main counts; #391), or changes or deletes `ops/STATUS.md` (retired by #392; a branch
+  opened before it may still carry it, and its merge of origin/main deletes it), is
   a **record commit**: it doesn't count as "changed after
   the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
   `git show --remerge-diff` is empty or touches only those paths; any other merge resolution
@@ -135,9 +136,11 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   goes into the session's own file in `ops/lessons/pending/` (one file per session, so two open
   PRs never collide on it, as with journal entries; #386, #391); the next session that opens a
   work PR moves its lines into `ops/LESSONS.md` before that PR's round 1 and deletes the file,
-  and the retro that curates LESSONS folds and deletes any left. Every record file is new in
-  its session (a journal entry, a pending lesson file), so two PRs' record commits never touch
-  the same file. (`ops/STATUS.md`, a shared file every record commit rewrote, was one until
+  and the retro that curates LESSONS folds and deletes any left. Each record file a session
+  writes is new in that session (a journal entry, a pending lesson file), and no session edits
+  another's (TICK §5), so two PRs' record commits don't touch the same file. That rests on the
+  convention: the record-commit check is by path and accepts an edit of any file under
+  `ops/journal/`. (`ops/STATUS.md`, a shared file every record commit rewrote, was one until
   #392 deleted it: three of its sections copied GitHub's state, which `cargo xtask status`
   prints, specs/tooling/status.md, and its conflicts cost whole sessions; #386.)
 - **Sessions without a work PR** (a Gardener run, a "done:" reply, a Planner run with nothing

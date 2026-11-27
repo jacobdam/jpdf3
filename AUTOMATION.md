@@ -71,7 +71,7 @@ GitHub (public repo jacobdam/jpdf3)
 ## 4. The session protocol (`ops/TICK.md`)
 
 ```
-0. Sync main. Read `cargo xtask status` (the current state from GitHub and the scheduler), CONSTITUTION.md, today's journal.
+0. Sync main. Run `cargo xtask status` (the current state from GitHub and the scheduler), CONSTITUTION.md, today's journal.
 1. Fetch issues/comments **authored by the owner only** (script filters by author).
 2. PICK (strict priority):
    a. owner issues labeled `human` (direct instructions; they override ADRs)
