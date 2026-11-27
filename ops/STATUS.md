@@ -7,13 +7,13 @@ Phase: bootstrap (pilot)
 - main is green: ci run 45914751752 for cf87e1e (PR #362's merge) passed.
 - #301 (nightly 2/3) merged (PR #351); its R2.1, #352, is folded into #361. Then #302 (part 3, files issues; depends on
   #360) reads `nightly.json` and `limits.json` as well as `regress.json`.
-- #305 (dashboard 1/2) merged (PR #354). The page is #353 (`ready`): finished work on branch
-  `t/353-dashboard-page` (75d990f); merge origin/main into it and open the PR. #306 (judge metrics) now depends on #353.
-- #344 (driver test's 200-PR bound): PR #365, auto-merge on. Follow-ups #366 (the test needs GNU `touch -d`, fails on
+- #353 (dashboard page, 2/2): PR #368, 3 review rounds, `ai-review` success, auto-merge on. Follow-up #369 (R1.3,
+  R1.4), M0 without `ready`. #306 (judge metrics) depends on #353.
+- #344 (driver test's 200-PR bound): PR #365 merged. Follow-ups #366 (the test needs GNU `touch -d`, fails on
   macOS) and #367 (R1.1, a `grep -x` without `-F` mutant), both M0 without `ready`.
 - ADR 0013 (#357, PR #359) is in its 24-hour window (`owner-todo` on #357). Its tasks #360, #361 are `ready` (Planner
   2026-11-27) and wait on #357; they fold #350 and #352 (closed). #302 also depends on #360. #322 merged (PR #362).
-- Work mix 0 of 20: #353 (`apps/web/`) is the only open M0 issue that counts as milestone work; the mix rises once
+- Work mix 0 of 20: #353 (`apps/web/`) was the only open M0 issue that counts as milestone work; the mix rises once
   M0 closes and M1 opens (ops/QUEUE.md, Work mix).
 - ADR 0012's one-time moves are done (`Ops` milestone; #308, #248 → M1, #250 → M3, #251 → M4; #247 deferred).
 - The judge's M0 gate passes (nightly 45179218903, 2026-11-23), but M0 is not tagged: its backlog isn't empty (rule j)
@@ -25,7 +25,7 @@ Phase: bootstrap (pilot)
 
 ## Next step
 0. `cargo xtask next-session` (TICK §2). Expected: `worker design-window #359` once its window passes,
-   then rule i (#303, #323, #353, lowest first).
+   then rule i (#303, #323, lowest first).
 1. **Next audit:** due at 10 product merges since audit 0006 or 2026-11-30 (`cargo xtask next-session` counts).
 2. **Next retro (0003): by 2026-11-30.** Measure retro 0002's two action items (0 conflicts in ops/journal/**,
    conflict-only sessions ≤ 1 in 20; PRs at 4 rounds ≤ 10%, no "passes when nothing ran" audit finding), retro 0001 item 1's
@@ -52,3 +52,6 @@ Phase: bootstrap (pilot)
 - A bounded-buffer claim ("at most cap + one chunk") → before round 1, state the allocation (reserve once, so capacity
   can't outgrow length), the failed-reservation path (no further heap allocation) and the cancel path; Codex found one
   of each in rounds 2–4 of PR #362 ([journal](journal/2026-11-26/2333-322-stderr-tail.md)).
+- A merge of origin/main that stops on conflicts while main changed a protected path → the guard blocks every Bash
+  call (even `git add`/`git commit`); `git merge --abort`, `git merge origin/main -X theirs`, then re-apply your side
+  in a new commit ([journal](journal/2026-11-27/0048-353-dashboard-page.md)).
