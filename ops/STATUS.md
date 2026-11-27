@@ -52,4 +52,6 @@ Phase: bootstrap (pilot)
 - Suggested owner follow-up (no issue yet): a command size cap in guard.py and an explicit hook `timeout`.
 
 ## Pending lessons
-- none
+- A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
+  old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
+  R1.1).
