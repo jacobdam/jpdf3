@@ -767,7 +767,14 @@ first; Save As into a folder the harness made read-only (macOS) / the adapter fa
 Fixture `offline.pdf`: 12 pages; the word "harbor" appears exactly 3 times, on pages 2, 7 and
 11; page 5 holds Japanese text in a Type0 font with `/Encoding /90ms-RKSJ-H` (a predefined
 CMap, loaded from the CMaps the app ships) and an embedded subset of a permissively licensed
-font as its CIDFont descendant; page 9 holds a random text sentinel.
+font as its CIDFont descendant; that descendant's `/CIDSystemInfo` is Adobe-Japan1 (Registry
+`Adobe`, Ordering `Japan1`: the collection `90ms-RKSJ-H` maps into), and its CIDs reach the
+subset's own glyphs: either a CID-keyed Adobe-Japan1 CFF, or a CIDFontType2 with a
+`/CIDToGIDMap` stream built for the subset, so a fixture fault can't make all three renders
+agree on wrong glyphs; page 9 holds a random text sentinel. The MuPDF and Poppler reference
+renders of page 5 need their predefined CMap data (for Poppler, the `poppler-data` package's
+CMaps): the comparison fails if either reference renderer reports, while rendering page 5,
+that it can't load the `90ms-RKSJ-H` CMap or the Adobe-Japan1 collection.
 
 Steps: load the app once with the network on → on this load the reader.md network rule holds
 (only same-origin GETs for static app assets, none cross-origin) → its service worker installs
