@@ -2361,6 +2361,17 @@ fn step10_dependencies() {
         one("Depends on: #149 (task 1a), #150 (task 1b)."),
         "planner"
     );
+    // #412: a mention inside a line isn't the dependency line (#303's body, which idled the
+    // loop); the same words at the line's start are.
+    assert_eq!(
+        one("Its `Depends on: #150` is met by #150 part 1."),
+        "worker ready #701"
+    );
+    assert_eq!(
+        one("**Refs:** PLAN §3. Depends on: #150."),
+        "worker ready #701"
+    );
+    assert_eq!(one("**Refs:** PLAN §3.\n  Depends on: #150."), "planner");
     // A lower-numbered blocked one doesn't hide a later free one.
     assert_eq!(
         pick(&[plus(

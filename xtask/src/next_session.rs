@@ -973,13 +973,17 @@ fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
     Ok(out)
 }
 
-/// The list right after each `Depends on:` (bold markers allowed): `#N` items separated by
-/// commas, spaces or `and`, each optionally followed by a `(…)` note. The list ends at the first
-/// other text, so prose after it (`Depends on: issues closed (#244)`) names nothing.
+/// The list on each dependency line: a line whose text, after leading whitespace and an
+/// optional `**`, starts with `Depends on:` (#412: a mention inside prose, such as
+/// ``Its `Depends on: #14` is met by``, names nothing). The list is `#N` items separated by
+/// commas, spaces or `and`, each optionally followed by a `(…)` note. It ends at the first other
+/// text, so prose after it (`Depends on: issues closed (#244)`) names nothing.
 fn dependencies(body: &str) -> Vec<u64> {
     let mut out = Vec::new();
     for line in body.lines() {
-        for rest in line.split("Depends on:").skip(1) {
+        let start = line.trim_start();
+        let start = start.strip_prefix("**").unwrap_or(start);
+        if let Some(rest) = start.strip_prefix("Depends on:") {
             let mut r = rest;
             loop {
                 r = r.trim_start_matches([' ', '*', ',']);
@@ -2280,6 +2284,13 @@ mod tests {
         assert_eq!(dependencies("Depends on: #1 (open"), [1]);
         // R1.2: prose after the phrase names nothing.
         assert!(dependencies("with its Depends on: issues closed, task 2 (#244).").is_empty());
+        // #412: only a line that starts with the phrase is a dependency line.
+        assert!(dependencies("Its `Depends on: #14` is met by #14 part 1").is_empty());
+        assert!(dependencies("**Refs:** PLAN §3. Depends on: #5").is_empty());
+        assert!(dependencies("x\n**Size:** small. **Depends on:** #5.").is_empty());
+        assert!(dependencies("* Depends on: #5").is_empty());
+        assert_eq!(dependencies("  **Depends on:** #5"), [5]);
+        assert_eq!(dependencies("\tDepends on: #6\nsee Depends on: #7"), [6]);
     }
 
     #[test]
