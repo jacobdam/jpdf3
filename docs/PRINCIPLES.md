@@ -146,23 +146,29 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
 
 ## P7. The retro measures R13 daily and never gates or orders work
 - **Invariant:** every retro record (`docs/retros/NNNN.md`, second line `Kind: daily` or
-  `Kind: weekly`) answers three questions with numbers from `cargo xtask metrics`: is the
-  current milestone moving (open count, filed and closed per day, forecast, product share of
-  merges), where the sessions went (idle, rework, records, product, process, unknown; idle
-  hours and idle hours with work waiting), and where the owner stepped in (target 0, exempt
-  kinds counted apart), plus the skip-label table and the quality floor. `cargo xtask
-  next-session` makes the retro due when no retro record is dated today (UTC). A retro adds or
-  removes no label, moves no milestone, edits no `ops/QUEUE.md` and reorders no PLAN.md task;
-  each stall it finds is one `discovery` + `stall` issue in the current milestone, without
-  `ready`, one open per cause. At most 3 action items are under measurement at a time, each on
-  a distinct number, each judged on the 7 UTC days after its merge.
-- **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row and §2's read-only bullet).
+  `Kind: weekly`, third `Period: YYYY-MM-DD..YYYY-MM-DD`) answers three questions with numbers
+  from `cargo xtask metrics`: is the current milestone moving (open count, moves, forecast,
+  product share of merges), where the sessions went (unknown, idle, rework, records, product,
+  process; idle hours and idle hours with work waiting), and where the owner stepped in (one
+  action, one intervention; target 0, exempt kinds counted apart), plus the skip-label table
+  and the quality floor. Periods neither overlap nor skip a day. `cargo xtask next-session`
+  makes the retro due when no retro record is dated today (UTC). On any issue or PR but its
+  own `retro` issue and PR and the issues it files, a retro adds or removes no label and moves
+  no milestone; it never edits `ops/QUEUE.md` or reorders a PLAN.md task. Each stall it finds
+  is one `discovery` + `stall` issue in the current milestone, without `ready`, one open per
+  cause. At most 3 action items are under measurement at a time, each on a distinct number,
+  each judged on the 7 UTC days after its merge day, extended at most once.
+- **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row and §2's read-only bullet, and
+  ADR 0012 §2).
 - **Enforced by:** the scheduler's daily term and its fixtures (ADR 0018 task 1),
   `cargo xtask metrics` (tasks 3–5); the rest is reviewer vigilance.
-- **Reviewers check:** a retro PR's session ran no label, milestone or QUEUE.md write; its
-  record has every section with numbers from the tool (not by hand once the tool computes
-  them); a new action item keeps the count under measurement at 3 or fewer with a number no
-  other item uses; a verdict cites the item's 7-day window; a change to the session classes
-  or the intervention kinds updates both the ADR's definitions and the metrics fixtures.
+- **Reviewers check:** a retro session ran no label or milestone write on another issue and no
+  QUEUE.md write; its record has every section with numbers from the tool (not by hand once
+  the tool computes them) and a `Period:` that starts the day after the previous record's;
+  a new action item keeps the count under measurement at 3 or fewer with a number no other
+  item uses; a verdict cites the item's 7-day window; a change to the session classes or the
+  intervention kinds updates both ADR 0018's definitions and the metrics fixtures.
 - **Paths:** `docs/retros/`, `xtask/src/metrics.rs`, `xtask/src/metrics/`,
-  `specs/tooling/metrics.md`, `ops/TICK.md`.
+  `xtask/tests/metrics.rs`, `xtask/tests/fixtures/metrics/`, `specs/tooling/metrics.md`,
+  `xtask/src/next_session.rs`, `xtask/src/next_session/`, `xtask/tests/next_session.rs`,
+  `specs/tooling/next-session.md`, `ops/TICK.md`.
