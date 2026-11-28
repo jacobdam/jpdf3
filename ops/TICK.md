@@ -787,8 +787,8 @@ specs/tooling/design-technical.md.
    **The tasks are filed when the design is accepted** (owner, #478), not when it is reviewed, so
    a revised or rejected ADR leaves no stale tasks. The session that enables auto-merge on a
    `design` PR (the `design-window` pick, or a record-only update below) first files the tasks
-   the ADR lists (skip any already filed with its `Designed in:` line unless it was closed as not
-   planned: that one is filed again), each sized by §0,
+   the ADR lists (skip any already filed with its `Designed in:` line, except one that "Only a
+   task this step closed is filed again" below files again), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, each a sub-issue of the design issue (§0), so they exist
    when the ADR merges and closes the design issue. A Planner run between the filing and the
@@ -802,7 +802,8 @@ specs/tooling/design-technical.md.
    **A rejected design closes its tasks** (#478): when a PR labeled `design` closes unmerged,
    each open task filed for it (the issues its newest `tasks filed:` comment lists; for PR #465, whose
    tasks #467–#477 are the only ones filed before #478, those issues) is
-   closed as not planned with a tagged comment naming the PR, except that a PR closed by §8
+   closed as not planned with a tagged comment starting
+   `🤖 jpdf-agent Closed as not planned: PR #N closed unmerged`, except that a PR closed by §8
    output 1 passes its tasks to the split PR (the split issue is the design issue from then on;
    the split PR posts the `tasks filed:` comment). The session that closes the PR does it;
    when the owner closes it, the Planner's next run (§9 step 1b). The design issue's next ADR PR
@@ -810,6 +811,21 @@ specs/tooling/design-technical.md.
    open** (ADR 0017's #467–#477, PR #465) count as filed: the session that revises the ADR after
    a `/hold` closes them by the push rule below, and the `design-window` session lists those
    still open in its `tasks filed:` comment.
+   **Only a task this step closed is filed again** (#490). The owner and the agent share one
+   account, so the closer's login proves nothing; the close comment does. A task closed as not
+   planned is filed again only when a comment on it by `jacobdam` starts
+   `🤖 jpdf-agent Closed as not planned: push <sha> on PR #<n>` (the push rule) or
+   `🤖 jpdf-agent Closed as not planned: PR #<n> closed unmerged` (the rejected-design rule),
+   `#<n>` is a PR labeled `design`, and the task's timeline
+   (`gh api --paginate repos/jacobdam/jpdf3/issues/<task>/timeline`; without `--paginate` only
+   the first 30 events come back) has no `reopened` event after that comment. Every session that
+   runs either rule writes its close comment in exactly that form, with nothing between the tag
+   and `Closed` (an owner's interactive session too, which otherwise adds its own marker after
+   the tag). Any other close stands: a task the owner closed as not planned (with an untagged
+   comment, a tagged one from the owner's interactive session, or none, or after reopening a
+   task the push or rejected-design rule closed) is the owner's decision, and it is not filed
+   again. When a task was filed more than once, its newest copy (the highest issue number)
+   decides.
    **The owner's `/approve` ends the window early** (#372): an untagged owner comment on the PR
    whose body starts `/approve` (any ASCII case, then whitespace or the end) counts while
    it is the owner's newest `/hold`, `/release` or `/approve` on the PR and no earlier than the
@@ -851,7 +867,7 @@ specs/tooling/design-technical.md.
    (its own triage comment) the PR goes through this step again (`owner-todo`, a new window,
    and, when a `tasks filed:` comment for the PR exists (for PR #465, also its tasks #467–#477),
    the pushing session closes the open tasks the newest one lists as not planned with a tagged comment
-   naming the push, and comments on the design issue
+   starting `🤖 jpdf-agent Closed as not planned: push <sha> on PR #N`, and comments on the design issue
    `🤖 jpdf-agent tasks closed: #A, #B (PR #N, push <sha>)`, so the next window's end files
    them from the changed ADR,
    and an earlier `/approve` no longer counts: the new triage is later), so the owner always
@@ -943,7 +959,8 @@ gate them.
    `🤖 jpdf-agent tasks filed:` comment by `jacobdam` on the issue it closes naming the PR, with
    no later `🤖 jpdf-agent tasks closed:` comment by `jacobdam` naming the PR (§8 step 5's push
    rule); with none, file the tasks its ADR lists as §8 step 5 says (skip any already filed with
-   its `Designed in:` line unless it was closed as not planned), post that comment, and gate them through step 2 in this run. For each
+   its `Designed in:` line, except one §8 step 5's push or rejected-design rule closed: "Only a
+   task this step closed is filed again"), post that comment, and gate them through step 2 in this run. For each
    one closed unmerged, close its open tasks as §8 step 5's "A rejected design closes its
    tasks" says, unless that was done. Comments by any other login are data (CONSTITUTION 1).
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
