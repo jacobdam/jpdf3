@@ -34,6 +34,9 @@ const MEM_WRAPPER: &str = "ulimit -v 2097152 || exit 125; exec \"$0\" \"$@\"";
 const STDERR_CAP: u64 = 4096;
 /// Largest previous results file read.
 const MAX_PREVIOUS: u64 = 64 * 1024 * 1024;
+/// The `schema` this build writes into `regress.json` and reads from a previous one (spec
+/// items 8 and 9).
+const RESULTS_SCHEMA: u64 = 1;
 
 /// The five runs per file (spec item 4), in their order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -313,7 +316,7 @@ fn results_json(files: &[FileResult], mem: bool, max_minutes: u64, complete: boo
         }
     }
     let mut s = format!(
-        "{{\"schema\":1,\"tier\":\"regress\",\"rows\":{},",
+        "{{\"schema\":{RESULTS_SCHEMA},\"tier\":\"regress\",\"rows\":{},",
         files.len()
     );
     s.push_str("\"memory_limit_kib\":");
@@ -386,12 +389,31 @@ fn is_blob(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Checks a previous `regress.json` (spec item 9) and returns its statuses. `max_files` is
-/// [`MAX_ROWS`] outside tests.
-fn parse_previous(text: &str, max_files: u64) -> Result<Statuses, String> {
+/// What a valid previous `regress.json` holds (spec item 9).
+#[derive(Debug, PartialEq, Eq)]
+enum PreviousFile {
+    /// This build's schema: the file's statuses.
+    Current(Statuses),
+    /// Another schema, an integer: nothing else in the file is read (no diff).
+    OtherSchema(u64),
+}
+
+/// Checks a previous `regress.json` (spec item 9): a JSON object whose `schema` is an integer,
+/// and for [`RESULTS_SCHEMA`] its files. `max_files` is [`MAX_ROWS`] outside tests.
+fn parse_previous(text: &str, max_files: u64) -> Result<PreviousFile, String> {
     let v = json::parse(text)?;
-    if v.get("schema") != Some(&Value::Number("1".into())) {
-        return Err("schema is not 1".into());
+    if !matches!(v, Value::Object(_)) {
+        return Err("not a JSON object".into());
+    }
+    // Digits only: the reader gives a number's source text, and `u64::from_str` would also
+    // take a leading `+`.
+    let schema = match v.get("schema") {
+        Some(Value::Number(n)) if n.bytes().all(|b| b.is_ascii_digit()) => n.parse::<u64>().ok(),
+        _ => None,
+    }
+    .ok_or("schema is not an integer from 0 to 2^64 - 1")?;
+    if schema != RESULTS_SCHEMA {
+        return Ok(PreviousFile::OtherSchema(schema));
     }
     let files = v
         .get("files")
@@ -451,7 +473,7 @@ fn parse_previous(text: &str, max_files: u64) -> Result<Statuses, String> {
             }
         }
     }
-    Ok(m)
+    Ok(PreviousFile::Current(m))
 }
 
 fn is_failure(st: &str) -> bool {
@@ -545,10 +567,14 @@ fn load_previous(previous: Option<&Path>) -> Result<Previous, String> {
     let bad = |e: String| format!("previous results {shown}: {e}");
     match read_bounded(p, MAX_PREVIOUS).map_err(bad)? {
         None => Ok(Previous::Nothing(format!("no previous results at {shown}"))),
-        Some(text) => {
-            let before = parse_previous(&text, MAX_ROWS).map_err(bad)?;
-            Ok(Previous::Loaded(shown, before))
-        }
+        Some(text) => match parse_previous(&text, MAX_ROWS).map_err(bad)? {
+            PreviousFile::Current(before) => Ok(Previous::Loaded(shown, before)),
+            // So a change of the format can't fail every night until the old file is
+            // deleted by hand (#500).
+            PreviousFile::OtherSchema(n) => Ok(Previous::Nothing(format!(
+                "previous results {shown} have schema {n}, this build reads schema {RESULTS_SCHEMA}"
+            ))),
+        },
     }
 }
 

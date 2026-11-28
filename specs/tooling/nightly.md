@@ -5,7 +5,8 @@ ISO 32000-2 clauses: none (development tool; it never parses PDF bytes, `jpdf-cl
 Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300, #301, #302)
 Status: implemented (the regress tier and the diff (#300), the bench and extra fuzz time
 (#301), and filing issues (item 16) in two parts: limits cases and regress files (#302), the
-fuzz pass and the bench (#383))
+fuzz pass and the bench (#383); a previous file of another schema counts as no previous
+(#500))
 
 ## Behavior
 1. **Usage.**
@@ -119,12 +120,21 @@ fuzz pass and the bench (#383))
      against the earlier night, and an invalid file fails before hours of runs.
    - No `--previous`, or no file at that path: `{"schema":1,"previous":null,"note":"…"}`,
      and stderr says there is no diff.
-   - Otherwise the previous file is read (item "Limits") and checked: an object with
-     `"schema":1` and a `files` array; each file an object with a `blob` of 40 lowercase hex
+   - Otherwise the previous file is read (item "Limits") and checked: valid JSON, an object,
+     whose `schema` member is an integer from 0 to 2^64 − 1 (a JSON number of digits only: no
+     sign, fraction or exponent, so `1.0`, `1e0`, `-1` and `"1"` are not integers).
+   - A `schema` other than 1 (this build's schema, item 8) means no previous, as when no file
+     is there (#500): `{"schema":1,"previous":null,"note":"previous results <FILE as given>
+     have schema <N>, this build reads schema 1"}`, the stderr line
+     `nightly: <that note>: no diff`, no regression findings (item 16), and no other member
+     is read. So a later change that bumps `regress.json`'s schema starts the diff again
+     from its first night instead of failing every night before the runs, while the CI cache
+     (ops/proposals/nightly-previous-night.md) still holds the old file.
+   - With `"schema":1` the file must also have a `files` array; each file an object with a `blob` of 40 lowercase hex
      digits (each blob once), a `url` string, a boolean `missing`, and either `"missing":true` with no runs or a `runs` array whose
      items have a known `op` (each op at most once per file) and a known status (item 5 plus
-     `not_run`). Anything else is a tool failure before any run (item 10). Other members are
-     ignored.
+     `not_run`). Anything else (not JSON, not an object, no integer `schema`, or schema 1 with
+     a bad member) is a tool failure before any run (item 10). Other members are ignored.
    - Each (blob, op) pair present on either side gets a status per side: the run's status, or
      `missing` for every op of a missing file, or `absent` when that side doesn't list the
      blob (or the op). Pairs whose two statuses differ are the changes, sorted by blob, then
@@ -480,9 +490,17 @@ Self-check:
     the run (one line after `recv_timeout`; no hook observes the reader thread), and the
     memory bound (stated, not measured).
   - A validator that accepts anything: one test per rejected shape of the previous file
-    (schema 2, a string schema, no `files`, a bad blob, a repeated blob, an unknown op, a
+    (not an object, a string, `null`, array, fraction, exponent, negative, `-0` or 2^64
+    schema, no schema, no `files`, a bad blob, a repeated blob, an unknown op, a
     repeated op, an unknown status, a missing file with runs, too many files, too large), each
     with a near-miss that is accepted (extra members, `missing:false` with runs).
+  - A schema rule that fails every other schema, or skips checks on schema 1 (#500): schemas
+    0, 2, 10 and 2^64 − 1 give no previous even with a bad `files` member, the same members
+    with schema 1 fail, the note and the stderr line are pinned for schema 2, and the real
+    `previous` step is `Ok` for it (so the night goes on: the driver tests' all-`Ok` night
+    exits 0) and `Failed` for a string schema. What still passes: dropping the digits-only
+    check, since the JSON reader never gives a number with a leading `+` (the one form
+    `u64::from_str` would add).
   - A bench that reports an earlier night's numbers: the test writes a stale `bench.json` and
     checks it is gone when the fake bench starts and absent after a `timeout` or `failed`
     end; a stale `nightly.json` is replaced.

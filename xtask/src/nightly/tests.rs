@@ -571,8 +571,16 @@ fn results_json_has_the_spec_shape_and_escapes_text() {
     // The writer's output is a valid previous file, and reads back the same statuses.
     assert_eq!(
         parse_previous(&text, MAX_ROWS).unwrap(),
-        current_statuses(&sample_files())
+        PreviousFile::Current(current_statuses(&sample_files()))
     );
+}
+
+/// The statuses of a previous file of this build's schema; any other answer fails the test.
+fn current(text: &str) -> Statuses {
+    match parse_previous(text, MAX_ROWS) {
+        Ok(PreviousFile::Current(m)) => m,
+        other => panic!("{text}: {other:?}"),
+    }
 }
 
 /// A previous results file with the given files array text.
@@ -591,7 +599,7 @@ fn the_previous_file_is_checked_strictly() {
     let ok_run = "{\"op\":\"info\",\"status\":\"ok\"}";
     // Near misses that pass: extra members, missing:false with runs, a missing file.
     let good = prev(&[file(&b1, false, ok_run), file(&blob(2), true, "")].join(","));
-    let m = parse_previous(&good, MAX_ROWS).unwrap();
+    let m = current(&good);
     assert_eq!(m.len(), 1 + 5);
     assert_eq!(
         m.get(&(b1.clone(), Op::Info)).map(|x| x.0.as_str()),
@@ -603,18 +611,41 @@ fn the_previous_file_is_checked_strictly() {
     );
     for st in STATUSES {
         let r = format!("{{\"op\":\"text2\",\"status\":\"{st}\"}}");
-        assert!(
-            parse_previous(&prev(&file(&b1, false, &r)), MAX_ROWS).is_ok(),
-            "{st}"
-        );
+        assert_eq!(current(&prev(&file(&b1, false, &r))).len(), 1, "{st}");
     }
+    // Schema 2 is #500's case; everything else in the file is unread.
     let bad = [
-        ("{\"schema\":2,\"files\":[]}".to_string(), "schema"),
-        ("{\"schema\":\"1\",\"files\":[]}".to_string(), "schema"),
-        ("{\"files\":[]}".to_string(), "schema"),
+        (
+            "{\"schema\":\"1\",\"files\":[]}".to_string(),
+            "schema is not an integer",
+        ),
+        (
+            "{\"schema\":\"2\",\"files\":[]}".to_string(),
+            "schema is not an integer",
+        ),
+        ("{\"files\":[]}".to_string(), "schema is not an integer"),
+        ("{\"schema\":null}".to_string(), "schema is not an integer"),
+        ("{\"schema\":[2]}".to_string(), "schema is not an integer"),
+        (
+            "{\"schema\":1.0,\"files\":[]}".to_string(),
+            "schema is not an integer",
+        ),
+        ("{\"schema\":2.5}".to_string(), "schema is not an integer"),
+        (
+            "{\"schema\":1e0,\"files\":[]}".to_string(),
+            "schema is not an integer",
+        ),
+        ("{\"schema\":-1}".to_string(), "schema is not an integer"),
+        ("{\"schema\":-0}".to_string(), "schema is not an integer"),
+        (
+            "{\"schema\":18446744073709551616}".to_string(),
+            "schema is not an integer",
+        ),
         ("{\"schema\":1}".to_string(), "no files"),
         ("{\"schema\":1,\"files\":{}}".to_string(), "no files"),
-        ("[]".to_string(), "schema"),
+        ("[]".to_string(), "not a JSON object"),
+        ("2".to_string(), "not a JSON object"),
+        ("[{\"schema\":2}]".to_string(), "not a JSON object"),
         (prev(&file(&b1.to_uppercase(), false, ok_run)), "bad blob"),
         (prev(&file(&b1[1..], false, ok_run)), "bad blob"),
         (prev(&file(&format!("{b1}0"), false, ok_run)), "bad blob"),
@@ -666,6 +697,37 @@ fn the_previous_file_is_checked_strictly() {
         let e = parse_previous(&text, MAX_ROWS).unwrap_err();
         assert!(e.contains(want), "{text}: {e}");
     }
+}
+
+/// #500: a previous file of another integer schema is no previous, whatever its other members
+/// hold, so a format change can't fail every night; this build's schema is still checked.
+#[test]
+fn a_previous_file_of_another_schema_is_not_read_further() {
+    for (text, want) in [
+        ("{\"schema\":2,\"files\":[]}", 2),
+        ("{\"schema\":2}", 2),
+        ("{\"schema\":2,\"files\":\"not an array\",\"x\":[1]}", 2),
+        ("{\"files\":{},\"schema\":0}", 0),
+        ("{\"schema\":10}", 10),
+        ("{\"schema\":18446744073709551615}", u64::MAX),
+    ] {
+        assert_eq!(
+            parse_previous(text, MAX_ROWS),
+            Ok(PreviousFile::OtherSchema(want)),
+            "{text}"
+        );
+    }
+    // The same bad members under this build's schema fail.
+    for text in [
+        "{\"schema\":1}",
+        "{\"schema\":1,\"files\":\"not an array\",\"x\":[1]}",
+    ] {
+        assert!(parse_previous(text, MAX_ROWS).is_err(), "{text}");
+    }
+    // The file is still bounded and strict JSON first.
+    assert!(parse_previous("{\"schema\":2,}", MAX_ROWS).is_err());
+    assert!(parse_previous("{\"schema\":2,\"schema\":1}", MAX_ROWS).is_err());
+    assert_eq!(RESULTS_SCHEMA, 1);
 }
 
 #[test]
@@ -808,14 +870,43 @@ fn no_previous_file_means_no_diff_said_so() {
             .contains("no previous results at")
     );
     assert!(line.contains("no diff"), "{line}");
-    // A previous file that exists but is invalid fails the diff.
-    let bad = d.join("bad.json");
-    std::fs::write(&bad, "{\"schema\":2}").unwrap();
-    let e = load_previous(Some(&bad)).unwrap_err();
-    assert!(
-        e.starts_with("previous results ") && e.contains("schema"),
-        "{e}"
+    // A previous file of another schema is no previous, and says which schema it had (#500).
+    let other = d.join("other.json");
+    std::fs::write(&other, "{\"schema\":2,\"files\":7}").unwrap();
+    let shown = other.display().to_string();
+    let note = format!("previous results {shown} have schema 2, this build reads schema 1");
+    assert_eq!(
+        load_previous(Some(&other)),
+        Ok(Previous::Nothing(note.clone()))
     );
+    let (text, line) = diff_for(&load_previous(Some(&other)).unwrap(), &sample_files());
+    let v = json::parse(&text).unwrap();
+    assert_eq!(v.get("previous"), Some(&Value::Null));
+    assert_eq!(v.get("note").and_then(Value::as_str), Some(note.as_str()));
+    assert_eq!(line, format!("nightly: {note}: no diff"));
+    // A previous file that exists but is invalid fails the diff: a schema that is not an
+    // integer, or this build's schema with a bad member.
+    let bad = d.join("bad.json");
+    for (text, want) in [
+        ("{\"schema\":\"2\"}", "schema is not an integer"),
+        ("{\"schema\":1}", "no files"),
+    ] {
+        std::fs::write(&bad, text).unwrap();
+        let e = load_previous(Some(&bad)).unwrap_err();
+        assert!(
+            e.starts_with("previous results ") && e.contains(want),
+            "{text}: {e}"
+        );
+    }
+    // The real `previous` step: `Ok` for another schema, so the night goes on to exit 0 (the
+    // driver tests: every step `Ok` exits 0), and `Failed` (exit 1) for an invalid file.
+    let root = Path::new("/nonexistent-root");
+    for (path, ok) in [(&other, true), (&bad, false)] {
+        let opts = p(&["--previous", &path.display().to_string()]).unwrap();
+        let got = Real { root, opts: &opts }.previous();
+        assert_eq!(got.is_ok(), ok, "{}: {got:?}", path.display());
+        assert!(ok || matches!(got, Err(Step::Failed(_))), "{got:?}");
+    }
     // A valid one gives a diff against this night.
     let good = d.join("good.json");
     std::fs::write(&good, results_json(&sample_files(), true, 120, true)).unwrap();
