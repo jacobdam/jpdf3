@@ -436,7 +436,7 @@ empty and the gate passes (TICK §9 step 4, #508):
 3. tag `mN` on the judged commit and close the milestone, after a re-check
 4. generate the next backlog
 
-M0 closes after only step 1's gate check, without the rest of step 1 or step 2 (owner, #508); its
+M0 closes after only step 1's gate check, without the rest of step 1, step 2 or step 3's re-check (owner, #508); its
 checklist is recorded afterwards (#527).
 
 ## 10. Audit sessions (self-correction)

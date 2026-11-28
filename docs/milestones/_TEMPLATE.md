@@ -5,7 +5,7 @@ Planner PR. Every item links its evidence (a run, a file or directory at the jud
 command, an issue or PR). Write only what is true when the PR merges: the tag is pushed later,
 by the close stage, so say where it goes, not that it exists. -->
 
-- Checklist run: <YYYY-MM-DD HH:MM UTC>, session <journal entry>
+- Checklist run: <YYYY-MM-DDTHH:MM:SSZ, taken when (c)'s lists are read>, session <journal entry>
 - Judged commit: <sha> (the tag `mN` goes on it when the close stage runs)
 
 ## (a) Fresh gate

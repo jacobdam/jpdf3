@@ -1069,15 +1069,16 @@ gate them.
      owner-approved milestone it is the only way to close. Each gets §0's replies.
    - **Close** (a Planner run whose step 4 finds the window ended or an `/approve` counting; or
      the session that takes a counting `/approve` under rule a): check again that `Mn` has no
-     open issue, that no issue in `Mn` was closed at or after the start of the `Checklist run:` minute (an issue
-     filed and fixed since then holds work no gate judged; one closed before it was closed
-     by the judged commit or an earlier one, or by a commit that (a) would have refused, or is
-     listed in (c)), and that (c) finds no issue
+     open issue, that every issue in `Mn` closed at or after the `Checklist run:` time (to the
+     second, taken when (c)'s lists were read) is one that (c) lists (any other was filed and
+     fixed since, so it holds work no gate judged; one closed before that time was closed by
+     the judged commit or an earlier one, by a commit that (a) would have refused, or is listed
+     in (c)), and that (c) finds no issue
      that left after the notice was filed. If a check fails, close the notice with a tagged
      comment saying which, and stop: the next empty backlog runs the checklist again.
      Otherwise tag the judged commit (`git tag mN <judged commit>`, `git push origin mN`),
      close the GitHub milestone `Mn` (so the scheduler's current milestone moves on), close the
-     notice with a tagged comment naming the tag (which takes its `owner-todo` off), and create
+     notice, if any, with a tagged comment naming the tag (which takes its `owner-todo` off), and create
      the next milestone's issues from PLAN.md §8 and the journeys if it has none (then step 3
      for that milestone).
 
