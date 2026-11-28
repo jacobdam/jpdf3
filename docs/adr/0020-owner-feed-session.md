@@ -258,8 +258,9 @@ keep the full run (main red, rule b, reads them).
     no new route issue exists) and on one whose linking PR is green (it waits for the quiet
     period); a comment on a route issue labeled `owner-todo` whose linking design PR is in its
     window, not a draft and failing (`owner-feed` at once), and on a route issue labeled
-    `owner-todo` that no open PR links (it waits for the quiet period); a comment on a green routed PR (it waits for the quiet period); a comment on issue
-    #5 while the route is #52, and on #520 (no suspension);
+    `owner-todo` that no open PR links (it waits for the quiet period); a comment on a green
+    routed PR (it waits for the quiet period); a comment on issue #5 while the route is #52, and
+    on #520 (no suspension);
   - review bodies: an owner review body on an agent PR (picked at once as `worker owner-comment`,
     and never in the `owner-feed` brief); the same with a tagged `jacobdam` `done:` naming it
     (no pick); named by the body of an open agent PR that is green (no pick) or failing (picked);
