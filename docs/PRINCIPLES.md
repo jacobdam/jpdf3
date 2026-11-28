@@ -91,3 +91,24 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   the spec's exit codes say, and decides nothing about order; no step's result is folded into
   a `bool` or an exit code before the end; the driver's tests cover the new step's failure.
 - **Paths:** `xtask/src/`.
+
+## P5. A protected file's tests run against the file, on its platform, from one manifest
+- **Invariant:** every test of a protected file (CONSTITUTION 12) is an entry in
+  `ops/protected-tests/manifest.toml` with its targets, platforms and tools; it runs against
+  its targets at their protected paths unless the runner is told to put a copy in their place;
+  its platforms include every platform where a target runs (macOS for `ops/driver/`, Linux for
+  a workflow job on `ubuntu-*`); it passes on main there, and a missing tool fails it. An
+  applied proposal's `ops/proposals/<topic>/` directory holds no test and no copy of a
+  protected file.
+- **Decided in:** ADR 0014.
+- **Enforced by:** reviewer vigilance until ADR 0014's tasks land: today the tests still sit in
+  the applied proposals' directories and nothing runs them. Then `cargo xtask protected-tests`
+  (task 2: a failing entry, a missing tool, an unlisted script, a platform the target table
+  rejects) in `cargo xtask ci linux` for the Linux entries and `cargo xtask ci macos` for the
+  macOS ones (task 3). "Applied" has no gate.
+- **Reviewers check:** a new or changed test of a protected file has a manifest entry with the
+  target's platforms and defaults to the protected path; a proposal PR ran the runner with its
+  copy in place of the target and says which entries fail on purpose; a test it changes stays in
+  its own directory and its apply steps move it into `ops/protected-tests/` in the same signed
+  commit; an applied proposal's directory keeps only its `.md` and `.diff` records.
+- **Paths:** `ops/protected-tests/`, `ops/proposals/`, `xtask/src/protected_tests*`.
