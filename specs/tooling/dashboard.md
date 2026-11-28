@@ -20,7 +20,8 @@ history (a shallow checkout without credentials):
    `apps/web/dashboard/index.html` (React + MUI, `apps/web/src/dashboard/`), so the page gets
    the web app's CSP meta tag and toolchain (TypeScript strict, Biome, the license check). After
    the web build copied `dist/` to `DIR/site/`, `ci linux` copies the committed snapshot to
-   `DIR/site/dashboard/data.json`. Pages serves it at `<site>/dashboard/`. The page fetches
+   `DIR/site/dashboard/data.json` (`copy_into_site` in `xtask/src/ci_linux.rs`, a strict-lane
+   file, since the judge runs it: #433, ADR 0012 §1). Pages serves it at `<site>/dashboard/`. The page fetches
    `./data.json` (same origin, `connect-src 'self'`) and renders it.
 3. **Judge metrics** (#306): the product metrics come from two places, because the deployed
    site holds only the current judge report. The `pages` job runs on pushes to main only and
@@ -278,8 +279,8 @@ weeks of nightlies on 2026-11-27) was not timed. The page: not measured
 and without an index, journal entry counting and its histogram, blocked ages, milestone order
 and forecast (window ends, `open` 0, `closed_28d` 0, past 9999-12-31), truncation at 999/1000,
 the pinned command arguments, bad inputs, flags, and a `--from` run end to end (missing inputs
-fail, a missing index doesn't), and the snapshot copy (no page, exactly 1 MiB, 1 MiB + 1, not
-a regular file, no snapshot). `xtask/src/ci_linux.rs` tests that `ci linux` runs the copy after
+fail, a missing index doesn't). `xtask/src/ci_linux.rs` tests the snapshot copy (no page,
+exactly 1 MiB, 1 MiB + 1, not a regular file, no snapshot), and that `ci linux` runs the copy after
 the web build, into `DIR/site/dashboard/`, and that its error fails the run
 (specs/tooling/ci-linux.md).
 - `xtask/src/dashboard.rs` judge history tests: run choice per week (newest first, ties by

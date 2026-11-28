@@ -2,10 +2,15 @@
 //! five checks, each run even when an earlier one failed, in the order [`drive`] fixes
 //! (ADR 0013, docs/PRINCIPLES.md P4). The exit code is `steps::exit_code` of the log.
 
-use crate::dashboard::{self, Copied};
 use crate::steps::{Log, Outcome};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+/// Largest snapshot `ci linux` copies into the site.
+pub const MAX_SNAPSHOT_BYTES: u64 = 1 << 20;
+/// The committed snapshot, relative to the repo root.
+pub const SNAPSHOT: &str = "ops/metrics/dashboard.json";
 
 /// The checks of `ci linux`, called only by [`drive`]; none decides the order. Each prints
 /// its own lines and returns its outcome.
@@ -32,6 +37,51 @@ pub fn drive(s: &mut dyn Steps, mut log: Log) -> Log {
     log.push("fuzz", s.fuzz());
     log.push("arlington", s.arlington());
     log
+}
+
+/// What [`copy_into_site`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Copied {
+    Yes,
+    /// No `site/dashboard/` (the web build failed or didn't run).
+    NoPage,
+    /// No committed snapshot.
+    NoSnapshot,
+}
+
+/// The `ci linux` step: copies the committed snapshot to `site/dashboard/data.json` when the
+/// web build wrote `site/dashboard/`.
+pub fn copy_into_site(repo: &Path, site: &Path) -> Result<Copied, String> {
+    use std::io::Read as _;
+    let dir = site.join("dashboard");
+    if !dir.is_dir() {
+        return Ok(Copied::NoPage);
+    }
+    let src = repo.join(SNAPSHOT);
+    let file = match jpdf_fsio::open_nonblocking(&src) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Copied::NoSnapshot),
+        Err(e) => return Err(format!("open {}: {e}", src.display())),
+    };
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("open {}: {e}", src.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", src.display()));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_SNAPSHOT_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read {}: {e}", src.display()))?;
+    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_SNAPSHOT_BYTES) {
+        return Err(format!(
+            "{}: larger than {MAX_SNAPSHOT_BYTES} bytes",
+            src.display()
+        ));
+    }
+    let dst = dir.join("data.json");
+    fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
+    Ok(Copied::Yes)
 }
 
 /// The dashboard step's outcome and the note it prints (specs/tooling/dashboard.md, Errors).
@@ -72,10 +122,7 @@ impl Steps for Real {
     }
 
     fn dashboard(&mut self) -> Outcome {
-        let (o, note) = dashboard_outcome(dashboard::copy_into_site(
-            &self.repo,
-            &self.out.join("site"),
-        ));
+        let (o, note) = dashboard_outcome(copy_into_site(&self.repo, &self.out.join("site")));
         if let Some(note) = note {
             eprintln!("xtask: dashboard: {note}");
         }
@@ -252,6 +299,51 @@ mod tests {
         assert!(
             matches!(&o, Outcome::Failed(why) if why.starts_with("dashboard: ") && why.ends_with("not a regular file")),
             "{o:?}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn copies_the_snapshot_up_to_one_mib() {
+        let base =
+            std::env::temp_dir().join(format!("xtask-dashboard-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (repo, site) = (base.join("repo"), base.join("site"));
+        assert!(fs::create_dir_all(repo.join("ops/metrics")).is_ok());
+        let snap = repo.join(SNAPSHOT);
+        assert!(fs::write(&snap, "{}").is_ok());
+        assert_eq!(
+            copy_into_site(&repo, &site),
+            Ok(Copied::NoPage),
+            "no page: nothing copied"
+        );
+        assert!(fs::create_dir_all(site.join("dashboard")).is_ok());
+        let data = site.join("dashboard/data.json");
+        let limit = usize::try_from(MAX_SNAPSHOT_BYTES).unwrap_or(0);
+        assert!(fs::write(&snap, vec![b' '; limit]).is_ok());
+        assert_eq!(copy_into_site(&repo, &site), Ok(Copied::Yes));
+        assert_eq!(
+            fs::metadata(&data).map(|m| m.len()).ok(),
+            Some(MAX_SNAPSHOT_BYTES)
+        );
+        assert!(fs::write(&snap, vec![b' '; limit + 1]).is_ok());
+        let r = copy_into_site(&repo, &site);
+        assert!(
+            r.as_ref()
+                .is_err_and(|e| e.contains("larger than 1048576 bytes")),
+            "{r:?}"
+        );
+        assert!(fs::remove_file(&snap).is_ok() && fs::create_dir_all(&snap).is_ok());
+        let r = copy_into_site(&repo, &site);
+        assert!(
+            r.as_ref().is_err_and(|e| e.contains("not a regular file")),
+            "{r:?}"
+        );
+        assert!(fs::remove_dir_all(&snap).is_ok());
+        assert_eq!(
+            copy_into_site(&repo, &site),
+            Ok(Copied::NoSnapshot),
+            "no snapshot: nothing copied"
         );
         let _ = fs::remove_dir_all(&base);
     }
