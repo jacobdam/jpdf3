@@ -1,0 +1,9 @@
+## 17:47 UTC #442 Proposal: drop the `isrg` audit import from `supply-chain/`
+- Session: worker ready #442
+- Picked: rule i because the scheduler named #442, the lowest-numbered ready issue in M1 (the work mix is below 70% and no ready product issue had its dependencies closed). main was green.
+- Did: PR #548 (strict lane). Added `ops/proposals/vet-imports-drop-isrg.md`: option A (recommended) removes `[imports.isrg]` from `supply-chain/config.toml` and `[audits.isrg.audits]` from `imports.lock` in one commit; option B lists ISRG in CONSTITUTION 9, AUTOMATION.md §6.4 and PLAN.md §3. Probes with cargo-vet 0.10.3 in scratch crates: `--locked` passes with both files edited (with and without the miniz_oxide audits); with only `config.toml` edited it fails `imports.lock is out-of-date` (exit 255); the miniz_oxide 0.8.9 graph stays fully audited without ISRG. Added one paragraph to `ops/proposals/vet-imports-miniz-oxide.md` on how its expected lock differs in either order. Noted: #445 (apply the miniz_oxide proposal) was closed at 13:15Z with no change to `imports.lock` on main and no comment; the proposal still says it isn't applied.
+- Result: `ai-review` success posted on this commit, auto-merge on. Once it merges, a later session adds `owner-todo` to #442 with `ready for owner: apply ops/proposals/vet-imports-drop-isrg.md` (§0).
+- Cost: about 35% of context; review rounds 2/4; regraded 0, overturned by the next reviewer 0; deferred: none (R1.1–R1.4 and R2.1 fixed)
+- Codex: skipped (no `crates/` or `tools/` path)
+- Lesson: the guard blocks a PR comment naming the vet subcommand that removes unused audits, even inside a quoted review report and its own disclosure line; hyphenate it (`cargo-vet`) and describe it in the disclosure without the trigger. Not added to LESSONS (TICK §4 mechanics lists triggers by example).
+- Ignored: none
