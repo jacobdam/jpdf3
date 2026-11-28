@@ -253,3 +253,27 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   owner pick or pulls an `Ops` issue into a milestone by overlap except when the milestone is
   planned.
 - **Paths:** `ops/TICK.md`, `AUTOMATION.md`, `ops/QUEUE.md`.
+
+## P10. Owner items move through text states; one session routes them; reactions are display
+- **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh`) is *handled* only by a
+  tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
+  issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
+  (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
+  owner issue itself; every other item is *unrouted*. The scheduler computes these states from
+  that text and those labels only, and nothing reads a reaction as state. The owner feed
+  session takes every unrouted item its brief lists and leaves each one handled (carried out,
+  or a question back) or routed; it writes no code, spec, ADR, test or proposal, and writes a
+  journal entry only for an `Ignored:` line, a lesson or an item left unrouted. Routes keep
+  rule a's priority (precedence step 1).
+- **Decided in:** ADR 0020 (amending ADR 0011 §1 and §2, ops/TICK.md §0).
+- **Enforced by:** `cargo xtask next-session`'s step 1 terms and their `--from` fixtures (ADR
+  0020 tasks 1 and 2); the guard's exact reaction shapes (task 3, an `ops/proposals/` change);
+  the rest is reviewer vigilance.
+- **Reviewers check:** a scheduler change reads a route only from a `jacobdam` author with a
+  tagged body, the exact `Owner instruction:` URL and (for an issue) `owner-work`, and treats a
+  closed route as unrouted; no rule or tool reads a reaction, or counts a reaction as a reply;
+  a TICK passage for the owner feed session adds no output beyond ADR 0020's allowed actions;
+  a session type that stops writing its journal shows that no scheduler term or metrics join
+  reads its records.
+- **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`, `ops/TICK.md`,
+  `AUTOMATION.md`, `ops/proposals/`.
