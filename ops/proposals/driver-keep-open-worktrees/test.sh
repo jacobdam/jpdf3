@@ -19,7 +19,8 @@ fail=0
 # case passes on fresh mtimes.
 aged() {
   local t=$(( $(date +%s) - $1 )) stamp f m; shift
-  stamp="$(date -u -d "@$t" +%Y%m%d%H%M.%S 2>/dev/null || date -u -r "$t" +%Y%m%d%H%M.%S)" || exit 1
+  stamp="$(date -u -d "@$t" +%Y%m%d%H%M.%S 2>/dev/null || date -u -r "$t" +%Y%m%d%H%M.%S 2>/dev/null)" ||
+    { echo "FAIL harness: neither date -d @$t (GNU) nor date -r $t (BSD) works"; exit 1; }
   for f in "$@"; do
     TZ=UTC0 touch -t "$stamp" "$f"
     m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"
@@ -72,7 +73,7 @@ check() { # name, want
 }
 setup; rm -f "$tmp/log"; run ok t/12-open t/99-other
 check "old with an open PR kept; old without one, a prefix (t/1 vs t/12-open), a longer name and a detached HEAD removed; a fresh one and one just under the age limit kept" "edge fresh open "
-grep -q 'keeping worktree open (open PR on t/12-open)' "$tmp/log" && echo "ok   the kept worktree is logged" || { echo "FAIL no keep line in the log"; fail=1; }
+grep -qs 'keeping worktree open (open PR on t/12-open)' "$tmp/log" && echo "ok   the kept worktree is logged" || { echo "FAIL no keep line in the log"; fail=1; }
 setup; run fail
 check "gh fails: nothing removed" "detached edge fresh nopr open prefix suffix "
 setup; run ok
