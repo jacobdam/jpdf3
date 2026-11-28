@@ -36,6 +36,8 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
     session's owner question (§8 output 4), a design ADR PR in its 24-hour `/hold` window
     (§8 step 5), or a `docs/PRODUCT.md` PR waiting for the owner (§10 step 6: v1's approval, or a
     later change's 24-hour window).
+  - A milestone close notice (§9 step 4) carries `owner-todo` from its filing until the
+    session that tags the milestone, or stops its close, closes the notice.
   - Remove `owner-todo` once the owner's part is done (a merge on main applying it, which for a
     protected path needs the owner's signed commits, or the owner comment it waited for), or,
     for a design ADR PR, once its window has passed with no `/hold`, or once the owner's
@@ -1001,12 +1003,86 @@ gate them.
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
    `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`.
-4. **Milestone backlog empty** (no open issue in it): check the gates
-   (`gh run download <latest nightly> -n judge-report`, read `gates/gates.json`). If the current
-   gate passes: tag `mN`, write `docs/milestones/mN.md`, close the GitHub milestone `Mn` (so
-   the scheduler's current milestone moves on), and create the next milestone's issues from
-   PLAN.md §8 and the journeys if it has none (then step 3 for that milestone). Otherwise create
-   issues for every failing criterion.
+4. **Milestone backlog empty** (no open issue in it). The `mN` tag can't be deleted (the guard
+   forbids delete pushes), so the close runs in stages, each in its own session (#508): the
+   checklist, the owner notice and its window, the close. **M0** (owner, #508) runs only item
+   (a) of the checklist and, when it finds a passing gate, the close stage at once in the same
+   session, skipping its re-check: no (b) to (d), no `docs/milestones/m0.md` checklist PR and no
+   notice; #527 records the rest of the checklist for `m0` afterwards. Every Planner run
+   whose current milestone has an open issue closes that milestone's open close notice, if
+   any, with a tagged comment naming the issue (the close stopped).
+   - **Already closing:** don't run a second checklist when (1) an open close notice for `Mn`
+     exists: go to the close when its window has ended or an `/approve` counts, else leave
+     this step; (2) an open agent PR adds or changes `docs/milestones/mN.md`: rule c works it;
+     or (3) `docs/milestones/mN.md` on main records a checklist run (its `Checklist run:`
+     line) that no close notice for `Mn`, open or closed, names: file the notice (below).
+   - **Checklist** (each item recorded with evidence links, from `docs/milestones/_TEMPLATE.md`,
+     in `docs/milestones/mN.md`, which this run's Planner PR adds or rewrites, step 6):
+     - (a) **Fresh gate.** The verdict is `gates.<Mn>.pass` in `gates/gates.json` of the
+       `judge-report` artifact (`gh run download <id> -n judge-report`) of a successful `ci.yml`
+       run with event `schedule` or `workflow_dispatch` whose head commit (`headSha`, the
+       *judged commit*) is origin/main's head, or is followed on origin/main only by commits
+       that change nothing but files under `ops/journal/` and `.md` files under
+       `ops/lessons/pending/` other than its `README.md`. If no such run exists and none is
+       queued or in progress on main for origin/main's head, start one (`gh workflow run
+       ci.yml --ref main`; a run takes about 25 min) unless one on that head already
+       concluded without success (that failure is rule b's or e's: wait for the next nightly);
+       record its URL in the journal and stop this step; the next Planner run reads it. A gate
+       that fails: issues for every failing criterion, as before.
+     - (b) **Deliverables.** Each deliverable in the milestone's PLAN.md §8 row, matched to what
+       is on main at the judged commit: a file or directory, a command that runs, a test, or a
+       closed issue whose PR merged.
+     - (c) **Issues that left.** Every issue that was in `Mn` and isn't now (its
+       `demilestoned` events, `gh api --paginate repos/jacobdam/jpdf3/issues/events`, with no
+       later return to `Mn`), and every issue in `Mn` closed as not planned or as a duplicate, or
+       closed as completed with no merged PR (`closedByPullRequestsReferences` empty), each with
+       its reason (the comment that moved or closed it). One on the exit path (ADR 0019
+       clause 1 term 1: the gate, the last step or the next milestone's first issues need it)
+       fails the checklist and is dealt with so: when the owner set where it is (an owner pick,
+       P9) or closed it (no tagged `jacobdam` close comment), leave it, comment on it for the
+       owner why the close waits for it, and add `owner-todo` (once: skip an issue already
+       carrying that comment and label); otherwise reopen it if it is closed, or move it back
+       into `Mn` with a comment saying why (an `Ops` issue with the P9 marker
+       `🤖 jpdf-agent Pulled from Ops: Mn (exit path, §9 step 4)`).
+     - (d) **Other exit criteria.** Each exit criterion of the PLAN.md §8 row that
+       `gates.json` doesn't measure, with evidence (a file, a run, a closed issue).
+
+     Anything missing in (b) or (d) gets an issue in `Mn`, like a failing gate criterion. If
+     any item fails, record the checklist in the journal only, write no
+     `docs/milestones/mN.md`, and stop.
+   - **Owner notice.** Filed once the checklist's Planner PR has merged (case 3 above; the
+     session that sees the merge first), so the window covers what is on main: a tagged issue
+     titled `Milestone Mn close: pre-close checklist`, in no milestone, labeled `owner-todo`,
+     whose body names the `Checklist run:` line, links the PR and `docs/milestones/mN.md`,
+     names the judged commit and says `ready for owner: Mn closes and mN is tagged on <judged
+     commit> after 24 h unless you /hold it (/approve closes it sooner)`. For a milestone the
+     owner must approve, it says `... closes and mN is tagged on <judged commit> only on your
+     /approve`; these are M4 (the owner preview, PLAN §8) and any milestone for which the owner
+     asks for it in an untagged comment on owner issue #508 or on any close notice for that
+     milestone, closed ones included. Owner commands
+     on the notice are untagged `jacobdam` comments whose body starts with `/approve`, `/hold`
+     or `/release` (any ASCII case, then whitespace or the end), ordered by `created_at`. The
+     window starts at the later of the notice's creation and the owner's last `/release` on
+     it, and has ended once 24 h have passed since then. A `/hold` with no later `/release`
+     stops everything; only a `/release` lifts it. An `/approve` counts when it is the newest
+     of the three commands and no `/hold` is standing; it ends the window early, and for an
+     owner-approved milestone it is the only way to close. Each gets §0's replies.
+   - **Close** (a Planner run whose step 4 finds the window ended or an `/approve` counting; or
+     the session that takes a counting `/approve` under rule a): check again that `Mn` has no
+     open issue, that no issue in `Mn` has its `closedAt` after the `Checklist run:` time (to the
+     second, taken when (c)'s lists were read, so each issue (c) lists closed before it; a later
+     close is an issue filed, reopened or moved back and closed since, whose work no gate
+     judged), and that (c) finds no issue
+     that left after the notice was filed. If a check fails, close the notice with a tagged
+     comment saying which, and stop: the next empty backlog runs the checklist again.
+     Otherwise tag the judged commit (`git tag mN <judged commit>`, `git push origin mN`),
+     close the GitHub milestone `Mn` (so the scheduler's current milestone moves on), close the
+     notice, if any, with a tagged comment naming the tag (which takes its `owner-todo` off), and create
+     the next milestone's issues from PLAN.md §8 and the journeys if it has none (then step 3
+     for that milestone).
+
+   Until `cargo xtask next-session` knows about these stages (#526), each stage waits for the
+   next Planner pick, so a notice keeps `owner-todo` past its window until the close.
 4a. **Work mix below 70%** (the brief's `work mix:` note; `planner due` names it, ADR 0011 §3):
    the budget orders, it never blocks. Add product issues to the milestone from PLAN.md §8 (its
    row) and the journeys, each sized by §0 and given its product `area:` label from
@@ -1029,7 +1105,8 @@ gate them.
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
    record commits skip review: journal and pending lesson files not on origin/main, §4 step 6); the brief adds this section and ADR 0011 §1, and
-   asks the reviewer to check each QUEUE.md line against GitHub. Otherwise a records PR (§5).
+   asks the reviewer to check each QUEUE.md line against GitHub, and each evidence link of a
+   `docs/milestones/mN.md` (the run and its `headSha`, each issue's reason) against GitHub and main. Otherwise a records PR (§5).
    A Planner PR closes no issue, so §4's per-issue terms apply to the PR itself: K counts the
    rounds on that PR only and the ledger stays on the PR. It is never escalated to design: where
    §4 step 6 would escalate it (§8) or hand it to the owner, close it unmerged instead with a
