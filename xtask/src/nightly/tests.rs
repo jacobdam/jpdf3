@@ -708,8 +708,8 @@ fn a_previous_file_of_another_schema_is_not_read_further() {
         ("{\"schema\":2}", 2),
         ("{\"schema\":2,\"files\":\"not an array\",\"x\":[1]}", 2),
         ("{\"files\":{},\"schema\":0}", 0),
-        ("{\"schema\":10}", 10),
-        ("{\"schema\":18446744073709551615}", u64::MAX),
+        ("{\"schema\":10,\"files\":null}", 10),
+        ("{\"schema\":18446744073709551615,\"files\":[1]}", u64::MAX),
     ] {
         assert_eq!(
             parse_previous(text, MAX_ROWS),
@@ -884,6 +884,14 @@ fn no_previous_file_means_no_diff_said_so() {
     assert_eq!(v.get("previous"), Some(&Value::Null));
     assert_eq!(v.get("note").and_then(Value::as_str), Some(note.as_str()));
     assert_eq!(line, format!("nightly: {note}: no diff"));
+    // The real `previous` step: `Ok` for another schema, so the night goes on to exit 0 (the
+    // driver tests: every step `Ok` exits 0), and `Failed` (exit 1) for an invalid file.
+    let root = Path::new("/nonexistent-root");
+    let step = |path: &Path| {
+        let opts = p(&["--previous", &path.display().to_string()]).unwrap();
+        Real { root, opts: &opts }.previous()
+    };
+    assert_eq!(step(&other), Ok(Previous::Nothing(note.clone())));
     // A previous file that exists but is invalid fails the diff: a schema that is not an
     // integer, or this build's schema with a bad member.
     let bad = d.join("bad.json");
@@ -897,15 +905,7 @@ fn no_previous_file_means_no_diff_said_so() {
             e.starts_with("previous results ") && e.contains(want),
             "{text}: {e}"
         );
-    }
-    // The real `previous` step: `Ok` for another schema, so the night goes on to exit 0 (the
-    // driver tests: every step `Ok` exits 0), and `Failed` (exit 1) for an invalid file.
-    let root = Path::new("/nonexistent-root");
-    for (path, ok) in [(&other, true), (&bad, false)] {
-        let opts = p(&["--previous", &path.display().to_string()]).unwrap();
-        let got = Real { root, opts: &opts }.previous();
-        assert_eq!(got.is_ok(), ok, "{}: {got:?}", path.display());
-        assert!(ok || matches!(got, Err(Step::Failed(_))), "{got:?}");
+        assert_eq!(step(&bad), Err(Step::Failed(e)), "{text}");
     }
     // A valid one gives a diff against this night.
     let good = d.join("good.json");

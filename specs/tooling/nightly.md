@@ -498,7 +498,7 @@ Self-check:
     0, 2, 10 and 2^64 − 1 give no previous even with a bad `files` member, the same members
     with schema 1 fail, the note and the stderr line are pinned for schema 2, and the real
     `previous` step is `Ok` for it (so the night goes on: the driver tests' all-`Ok` night
-    exits 0) and `Failed` for a string schema. What still passes: dropping the digits-only
+    exits 0) and `Failed` for a string schema and for schema 1 without `files`. What still passes: dropping the digits-only
     check, since the JSON reader never gives a number with a leading `+` (the one form
     `u64::from_str` would add).
   - A bench that reports an earlier night's numbers: the test writes a stale `bench.json` and
