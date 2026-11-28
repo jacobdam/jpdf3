@@ -114,8 +114,9 @@ the Planner can read.
 ## Verification
 - **The first Planner run after the merge** applies §9 step 2 as amended (task 1) to M0 and
   names in its journal every move it makes. On today's M0 it should make none: #15, #19, #21,
-  #208 and #431 are the exit path (term 1); #481 and #490 are owner picks (clause 3; task 1
-  posts their `Owner pick: M0` markers if this ADR's session hasn't); #493 closes with this ADR;
+  #208 and #431 are the exit path (term 1); #481 and #490 are owner picks (clause 3; this ADR's session posted
+  their `Owner pick: M0` markers: https://github.com/jacobdam/jpdf3/issues/481#issuecomment-7237025720,
+  https://github.com/jacobdam/jpdf3/issues/490#issuecomment-7237026044); #493 closes with this ADR;
   task 1's own issue is term 1 (below). Any move it does make is a finding for this ADR's
   success check.
 - **Success check** (the first weekly retro, ADR 0018 clause 6, whose period ends 7 or more UTC
@@ -152,7 +153,7 @@ the Planner can read.
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Milestone | Depends on |
 |---|---|---|---|
-| 1 | ops/TICK.md for clauses 1–5: §5 Discoveries (term 2 narrow, term 4 replaced by the owner pick with clause 3's two forms and the `Owner pick:` marker, a strict-list subject keeps its lane but chooses no milestone), §4 step 4's deferral parenthesis, §2 rule a (the session handling an owner comment that names issues and a milestone posts the `Owner pick:` markers), §9 step 2 (the move to `Ops` and the milestone moves skip owner picks; the pulls of clause 4), §9 step 3 (the overlap pull when a milestone is planned), §9 step 4 (clause 5's issue after the last `M<n>`), §6 Housekeeping (list the open strict-list `Ops` issues with their ages in the audit record; ask for at most one by a tagged comment `Audit NNNN asks the Planner to pull this into <Mn>: <why>`), §7 step 4 (report the strict-list part of the `Ops` count); AUTOMATION.md §7's "Extra work needed" row and §4.1's `Ops` sentence; a Status note on ADR 0012 (§2 amended by ADR 0019); post the `Owner pick: M0` markers on #481 and #490 if they are missing. Strict lane: ADR 0012 §2 and which text is an instruction are on the strict list | M0 | #493 |
+| 1 | ops/TICK.md for clauses 1–5: §5 Discoveries (term 2 narrow, term 4 replaced by the owner pick with clause 3's two forms and the `Owner pick:` marker, a strict-list subject keeps its lane but chooses no milestone), §4 step 4's deferral parenthesis, §2 rule a (the session handling an owner comment that names issues and a milestone posts the `Owner pick:` markers), §9 step 2 (the move to `Ops` and the milestone moves skip owner picks; the pulls of clause 4), §9 step 3 (the overlap pull when a milestone is planned), §9 step 4 (clause 5's issue after the last `M<n>`), §6 Housekeeping (list the open strict-list `Ops` issues with their ages in the audit record; ask for at most one by a tagged comment `Audit NNNN asks the Planner to pull this into <Mn>: <why>`), §7 step 4 (report the strict-list part of the `Ops` count); AUTOMATION.md §7's "Extra work needed" row and §4.1's `Ops` sentence; a Status note on ADR 0012 (§2 amended by ADR 0019). Strict lane: ADR 0012 §2 and which text is an instruction are on the strict list | M0 | #493 |
 
 Task 1's issue carries `Designed in: #493` and `Depends on: #493` lines (ops/TICK.md §8 step 5)
 and goes in M0 by term 1: until its text is on main, sessions read today's term 4 and file
