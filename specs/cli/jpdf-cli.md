@@ -193,11 +193,14 @@ measured 6.84 s for the first one.
 
 All input-derived arithmetic is checked, and `clippy::arithmetic_side_effects` is denied in
 the root `Cargo.toml`'s `[workspace.lints.clippy]` (#105), which every root workspace member
-inherits (the judge's policy check requires `[lints] workspace = true` in each), so an
-unchecked `+`, `-` or `*`, or a `/` or `%` by a non-constant, in any target of any member
-(libraries, binaries, unit and integration tests, `xtask`, the tools) fails CI's
-`cargo clippy --workspace --all-targets -D warnings` (not `cargo build`). The crate roots of `jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and
-`jpdf-cli` also keep their own `#![deny]` from #77. The fuzz project (`fuzz/`) is its own
+inherits (the judge's policy check requires `[lints] workspace = true` in each), so any
+arithmetic the lint flags, in any target of any member (libraries, binaries, unit and
+integration tests, `xtask`, the tools), fails CI's
+`cargo clippy --workspace --all-targets --locked -- -D warnings` (not `cargo build`). The
+lint skips what it can evaluate as a constant (`NOW - 60`) and some expressions it treats as
+in range (`300 + i` over `0..9` in `xtask/tests/next_session.rs` passes it). The crate roots
+of `jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and `jpdf-cli` also keep their own `#![deny]`
+from #77. The fuzz project (`fuzz/`) is its own
 workspace and is not covered. Integers are exactly `i64::MIN..=i64::MAX` (§7.3.3 leaves the range
 to the implementation; Annex C recommends at least 32 bits); one past either end is malformed
 (boundary test `integer_range_boundaries`). Number tokens are never copied: reals are parsed
@@ -209,7 +212,8 @@ Work is linear in file size: the lexing budget bounds total lexing to 4× the fi
 
 ## Security
 Self-check (#77):
-- Arithmetic: the lint above makes every unchecked `+`/`-`/`*` a CI clippy error in the four crates;
+- Arithmetic: the lint above makes the arithmetic it flags a CI clippy error in every
+  workspace member;
   integer accumulation uses `checked_mul`/`checked_add`/`checked_sub`, octal escapes are at
   most three digits (≤ 0o777, saturating ops that never saturate).
 - What broken implementation still passes? A CLI that opens before checking the size fails
