@@ -262,7 +262,15 @@ checked by the Playwright test from computed colors: every `h1`, `h2`, `main p`,
 and `Alert` (the truncation warning, the invalid snapshot, the invalid judge report), and
 each of their descendants that holds text, against its own effective background (an `Alert`
 has a tinted one); a translucent color or a background image fails the test, since it has no
-one color to measure. One bar is checked against the page. Headings are in order (h1, then h2).
+one color to measure. The same check covers the `::before` and `::after` of each of those
+elements and of every element inside them whose `content` is not `none` (against the
+pseudo-element's own background, else its element's). Each checked text (a pseudo-element's
+parent is its element) fails when it or an ancestor has an `opacity` below 1, or when its
+`-webkit-text-fill-color` differs from its `color` (#431); a test injects each of these and
+expects the check to reject it. Other ways to fade or hide text are not checked, among them a
+`filter`, a mask, a blend mode, a text stroke or shadow, `::marker`, `::first-line`,
+`::first-letter`, and an element or pseudo-element painted over the text. One bar is checked
+against the page. Headings are in order (h1, then h2).
 
 ## Platforms
 The snapshot: any machine with `gh` and `git` (a session's). The page: web (GitHub Pages).
@@ -313,5 +321,7 @@ the web build, into `DIR/site/dashboard/`, and that its error fails the run
 that isn't text, a `superseded` that isn't a boolean, text that isn't JSON, a body of exactly
 4 MiB read and one of 4 MiB + 1 refused), the committed `ops/metrics/dashboard.json`
   rendering without the invalid state (so the writer and the validator agree), contrast in
-  light and dark mode (every text style, each of the three `Alert`s; Accessibility), and the shared fixture checks (no console errors, CSP violations or
-  foreign requests).
+  light and dark mode (every text style, each of the three `Alert`s, their `::before`/`::after`
+  content, `opacity` and `-webkit-text-fill-color`, each injected once to show the check
+  rejects it; Accessibility), and the shared fixture checks (no console errors, CSP violations
+  or foreign requests).
