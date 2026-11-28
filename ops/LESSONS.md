@@ -167,6 +167,7 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
   ([journal](journal/2026-11-21.md), PR #58).
+- Proposing a `supply-chain/`, `deny.toml` or other pinned-config change → the judge's `policy` job copies those files from the base commit before it runs, so a PR's own copy is never checked: the owner's change lands on main first, and a dependent PR must be based on it (PR #444 R1.2, [journal](journal/2026-11-28/0304-304-backend-selection.md)).
 
 ## Specs & journeys
 - Writing journeys (append-only gates) → give every step one checkable result and a test
@@ -365,6 +366,7 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Finding "the last X" from git (last audit, last retro) → `git log -1 --diff-filter=A` with an
   exact filename pattern (`[0-9][0-9][0-9][0-9].md`); the plain last-touch commit resets on any
   typo fix ([journal](journal/2026-11-21.md), PR #90).
+- Recording a batch of tool runs in an ADR (admission, benchmarks) → name the exact version and flags of each run and why it was chosen; a one-phrase rule ("the newest audited version", "the newest of the previous line") was false for some items and drew a major in rounds 1 and 2 of PR #444. Check each named version against the registry's version list before round 1 ([journal](journal/2026-11-28/0304-304-backend-selection.md)).
 - Writing a record (retro, audit, journal) that claims GitHub side effects (labels, new issues)
   → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
   Claiming a workflow or rule fired (drills) → cite the run log or the resulting state (timeline event, draft flag),
