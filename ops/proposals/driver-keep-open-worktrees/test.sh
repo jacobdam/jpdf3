@@ -32,11 +32,11 @@ setup() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo"; cd "$tmp/repo" || exit 1
   git init -q -b main . && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   mkdir -p .claude/worktrees
-  for w in "open:t/12-open" "nopr:t/13-nopr" "prefix:t/1" "fresh:t/14-fresh" "suffix:t/12-open-x" "edge:t/15-edge"; do
+  for w in "open:t/12-open" "nopr:t/13-nopr" "prefix:t/1" "fresh:t/14-fresh" "suffix:t/12-open-x" "edge:t/15-edge" "dot:t/1.2"; do
     git worktree add -q ".claude/worktrees/${w%%:*}" -b "${w#*:}"
   done
   git worktree add -q --detach .claude/worktrees/detached
-  aged $(( 3*86400 )) .claude/worktrees/{open,nopr,prefix,suffix,detached}
+  aged $(( 3*86400 )) .claude/worktrees/{open,nopr,prefix,suffix,detached,dot}
   # Just inside the age limit: `find -mtime +2` counts whole days, so 2 days 23 hours is not old.
   aged $(( 2*86400 + 23*3600 )) .claude/worktrees/edge
 }
@@ -75,7 +75,7 @@ setup; rm -f "$tmp/log"; run ok t/12-open t/99-other
 check "old with an open PR kept; old without one, a prefix (t/1 vs t/12-open), a longer name and a detached HEAD removed; a fresh one and one just under the age limit kept" "edge fresh open "
 grep -qs 'keeping worktree open (open PR on t/12-open)' "$tmp/log" && echo "ok   the kept worktree is logged" || { echo "FAIL no keep line in the log"; fail=1; }
 setup; run fail
-check "gh fails: nothing removed" "detached edge fresh nopr open prefix suffix "
+check "gh fails: nothing removed" "detached dot edge fresh nopr open prefix suffix "
 setup; run ok
 check "no open PRs: every old one removed" "edge fresh "
 setup; run ok t/1 t/13-nopr t/12-open-x
@@ -89,5 +89,11 @@ setup; run ok $(seq -f 't/9%03g-other' 1 200) t/12-open
 check "201 open PRs, the one this worktree has last (past the 200 read): removed" "edge fresh "
 setup; run ok t/12-open fork:t/13-nopr
 check "a fork's PR with an agent branch name keeps nothing: t/13-nopr removed" "edge fresh open "
+# A branch name is matched as text, not as a regex (#367): the . in t/1.2 must not match the x of t/1x2.
+setup; run ok t/1x2
+check "open PR t/1x2: t/1.2 removed (a fixed-string match, not a regex)" "edge fresh "
+# Case counts too (#429 R1.1): an open PR on T/12-OPEN keeps nothing.
+setup; run ok T/12-OPEN
+check "open PR T/12-OPEN: t/12-open removed (case-sensitive)" "edge fresh "
 cd "$tmp/repo" && [[ -z "$(git worktree list --porcelain | grep -c prunable | grep -v '^0$')" ]] && echo "ok   git worktree prune ran (no prunable entries)" || { echo "FAIL prunable worktrees left"; fail=1; }
 exit $fail
