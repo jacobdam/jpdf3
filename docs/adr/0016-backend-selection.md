@@ -23,9 +23,11 @@ crates.io version with default features (23 runs). Eleven were run again at an o
 version (11 runs): miniz_oxide 0.8.9, the newest version the imported audit files (Google,
 Mozilla, Bytecode Alliance, Zcash, as fetched that day) cover; skrifa 0.29.0, the last one
 Google audited (skrifa itself is covered up to 0.50.0 through Mozilla's deltas; the re-run
-checked whether an older dependency graph was clean); and for the RustCrypto crates the
-newest release of the previous line (md-5 0.10.5, sha2 0.10.8, rc4 0.1.0, aes 0.8.4, cbc
-0.1.2, p256 0.13.2, p384 0.13.1, rsa 0.9.9, x509-cert 0.2.5), which has no `hybrid-array`.
+checked whether an older dependency graph was clean); and for the RustCrypto crates a
+release of the previous line, which has no `hybrid-array`: the newest one for rc4 0.1.0, aes
+0.8.4, cbc 0.1.2, p256 0.13.2, p384 0.13.1 and x509-cert 0.2.5; for md-5 0.10.5 and sha2
+0.10.8 the newest version the audit files cover (md-5 0.10.6 and sha2 0.10.9 are newer);
+and rsa 0.9.9, not the newer 0.9.10. The newer patch releases were not run.
 Of those, vet passes the crate itself only for miniz_oxide 0.8.9, skrifa 0.29.0, md-5 0.10.5
 and sha2 0.10.8; the audit files hold no audit of rc4, cbc, rsa, p384, x509-cert or cms at
 any version, and only delta audits of p256 and aes. Four were run with `--no-default-features`
@@ -58,7 +60,7 @@ ended `admitted` or `rejected by`, never `not decided`).
 | | `tiny-skia@0.12.0` (also `--no-default-features`) | unsafe, vet (+ build-time with defaults) | `unsafe` in tiny-skia itself | own | #453 |
 | `ColorTransform` | `moxcms@0.9.2` | unsafe, vet | `unsafe` in moxcms itself, pxfm, num-traits | own | #454 |
 | `Hasher` / `Cipher` | `md-5@0.11.0`, `sha2@0.11.2`, `rc4@0.2.0`, `aes@0.9.4`, `cbc@0.2.1` | unsafe, vet (+ build-time for sha2, aes) | `unsafe` in hybrid-array (and libc for sha2, aes); no imported audits for most of the graph | – | – |
-| | `md-5@0.10.5`, `sha2@0.10.8`, `rc4@0.1.0`, `aes@0.8.4`, `cbc@0.1.2` | unsafe, vet, build-time | `unsafe` in generic-array 0.14 (and libc for sha2, aes); vet reports unvetted generic-array, typenum, crypto-common, version_check, plus digest (md-5, sha2), block-padding (cbc), cpufeatures and libc (sha2, aes), and rc4 0.1.0, cbc 0.1.2 and aes 0.8.4 themselves (no full imported audit) | own | #455 |
+| | `md-5@0.10.5`, `sha2@0.10.8`, `rc4@0.1.0`, `aes@0.8.4`, `cbc@0.1.2` | unsafe, vet, build-time | `unsafe` in generic-array 0.14 (and libc for sha2, aes); vet reports unvetted generic-array, typenum, crypto-common, version_check, cfg-if (sha2, aes), plus digest (md-5, sha2), block-padding (cbc), cpufeatures and libc (sha2, aes), and rc4 0.1.0, cbc 0.1.2 and aes 0.8.4 themselves (no full imported audit) | own | #455 |
 | `SignatureVerifier` | `rsa@0.10.0`, `p256@0.14.0`, `p384@0.14.0` | unsafe, vet, build-time | `unsafe` in hybrid-array, base16ct, base64ct, cmov, pem-rfc7468, getrandom, libc, serde, … | – | – |
 | | `rsa@0.9.9`, `p256@0.13.2`, `p384@0.13.1` | deny, unsafe, vet, build-time | RustSec vulnerability advisories (timing side channels), plus the above with generic-array | – | – |
 | | `x509-cert@0.3.1`, `x509-cert@0.2.5` (also `--no-default-features`), `cms@0.2.3` | unsafe, vet, build-time | `unsafe` in base64ct, flagset, the proc-macro stack; der_derive not audited | own | #456 |
