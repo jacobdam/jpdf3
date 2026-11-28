@@ -13,8 +13,12 @@ pass=0; failn=0
 ok() { if "$@"; then pass=$((pass+1)); else failn=$((failn+1)); echo "FAIL: $*"; fi; }
 not() { ! "$@"; }
 # extract <first line prefix> <last line prefix>: the lines from the first to the last, inclusive.
+# Both markers must be found: an end marker that a later change lost would otherwise eval the rest
+# of the file (as codex-homebrew-read/test-policy.sh's R1.3). awk exits 3 at the end of the file
+# without the end marker.
 extract() {
-  local t; t="$(awk -v a="$1" -v b="$2" 'index($0,a)==1{on=1} on{print} on&&index($0,b)==1{exit}' "$S")"
+  local t; t="$(awk -v a="$1" -v b="$2" 'index($0,a)==1{on=1} on{print} on&&index($0,b)==1{done=1; exit}
+    END{exit done?0:3}' "$S")" || { echo "markers not found in $S: $1 ... $2" >&2; exit 2; }
   [[ -n "$t" ]] || { echo "not found in $S: $1" >&2; exit 2; }
   printf '%s\n' "$t"
 }
@@ -41,16 +45,23 @@ mkdir sweep && (
 ); ok test $? -eq 0
 
 # 3. q / FS_POLICY: valid TOML inline table, paths with quotes and backslashes survive.
-eval "$(extract 'q() {' 'q() {')"
-HOME_SAVE="$HOME"; HOME='/Users/a "b"\c'
-eval "$(extract 'FS_POLICY="{' 'FS_POLICY+=" }"')"
-HOME="$HOME_SAVE"
+# One contiguous block from q() to the end of FS_POLICY (q, HB, HB_READ and the loop, since
+# codex-homebrew-read, PR #291), built in a subshell with that HOME. Extract first, then eval: a
+# lost marker stops the run here instead of evaluating the rest of the file.
+POLICY_BLOCK="$(extract 'q() {' 'FS_POLICY+=" }"')" || exit 2
+FS_POLICY="$(HOME='/Users/a "b"\c'; eval "$POLICY_BLOCK"; printf '%s' "$FS_POLICY")"
+# The exact Homebrew grant list is codex-homebrew-read/test-policy.sh's case; this one checks the
+# quoting: all four $HOME grants under the quoted HOME, the rest under the Homebrew prefix by name.
 ok /opt/homebrew/bin/python3.14 -I -c '
 import sys, tomllib
 t = tomllib.loads("x = " + sys.argv[1])["x"]
+h = "/Users/a \"b\"\\c/"
 assert t[":root"] == "deny" and t[":minimal"] == "read" and t[":slash_tmp"] == "deny", t
-assert t["/Users/a \"b\"\\c/.cargo/registry"] == "read", t
-assert t["/opt/homebrew"] == "read" and len(t) == 8, t
+home = {h + p for p in (".rustup/toolchains", ".rustup/settings.toml", ".cargo/bin", ".cargo/registry")}
+assert all(t.get(k) == "read" for k in home), t
+assert all(v == "read" and k.startswith("/opt/homebrew/") for k, v in t.items()
+           if not k.startswith(":") and k not in home), t
+assert "/opt/homebrew" not in t and len(t) == 3 + len(home) + 9, t
 assert not any("credentials" in k or ".codex" in k or ".ssh" in k for k in t), t
 ' "$FS_POLICY"
 
