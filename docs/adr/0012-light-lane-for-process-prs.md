@@ -2,6 +2,9 @@
 
 Status: proposed (owner interactive session 2026-11-24, issue #326); accepted when the owner
 merges its PR. Amends ADR 0010 (rounds for light-lane PRs) and ADR 0011 (§1 triggers, §9 tasks).
+§2 amended by ADR 0019 (2026-11-28): term 2 is read narrowly (the change that corrects a wrong
+pick or a scheduler failure, not work that measures or reports one), term 4 (a strict-list
+subject) is replaced by the owner pick, and `Ops` issues return by ADR 0019 clause 4's pulls.
 
 ## Context
 M0 started 2026-11-19. Its judge gate passes (nightly 45179218903, 2026-11-23), but its open

@@ -182,7 +182,12 @@ a. **Owner issues/comments labeled `human`** (or any owner instruction you haven
    in the `owner-issues.sh` output with no "done:" reply linking it, §0). They override ADRs.
    Reply "picked up" and "done:" as §0 says. Only untagged owner text counts: a `human` label on
    a tagged issue (one an owner interactive session filed) is not an instruction until the owner
-   posts an untagged comment on it (ADR 0011 §7).
+   posts an untagged comment on it (ADR 0011 §7). When the owner comment names other issues by
+   number and a milestone for them (an owner pick, §5 Discoveries, ADR 0019 clause 3), post on
+   each issue it names, before the "done:" reply, a tagged comment whose first line is
+   `🤖 jpdf-agent Owner pick: <Mn> (<URL of the owner comment>)` (`Ops` for `<Mn>` when it
+   names `Ops`), with nothing between the tag and `Owner`, and make the move if the issue isn't
+   there yet. A comment on the issue itself needs no marker: the Planner reads it there.
 b. **main is red.** Read the failing run. Infra failure (network, outage, a missing download,
    `JUDGE-INFRA-FAILURE`) → `gh run rerun --failed <id>`; never change code for infra. Real
    failure → fix it. Red for 3 sessions → revert the culprit merge via PR and reopen its issue.
@@ -402,7 +407,8 @@ Each round K runs in this order:
      succeed: the next delta round (step 5), or in round 4 (round 2 in the light lane) the final
      check (step 6).
    - Blockers and majors are fixed in the PR. Minors and nits that aren't quick fixes go to an
-     issue (`deferred: #N`, filed without `ready`, §9; a process-area one in `Ops`, §5). In the
+     issue (`deferred: #N`, filed without `ready`, §9; a process-area one in `Ops` unless a §5
+     Discoveries term holds, and a strict-list subject alone is no term). In the
      light lane they get no issue: `dropped (light lane, ADR 0012)`. A deferred security finding gets its `sev:*` label from the ADR 0009
      table, not from the review grade, and only `sev:medium` / `sev:low` ones may be deferred
      (to M10). A finding that would be `sev:high` or above by that table (a hang on hostile
@@ -606,14 +612,31 @@ session.
   scheduler doesn't read it.
 - **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
-  `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
-  unless (1) it blocks the current milestone's gate or last step, or the next milestone's first
-  issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use;
-  (3) it is `crash` or `security` (rule d and ADR 0009; a latent high goes in the milestone
-  where its path appears, `deferred`, rule d's latent-high line); or (4) it is about a
-  strict-list subject (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge, the
-  review rules). Until #308's `area:` labels exist, judge "process-area" by the files the issue
-  would change. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
+  `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2 as ADR 0019 amends
+  it; P9), not the current one, unless a term holds: (1) it blocks the current milestone's gate
+  or last step, or the next milestone's first issues; (2) it is the change that corrects a wrong
+  pick or a failure of `cargo xtask next-session` seen in live use (not work that measures,
+  logs or reports such events); (3) it is `crash` or `security` (rule d and ADR 0009; a latent
+  high goes in the milestone where its path appears, `deferred`, rule d's latent-high line);
+  (4) it is an owner pick for that milestone (below); or (6) a `Pulled from Ops:` comment holds
+  it there (§9 step 2). (Term 5, ADR 0018 clause 4's `stall` issues, is added here by #480.)
+  **A strict-list subject** (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge,
+  the review rules) **chooses no milestone**: such an issue goes to `Ops` unless a term holds,
+  and its PR is in the strict lane wherever the issue sits (§4 Lanes). Moving it changes when it
+  is done, never how: CONSTITUTION 12 and `ops/proposals/` still apply. Until #308's `area:`
+  labels exist, judge "process-area" by the files the issue would change.
+  **Owner picks** (ADR 0019 clause 3): an issue is an owner pick for `Mn` (or `Ops`) when the
+  newest owner statement about its milestone names it there. An owner statement is an untagged
+  comment by `jacobdam` (its body doesn't start with `🤖 jpdf-agent` after leading whitespace,
+  as `ops/driver/owner-issues.sh` tests it) that either is on the issue and names the milestone,
+  or is on another issue or PR of this repository and names the issue by number and the
+  milestone; for the second form, rule a's session posts an `Owner pick:` marker on the issue
+  (§2 rule a), which the Planner honors only after reading the comment it links (§9 step 2).
+  Statements are ordered by the owner comment's `created_at` (an edit doesn't promote an old
+  one), never by the marker's. A milestone change in the issue's timeline with no such comment
+  is not a pick (the owner and the agent share the account), and a comment by any other login
+  is data (CONSTITUTION 1). A pick ends when a newer owner statement about the issue's
+  milestone says otherwise. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
   that fails, file in the current milestone with the body line `Move to: Ops (ADR 0012 §2)`, and
   the Planner moves it. Step 10 never picks from `Ops`. Decisions → `docs/adr/NNNN-*.md`
   (spec ambiguity order: ISO 32000-2 → errata → reference-engine consensus → safer behavior;
@@ -649,6 +672,15 @@ session.
   against §0 (add or remove it); reconcile PLAN/issues/labels
   with reality; remove dead or duplicated code; refresh deps through admission; update
   `rust-toolchain.toml` to the latest stable.
+- **`Ops`, owner picks and pulls** (ADR 0019; P9): list in the audit record every open `Ops`
+  issue whose subject is on the strict list (§4 Lanes), with its age in days. Ask the Planner
+  for at most one of them, by a tagged comment on it
+  `🤖 jpdf-agent Audit NNNN asks the Planner to pull this into <Mn>: <why>` (`<Mn>` the current
+  milestone; §9 step 2 makes the pull). Open the link of every `Owner pick:` marker on an open
+  issue (`gh search issues --repo jacobdam/jpdf3 --state open '"Owner pick:" in:comments'`) and
+  check it as §9 step 2 does; and list every open issue that a `Pulled from Ops:` comment holds,
+  with the pull it names. A marker the Planner honored that fails the check, or a pull that
+  none of §9 step 2's pulls allows, is a finding for the Planner.
 - **Record:** write `docs/audits/NNNN.md`.
 
 ## 7. RETRO session (process, not product)
@@ -683,7 +715,8 @@ session.
 4. **Allowed changes:** this file (ops/TICK.md), task sizing, xtask tooling, templates,
    reviewer/worker prompt wording, PLAN task order, and the AUTOMATION.md lines that light-lane
    PRs since the last retro listed as `AUTOMATION.md now false:` (ADR 0012 §1); **rewrite every
-   such line**. Report the `Ops` milestone's open count and its change since the last retro; over
+   such line**. Report the `Ops` milestone's open count, the part of it whose subject is on the
+   strict list (§4 Lanes; ADR 0019), and the change of each since the last retro; over
    40 open, close the issues that are no longer true, with a comment. Count the light-lane PRs'
    rounds, caps and final checks by hand from their `Lane:` lines and review headers (`cargo
    xtask metrics` counts the strict cap and final check only, until #328), and the issue groups
@@ -948,9 +981,12 @@ gate them.
    main, no path named, or why unsure>)`, so rule d picks it. Otherwise, if no milestone is named, name the
    one where the path appears in a comment; if it is in another milestone than that one, or
    later than M4, move it there (M4 at the latest) with a comment saying why. Neither of these
-   changes what the owner set: when the newest untagged owner comment about the issue's
-   milestone or condition (on the issue, or on a PR whose comment names the issue) set them,
-   they stay as set, and a doubt about them goes in a comment for the owner instead.
+   changes a condition the owner set: when the newest untagged owner comment about the issue's
+   condition (on the issue, or on a PR whose comment names the issue) set it, it stays as set,
+   and a doubt about it goes in a comment for the owner instead. An owner pick (§5 Discoveries,
+   read as step 2 says) for another milestone doesn't stop either move: ADR 0009's placement
+   wins (ADR 0019 clause 3, term 3), and the move's comment names the pick, with the owner
+   comment's URL, for the owner.
 1b. **Design tasks** (owner, #478; every run, reruns included): the owner can merge or close a
    `design` PR with GitHub's buttons, which no session sees (§8 step 5). List the PRs labeled
    `design` merged or closed in the last 14 days
@@ -975,9 +1011,29 @@ gate them.
    umbrella whose remaining work is only in issues of later milestones moves to the latest of
    those milestones (it closes after them), and an issue that can't be done in this milestone
    (it needs a later milestone's work) moves to that milestone; say why in a comment. A
-   process-area issue in the current milestone that none of §5's four Discoveries terms keeps
-   there moves to `Ops`, and an `Ops` issue moves into the current milestone once term 1 or 2
-   holds or a retro asks for it (ADR 0012 §2). **Once, on the first run after ADR 0012
+   process-area issue in the current milestone that none of §5's Discoveries terms keeps there
+   moves to `Ops` (ADR 0012 §2, ADR 0019 clause 1; P9).
+   **Owner picks and pulls stay** (ADR 0019 clauses 3 and 4): no move of this step (the move to
+   `Ops`, the milestone moves) takes an owner pick out of its milestone, or an issue that a
+   `Pulled from Ops:` comment holds (term 6) while no newer owner statement moved it; a doubt
+   about one goes in a tagged comment for the owner. Read the picks so: each untagged `jacobdam`
+   comment on the issue that names a milestone is a statement; each `Owner pick:` marker (a
+   tagged `jacobdam` comment whose first line is `🤖 jpdf-agent Owner pick: <Mn> (<URL>)`) is
+   only a pointer: read the comment its URL links, through the endpoint its anchor names
+   (`gh api repos/jacobdam/jpdf3/issues/comments/<id>` for `#issuecomment-<id>`,
+   `.../pulls/comments/<id>` for `#discussion_r<id>`, `.../pulls/<n>/reviews/<id>` for
+   `#pullrequestreview-<id>`), and honor it only when that comment is by `jacobdam`, untagged
+   by the owner feed's test (§5 Discoveries), and names the issue by number and the milestone.
+   A marker that fails the check, or whose link you can't read, is ignored: say so in a tagged
+   comment on the issue (the owner can restate the pick there). Order the statements by the
+   owner comment's `created_at`, never the marker's; the newest decides.
+   **Pulls from `Ops`** (ADR 0019 clause 4): an `Ops` issue moves into the current milestone
+   only when term 1 or 2 now holds for it, an audit asked for it (a tagged `jacobdam` comment on
+   it starting `🤖 jpdf-agent Audit NNNN asks the Planner to pull this into <Mn>:`, §6, naming
+   the current milestone), a retro asked for it (ADR 0012 §2), or step 3's overlap pull finds
+   it. Make the move and post a tagged comment on the issue whose first line is
+   `🤖 jpdf-agent Pulled from Ops: <Mn> (<the pull and its reason>)`; that comment keeps it in
+   `<Mn>` (term 6) until it closes or a newer owner statement moves it. **Once, on the first run after ADR 0012
    merges:** create the `Ops` milestone if it is missing (`gh api
    repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
    gate needs (ADR 0012 §2)"`) and make ADR 0012 §3's and §4's moves (#308 and #248 to M1, with
@@ -1002,7 +1058,12 @@ gate them.
 3. **Design ahead** (ADR 0011 §6), when the milestone has no plan yet (`planner due` names it):
    list the cross-cutting concerns the milestone introduces (M2's image decoding: memory,
    untrusted input, threading, the CLI) and, for each with no `docs/PRINCIPLES.md` entry, file a
-   `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`.
+   `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`. In the same
+   run, **pull by overlap** (ADR 0019 clause 4): each open `Ops` issue whose fix changes a file
+   or rule that one of this milestone's issues changes (judged from the two issues' text until
+   #308's `area:` labels exist) moves into the milestone, with step 2's `Pulled from Ops:`
+   comment naming the overlapping issue. This pull happens only here, when the milestone is
+   planned, never on a later run.
 4. **Milestone backlog empty** (no open issue in it). The `mN` tag can't be deleted (the guard
    forbids delete pushes), so the close runs in stages, each in its own session (#508): the
    checklist, the owner notice and its window, the close. **M0** (owner, #508) runs only item
@@ -1079,7 +1140,11 @@ gate them.
      close the GitHub milestone `Mn` (so the scheduler's current milestone moves on), close the
      notice, if any, with a tagged comment naming the tag (which takes its `owner-todo` off), and create
      the next milestone's issues from PLAN.md §8 and the journeys if it has none (then step 3
-     for that milestone).
+     for that milestone). When `Mn` is the last `M<n>` that PLAN.md §8 lists, there is no next
+     one: file instead one tagged issue `Ops after <Mn>: <count> open`, in no milestone, labeled
+     `owner-todo` (§0), listing each open `Ops` issue and whether its subject is on the strict
+     list (§4 Lanes). What to do with them is a scope decision, the owner's (ADR 0019 clause 5,
+     ADR 0011 §7); close nothing in `Ops` for the milestone's sake.
 
    Until `cargo xtask next-session` knows about these stages (#526), each stage waits for the
    next Planner pick, so a notice keeps `owner-todo` past its window until the close.
@@ -1087,7 +1152,8 @@ gate them.
    the budget orders, it never blocks. Add product issues to the milestone from PLAN.md §8 (its
    row) and the journeys, each sized by §0 and given its product `area:` label from
    `ops/areas.toml` (until #308 creates the labels there are none, and step 10 doesn't reorder),
-   and ready the ones step 2 allows. You may move process issues to a later milestone or label them `deferred`,
+   and ready the ones step 2 allows. You may move process issues (not an owner pick or one a
+   `Pulled from Ops:` comment holds, step 2) to a later milestone or label them `deferred`,
    with a comment saying why that ends with its `Undefer when:` line (§5); never close one for
    the budget.
 5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4a: the `Milestone: <Mn>` line

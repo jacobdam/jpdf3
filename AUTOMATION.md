@@ -111,6 +111,9 @@ GitHub (public repo jacobdam/jpdf3)
 ADR 0012 amends it: QC (task 5) and the `area:` labels (task 4 part 2) are M1 work, Design: UI
 (task 7) M3, the user advocate (task 8) M4, and the area threshold and Gardener (task 4 part 3)
 wait in `Ops` while the Planner names issue groups by judgement (ops/TICK.md §9 step 2a).
+`Ops` work enters a numbered milestone only by ADR 0019 clause 4's pulls: a milestone term starts
+to hold, an overlap the Planner finds when it plans a milestone, an audit's request (one at a
+time) or a retro's (ops/TICK.md §9 steps 2 and 3).
 The protocol above is the current one. ADR 0011 replaces step 2's self-selection with
 **session types** chosen by a read-only scheduler, `cargo xtask next-session`: Worker, Design
 (technical, product, UI), Audit, QC, User advocate, Retro, Planner and Gardener, each with a
@@ -391,7 +394,7 @@ The judge is the hard backstop.
 
 | Situation | Rule |
 |---|---|
-| Extra work needed | new `discovery` issue in the right milestone; process-area work goes in `Ops` unless it blocks a gate, is a live scheduler wrong pick, is `crash`/`security`, or is about a strict-list subject (ADR 0012 §2) |
+| Extra work needed | new `discovery` issue in the right milestone; process-area work goes in `Ops` unless it blocks a gate, is the fix of a live scheduler wrong pick, is `crash`/`security`, is an owner pick, or was pulled from `Ops` (ADR 0012 §2 as amended by ADR 0019); a strict-list subject sets the lane, not the milestone |
 | Spec ambiguity | ① ISO 32000-2 text → ② errata / PDF Association notes → ③ reference-engine consensus → ④ the safer behavior. Record an ADR. |
 | Broken real-world files | **read leniently** (as the consensus engines do), **write strictly** (per spec) |
 | Reference engines disagree | page goes on the disputed list (excluded from ratchet); if ours matches neither, file a bug |
