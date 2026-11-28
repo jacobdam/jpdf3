@@ -1,7 +1,7 @@
 //! The nightly's `issues` step (specs/tooling/nightly.md item 16): one GitHub issue per
 //! failure signature, filed with `gh` when `--file-issues` is given, or a comment on the open
-//! issue that already carries the signature. Part 1 of #302: failed limits cases, regress
-//! crashes and timeouts, and regress regressions; the fuzz pass and the bench are part 2.
+//! issue that already carries the signature: failed limits cases, regress crashes and
+//! timeouts, and regress regressions (#302), then fuzz crashes and a bench timeout (#383).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use jpdf_testgen::json::{self, Value};
 
+use super::extra::{BenchResult, FuzzResult};
 use super::{FileResult, Previous, current_statuses, is_blob};
 use crate::limits::CaseResult;
 use crate::steps::Outcome as Step;
@@ -147,6 +148,105 @@ pub fn findings(
     out
 }
 
+/// Most bytes in a fuzz target or artifact name that goes into a signature.
+pub const MAX_NAME: usize = 100;
+/// libFuzzer's prefix for an input that was only slow: never a finding of its own.
+pub const SLOW_UNIT: &str = "slow-unit-";
+
+/// A name a signature may hold (spec item 16): 1 to [`MAX_NAME`] bytes of ASCII lowercase
+/// letters, digits, `_` and `-`.
+pub fn safe_name(n: &str) -> bool {
+    !n.is_empty()
+        && n.len() <= MAX_NAME
+        && n.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+}
+
+/// The fuzz pass's and the bench's findings, after [`findings`] (spec item 16): for each fuzz
+/// target that failed, in run order, one `crash` finding per copied artifact whose name is in
+/// the set of [`safe_name`], by name order, and one for the target itself when it has no such
+/// artifact or any other; then a `perf` finding when the bench ended `timeout`. A target whose
+/// own name is outside the set is never filed; a target that ran clean is not filed for its
+/// artifacts, and libFuzzer's `slow-unit-` files are never filed by name (they are not crashes).
+/// The signature holds libFuzzer's input hash, so a crash found again through another input
+/// files a new issue (spec item 16).
+pub fn extra_findings(bench: Option<&BenchResult>, fuzz: Option<&FuzzResult>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let targets = fuzz.map_or(&[][..], |f| f.targets.as_slice());
+    let seconds = fuzz.map_or(0, |f| f.seconds);
+    for t in targets.iter().filter(|t| !t.ok && safe_name(&t.name)) {
+        let prefix = format!("fuzz/{}/", t.name);
+        let (named, other): (Vec<&str>, Vec<&str>) = t
+            .artifacts
+            .iter()
+            .map(|a| a.strip_prefix(&prefix).unwrap_or(""))
+            .filter(|n| !n.starts_with(SLOW_UNIT))
+            .partition(|n| safe_name(n));
+        for n in &named {
+            out.push(Finding {
+                sig: format!("fuzz:{}:{n}", t.name),
+                label: "crash",
+                title: format!("nightly: fuzz target {} crashed: {n}", t.name),
+                detail: format!(
+                    "- Fuzz target `{}`, {seconds} s (specs/tooling/nightly.md item 13): \
+                     artifact `{prefix}{n}` in the nightly's output directory\n\
+                     - Reproduce: `cargo fuzz run {} fuzz/artifacts/{}/{n}`\n",
+                    t.name, t.name, t.name
+                ),
+            });
+        }
+        if named.is_empty() || !other.is_empty() {
+            out.push(Finding {
+                sig: format!("fuzz:{}", t.name),
+                label: "crash",
+                title: format!("nightly: fuzz target {} crashed", t.name),
+                detail: format!(
+                    "- Fuzz target `{}`, {seconds} s (specs/tooling/nightly.md item 13): \
+                     crashed, hung or ran out of memory; {} artifacts copied, {} of them \
+                     not named here for a name outside the allowed set or a path outside \
+                     `fuzz/<target>/` (slow units are not named either)\n\
+                     - Reproduce: `cargo xtask fuzz --target {} --seconds {seconds}`\n",
+                    t.name,
+                    t.artifacts.len(),
+                    other.len(),
+                    t.name
+                ),
+            });
+        }
+    }
+    if let Some(b) = bench.filter(|b| b.status == "timeout") {
+        out.push(Finding {
+            sig: "bench:timeout".into(),
+            label: "perf",
+            title: "nightly: the bench ran out of time".into(),
+            detail: format!(
+                "- Bench on {} regress files (specs/tooling/nightly.md item 12): `timeout` at \
+                 the `--bench-minutes` limit, exit {}, signal {}, {} ms\n\
+                 - Reproduce: `cargo xtask bench`\n",
+                b.files,
+                num(b.exit),
+                num(b.signal),
+                num(b.ms)
+            ),
+        });
+    }
+    out
+}
+
+/// The night's findings in filing order (spec item 16): [`findings`], then
+/// [`extra_findings`].
+pub fn night_findings(
+    limits: &[CaseResult],
+    previous: Option<&Previous>,
+    files: Option<&[FileResult]>,
+    bench: Option<&BenchResult>,
+    fuzz: Option<&FuzzResult>,
+) -> Vec<Finding> {
+    let mut out = findings(limits, previous, files);
+    out.extend(extra_findings(bench, fuzz));
+    out
+}
+
 /// The body of a new issue.
 pub fn issue_body(f: &Finding, night: &str) -> String {
     format!(
@@ -217,12 +317,15 @@ pub struct Filed {
     pub skipped: usize,
 }
 
-/// The labels a finding can carry, all listed for deduplication (a limits case changes label
+/// The labels listed for deduplication on every filing night (a limits case changes label
 /// with its status, so its open issue may carry the other one).
 pub const LABELS: [&str; 2] = ["bug", "crash"];
+/// Listed too when a finding carries it (only `bench:timeout` does, and always with it).
+pub const PERF: &str = "perf";
 
 /// Files `found` (spec item 16): no `gh` call when there is nothing to file; else one list
-/// per label of [`LABELS`], then at most `max_writes` writes: the creates first (in finding
+/// per label of [`LABELS`] (and [`PERF`] when a finding has it), then at most `max_writes`
+/// writes: the creates first (in finding
 /// order), then the comments, so a new finding is never starved by known ones. `Err` at the
 /// first failed call, with what was filed before it.
 pub fn file(
@@ -237,7 +340,8 @@ pub fn file(
         return Ok(done);
     }
     let mut map = BTreeMap::new();
-    for label in LABELS {
+    let perf = found.iter().any(|f| f.label == PERF).then_some(PERF);
+    for label in LABELS.into_iter().chain(perf) {
         let limit = list_cap.to_string();
         let args = s(&[
             "issue",

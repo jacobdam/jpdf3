@@ -3,9 +3,9 @@
 Area: tooling
 ISO 32000-2 clauses: none (development tool; it never parses PDF bytes, `jpdf-cli` does)
 Journeys: none (development tool; ops/judge/CONTRACT.md §2, PLAN §6.1 "Corpora", issues #19, #300, #301, #302)
-Status: implemented (parts 1 and 2 of 3: the regress tier and the diff (#300), the bench and
-extra fuzz time (#301); part 3, filing issues (#302), in two parts: limits cases and regress
-files here (item 16), the fuzz pass and the bench in #383)
+Status: implemented (the regress tier and the diff (#300), the bench and extra fuzz time
+(#301), and filing issues (item 16) in two parts: limits cases and regress files (#302), the
+fuzz pass and the bench (#383))
 
 ## Behavior
 1. **Usage.**
@@ -280,7 +280,7 @@ files here (item 16), the fuzz pass and the bench in #383)
     So a nightly that stops before the regress runs runs neither the bench nor the fuzz pass
     and writes no `nightly.json` (but files the limits cases' issues). The exit code is item 10's, computed from the log alone: a
     bench or fuzz tool failure makes it 1, which beats 75 and 4.
-16. **Issues** (#302 part 1; the fuzz pass and the bench are #383). The step reads only what
+16. **Issues** (#302; the fuzz pass and the bench #383). The step reads only what
     the earlier steps returned in memory (item 15), never `DIR`, so it can't file from an
     earlier night's files (item 10). **Findings**, in this order:
 
@@ -289,13 +289,31 @@ files here (item 16), the fuzz pass and the bench in #383)
     | `limits:<case>` | a limits case whose status is not `pass` (item 11) | `crash` for `crash` or `timeout`, else `bug` | `nightly: limits case <case> ended <status>` |
     | `regress:<blob>` | a regress file with at least one `crash` or `timeout` run (item 5), in run order (blob-id order, item 4) | `crash` | `nightly: jpdf-cli crash or timeout on regress file <first 12 hex>` |
     | `regression:<blob>:<op>` | with a previous night (item 9): a run `ok` then and `error` or `not_implemented` now, by blob then op | `bug` | `nightly: regress regression: <op> on <first 12 hex> went from ok to <status>` |
+    | `fuzz:<target>:<artifact>` | a fuzz target that crashed, hung or ran out of memory (item 13), in run order: each artifact copied for it to `DIR/fuzz/<target>/`, by name order | `crash` | `nightly: fuzz target <target> crashed: <artifact>` |
+    | `fuzz:<target>` | the same target when no artifact was copied for it, or any copied artifact's name is outside the set below | `crash` | `nightly: fuzz target <target> crashed` |
+    | `bench:timeout` | the bench ended `timeout` (item 12) | `perf` | `nightly: the bench ran out of time` |
 
     A run that becomes `crash` or `timeout` is the file's `regress:` finding, not a regression;
-    a file whose blob is not 40 lowercase hex digits is never filed. Signatures hold only
-    ASCII lowercase letters, digits, `_`, `:` and `-`.
-    **Filing**, only with `--file-issues`; with no finding, `gh` is not called at all. For both
-    labels, `bug` then `crash` (a limits case changes label with its status, so its open issue
-    may carry the other one), `gh issue list --state open --label <label> --limit 1000
+    a file whose blob is not 40 lowercase hex digits is never filed. A fuzz target or artifact
+    name goes into a signature only when it is 1 to 100 bytes of ASCII lowercase letters,
+    digits, `_` and `-` (libFuzzer names its artifacts `crash-<hex>`, `oom-<hex>`,
+    `timeout-<hex>`): a target whose name is outside that set is never filed, and an artifact
+    whose name is outside it (or whose path is not `fuzz/<target>/<name>`) is counted in the
+    target's `fuzz:<target>` finding, not named. A target that ran clean is not filed for its
+    artifacts, and a `slow-unit-` file (libFuzzer's slow input, not a crash) is never filed by
+    name, so a failed target with only such files is its `fuzz:<target>` finding. The
+    signature holds libFuzzer's input hash, so the same bug found again through another input
+    files a new issue rather than a comment (the write cap bounds them per night), and a fuzz pass that failed as a tool
+    (item 13) still files the failed targets that started. The fuzz and bench findings come
+    only from a night that reached the fuzz pass's end (a stop before it, item 15, leaves
+    them out). A drop in the bench's numbers from one night to the next is not a finding:
+    the nightly is not given the previous night's `bench.json` (only `regress.json`, item 9),
+    so there is nothing to compare. Signatures hold only ASCII lowercase letters, digits,
+    `_`, `:` and `-`.
+    **Filing**, only with `--file-issues`; with no finding, `gh` is not called at all. For the
+    labels `bug` then `crash` (a limits case changes label with its status, so its open issue
+    may carry the other one), then `perf` when a finding carries it (only `bench:timeout`
+    does, and always with that label), `gh issue list --state open --label <label> --limit 1000
     --json number,body`. A list of 1000 or more is refused (it may be cut, so a duplicate could
     be missed). An issue matches a signature when its body starts with the agent tag and has
     the line `nightly-signature: <signature>` exactly; the lowest number wins. Then at most 20
@@ -319,7 +337,11 @@ files here (item 16), the fuzz pass and the bench in #383)
     regress file, the blob, its manifest URL in backticks (left out with "URL not shown" when it
     is empty or holds a byte outside printable ASCII or a backtick) and each `crash` or
     `timeout` run's op, status, exit, signal and time; for a regression, the blob, URL, op and
-    both statuses. **No `jpdf-cli` output (stderr) and no corpus bytes go into an issue**
+    both statuses; for a fuzz finding, the target, the seconds per target and either the
+    artifact's path under `DIR` and `cargo fuzz run <target> fuzz/artifacts/<target>/<artifact>`,
+    or the counts of artifacts copied and not named and `cargo xtask fuzz --target <target>
+    --seconds <S>`; for the bench, its file count, exit, signal and time and `cargo xtask bench`.
+    No artifact bytes, fuzz log or tool error text goes into an issue either. **No `jpdf-cli` output (stderr) and no corpus bytes go into an issue**
     (CONSTITUTION 1, 13): to see the message, run the file again. The CI run id comes from
     `GITHUB_RUN_ID` when it is 1 to 20 digits, else it is left out. `gh` runs with
     `GH_PROMPT_DISABLED=1`, no pager, stdin on the null device and stderr to the nightly's
@@ -384,7 +406,9 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
 - Issues (item 16): ≤ 20 writes per night; each `gh` call ≤ 120 s and ≤ 64 MiB of stdout;
   lists of < 1000 open issues per label. Exact-boundary tests: 20 findings give 20 writes and
   21 give 20 plus one counted; a list one short of its limit is used and one at it refused, and stdout of exactly the cap
-  is read while one byte more fails (both limits passed in small, the real values pinned).
+  is read while one byte more fails (both limits passed in small, the real values pinned); a
+  fuzz artifact name of exactly 100 bytes is named in a signature and one of 101 is only
+  counted in its target's finding.
 - Bench: `--bench-minutes` ≤ 120 of wall time, killed at the limit; a sample of ≤ 20 files.
 - Fuzz: `--fuzz-seconds` ≤ 3600 per target (libFuzzer's `-max_total_time`), so the pass takes
   ⌈targets / cores⌉ × S plus the build; ≤ 100 artifacts copied per target.
@@ -418,8 +442,11 @@ error is the same text as in `nightly.json` (`release build failed (<status>)`,
   stderr, no corpus bytes and nothing from the sealed corpus (the tier is `regress`); titles
   and signatures are built from xtask's own names, statuses, numbers and checked blob ids, the
   URL from the repository's manifest is shown only inside backticks and only when it can't
-  leave them. What keeps another account's issue from capturing a finding is the label filter:
-  only open issues labeled `bug` or `crash` are read, and only accounts with triage rights can
+  leave them. Fuzz target and artifact names come from file names under `fuzz/` (written by
+  `cargo fuzz` and libFuzzer, so not xtask's own): they reach a title, a signature or a body
+  only when they pass item 16's character set and length check, which leaves no character
+  that Markdown, a mention (`@`) or a signature line could use. What keeps another account's issue from capturing a finding is the label filter:
+  only open issues labeled `bug` or `crash` (and `perf` on a night with a bench timeout) are read, and only accounts with triage rights can
   set labels. The tag at the start of the body (followed by a space) and the exact signature
   line only keep other issues of those labels from matching; the author is not checked, so a
   tagged issue an owner or agent session labels with the same line captures it (it gets the
@@ -489,6 +516,15 @@ Self-check:
     `ok` → `crash`, a missing file). No `gh` call without findings or without `--file-issues`.
     What still passes: a real `gh` whose output differs from the fake's (the list's JSON
     shape is checked strictly, so a change fails the step loudly).
+  - Fuzz and bench findings (#383) that file a clean target, drop an artifact, let a name
+    outside the set through, or file a bench that didn't time out: the tests have each kind
+    of target and every bench status, and hand mutants (no `ok` check, no unnamed-artifact
+    finding, `<` for `<=` at the length cap, an empty name allowed, upper case allowed, the
+    file name taken without its `fuzz/<target>/` prefix check, a bench filed for any non-`ok`
+    status, no `perf` list) each fail a test. A driver that hands `issues` no bench or fuzz
+    results: the fake's `issues` line carries them, as `summary`'s does. What still passes:
+    the `Real` adapter calling `findings` alone (one expression, checked by the reviewer;
+    the order is `night_findings`, which has its own test).
 - Not covered by tests: the real build, the real fetch (network), the CI wiring, the real
   adapters (`Real` in `xtask/src/nightly.rs`; the functions they wrap have their own tests);
   a real fuzz pass (the nightly toolchain and minutes of fuzzing:
@@ -538,7 +574,10 @@ step's data, one run per failing step, the no-file stop, the limits part's codes
 write after the fuzz pass, with the bench's and fuzz pass's results handed to `summary`; and
 #352's case, a failed removal as its own entry when the write succeeds) and `xtask/src/steps.rs` (the `exit_code` table, the
 `JUDGE-INFRA-FAILURE` line, the log). The `issues` step (item 16): `xtask/src/nightly/issues/tests.rs`
-(the findings, the bodies, the fake `gh`'s repeat night and near misses, both caps, a `gh`
+(the findings, the fuzz and bench findings (#383: named and unnamed artifacts, a clean target,
+a target name outside the set, slow units, a failed pass, each bench status, the filing order, and the
+`perf` list on a bench-timeout night only, with its repeat night), the bodies, the fake `gh`'s repeat night and near misses, both caps, a `gh`
 failure mid-way, the night label, and the real runner with fake `gh` scripts: arguments,
 exit codes, a hang killed at its limit, a missing program, non-UTF-8 output), and in
-`driver.rs` its place last, after a stop, and the data it gets.
+`driver.rs` its place last, after a stop, and the data it gets (the bench's and the fuzz
+pass's results only from a night that reached them).
