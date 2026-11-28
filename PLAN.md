@@ -159,6 +159,10 @@ a **conformance test suite** that any implementation must pass, so swapping one 
 | `OcrEngine` *(Phase 2)* | text recognition | `ocrs` (pure Rust) |
 | `TextShaper` | shaping for edited/added text | `rustybuzz` / `harfrust` |
 
+**Verified in M0:** [ADR 0016](docs/adr/0016-backend-selection.md) records the admission run
+of every candidate above (2026-11-28). Only `miniz_oxide` (0.8.9) passes; every other trait
+gets our own implementation, and `Signer` stays the platform's.
+
 **Admission rules for any third-party crate** (enforced by the protected judge, no human step;
 full rules in AUTOMATION.md §6.4):
 1. License in the allowlist (MIT, Apache-2.0, BSD-2/3-Clause, Zlib, ISC, Unicode-3.0, OFL-1.1 for fonts).
