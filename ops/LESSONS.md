@@ -6,6 +6,9 @@ review-diff, `ai-review` order, arithmetic/step-cap and conformance-suite lesson
 ops/TICK.md and specs/_TEMPLATE.md; they are no longer listed here.
 Retro 0002 promoted the checker/filter/parser/loop-rule lessons into the specs/_TEMPLATE.md self-check and
 dropped entries TICK §0 and §4 already state (background waits, "not proven" findings, post triggers).
+Retro 0003 promoted the sizing-after-rustfmt lesson into ops/TICK.md §0 and the "walk a rule over GitHub state
+through every case before round 1" lessons (PRs #289, #312, #479, #524, #528) into ops/TICK.md §3 step 2, and
+dropped stale bootstrap entries (judge calibration, the skipped-job verdict, settings bootstrap, "last X" from git).
 
 ## Tooling & environment
 - A merge of origin/main that brings a protected-path change from main → the guard blocks the merge, and once it
@@ -23,43 +26,46 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   directory, never `/tmp` (owner instruction, #28). `$TMPDIR` is unset in the sandbox (so
   `$TMPDIR/x` is `/x`, read-only): use the git-ignored `target/scratch/` of your worktree
   ([journal](journal/2026-11-21.md), PR #93).
-- Claude Code project settings and hooks apply **live** to running sessions → never write
-  `.claude/settings.json` before its hook script exists and passes `--selftest` (bootstrap, 2026-11-20).
-- PKCS#12 fixtures on macOS: `/usr/bin/openssl` is LibreSSL → always pass `-keypbe AES-256-CBC
-  -certpbe AES-256-CBC -macalg sha256`; pyHanko `SimpleSigner.load_pkcs12(file, passphrase=...)`
-  takes the password by keyword (the 2nd positional argument is the CA chain) (bootstrap).
-- Scripted multi-line replacements (python `str.replace`) after `cargo fmt` → they fail
-  because rustfmt reflowed the text. Re-read the formatted lines first, and make the script
-  assert every match before writing anything ([journal](journal/2026-11-21.md), PR #67).
-- macOS: no `timeout` binary (exit 127), system `python3` lacks `tomllib` → use
-  `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`, so put
-  files for containers there, not in `/tmp` ([journal](journal/2026-11-20.md)).
+- Scripted edits → after `cargo fmt`, multi-line `str.replace` scripts fail because rustfmt reflowed the text: re-read
+  the formatted lines and make the script assert every match before writing ([journal](journal/2026-11-21.md),
+  PR #67). An inline `python3 -c "..."` whose strings hold Markdown backticks → zsh runs them as command
+  substitutions (an empty match still "succeeded" once and duplicated a line): write the script to a file with a
+  quoted heredoc and run that ([journal](journal/2026-11-28/0617-236-memory-adr.md)).
+- macOS/BSD shell → no `timeout` binary (exit 127); system `python3` lacks `tomllib`, so use
+  `/opt/homebrew/bin/python3.14 -I` for judge scripts; colima/docker mounts only `$HOME`
+  ([journal](journal/2026-11-20.md)); `cargo` may be off PATH (`export PATH=$HOME/.cargo/bin:$PATH`,
+  [journal](journal/2026-11-25/1750-301-nightly-bench.md)). BSD grep exits 2 on an ERE with an empty alternative
+  (`(a|)$`), so `! grep -v …` passes everything: accept only the exact success code (`(( $? == 1 ))` for `grep -qv`)
+  and test a bad input; BSD awk rejects a newline in `-v`: pass multi-line data through `ENVIRON`. Extract the code
+  under test from the patched script by its exact text so the tests can't drift ([journal](journal/2026-11-22.md), PR #171).
 - Running the Playwright probes by hand (or letting a reviewer run them) → a relative `JPDF_PROBE_OUT`/`--output`
   resolves from the config's directory, so output lands under it or its parents (`apps/web/target/`, `apps/target/` in
   PR #204 R3.1), which the root-only `/target` ignore misses; biome fails only on paths under apps/web, and `git add -A`
   commits the rest. Pass absolute paths under the worktree's `target/scratch/`, and read `git status --short` before
-  every commit
-  ([journal](journal/2026-11-22.md), PR #204).
-- Hand-checking that a specific test kills a mutant → run `cargo nextest run --no-fail-fast`; fail-fast stops at
-  the first failing test, so the targeted test may never run and a "caught" claim can be false
-  ([journal](journal/2026-11-21.md), PR #140).
+  every commit ([journal](journal/2026-11-22.md), PR #204).
 - Mutation testing → `cargo mutants -p X` runs only X's own tests, so cross-crate coverage looks missing; add
   `--test-package` for the crates that exercise X (the whole workspace is too slow because of the bench tests).
   Use `--in-diff <range diff>`, set `TMPDIR` (it is unset) to the session scratchpad **outside the repo**: under
   `target/scratch/` the jpdf-corpus tests refuse a cache inside the git tree and the baseline fails, so no mutant runs
-  (audit 0003). For jpdf-traits (about 26 s per mutant) narrow it with `-f` to the non-suite files
-  ([journal](journal/2026-11-21.md), audit 0001, audit 0002, [audit 0003](journal/2026-11-22.md)).
-- Judge-like memory checks: macOS RSS ≠ address space → run the Linux build in docker
-  (`rust:<pinned>`) under `ulimit -v 2097152` ([journal](journal/2026-11-20.md)).
-- `reference.py` on the full smoke corpus takes ~4 min locally; one pdf.js file hangs MuPDF
-  (> 60 s) → reference tools must be called with timeouts (bootstrap).
-- Timing tests with shell-script fake engines → on macOS the first exec of a freshly written
-  script can take ~2 s; give timed assertions a warmup run and generous upper bounds; when a
-  test needs the script to reach a point before a deadline, have it signal that point (atomic
-  rename of a marker) and retry with a longer limit if it didn't (#75, PR #103); and
-  test process-group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills
-  the session's shell) ([journal](journal/2026-11-21.md), PR #59).
-
+  (audit 0003). For jpdf-traits (about 26 s per mutant) narrow it with `-f` to the non-suite files. Checking by hand
+  that a test kills a mutant → `cargo nextest run --no-fail-fast` (fail-fast may never run the targeted test, PR #140).
+  Hand mutants with sed: if the mutated literal also appears in the expected value, sed rewrites both, so replace only
+  the first occurrence and check which line changed (PR #131); undoing with `git checkout <file>` drops your
+  uncommitted edits (commit first, PR #201); a file restored with `mv` keeps its old mtime, so `touch` it before any
+  live run ([journal](journal/2026-11-21.md), audits 0001–0003, [journal](journal/2026-11-24/0150-295-hold-skip.md)).
+- Running judge tools locally → macOS RSS ≠ address space, so run memory checks on the Linux build in docker
+  (`rust:<pinned>`) under `ulimit -v 2097152`; `reference.py` on the full smoke corpus takes ~4 min and one pdf.js
+  file hangs MuPDF (> 60 s), so call reference tools with timeouts ([journal](journal/2026-11-20.md), bootstrap).
+- Timing tests → with shell-script fake engines the first exec of a freshly written script on macOS can take ~2 s:
+  give timed assertions a warmup run and generous upper bounds, and when a test needs the script to reach a point
+  before a deadline, have it signal that point (atomic rename of a marker) and retry with a longer limit if it didn't
+  (#75, PR #103). File mtimes (`stat -f %m`) have 1 s resolution, so an off-by-one at the limit survives: measure
+  below a second (perl `Time::HiRes`) and test "half a second under survives / stops at the limit" (PR #127).
+  Process groups: test group kills only from Rust (a stray `kill -- -PGID` in the tool shell kills the session's
+  shell); never let a test feed a value that could become `kill -- -1` (`1`, `01`), even "to check the guard refuses
+  it": write only ids of sleepers you spawned in their own group, test the guard with the kill command textually
+  swapped for `echo` (assert the swap happened), and prove each "unregister before reap/kill" order with a test-only
+  event recorder (PR #133) ([journal](journal/2026-11-21.md), PR #59).
 - The guard blocks a Bash call whose text contains the word u‑n‑s‑a‑f‑e, or names a gh comment/issue command
   (it tries to parse it as a CLI write), even in a heredoc or python script writing markdown →
   write such files with Write/Edit ([journal](journal/2026-11-22.md), PR #178). The post triggers are listed in TICK
@@ -67,6 +73,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   long post whose single-quoted body holds `$` + quote or `$$`+brace: split it or space the token and disclose it
   ([journal](journal/2026-11-21.md), PR #129; [journal](journal/2026-11-22.md), PR #183).
   Never `cat > file` without a heredoc (it waits on stdin until the 2 min timeout) ([journal](journal/2026-11-21.md), PR #104).
+- Protected files outside the protected paths → the guard blocks `git apply`/`patch` of a protected file's diff even
+  in scratch directories (generate the diff from a scratch copy and test that copy, with a harness that refuses to run
+  if the stubbing failed, PR #127), and `cp` with a protected path as the source (write copies with Write or from the
+  tool itself) ([journal](journal/2026-11-21.md), [journal](journal/2026-11-27/2223-303-admit.md)).
 - Proposing a guard/hook change that "skips quoted text" → shlex is not the shell: `#` comments, zsh `=word`, newlines
   inside quoted text and duplicated copies elsewhere in the command all differ. Allowlist the remainder word by word,
   pin every alternative with a direct assert plus a mutant, and fuzz with a real bash and zsh oracle (fake gh on PATH)
@@ -76,36 +86,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   of a small finding's PR ([journal](journal/2026-11-22.md), PR #183). The hook fails open on a timeout or exception:
   use a one-pass tokenizer, not nested-quantifier regexes, and self-test adversarial timing inputs that contain the
   trigger word ([journal](journal/2026-11-21.md), PR #119).
-
-- Writing a shell check from grep/awk exit codes → BSD grep exits 2 on an ERE with an empty alternative (`(a|)$`),
-  so `! grep -v …` passes everything: accept only the exact success code (`(( $? == 1 ))` for `grep -qv`) and test a
-  bad input. BSD awk rejects a newline in `-v`: pass multi-line data through `ENVIRON`. Extract the code under test
-  from the patched script by its exact text so the tests can't drift ([journal](journal/2026-11-22.md), PR #171).
 - Trusting config for a tool run with the driver's permissions (cargo, rustup) → they read config from **every
   ancestor directory**, and `<main checkout>/.claude/worktrees/`, `target/`, `ops/state/` and `~/.cargo` are writable by
   sessions and not protected. Walk the ancestors, pin env overrides (`RUSTUP_TOOLCHAIN`), and keep anything that
   decides what to kill or run in the driver's memory, not a file ([journal](journal/2026-11-22.md), PR #171).
-
-- A scheduler or tool input built live from command output (git reads) and parsed later → put the filtering in a
-  pure function over the command text with a fake reader, and decide per failure (bad bytes, oversize) whether it
-  skips, exits 1 or exits 2, before round 1 (PR #285 R1.1: [journal](journal/2026-11-23/2225-243-step11.md)).
-
-- `npx <tool>` in apps/web before `npm ci` → npx downloads whatever registry package has that name (it fetched
-  an unrelated `biome@0.3.3`). Run `npm ci --ignore-scripts` in the worktree first and call `./node_modules/.bin/<tool>`
-  ([journal](journal/2026-11-22.md), PR #121).
-
-- Timing tests that read file mtimes (`stat -f %m`, 1 s resolution) → an off-by-one at the limit survives; measure
-  below a second (perl `Time::HiRes`) and test "half a second under survives / stops at the limit"
-  ([journal](journal/2026-11-21.md), PR #127).
-- Testing a diff for a protected file → the guard blocks `git apply`/`patch` even in scratch directories; generate
-  the diff from a scratch copy and test that copy, with a harness that refuses to run if the stubbing failed
-  ([journal](journal/2026-11-21.md), PR #127).
-
-- Testing code that signals process groups (watchdogs, group kills) → never let a test feed a value that could
-  become `kill -- -1` (`1`, `01`), even "to check the guard refuses it". Write only ids of sleepers you spawned in
-  their own group; test the guard with the kill command textually swapped for `echo` (assert the swap happened). Prove
-  each "unregister before reap/kill" order with a test-only event recorder; reviewers found a new untested order in
-  4 rounds running ([journal](journal/2026-11-21.md), PR #133).
 - Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
   use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
   ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)). Both forms are GNU-only: macOS `touch` rejects
@@ -117,35 +101,17 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
-- Session shell: `cargo` not found (no `~/.cargo/bin` on PATH) → `export PATH=$HOME/.cargo/bin:$PATH` before
-  `cargo xtask next-session` ([journal](journal/2026-11-25/1750-301-nightly-bench.md)).
 - Running apps/web checks on the Linux host (no Node, Chromium exits 127, text boxes "hidden") → fetch the Node 24
   tarball and its SHASUMS256.txt from nodejs.org into `target/scratch/` and check the sum; `apt-get download` the
   libraries `ldd` reports missing plus `fonts-dejavu-core`, `dpkg-deb -x` them there, and run Playwright with
   `LD_LIBRARY_PATH` and a `FONTCONFIG_FILE` naming that font directory; without fonts every visibility assertion
   fails ([journal](journal/2026-11-25/1830-305-dashboard.md)).
-- Sizing a Rust tool before claiming → its in-module tests come out about as long as the code after rustfmt (a
-  540-line module grew to 1028), and a React page adds a validator and a Playwright suite: estimate code × 2 plus
-  the web part, and split before writing, not after (#305's work reached 2091 lines and was split into PR #354 and #353)
-  ([journal](journal/2026-11-25/1830-305-dashboard.md)). Count a draft's lines after `cargo fmt`, not before: rustfmt
-  put table-driven test arrays and builder chains one item per line, and #303's draft went from about 1100 to 1850
-  lines; split before the first review (#413) and write test inputs as one space-split string to keep the arrays short
-  ([journal](journal/2026-11-27/2223-303-admit.md)).
 - Running `cargo vet` on a crate the repo doesn't use yet (admission pre-checks) → `--locked` reads the repo's
   `imports.lock`, which vet prunes to the audits the current graph needs, so it reports every new crate unaudited; copy
-  the store into a scratch probe and run vet without `--locked` there. Copying the store by hand with `cp` from
-  `supply-chain/` is blocked by the guard even with the protected path as the source: write the copies with Write or
-  from the tool itself ([journal](journal/2026-11-27/2223-303-admit.md)).
-
-- An inline `python3 -c "..."` edit whose strings hold Markdown backticks → zsh runs them as command substitutions (an empty match still "succeeded" once and duplicated a line); write the script to a file with a quoted heredoc and run that ([journal](journal/2026-11-28/0617-236-memory-adr.md)).
+  the store into a scratch probe and run vet without `--locked` there ([journal](journal/2026-11-27/2223-303-admit.md)).
 - A change that makes an xtask command write under the main checkout (found from the git common dir) → every test, and every hand mutant you run, must run in a fresh `git init` repo with `GIT_CEILING_DIRECTORIES`, or it writes the real checkout's file; check the real file after mutants ([journal](journal/2026-11-28/0945-481-pick-log.md)).
-- A test that writes each bad case to one fixture path in a loop, then runs a later step (the real adapter, the driver) on that path after the loop → it checks only the last case, so a spec line naming another case is false; run every step inside the loop per case ([journal](journal/2026-11-28/0959-500-unknown-schema.md), PR #506 R1.1).
 
 ## Judge & CI
-- MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
-  smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
-- A skipped required job counts as success on GitHub → the verdict job runs `if: always()` and
-  fails unless every upstream job succeeded (bootstrap).
 - main red with `judge-verdict` green, only `pages` failed (deploy-pages "No artifacts named
   github-pages") **and** `upload-pages-artifact` succeeded in the same attempt → infra, no code
   change. Don't rerun: one rerun worked (#39), another hit "Multiple artifacts named
@@ -153,20 +119,18 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   step failed or was skipped, it's a real bug. Durable fix proposed in
   `ops/proposals/pages-deploy-retry.md` ([journal](journal/2026-11-21.md), PR #63). Exception: deploy-pages got
   HTTP 500 and main's head has no newer push → `gh run rerun --failed` worked (run 45649071740)
-  ([journal](journal/2026-11-25/1620-main-red-pages.md)).
-- main red on an infra job while a newer main `ci` run is in progress → don't `rerun --failed`: it queues in the main
-  concurrency group, and a later push before it starts cancels it (run 45249100863 attempt 2 ran no job). Read the newer run's result
-  for the same job instead, and record the run's state after acting ([journal](journal/2026-11-23.md), PR #271).
-- Writing a local check that mirrors a judge script → match its Python regex semantics
-  exactly (`\s` crosses newlines and includes U+001C–U+001F; pathlib globs match `.md`
-  files and directories), and diff both side by side on probe trees before review
-  ([journal](journal/2026-11-20.md), PR #27). A Rust check that mirrors a GitHub Actions `if:` expression → fold case:
-  `startsWith`/`contains` there ignore case (PR #296 R1.1: [journal](journal/2026-11-24/0150-295-hold-skip.md)).
-- Reading a judge output (report.json, gates.json) in a tool or page → read the writer in ops/judge/ for every value
-  each field can take, not one downloaded sample: verdict.py writes journey `pass: None` when a platform has no e2e
-  results (push runs without macOS), and nightlies also run on `workflow_dispatch` (PR #370 R1.1, R1.6). A "rejects
-  over the cap" test must use otherwise valid input, or the parse error passes it (R2.1)
-  ([journal](journal/2026-11-27/0106-306-judge-metrics.md)).
+  ([journal](journal/2026-11-25/1620-main-red-pages.md)). Any infra job red while a newer main `ci` run is in
+  progress → don't `rerun --failed`: it queues in the main concurrency group, and a later push before it starts
+  cancels it (run 45249100863 attempt 2 ran no job); read the newer run's result for the same job instead, and record
+  the run's state after acting ([journal](journal/2026-11-23.md), PR #271).
+- Mirroring or reading a judge script in a tool, check or page → match its Python regex semantics exactly (`\s`
+  crosses newlines and includes U+001C–U+001F; pathlib globs match `.md` files and directories) and diff both side by
+  side on probe trees before review (PR #27); a Rust check that mirrors a GitHub Actions `if:` expression folds case
+  (`startsWith`/`contains` ignore it, PR #296 R1.1). Read the writer in ops/judge/ for every value each field can take,
+  not one downloaded sample: verdict.py writes journey `pass: None` when a platform has no e2e results (push runs
+  without macOS), and nightlies also run on `workflow_dispatch` (PR #370 R1.1, R1.6). A "rejects over the cap" test
+  must use otherwise valid input, or the parse error passes it (R2.1) ([journal](journal/2026-11-20.md),
+  [journal](journal/2026-11-24/0150-295-hold-skip.md), [journal](journal/2026-11-27/0106-306-judge-metrics.md)).
 - Adding a fuzz target → the judge's nightly step runs `cargo fuzz run` with no seeds (33
   edges from an empty corpus), so give each target a structure template like
   `jpdf_testgen::from_fuzz_chunks` (about 1000 edges), not just seeds in `xtask/src/fuzz.rs`
@@ -192,20 +156,20 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   (shadow attacks are legal edits), keep certificate-derived URLs off loopback/private
   addresses, check web limits (CORS, mixed content, CSP, `fetch` redirect modes) and macOS ATS
   before promising a request, and draw the fixture PKI's expiry timeline before writing
-  clock steps ([journal](journal/2026-11-20.md), PR #46).
+  clock steps ([journal](journal/2026-11-20.md), PR #46). PKCS#12 fixtures on macOS: `/usr/bin/openssl` is LibreSSL,
+  so pass `-keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256`; pyHanko `SimpleSigner.load_pkcs12(file,
+  passphrase=...)` takes the password by keyword (the 2nd positional argument is the CA chain) (bootstrap).
 - Writing a spec that restates journeys (UI spec, feature spec) → quote the journeys' exact UI
   strings (empty states, option names, page-field format, notice wording) instead of
   paraphrasing, and check new web keys against `specs/ui/shortcuts.md` rule 3 (the
-  browser-reserved list) ([journal](journal/2026-11-20.md), PR #40).
-
+  browser-reserved list) ([journal](journal/2026-11-20.md), PR #40). A review fix that moves a journey check to new
+  UI elements → check that each element is on screen at that step (specs/ui/information-architecture.md), and on
+  macOS whether the system or the app draws it ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1).
 - Writing an overview doc (README, digest) from PLAN.md → PLAN describes the target, so "runs in a worker", "is
   published", "every limit is enforced" come out in the present tense; check each against the tree and open issues
   first (PR #169 round 1: 2 majors, 2 minors) ([journal](journal/2026-11-22.md), PR #169). Same for a cleanup's
   "one copy", "only", "every" claims: grep the whole tree for the duplicated shape before writing them (PR #212 spent
   rounds 1 and 2 on such a sentence) ([journal](journal/2026-11-22.md), PR #212).
-- A review fix that moves a journey check to new UI elements → check that each element is on screen at that step
-  (specs/ui/information-architecture.md), and on macOS whether the system or the app draws it
-  ([journal](journal/2026-11-27/1318-334-languages.md), R2.1, R3.1).
 
 ## Apps (web, macOS)
 - Writing a check that "nothing from set X reaches the artifact" (licenses, imports) → a text
@@ -230,8 +194,10 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   Full Keyboard Access, NSDocument autosave writes silently, the macOS split view has no
   overlay sidebar ([journal](journal/2026-11-20.md), PR #44).
 - Choosing npm packages (web app, test tools) → run `npm run licenses` in apps/web on the
-  candidate tree first: CONSTITUTION 10 has no build-only exemption, and Vite 8, ESLint,
-  Babel-based plugins and axe-core all fail it ([journal](journal/2026-11-20.md), PR #49).
+  candidate tree first: Vite 8, ESLint, Babel-based plugins and axe-core failed it before CONSTITUTION 10's
+  test/build-tool list ([journal](journal/2026-11-20.md), PR #49). `npx <tool>` before `npm ci` downloads whatever
+  registry package has that name (it fetched an unrelated `biome@0.3.3`): run `npm ci --ignore-scripts` in the
+  worktree first and call `./node_modules/.bin/<tool>` ([journal](journal/2026-11-22.md), PR #121).
 - Asserting styles in Playwright → use a `toHaveCSS` assertion, not your eye (MUI 9 ignores
   Typography `color`); after a pointer or focus action, await `el.getAnimations()` first (MUI
   transitions take 250 ms). Check a disabled control's hover and focused-hover states: an sx
@@ -270,24 +236,18 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Checking a backend-reported count whose unit the backend chooses (operations, work) → an absolute lower bound is
   covered by any flat rate (per sample, per input byte). Measure a difference between two inputs with the same output
   and at least the same length ([journal](journal/2026-11-21.md), PR #135).
-- Generating test vectors in code (bit writers, keystreams) → the toy that "checks" them often shares the same tables,
-  so a typo passes both; verify once with an independent implementation (CPython zlib, LibreSSL) and pin a size +
-  checksum fingerprint so any generator change gets re-verified ([journal](journal/2026-11-21.md), PR #110).
-- Running git on a cache a stranger could plant (`--cache DIR`) → git writes through a symlink at any path it
-  touches (refs, packs, reflogs, FETCH_HEAD, shallow), follows gitfiles, runs hooks and config programs. Require
-  the whole cache to be plain directories and regular files, allow-list its config keys, and put every setting on
-  the `-c` command line; naming dangerous paths took 3 review rounds ([journal](journal/2026-11-21.md), PR #131).
-- Hand mutation with sed → if the mutated literal also appears in the test's expected value, sed rewrites both
-  and the mutant "survives"; replace only the first occurrence and check which line changed (PR #131). Undoing a
-  mutant with `git checkout <file>` also drops your uncommitted edits in that file: commit first, or mutate and
-  restore a copy ([journal](journal/2026-11-22.md), PR #201). A mutant made with `sed -i.bak` and undone with `mv`
-  keeps the old mtime, so cargo reuses the mutated binary: `touch` the restored file before any live run
-  ([journal](journal/2026-11-24/0150-295-hold-skip.md)).
-- Reading pinned data from a git cache → pinning ids is not integrity: git doesn't re-hash on
-  read, replace refs remap blobs, and `git -C` walks up into the parent repo (or obeys an
-  inherited `GIT_DIR`). Use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env,
-  `fsck --full` before reading, and `cat-file --batch-check` sizes before `--batch`
-  ([journal](journal/2026-11-21.md), PR #62).
+- Generating test vectors or fixtures in code (bit writers, keystreams, edited PDFs) → the toy that "checks" them often
+  shares the same tables, so a typo passes both: verify once with an independent implementation (CPython zlib,
+  LibreSSL) and pin a size + checksum fingerprint so any generator change gets re-verified (PR #110). Edit generated
+  PDFs as `Vec<u8>`: `String::from_utf8_lossy` changes byte lengths (binary header comment) and silently shifts
+  offsets ([journal](journal/2026-11-21.md), [journal](journal/2026-11-20.md)).
+- Running git on a cache a stranger could plant (`--cache DIR`), or reading pinned data from it → git writes through a
+  symlink at any path it touches (refs, packs, reflogs, FETCH_HEAD, shallow), follows gitfiles, runs hooks and config
+  programs: require the whole cache to be plain directories and regular files, allow-list its config keys, and put
+  every setting on the `-c` command line (naming dangerous paths took 3 review rounds, PR #131). Pinning ids is not
+  integrity: git doesn't re-hash on read, replace refs remap blobs, and `git -C` walks up into the parent repo (or
+  obeys an inherited `GIT_DIR`); use `--git-dir`, `--no-replace-objects`, a scrubbed `GIT_*` env, `fsck --full` before
+  reading, and `cat-file --batch-check` sizes before `--batch` (PR #62) ([journal](journal/2026-11-21.md)).
 - Guarding "never write inside the repo" from a tool built in a worktree → the repo root
   is `.claude/worktrees/<x>`, which sits inside the main checkout. Refuse any path with an
   enclosing `.git`, check before creating directories, and re-check subdirectories for
@@ -300,63 +260,58 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   memory bound) now look redundant and no result-based test notices their removal. Test the early stop: an
   over-long token with no terminator must fail with the limit error after a few lexed bytes
   ([journal](journal/2026-11-21.md), PR #140).
-- Writing a "defaults fit the memory budget" check → summing the charged limits proves nothing: require an
-  itemized reserve (or say plainly there is none), and before the first review give every `Vec::new`/`collect`/
-  `with_capacity` on the code path a term, pinning each per-item constant against a parsed worst-case shape. PR #142
-  rounds 1 to 3 each found a missed term ([journal](journal/2026-11-21.md), PR #108;
-  [journal](journal/2026-11-22.md), PR #142).
-- Writing a memory rule for a caller that doesn't exist yet (a budget helper plus "requirements on future code") →
-  before round 1, walk every allocation the caller will make (decryption, each filter stage, the shrink copy, the final
-  contiguous slice) and say for each whether it is capped, charged by capacity, or an uncharged estimate. PR #186
-  drew such majors in each of rounds 1 to 4 (capacity, intermediates, decryption, shrink copy, cipher capacity)
-  ([journal](journal/2026-11-22.md), PR #186). But keep those rules abstract ("only a size the engine computed and
-  checked"). Filter-specific examples (predictor rows, join buffers) belong in the caller's PR: in PR #232 the join
-  text drew S2.1 and S3.2, the predictor text S4.1 and S5.1 (the last one in the final check)
-  ([journal](journal/2026-11-22.md), PR #232).
+- Writing a memory budget (a "defaults fit" check, or a rule for a caller that doesn't exist yet) → summing the
+  charged limits proves nothing: require an itemized reserve (or say plainly there is none), and before round 1 walk
+  every allocation on the path (`Vec::new`/`collect`/`with_capacity`, decryption, each filter stage, the shrink copy,
+  the final contiguous slice), saying for each whether it is capped, charged by capacity, or an uncharged estimate,
+  and pin each per-item constant against a parsed worst-case shape. PR #142 rounds 1 to 3 and PR #186 rounds 1 to 4
+  each found a missed term. Keep a rule for a future caller abstract ("only a size the engine computed and checked"):
+  filter-specific examples (predictor rows, join buffers) belong in the caller's PR, where PR #232's drew S2.1 to
+  S5.1 ([journal](journal/2026-11-21.md), PR #108; [journal](journal/2026-11-22.md), PR #142, PR #186, PR #232).
 - Caching results of hostile input (resolve cache, decoded streams) → test every rejection path twice (a second
   resolve after each kind of failure must fail the same way and cache nothing), pin cost formulas with literals and
   spare-capacity buffers (an expected value built from the constant under test pins nothing), and let the control
   case assert where the uncached path first fails ([journal](journal/2026-11-21.md), PR #139).
-- Tests that edit generated PDFs: `String::from_utf8_lossy` changes byte lengths (binary header
-  comment) and silently shifts offsets → edit `Vec<u8>` directly ([journal](journal/2026-11-20.md)).
-- clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an integration test file
-  → write those helpers to return `io::Result` and use `?` ([journal](journal/2026-11-24/0309-246-issue-lint.md)).
+- Workspace lints in tests → clippy's `allow-expect-in-tests` covers `#[test]` functions only, not helpers of an
+  integration test file, so write those helpers to return `io::Result` and use `?`
+  ([journal](journal/2026-11-24/0309-246-issue-lint.md)); `as` casts are denied in tests too, so convert floats with a
+  bit-setting helper instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 - A reviewer subagent that builds a scratch copy of the repo can leave stale binaries in the worktree's `target/`
   (`cannot run xtask`, fixture paths under the copy) → `cargo clean -p <crate>`, and tell reviewers to use their own
   `CARGO_TARGET_DIR` ([journal](journal/2026-11-24/0430-275-step6.md)).
-- The workspace denies `as` casts in tests too → convert floats with a bit-setting helper
-  instead of adding an `allow` ([journal](journal/2026-11-21.md), PR #71).
 
 ## Process
-- A test or spec claim that a fixture keeps N flags or labels independent ("a swapped field fails") → compute each
-  word's set of fixture items, opposites included, by script and run one swap mutant per pair before round 1; checked
-  by eye it took PR #393 three rounds (R1.2, R2.1, R3.1) ([journal](journal/2026-11-27/1501-390-status.md)).
-- A near-miss test fixture made with a broad string `replace` (an author login) → it can also change another field (a
-  URL holding the login) and pass for the wrong reason; replace the exact JSON field and check with a hand mutant
-  ([journal](journal/2026-11-27/0901-373-design-window.md)).
-- A tool that files or updates issues across nights (dedup by a key) → before round 1, run it in a test for two
-  nights over the cap (a shared write cap spent on updates starves new findings forever: create first) and with a
-  finding whose label changes between nights (list every label a key can carry); PR #384 R1.1, R1.2
-  ([journal](journal/2026-11-27/1405-302-nightly-issues.md)).
-- Harness generators that scale an attack (#25) → a size formula with a rounded per-item estimate fails for some
-  in-range sizes (`max-per-object` at 75–79 MiB): derive the count from the exact item size and test every value of
-  the size flag, not just its ends ([journal](journal/2026-11-25/1719-25-limits-harness.md), PR #349 R1.1).
-- Tests: a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check
-  → choose a state that fails only X, or have the function say which step failed
-  ([journal](journal/2026-11-25/1750-301-nightly-bench.md), PR #351 R2.1).
+- A test that passes for the wrong reason (beyond the template's "replace each term with `true`") → a loop that writes
+  each bad case to one fixture path and runs a later step after the loop checks only the last case: run every step
+  inside the loop (PR #506 R1.1); a near-miss fixture made with a broad string `replace` (an author login) can also
+  change another field (a URL holding the login): replace the exact JSON field and check with a hand mutant
+  (#373); a "step X fails → tool failure" test whose blocking state also breaks a later step passes without X's check:
+  choose a state that fails only X, or have the function say which step failed (PR #351 R2.1); a claim that a fixture
+  keeps N flags independent: compute each word's set of fixture items, opposites included, by script and run one swap
+  mutant per pair (PR #393 took three rounds by eye) ([journal](journal/2026-11-28/0959-500-unknown-schema.md),
+  [journal](journal/2026-11-27/0901-373-design-window.md), [journal](journal/2026-11-25/1750-301-nightly-bench.md),
+  [journal](journal/2026-11-27/1501-390-status.md)).
+- Writing a test harness for a filter or an issue-filing tool (beyond the template's self-check) → a filter that
+  mirrors another check (the guard's tag rule) needs cases run through both, including leading whitespace and the
+  characters each side strips (audit 0005 AC.1, AS.1). A fake CLI must run the script's real arguments (build the JSON
+  from the requested `--json` fields and apply its `--jq` with jq), and every guard needs a case per command
+  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2). Assert each shown record's body and the exact output set,
+  not membership (PR #265, CX.7). A "newest N by time" test needs a fixture where time order differs from id order,
+  list order and reversed list order (PR #267). A tool that files or updates issues across nights (dedup by a key)
+  needs a two-nights-over-the-cap test (a shared write cap spent on updates starves new findings: create first) and a
+  finding whose label changes between nights (PR #384 R1.1, R1.2,
+  [journal](journal/2026-11-27/1405-302-nightly-issues.md)).
+- A scheduler or tool input built live from command output (git reads) and parsed later → put the filtering in a
+  pure function over the command text with a fake reader, and decide per failure (bad bytes, oversize) whether it
+  skips, exits 1 or exits 2, before round 1 (PR #285 R1.1: [journal](journal/2026-11-23/2225-243-step11.md)).
 - Building something for the Pages site from CI data → the `project-linux` job that runs `cargo xtask ci linux` has
   no GitHub token and a shallow checkout (no `persist-credentials`, no `fetch-depth`): compute GitHub or git numbers
   in a session and commit them, as `ops/metrics/dashboard.json` does ([journal](journal/2026-11-25/1830-305-dashboard.md)).
-- Filtering GitHub lists by "the agent's own" (`--author @me`, comment authors) → the account is shared with the
-  owner, so the author proves nothing: filter by the tag at the start of the body, and treat owner PRs in the owner
-  feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269 R1.2, R1.3).
-- Writing a test harness for a filter (beyond the template's self-check) → a filter that mirrors another check (the
-  guard's tag rule) needs cases run through both, including leading whitespace and the characters each side strips
-  (audit 0005 AC.1, AS.1). A fake CLI must run the script's real arguments (build the JSON from the requested
-  `--json` fields and apply its `--jq` with jq), and every guard needs a case per command
-  ([journal](journal/2026-11-23.md), PR #264 R1.1, R1.2). Assert each shown record's body and the exact output set,
-  not membership ([journal](journal/2026-11-23.md), PR #265, CX.7). A "newest N by time" test needs a fixture where
-  time order differs from id order, list order and reversed list order ([journal](journal/2026-11-23.md), PR #267).
+- Deciding who wrote a GitHub record (`--author @me`, comment authors, a decision read from "a tagged comment") → the
+  account is shared with the owner, so the author alone proves nothing and the tag alone proves nothing either (the
+  repo is public and anyone can type it): agent records are tagged **and** by `jacobdam`, owner records untagged and
+  by `jacobdam`; treat owner PRs in the owner feed (`is_pr`) separately ([journal](journal/2026-11-23.md), PR #269
+  R1.2, R1.3; [journal](journal/2026-11-28/0555-461-undefer.md), PR #464 R1.1; PR #533 R1.1).
 - Scoping an audit's security brief → include proposal scripts that decide what counts as an owner instruction or
   what leaves the machine, even though they aren't live code (audit 0004's AC.1 was found only by the code reviewer).
   If Codex returns "flagged for possible cybersecurity risk", record it as unavailable; don't reword the brief to get
@@ -367,35 +322,22 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Branching from an unmerged PR branch → after it squash-merges, `git merge origin/main`
   gives add/add conflicts on the shared files; if main's tree equals the old PR head (`git
   diff <head> origin/main` empty), resolve with `git checkout --ours` ([journal](journal/2026-11-20.md), PR #32).
-- Finding "the last X" from git (last audit, last retro) → `git log -1 --diff-filter=A` with an
-  exact filename pattern (`[0-9][0-9][0-9][0-9].md`); the plain last-touch commit resets on any
-  typo fix ([journal](journal/2026-11-21.md), PR #90).
 - Recording a batch of tool runs in an ADR (admission, benchmarks) → name the exact version and flags of each run and why it was chosen; a one-phrase rule ("the newest audited version", "the newest of the previous line") was false for some items and drew a major in rounds 1 and 2 of PR #444. Check each named version against the registry's version list before round 1 ([journal](journal/2026-11-28/0304-304-backend-selection.md)).
 - Writing a record (retro, audit, journal) that claims GitHub side effects (labels, new issues)
   → do them before the review, or the record is false when it merges ([journal](journal/2026-11-21.md), PR #90).
   Claiming a workflow or rule fired (drills) → cite the run log or the resulting state (timeline event, draft flag),
   never the bot's "applied" message: a `|| true` hid a permission error ([journal](journal/2026-11-22.md), PR #209 R1.1).
-  Writing a rule or session type whose PR closes no issue (Planner) → before round 1, walk that PR through every
-  TICK section keyed to an issue (§4 K and cap, §4 step 6 escalation, §5 `/hold` and `owner-todo`, §8) and write each
-  mapping down; PR #289 drew one such gap per round (R1.1 to R5.3) and reached design
-  ([journal](journal/2026-11-24/0004-244-planner.md)). A session type with its own merge rule (owner approval, a
-  window) → also walk each §8 output (split labels, output 2's fold, step 6's auto-merge) and what the scheduler reads
-  of the kept or refiled issue; PR #312's routing fixes drew R2.1 and R3.1–R3.3
-  ([journal](journal/2026-11-24/0346-249-design-product.md)).
-- Tests: a filter test whose filtered-out records would land in the same bucket anyway passes without the filter →
-  hand-mutate each filter before round 1 and give the filtered records a value that changes the result
-  ([journal](journal/2026-11-24/0511-288-work-mix.md), PR #317 R1.1).
-- Creating numbered issues that reference each other: re-creating a blocked issue after later
-  ones gives it a later number → create dependencies first, then check numbers before writing "Depends on: #N"
-  ([journal](journal/2026-11-20.md)).
+  Filing numbered issues that reference each other: re-creating a blocked issue after later ones gives it a later
+  number, so create dependencies first, then check numbers before writing "Depends on: #N" ([journal](journal/2026-11-20.md)).
 - A behavior change stated as "only for case X" that comes from removing a fold → check every input that reached the
   old printing or exit path, not only the one the ADR names ([journal](journal/2026-11-27/1338-360-steps.md), PR #382
   R1.1).
 - Lifting a skip label (`deferred`, `owner-todo`, `blocked`) from an untagged owner issue → it is back in the owner feed, so rule a picks it ahead of rule d and step 6. Say so in the lift comment, and don't promise a later step's pick ([journal](journal/2026-11-28/0555-461-undefer.md), PR #464 R1.2).
-- A rule that reads a condition or a decision from "a tagged comment" → also require the author `jacobdam`. The repo is public and anyone can type the tag ([journal](journal/2026-11-28/0555-461-undefer.md), PR #464 R1.1).
-- Defining a count over GitHub events or session windows (owner actions, merges, journal joins) in an ADR → before round 1, run each rule against one real day's timelines and index.tsv rows: auto-merge shows as `auto_squash_enabled`, an issue closed by a merge has `commit_id` null (use `ClosedEvent.closer`), one owner action spans several events, and a journal `HHMM` is a minute that can start before the session's first second; PR #479 drew one such finding per round (R1.6, R2.1, R2.5, R3.2, R3.5, R4.2, R4.4) ([journal](journal/2026-11-28/0653-463-daily-retro.md)).
 - A design that names a lint or gate scope ("the library code of every crate") → check it against the real cargo targets and features before round 1: `--lib` skips a bin-only crate, `--no-deps` is needed to exclude a path dependency, and a `cfg(feature)` gate on a module drops that crate's own tests unless it is `cfg(any(test, feature))` (PR #465 R1.2, R1.8, R2.1; [journal](journal/2026-11-28/0617-236-memory-adr.md)).
-- A Planner run in the owner's interactive session that files an issue in the current milestone → the loop's `planner new-issues` rerun starts for that issue and sees the interactive run only by its locked `planner/` worktree and minutes-old `(owner's interactive session)` comments; check for them before running the Planner pass (PR #521, [journal](journal/2026-11-28/1029-planner-owner-run.md)).
-- Designing a rule over owner-feed items (routes, handled states, suspensions) → before round 1, tabulate each feed kind's lifetime (owner issues: open only, skip labels; comments: from FLOOR, repo-wide `done:`; review bodies: open PRs only, no reactions) and walk each route through the PR closing, the route closing unfinished, a skip label on the route and rule c's pick of the PR it names; PR #524 drew one review-body or rule-c finding in each of rounds 2 to 5 (R2.1, R3.1, R4.1, R5.1) and reached design ([journal](journal/2026-11-28/1047-522-owner-feed-adr.md)).
-- Writing a re-check before an irreversible step (a tag, a close) as a time window over GitHub events → each patched boundary drew a new major (judged-commit time vs the issue close seconds later, a same-minute close, a reopened issue): from the start, compare one recorded instant to the second against `closedAt`, and walk the three cases (closed by the judged commit, closed earlier in the same session, reopened and closed again) before round 1. And any final-check finding, even a nit, escalates to design, so fix the wording before the final check runs ([journal](journal/2026-11-28/1117-525-preclose.md), PR #528 R2.1, R3.1, R4.1, R5.1).
-- A reviewer's suggested wording for a nit or minor that lists cases ("a parked route issue, or …") → check it against the term it restates before applying it, or write the rule as the test itself ("a route step 1.2 wouldn't pick even without it"); PR #530's R3.2 wording drew the R4.1 major ([journal](journal/2026-11-28/1142-529-owner-feed-design.md)).
+- A session that finds a tagged PR, worktree or issue minutes old (a Planner rerun, a "leftover" worktree, rule c's
+  pick of a just-opened PR) → the owner's interactive session may still be working it: check for its locked
+  worktree, `(owner's interactive session)` comments and the PR's age, and let it finish before acting; PR #521's
+  Planner rerun started for an issue that run had just filed, and this retro's session first got rule f's
+  `t/508-m0-close` and then rule c's PR #536, both of which the interactive session finished within 7 minutes
+  ([journal](journal/2026-11-28/1029-planner-owner-run.md), [journal](journal/2026-11-28/1353-537-retro.md)).
+- A reviewer's suggested wording for a nit or minor that lists cases ("a parked route issue, or …") → check it against the term it restates before applying it, or write the rule as the test itself ("a route step 1.2 wouldn't pick even without it"); PR #530's R3.2 wording drew the R4.1 major ([journal](journal/2026-11-28/1142-529-owner-feed-design.md)). Any final-check finding, even a nit, escalates to design, so fix wording before the final check runs (PR #528 R5.1). Rewrapping by hand in a fix drew nits in rounds 2 to 4 of PR #533: check every added line's width after each fix ([journal](journal/2026-11-28/1231-509-adr0019-text.md)).
