@@ -92,8 +92,10 @@ the 2 GiB unused.
   decoded into growing buffers (3 × at the growth peak; chunks of short strings are in the
   per-object bound). `parse_object_bytes_bound_real_objects` parses five shapes and checks
   the bound, and the nested shape holds exactly 272 bytes per dictionary.
-- **Trailer.** The stored trailer keeps only the first usable `/Root` and `/Size`, at most 2
-  entries in an exact buffer (`trim_trailer`). Before #109 it kept every duplicate: 2 M
+- **Trailer.** The stored trailer keeps only one usable `/Root` and one usable `/Size`, each
+  from the newest trailer in the `/Prev` chain that has one (#78), at most 2 entries in an exact
+  buffer (`TrailerParts`). Each section's own trailer is dropped once its entries are taken, so
+  one parsed trailer is alive at a time, as before. Before #109 it kept every duplicate: 2 M
   `/Root 1 0 R` entries in a 22 MB trailer stayed alive for the document (about 173 MiB).
 - **Phases run one at a time.** A document parses an object, decodes a stream or renders a
   tile, never two at once. A finished phase does not always give its address space back, so

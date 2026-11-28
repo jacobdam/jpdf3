@@ -235,6 +235,18 @@ Self-check (#77):
   copied (a counting global allocator is banned by CONSTITUTION 3); review covers it, and the
   adversarial memory harness (#25) is the long-term check. The 4 GiB sparse-file case is
   covered by the ordering test above instead of an RSS measurement.
+- Lenient reads (#78). What broken implementation still passes? Taking `/Root` from the
+  oldest trailer instead of the newest fails `update_trailer_takes_missing_entries_from_older_trailers`
+  (four of its five cases); `<=` instead of `<` at the end-of-file offset fails both offset tests
+  (offset `len`); treating any `/Type` name, or any `N G obj` without the dictionary check, as
+  a stream fails the startxref tests; inferring every untyped kid as a page fails the kid test's
+  untyped `/Kids` cases (each checked by a hand mutant before review). Still passing: an
+  untyped kid whose `/Kids` is any value at all is an intermediate node (`/Kids 5` too, which is
+  then reported as `nested page trees`, exit 3, rather than malformed); the stricter answer
+  would need the nested-tree walk, which doesn't exist yet. The xref-stream check parses one
+  object at the section offset through the normal `Parser`, so every per-parse limit and the
+  lexing budget apply to it; it adds no arithmetic. The end-of-file comparison is between a
+  `u32` widened to `usize` and the slice length, with no arithmetic.
 - Residual: once opened, the descriptor is fixed, so a swap after the `fstat` changes nothing;
   a swap between `stat` and `open` opens non-blocking and the `fstat` check refuses it.
 
@@ -274,6 +286,18 @@ resolves only the catalog, the page-tree root and its kids.
   loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
   page limits, objects nested in strings and kids sharing one body (overlap rejection),
   overlapping `/Prev` sections (rejected), per-document object budget, out-of-range xref offsets (read as free).
+  The lenient reads of #78, each with its near miss: `update_trailer_without_root_uses_the_older_root`
+  (no usable `/Root` anywhere stays malformed), `kid_without_type_is_inferred_from_its_shape` (a
+  wrong `/Type` name stays malformed), `xref_offset_past_end_of_file_reads_as_null` (offsets
+  `len`, `len + 1` and `u32::MAX` are null; `len - 1` is checked against its header),
+  `startxref_at_a_non_xref_object_is_malformed` (an `/XRef` stream object stays unsupported),
+  `hybrid_file_is_read_through_its_table` (an entry free in the table stays null).
+- `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
+  (five old/new trailer pairs, the kept entries, their order and exact capacity),
+  `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
+  (one `/XRef` dictionary against nine near misses: another `/Type`, a string `XRef`, another
+  key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
+  dictionary), `offset_at_end_of_file_reads_as_free` (the same offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.
