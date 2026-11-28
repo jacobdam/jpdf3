@@ -98,10 +98,11 @@ reads each mtime back with `stat`: a date that didn't take stops the run with `F
 | 201 open PRs, `t/12-open` last (past the 200 read): `open` goes | ok | ok |
 | open PR `t/12-open` and a fork's PR on `t/13-nopr`: `t/13-nopr` goes | ok | FAIL (`open` deleted) |
 | open PR `t/1x2`: `t/1.2` goes (the name is matched as text, not as a regex, #367) | ok | ok |
+| open PR `T/12-OPEN`: `open` goes (the match is case-sensitive, #429) | ok | ok |
 | `git worktree prune` ran (no prunable entries) | ok | ok |
 
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
-`-x`), regex match (`grep -qx` without `-F`, #367), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
+`-x`), regex match (`grep -qx` without `-F`, #367), case-insensitive match (`grep -qxiF`, #429), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
 detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
 `--state all`, `--limit 1`, `--limit 30`, `--limit 199`, `--limit 201` or no `--limit` (any
 `--limit` but 200 fails the 200 or the 201 case, #344), dropping the fork filter or its

@@ -92,5 +92,8 @@ check "a fork's PR with an agent branch name keeps nothing: t/13-nopr removed" "
 # A branch name is matched as text, not as a regex (#367): the . in t/1.2 must not match the x of t/1x2.
 setup; run ok t/1x2
 check "open PR t/1x2: t/1.2 removed (a fixed-string match, not a regex)" "edge fresh "
+# Case counts too (#429 R1.1): an open PR on T/12-OPEN keeps nothing.
+setup; run ok T/12-OPEN
+check "open PR T/12-OPEN: t/12-open removed (case-sensitive)" "edge fresh "
 cd "$tmp/repo" && [[ -z "$(git worktree list --porcelain | grep -c prunable | grep -v '^0$')" ]] && echo "ok   git worktree prune ran (no prunable entries)" || { echo "FAIL prunable worktrees left"; fail=1; }
 exit $fail
