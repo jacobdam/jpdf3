@@ -73,7 +73,14 @@ The missing decision: **a pending owner item has two text states the scheduler c
    A *route* is such an open PR or issue, and it is a route only while the URL on its line is a
    pending owner item (not handled): a line naming a stranger's comment, a pre-floor comment, a
    handled item or any other URL makes no route, so it gets no rule a priority (its issue is
-   worked, if at all, by the normal rules).
+   worked, if at all, by the normal rules). The feed lists review bodies only on open PRs, so a
+   review body leaves it when its PR closes, handled or not. For a route line that names a review
+   body (`…/pull/<n>#pullrequestreview-<id>`) not in the feed, the scheduler reads PR `<n>`'s
+   reviews and conversation comments itself (read commands, not the protected feed) and counts
+   the review as a pending owner item when it is by `jacobdam`, untagged, non-empty, submitted
+   at or after `FLOOR`, and no tagged `jacobdam` `done:` reply on PR `<n>` names it. Such a review
+   stays an owner item while a route names it, and once that route closes it is listed as an
+   unrouted item like any other, so its `done:` is posted.
 2. **One session moves the unrouted ones.** The **owner feed** session takes every unrouted item
    the scheduler lists, oldest first, and leaves each one handled or routed before it exits. It
    writes no code, spec, ADR, test or proposal. Its allowed actions:
@@ -93,8 +100,9 @@ The missing decision: **a pending owner item has two text states the scheduler c
    `worker owner-routed #N` (`design-technical owner-routed #N` with `design`,
    `design owner-routed #N` with `design-product`); an open routed PR that is failing (step 3's
    test, not held, not `needs-design`), as `worker owner-routed #N`. A route is not picked while
-   an unrouted owner item sits on it (a comment on the route issue or PR, or on an open PR
-   that links the route issue): that item may change the work, so the owner feed session reads
+   an unrouted owner item of any kind sits on it (a comment, inline review comment or review
+   body on the route issue or PR, or on an open PR that links the route issue): that item may
+   change the work, so the owner feed session reads
    it first, and it is picked without the quiet period (below). When the route closes or
    merges, the item is unrouted again, and the next owner feed session posts its `done:` (or
    routes it again when the PR closed unmerged).
@@ -124,7 +132,9 @@ The missing decision: **a pending owner item has two text states the scheduler c
    time (`created_at`) is at least 10 minutes old (a quiet period, so a burst of owner comments
    is one session), or the oldest is at least 60 minutes old (so a steady trickle still gets a
    session each hour), or an unrouted owner issue has no time in the feed, or an unrouted item
-   sits on a route (invariant 3); the last two are picked at once.
+   suspends a route pick (invariant 3: on a route that step 1.1 would pick without it); the last
+   two are picked at once. An item on a route that wouldn't be picked anyway (a green routed PR,
+   a route issue an open PR links) waits for the quiet period like any other.
    The brief lists every unrouted item, oldest first, at most 25 (the rest wait for the next
    pick), and notes the items waiting for the quiet period when it doesn't pick;
 3. the closed owner issues of today's `owner-done` term, read as unrouted items of (2): a closed
@@ -144,11 +154,11 @@ are not Planner records (steps 8 and 11), and the work mix leaves owner sessions
 as today.
 
 **The records fast path.** A PR whose every changed path is a record path (a stricter subset of
-ADR 0011 §3's record commit, applied to the PR's whole diff against its base; the legacy
-`ops/journal/YYYY-MM-DD.md` files, which §3 also accepts, take the full run: each path added or modified under
+ADR 0011 §3's record commit, applied to the PR's whole diff against its base: each path added or modified under
 `ops/journal/YYYY-MM-DD/<name>.md`, or added as `ops/lessons/pending/<name>.md` other than
 `README.md`, each a regular file of mode 100644, no rename, delete or other mode) skips the
 build, test and judge jobs, and `judge-verdict` passes it with the reason "records only". The
+legacy `ops/journal/YYYY-MM-DD.md` files, which §3 also accepts, take the full run. The
 classifier runs from the base commit's copy, as the `policy` job reads pinned config from the base
 (LESSONS, PR #444 R1.2), so a PR can't change the rule that grades it. Pushes to main keep the
 full run (main red, rule b, reads them).
@@ -161,11 +171,16 @@ full run (main red, rule b, reads them).
   green (no pick), failing (picked), held (no pick); the quiet period at 9:59 and 10:00 minutes,
   the trickle bound at 59:59 and 60:00, an issue item without a time; 25 and 26 items in the
   brief; a closed owner issue with `owner-work`, with a legacy "picked up", with neither; a
-  pre-floor owner comment (never an item, also at 59 days); an owner issue labeled `owner-todo`,
+  pre-floor owner comment updated within the last 14 days, so the feed still shows it (never an
+  item); a review body on a closed PR named by an open route (an item, route kept) and the same
+  review with a `done:` reply on that PR, by a stranger, or tagged (no item, no route), and that
+  route closed (the review listed as unrouted); an owner issue labeled `owner-todo`,
   `blocked` or `deferred` (no item; one pick after the label goes); a route whose line names a
   stranger's comment, and one whose item is already handled (no route pick, and the issue is no
-  route); a route with a newer owner comment on it, and on the PR that links it (no route pick,
-  `owner-feed` at once), and the same comment once handled (the route is picked again).
+  route); a route with an unrouted owner comment on it, an inline review comment, a review
+  body, and a comment on the PR that links it (no route pick, `owner-feed` at once), the same
+  comment once handled (the route is picked again), and a comment on a green routed PR (it waits
+  for the quiet period).
   What broken implementation still passes: one that treats a route that a session filed for
   the wrong item (wrong URL by mistake, right shape) as correct. Only P10's reviewer line and
   the owner's view (👀 on the comment, the cross-reference GitHub shows on the route) catch it.
@@ -223,7 +238,9 @@ New principle, in docs/PRINCIPLES.md:
 > **P10.** Owner items move through text states; one session routes them; reactions are display
 > - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
 >   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
->   inline review comment or review body from the feed's `FLOOR` on) is *handled* only by a
+>   inline review comment or review body from the feed's `FLOOR` on, not an `/approve` that the
+>   design window counts, #372; a review body a route names stays one after its PR closes) is
+>   *handled* only by a
 >   tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
 >   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
 >   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged

@@ -257,7 +257,9 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
 ## P10. Owner items move through text states; one session routes them; reactions are display
 - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
-  inline review comment or review body from the feed's `FLOOR` on) is *handled* only by a
+  inline review comment or review body from the feed's `FLOOR` on, not an `/approve` that the
+  design window counts, #372; a review body a route names stays one after its PR closes) is
+  *handled* only by a
   tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
