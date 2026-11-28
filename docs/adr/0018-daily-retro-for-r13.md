@@ -96,10 +96,16 @@ that a stall costs a day, not a week.
    (ADR 0011 §5's area cycle, §6's "two retros in a row", ADR 0011's and ADR 0012's Success
    checks) counts weekly retros only (task 1 adds a Status note to both ADRs).
 
-**The period.** A daily retro's period starts the day after the newest record's `Period:` end
-(any kind) and ends yesterday (UTC); a weekly one also reports the 7 days ending yesterday for
-its trends. Periods never overlap and leave no day out, whenever a record merges. `cargo xtask
-metrics`' default `--since` changes from the last record's commit day to that rule (task 3).
+**The period.** Every period ends yesterday (UTC). A daily retro's period starts the day after
+the newest dated `Period:` end (any kind), so the daily chain leaves no day out and puts no day
+in two daily periods, whenever a record merges. A weekly retro's period starts the day after
+the previous weekly record's `Period:` end (normally 7 days); it overlaps the daily periods on
+purpose, and every rule that counts weekly retros (clause 6) reads it, never a daily period.
+An incident retro on a day whose period would be empty (it would start after yesterday,
+because a retro already ran today) writes `Period: none (incident)`, reports today so far for
+the incident only, and is skipped when the next retro looks for the newest dated `Period:`.
+`cargo xtask metrics`' default `--since` changes from the last record's commit day to these
+rules (task 3).
 
 A reviewer can check each clause against a record or a fixture: a scheduler fixture with a
 retro record dated `2026-11-28T23:59:59Z` and `now` = `2026-11-29T00:00:00Z` is due (another
@@ -125,11 +131,13 @@ classified by the first rule that matches:
 1. *unknown:* no pick is logged for it (below). Counted, never guessed from duration;
 2. *idle:* its pick is `idle`, or the scheduler exited 2;
 3. *rework:* its pick's first line is `worker main-red run <id>`, `worker own-pr #N` or
-   `design-technical needs-design #N`, or the session ran the fallback (`Session: fallback
-   exit <code>`) and worked rule b or c;
+   `design-technical needs-design #N` (a broken-scheduler run, exit neither 0 nor 2, falls to
+   *process*: the session fixes the scheduler);
 4. *records:* its pick is `worker design-window #N`, or its journal record is on a PR that
    changes only record paths (ops/TICK.md §4 step 6). Its journal record is the journal file
-   whose `Session:` line equals its pick and whose `HHMM-` name falls in its window;
+   whose `Session:` line equals its pick and whose `HHMM` minute (`HH:MM:00` to `HH:MM:59`)
+   overlaps its window [start, start + duration]: `ops/journal/2026-11-27/1621-386-done.md`
+   belongs to the session that started at 16:21:36;
 5. *product:* its pick names an issue (`#N`) that carries a product `area:` label
    (ops/areas.toml), or that an agent PR (`Closes #N`, open or merged) whose diff changes a
    product path (ADR 0011 §3) closes; until the `area:` labels exist (#308), only the second
@@ -174,9 +182,10 @@ session between classes.
 
 **Where did the owner step in?** One owner action is one intervention, counted under the
 first of these kinds that matches it:
-1. a tagged issue labeled `human` within a minute of its creation (filed in an owner
-   interactive session, CLAUDE.md; on 2026-11-28 the label came 1 to 5 s after creation; driver sessions never add `human`, a rule this ADR adds in task 1). The owner's
-   untagged endorsement on it (ADR 0011 §7) is part of the same intervention, not a second;
+1. a tagged issue whose `human` label was added at most 60 s after its creation (61 s is
+   out; filed in an owner interactive session, CLAUDE.md; on 2026-11-28 the label came 1 to
+   5 s after creation; driver sessions never add `human`, a rule this ADR adds in task 1). The
+   owner's untagged endorsement on it (ADR 0011 §7) is part of the same intervention;
 2. any other untagged issue, comment, review body or inline review comment by `jacobdam`
    (body not starting with `🤖 jpdf-agent` after leading whitespace, the owner feed's test in
    `ops/driver/owner-issues.sh`). `/hold`, `/release` and `/approve` are among these; the report
@@ -188,15 +197,19 @@ first of these kinds that matches it:
    which is why "outside every session window" is not the test;
 4. a label change, milestone change, close or merge by the account outside every session
    window (index.tsv: start time to start time plus duration), except the agent's own
-   after-effects: a merge of a tagged PR by auto-merge (its timeline has an
-   `auto_merge_enabled` event before the merge) and a close made by such a merge (a `closed`
-   event that names the merge commit). PR #464 merged at 06:12:18 UTC and closed #461 at
-   06:12:21, two seconds after its session ended; neither counts. An owner action inside a
-   window is missed (an undercount, stated in the report);
+   after-effects: the merge of a tagged PR whose timeline has an `auto_merge_enabled`,
+   `auto_squash_enabled` or `auto_rebase_enabled` event before it, that PR's own `merged` and
+   `closed` events (one action, not counted), and the close of each issue whose `ClosedEvent`
+   names that PR as its `closer` (GraphQL; the REST event's `commit_id` is null for these).
+   PR #464 (`auto_squash_enabled` at 06:07:48) merged at 06:12:18 UTC and closed #461 at
+   06:12:21, two seconds after its session ended; none of the three events counts. An owner
+   action inside a window is missed (an undercount, stated in the report);
 5. a commit on main by the owner (`owner/` branches, AUTOMATION.md §6.1).
 
-By this count 2026-11-28 had 6 interventions before this ADR: `ready` on #440 and #423 (kind
-3), and #433, #438, #461 and #463 (kind 1).
+By this count 2026-11-28 had 10 interventions before this design session started (06:53:30
+UTC), counted by hand from the day's comments and the `ready` events on #423 and #440 (label
+events on other issues were not scanned): #433, #438, #461, #463 and #466 (kind 1); `/approve`
+on PR #422 and the two comments on #146 (kind 2); `ready` on #440 and #423 (kind 3).
 
 Two kinds are counted apart and are not R13 gaps: actions a rule leaves only to the owner (an
 owner-signed commit on a protected path, CONSTITUTION 12; the owner's answer on an issue or PR
@@ -239,7 +252,7 @@ next weekly retro (clause 6), whatever its number.
    judge is protected and its gates are the product's, not the process's.
 3. **A measurement:** the retro measures itself: the forecast date's movement, idle hours with
    work waiting, and the owner-intervention count, against the 2026-11-28 baseline (about 1.4
-   idle hours before the owner stepped in, 6 interventions).
+   idle hours before the owner stepped in, 10 interventions by 06:53 UTC).
 4. **Reviewer vigilance:** P7 in `docs/PRINCIPLES.md` (below), for clauses 3, 5 and 6, which
    no tool checks: a retro changes no label or milestone on another issue, its action items stay within 3
    under measurement with distinct numbers, and every record answers the three questions.
@@ -267,7 +280,13 @@ next weekly retro (clause 6), whatever its number.
   auto-merged tagged PR and its `Closes` close after its session's window (not counted); a
   `human` issue with an untagged owner comment (one intervention); a deferral whose condition
   came true after the newest Planner record (not stale) and one before it (stale); a record
-  whose `Period:` ends 2 days before yesterday (the next period starts the day after it).
+  whose `Period:` ends 2 days before yesterday (the next period starts the day after it); an
+  incident retro after a daily one the same day (`Period: none`, skipped by the next); a
+  weekly period of 7 days next to a daily one of 1; a journal file `1621-…` joined to a
+  session that started at 16:21:36 (joined) and one at 16:22:00 with a 1621 window ended at
+  16:21:59 (not); an `auto_squash_enabled` PR and the issue its `ClosedEvent.closer` names
+  (not counted) next to a merge with no auto-merge event (counted); a `human` label at 60 s
+  (kind 1) and at 61 s (not kind 1).
 - What no fixture catches: a session that changes a label by hand inside a retro (clause 3),
   owner actions inside a session window (kind 4 of the intervention list) and a forged pick
   line. The first is P7's reviewer check, the others undercount or misclass one session each.

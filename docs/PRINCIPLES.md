@@ -151,15 +151,17 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   product share of merges), where the sessions went (unknown, idle, rework, records, product,
   process; idle hours and idle hours with work waiting), and where the owner stepped in (one
   action, one intervention; target 0, exempt kinds counted apart), plus the skip-label table
-  and the quality floor. Periods neither overlap nor skip a day. `cargo xtask next-session`
+  and the quality floor. Daily periods neither overlap nor skip a day; a weekly period spans
+  the days since the previous weekly one, and rules that count weekly retros read it. `cargo xtask next-session`
   makes the retro due when no retro record is dated today (UTC). On any issue or PR but its
   own `retro` issue and PR and the issues it files, a retro adds or removes no label and moves
   no milestone; it never edits `ops/QUEUE.md` or reorders a PLAN.md task. Each stall it finds
   is one `discovery` + `stall` issue in the current milestone, without `ready`, one open per
   cause. At most 3 action items are under measurement at a time, each on a distinct number,
   each judged on the 7 UTC days after its merge day, extended at most once.
-- **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row and §2's read-only bullet, and
-  ADR 0012 §2).
+- **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row, §2's read-only bullet, §5's
+  area cycle, §6's "two retros in a row" and its Success check, and ADR 0012 §2 and its
+  Success check).
 - **Enforced by:** the scheduler's daily term and its fixtures (ADR 0018 task 1),
   `cargo xtask metrics` (tasks 3–5); the rest is reviewer vigilance.
 - **Reviewers check:** a retro session ran no label or milestone write on another issue and no
