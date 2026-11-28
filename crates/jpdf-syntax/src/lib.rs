@@ -6,6 +6,8 @@
 // Input-derived arithmetic is checked; overflow panics in every profile (#77).
 #![deny(clippy::arithmetic_side_effects)]
 
+#[cfg(test)]
+mod boundary_tests;
 mod budget;
 mod error;
 mod lexer;
