@@ -1069,11 +1069,10 @@ gate them.
      owner-approved milestone it is the only way to close. Each gets §0's replies.
    - **Close** (a Planner run whose step 4 finds the window ended or an `/approve` counting; or
      the session that takes a counting `/approve` under rule a): check again that `Mn` has no
-     open issue, that every issue in `Mn` closed at or after the `Checklist run:` time (to the
-     second, taken when (c)'s lists were read) is one that (c) lists (any other was filed and
-     fixed since, so it holds work no gate judged; one closed before that time was closed by
-     the judged commit or an earlier one, by a commit that (a) would have refused, or is listed
-     in (c)), and that (c) finds no issue
+     open issue, that no issue in `Mn` has its `closedAt` after the `Checklist run:` time (to the
+     second, taken when (c)'s lists were read, so each issue (c) lists closed before it; a later
+     close is an issue filed, reopened or moved back and closed since, whose work no gate
+     judged), and that (c) finds no issue
      that left after the notice was filed. If a check fails, close the notice with a tagged
      comment saying which, and stop: the next empty backlog runs the checklist again.
      Otherwise tag the judged commit (`git tag mN <judged commit>`, `git push origin mN`),
