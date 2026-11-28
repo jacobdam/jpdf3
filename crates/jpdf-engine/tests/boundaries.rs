@@ -25,6 +25,26 @@ fn file_size_limit_is_exact() {
     );
 }
 
+/// `max_xref_entries` at its exact boundary on a one-page PDF that opens: its table has 4
+/// entries (the free head, the catalog, the page tree and the page), so a limit of 4 opens it
+/// and 3 refuses it.
+#[test]
+fn xref_entry_limit_is_exact_on_a_document_that_opens() {
+    let pdf = minimal_pdf(1);
+    let at = |max_xref_entries| {
+        let limits = Limits {
+            max_xref_entries,
+            ..Limits::default()
+        };
+        Document::open(&pdf, &limits).map(|d| d.page_count())
+    };
+    assert_eq!(at(4), Ok(1));
+    assert_eq!(
+        at(3),
+        Err(EngineError::LimitExceeded("cross-reference entries"))
+    );
+}
+
 #[test]
 fn display_text_of_every_variant() {
     let cases = [

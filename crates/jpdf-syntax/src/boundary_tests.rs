@@ -22,8 +22,9 @@ fn parse(src: &[u8]) -> Result<Object, SyntaxError> {
 }
 
 /// `SyntaxError`'s own text. The CLI prints the `EngineError` it becomes (ops/judge/CONTRACT.md
-/// §1): crates/jpdf-engine/tests/boundaries.rs pins `EngineError`'s text, open.rs there the
-/// conversion of each variant, and tools/jpdf-cli/tests/messages.rs one full stderr line.
+/// §1). crates/jpdf-engine/tests/boundaries.rs pins `EngineError`'s text for values built
+/// directly; the conversion is checked only for the cases crates/jpdf-engine/tests/open.rs
+/// opens, and tools/jpdf-cli/tests/messages.rs checks one full stderr line (an empty file).
 #[test]
 fn display_text_of_every_variant() {
     let cases = [
@@ -259,8 +260,10 @@ fn objects_overlapping_by_one_byte_are_rejected() {
     );
 }
 
-/// `max_xref_entries` at a small exact boundary on a complete file: its table has 2 entries
-/// (the free head and object 1), so a limit of 2 parses and 1 is refused.
+/// `max_xref_entries` at a small exact boundary in `XrefDocument::parse`, on a fully populated
+/// table of 2 entries (the free head and object 1): a limit of 2 parses and 1 is refused. The
+/// file has no `/Root`, so it opens no document; crates/jpdf-engine/tests/boundaries.rs has the
+/// same pair on a one-page PDF that opens.
 #[test]
 fn xref_entry_limit_is_exact_on_a_complete_file() {
     let data = tiny_file();

@@ -14,7 +14,10 @@ fn empty_file_prints_the_engine_error_line() -> io::Result<()> {
         .join(format!("jpdf-cli-messages-{}", std::process::id()));
     DirBuilder::new().create(&dir)?;
     let path = dir.join("empty.pdf");
-    OpenOptions::new().write(true).create_new(true).open(&path)?;
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
     let o = Command::new(env!("CARGO_BIN_EXE_jpdf-cli"))
         .arg("info")
         .arg(&path)
