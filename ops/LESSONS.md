@@ -138,6 +138,7 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   from the tool itself ([journal](journal/2026-11-27/2223-303-admit.md)).
 
 - An inline `python3 -c "..."` edit whose strings hold Markdown backticks → zsh runs them as command substitutions (an empty match still "succeeded" once and duplicated a line); write the script to a file with a quoted heredoc and run that ([journal](journal/2026-11-28/0617-236-memory-adr.md)).
+- A change that makes an xtask command write under the main checkout (found from the git common dir) → every test, and every hand mutant you run, must run in a fresh `git init` repo with `GIT_CEILING_DIRECTORIES`, or it writes the real checkout's file; check the real file after mutants ([journal](journal/2026-11-28/0945-481-pick-log.md)).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
