@@ -137,6 +137,8 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
   `supply-chain/` is blocked by the guard even with the protected path as the source: write the copies with Write or
   from the tool itself ([journal](journal/2026-11-27/2223-303-admit.md)).
 
+- An inline `python3 -c "..."` edit whose strings hold Markdown backticks → zsh runs them as command substitutions (an empty match still "succeeded" once and duplicated a line); write the script to a file with a quoted heredoc and run that ([journal](journal/2026-11-28/0617-236-memory-adr.md)).
+
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of
   smoke pages; only those consensus pages are ratcheted (bootstrap calibration).
@@ -390,3 +392,4 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Lifting a skip label (`deferred`, `owner-todo`, `blocked`) from an untagged owner issue → it is back in the owner feed, so rule a picks it ahead of rule d and step 6. Say so in the lift comment, and don't promise a later step's pick ([journal](journal/2026-11-28/0555-461-undefer.md), PR #464 R1.2).
 - A rule that reads a condition or a decision from "a tagged comment" → also require the author `jacobdam`. The repo is public and anyone can type the tag ([journal](journal/2026-11-28/0555-461-undefer.md), PR #464 R1.1).
 - Defining a count over GitHub events or session windows (owner actions, merges, journal joins) in an ADR → before round 1, run each rule against one real day's timelines and index.tsv rows: auto-merge shows as `auto_squash_enabled`, an issue closed by a merge has `commit_id` null (use `ClosedEvent.closer`), one owner action spans several events, and a journal `HHMM` is a minute that can start before the session's first second; PR #479 drew one such finding per round (R1.6, R2.1, R2.5, R3.2, R3.5, R4.2, R4.4) ([journal](journal/2026-11-28/0653-463-daily-retro.md)).
+- A design that names a lint or gate scope ("the library code of every crate") → check it against the real cargo targets and features before round 1: `--lib` skips a bin-only crate, `--no-deps` is needed to exclude a path dependency, and a `cfg(feature)` gate on a module drops that crate's own tests unless it is `cfg(any(test, feature))` (PR #465 R1.2, R1.8, R2.1; [journal](journal/2026-11-28/0617-236-memory-adr.md)).

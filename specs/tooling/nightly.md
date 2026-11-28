@@ -354,8 +354,8 @@ fuzz pass and the bench (#383))
     not `Infra`: a rerun of the whole night would not be cheaper than the next night. So with
     `--file-issues`, a night without network that also has a finding (a failed limits case)
     exits 1, not the fetch's 75 (item 10: `Failed` beats `Infra`).
-    The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN`; it
-    needs `--file-issues` added to its command (ops/proposals/nightly-file-issues.md).
+    The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN` and
+    passes `--file-issues` (ops/proposals/nightly-file-issues.md, applied).
 
 ## Persistence
 No document persistence. GitHub issues and comments (item 16, only with `--file-issues`).
@@ -364,7 +364,7 @@ No document persistence. GitHub issues and comments (item 16, only with `--file-
 `work/` under `DIR` (and the `.tmp` names after a failed rename, item 10). In the repository's
 ignored paths: the fuzz pass's seeds and corpus under `fuzz/corpus/`, its artifacts under
 `fuzz/artifacts/`, its logs under `target/fuzz-logs/` (specs/tooling/fuzz.md). The previous night's file is passed in by the caller (with no previous file there are no regression findings, item 16): the CI step that downloads
-it needs the owner (`.github/` is protected) and is not proposed yet (ops/proposals/nightly-file-issues.md, "Not in this proposal").
+it needs the owner (`.github/` is protected) and is proposed in ops/proposals/nightly-previous-night.md (#497).
 
 ## Undo
 Not applicable (development tool).
