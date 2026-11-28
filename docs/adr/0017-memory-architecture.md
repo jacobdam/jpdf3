@@ -7,7 +7,9 @@ ops/TICK.md §8 step 5). The owner's `/approve` ends the window early. The owner
 `owner-todo` on the ADR PR itself ("so I review the design before it merges", #236), so the
 label goes on the PR as well as on #236: `cargo xtask next-session` doesn't merge a design PR
 that carries it, so this one merges only after the owner removes it (then the window or an
-`/approve` applies as usual).
+`/approve` applies as usual). The label also takes the PR out of the scheduler's rule c (the
+own-PR step skips PRs labeled `owner-todo`), so while it is on, a conflict with main or a lost
+`ai-review` on this PR waits for the owner too.
 
 ## The problem class
 The judge runs `jpdf-cli` under a 2 GiB `RLIMIT_AS` (ops/judge/CONTRACT.md); running out is a
@@ -142,9 +144,12 @@ of every crate under `crates/` and of `tools/jpdf-cli`, except `jpdf-mem` and `j
 the dependencies `jpdf-mem` and `jpdf-alloc` aren't linted through the crates that use them. It
 uses its own configuration (`CLIPPY_CONF_DIR`), at `-D clippy::disallowed_methods`.
 `jpdf-traits`' conformance suites and toy backends (`pub mod conformance`, test support that the
-backends' tests call and the engine never does) move behind a `conformance` cargo feature that
-only dev-dependencies enable (task 5), so the gate's default-feature build doesn't compile
-them; every other module of `jpdf-traits` is gated.
+backends' tests call and the engine never does) move behind
+`#[cfg(any(test, feature = "conformance"))]` (task 5): jpdf-traits' own tests still compile them
+(119 of its tests live there), the backends' tests enable the `conformance` feature through a
+dev-dependency, and the gate's build (default features, no `test`) doesn't compile them. Task 5
+shows that `cargo nextest run --workspace` runs the same tests before and after. Every other
+module of `jpdf-traits` is gated.
 
 The list denies the std APIs that allocate a runtime-sized or growing buffer: the sized
 constructors, reserve and resize methods, `vec![x; n]`, the growth methods of `Vec`,
@@ -172,11 +177,11 @@ measurement catches what is left.
 - **The baseline** `ops/metrics/limits-peaks.json` holds, per platform (`linux`, `macos`), per
   `--mib` value that a job runs, and per case, the counted peak and (macOS) the footprint. A
   case fails (exit 4, as a limits finding does) when:
-  - its counted peak passes its baseline by more than 10% plus 1 MiB (exactly baseline × 1.1 +
-    1 MiB passes, one byte more fails);
+  - its counted peak passes `baseline + baseline / 10 + 1 MiB` (integer bytes, the division
+    rounding down; exactly that passes, one byte more fails);
   - on Linux, its OS peak passes 2 GiB − 64 MiB (exactly that passes, one byte more fails);
-  - on macOS, its footprint passes 2 GiB − 64 MiB or its footprint baseline by more than 25%
-    plus 16 MiB (the same boundary rule): the counter sees only live bytes, and memory libmalloc
+  - on macOS, its footprint passes 2 GiB − 64 MiB or `baseline + baseline / 4 + 16 MiB` (the
+    same integer rule): the counter sees only live bytes, and memory libmalloc
     keeps after a free (#165) shows only in the footprint;
   - its counted peak is 0 (no allocator installed).
 
@@ -197,8 +202,11 @@ measurement catches what is left.
   with the first decode phase); `many-small` (the largest number of tiny allocations the limits
   allow, such as maximal dictionaries of one-byte names kept in the cache: the C allocator's
   per-allocation overhead, which the counter doesn't see, grows with the count, so this case
-  checks the margin where it is thinnest); and on macOS #165's re-resolve probe (one large
-  uncached object resolved many times).
+  checks the margin where it is thinnest); and on macOS #165's re-resolve probe. That
+  case is built to #165's measured profile whatever `--mib` is: an uncached object of 2^20 slots
+  resolved often enough that #165's growth (about 34 MB per resolve) would pass the 2 GiB −
+  64 MiB ceiling (at least 64 resolves), so today's retention shows against the ceiling, not
+  only against a baseline recorded with it.
 - The fuzz targets install `CappedAlloc` at their `H` (1024 MiB, §1), so an allocation past the
   cap is a refused charge or a saved crash. The nightly also replays each target's corpus with a
   `--sanitizer none` build under `ulimit -v 2097152`: AddressSanitizer reserves terabytes of
@@ -267,7 +275,8 @@ peak got worse.
   forgets `alloc_zeroed` in the cap check is caught by the zeroed case; one that is never
   installed is caught by the harness's "counted peak is 0" rule. `JPDF_MEM_CAP_MIB` gets its own
   boundary tests in task 7: a value of exactly `H` is taken as `H`, `H` + 1 MiB (and any larger
-  or malformed value) is clamped to `H` or refused as a usage error, and a lowered value makes a
+  value) is clamped to `H`, a malformed value is a usage error (exit 2 before the file is
+  read), and a lowered value makes a
   valid file fail with exit 2 `limit exceeded: memory`.
 - `jpdf-mem`'s tests, with a fake gauge: a charge that reaches `S` exactly passes and one byte
   more is refused; a reservation counts until dropped; sums saturate. Still passing: a helper
@@ -283,9 +292,10 @@ peak got worse.
 - The harness: a `jpdf-cli` without the allocator fails (counted peak 0); one that leaks or
   grows fails its baseline; one that aborts at the cap is a `crash`; one that ignores
   `JPDF_MEM_CAP_MIB` fails `memory-cap`. Task 8 tests each failure rule of §4 at its exact
-  boundary with fake runs: a counted peak of exactly baseline × 1.1 + 1 MiB passes and one byte
+  boundary with fake runs: a counted peak of exactly `baseline + baseline / 10 + 1 MiB` passes (with a baseline not
+  divisible by 10, so the rounding is pinned) and one byte
   more fails, an OS peak (and a macOS footprint) of exactly 2 GiB − 64 MiB passes and one byte
-  more fails, a footprint of exactly its baseline × 1.25 + 16 MiB passes and one byte more fails,
+  more fails, a footprint of exactly `baseline + baseline / 4 + 16 MiB` passes and one byte more fails,
   and a counted peak of 0 fails while 1 byte passes; a baseline looked up under the wrong
   platform or `--mib` key fails a test too. Still passing: a hostile allocation history that no
   case reproduces. The cases come from findings (§ the process rule) and the fuzzers explore the
@@ -298,7 +308,7 @@ peak got worse.
 | #146 | folded into task 8, whose PR closes it; `deferred` until then | the cross-phase history becomes a harness case under the real limit, measured instead of bounded by a formula; the gate stays until then |
 | #154 | kept closed; the gate stays | it keeps decode and raster off the jpdf-cli path until task 8 is merged and the first decode phase's PR passes its own harness cases (Requirements on future callers); task 8 restates the lift condition in specs/tooling/cli-dependency-gate.md |
 | #156 | superseded (closed with a link to this ADR) | what closes #146 is decided here (task 8's cases under the cap); arena reservations are part of the OS peak the harness measures |
-| #165 | folded into task 9, whose PR closes it | the macOS measurement runs #165's re-resolve probe as a case and fails it when the footprint passes its ceiling or baseline (§4), which is where memory libmalloc keeps after a free shows; the counter caps the live bytes |
+| #165 | folded into task 9; its PR closes #165 only if the #165 case passes | the macOS measurement runs #165's re-resolve probe, sized to its measured profile, and fails it when the footprint passes the ceiling or its baseline (§4), which is where memory libmalloc keeps after a free shows; if the case fails, task 9 lands the measurement without that case, posts the failing numbers on #165, and #165 stays open under its own severity rule (sev:high once a hostile file passes 2 GiB on macOS) |
 | #168 | kept closed; `ImageInputBudget` stays as a per-call bound | removing the shared allowance would let page data and globals each reach the per-stream cap, a loosened limit (§2); under the cap, a decode that doesn't fit under `S` also fails with `LimitExceeded("memory")` |
 | #187 | kept closed; `charge_output` stays with `ImageInputBudget` | it is how that per-call bound charges capacity |
 | #231 | superseded (closed with a link to this ADR) | it is about code that doesn't exist yet, so its items become requirements on future callers: items 1 and 2 (the image caller charges each stage with `charge_output`, chunked growth, no speculative reservation at the cap) are requirement 7, item 3 (each adapter's output capacity at the exact cap) is requirement 4 |
@@ -312,7 +322,7 @@ peak got worse.
 | 2 | `ops/proposals/allocator-exception.md`: CONSTITUTION 3's second sole exception (`crates/jpdf-alloc`, its limits as in §1) and the matching ops/judge/policy.py change, with a test plan. About 300 lines. | #236 |
 | 3 | Owner: apply task 2's proposal (signed commits). Filed without `ready`; `owner-todo` once task 2's PR merges (ops/TICK.md §0). | task 2 |
 | 4 | Migrate jpdf-syntax onto `jpdf-mem` (lexer, parser containers, xref table, spans, trailer, resolve cache), checkpoints in its input loops, `LimitExceeded("memory")`; boundary tests with a fake gauge (a parse that crosses `S` fails with the error, never panics); `jpdf-mem` added to the jpdf-cli dependency gate. About 800 lines. | task 1 |
-| 5 | Migrate jpdf-cos, jpdf-engine, jpdf-cli (`read_capped` through `jpdf-mem`) and the runtime modules of jpdf-traits (`limits.rs`, `raster.rs` and the rest outside `conformance`) the same way, with their boundary tests; move `jpdf-traits`' `pub mod conformance` and its toy backends behind a `conformance` cargo feature that only dev-dependencies enable (§3). About 800 lines. | task 4 |
+| 5 | Migrate jpdf-cos, jpdf-engine, jpdf-cli (`read_capped` through `jpdf-mem`) and the runtime modules of jpdf-traits (`limits.rs`, `raster.rs` and the rest outside `conformance`) the same way, with their boundary tests; move `jpdf-traits`' `pub mod conformance` and its toy backends behind `#[cfg(any(test, feature = "conformance"))]`, the backends' tests enabling the feature (§3), with the same test count before and after. About 800 lines. | task 4 |
 | 6 | `cargo xtask mem-lint` (§3) in `cargo xtask ci linux`: `--lib --bins --no-deps` with the default features, the configuration, one fixture per denied method (a library and a binary fixture, so a skipped target fails), the crate list, spec `specs/tooling/mem-lint.md`. About 600 lines. | task 5 |
 | 7 | `crates/jpdf-alloc`: `CappedAlloc` (count, peak, refusal at `H`), its `Gauge` impl; installed in jpdf-cli with `JPDF_MEM_CAP_MIB` (lower only, its boundary tests as in Verification) and `JPDF_MEM_REPORT` (the counted peak, and `VmPeak` on Linux, on stderr); tests as in Verification; an exit-2 test with a lowered cap; added to the dependency gate. About 600 lines. | task 3, task 5 |
 | 8 | `cargo xtask limits`: both peaks per case in `limits.json`, the baseline `ops/metrics/limits-peaks.json` keyed by platform and `--mib`, the failure rules of §4 with their exact-boundary tests (Verification), the `memory-cap`, #146 and `many-small` cases, and a `--mib 64` run in `cargo xtask ci linux`; specs/tooling/limits.md, ci-linux.md and nightly.md, and the gate's lift condition in specs/core/memory-budget.md and specs/tooling/cli-dependency-gate.md. Closes #146. About 1000 lines. | task 7 |
