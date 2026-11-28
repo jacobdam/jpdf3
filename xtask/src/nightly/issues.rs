@@ -203,8 +203,8 @@ pub fn extra_findings(bench: Option<&BenchResult>, fuzz: Option<&FuzzResult>) ->
                 detail: format!(
                     "- Fuzz target `{}`, {seconds} s (specs/tooling/nightly.md item 13): \
                      crashed, hung or ran out of memory; {} artifacts copied, {} of them \
-                     not named here for a name outside the allowed set (slow units are \
-                     not named either)\n\
+                     not named here for a name outside the allowed set or a path outside \
+                     `fuzz/<target>/` (slow units are not named either)\n\
                      - Reproduce: `cargo xtask fuzz --target {} --seconds {seconds}`\n",
                     t.name,
                     t.artifacts.len(),
