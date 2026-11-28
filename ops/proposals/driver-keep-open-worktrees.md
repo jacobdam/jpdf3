@@ -76,8 +76,8 @@ starts without its scratch files.
 ## Tests
 
 `bash ops/proposals/driver-keep-open-worktrees/test.sh [driver.sh]` (default: the proposed
-driver). It builds a temp repo with seven worktrees (`t/12-open`, `t/13-nopr`, `t/1`,
-`t/12-open-x`, a detached HEAD, all dated 3 days back; `t/15-edge`, dated 2 days 23 hours back,
+driver). It builds a temp repo with eight worktrees (`t/12-open`, `t/13-nopr`, `t/1`,
+`t/12-open-x`, `t/1.2`, a detached HEAD, all dated 3 days back; `t/15-edge`, dated 2 days 23 hours back,
 just inside the age limit; and a fresh `t/14-fresh`) and a fake `gh` (needs `jq`) that acts like
 `gh pr list`: it reads at most `--limit` PRs (default 30), keeps only the `--json` fields asked
 for, applies the `-q` filter, marks fork PRs
@@ -97,10 +97,11 @@ reads each mtime back with `stat`: a date that didn't take stops the run with `F
 | 200 open PRs, `t/12-open` last: `open` stays | ok | FAIL (`open` deleted) |
 | 201 open PRs, `t/12-open` last (past the 200 read): `open` goes | ok | ok |
 | open PR `t/12-open` and a fork's PR on `t/13-nopr`: `t/13-nopr` goes | ok | FAIL (`open` deleted) |
+| open PR `t/1x2`: `t/1.2` goes (the name is matched as text, not as a regex, #367) | ok | ok |
 | `git worktree prune` ran (no prunable entries) | ok | ok |
 
 Hand mutants of the proposed driver, each failing a case: substring match (`grep -qF` without
-`-x`), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
+`-x`), regex match (`grep -qx` without `-F`, #367), ignoring a `gh` failure, dropping the age test, dropping the keep log, dropping the
 detached-HEAD guard (`[[ -n "$b" ]]`), dropping `git worktree prune`, dropping the `-q` filter,
 `--state all`, `--limit 1`, `--limit 30`, `--limit 199`, `--limit 201` or no `--limit` (any
 `--limit` but 200 fails the 200 or the 201 case, #344), dropping the fork filter or its
