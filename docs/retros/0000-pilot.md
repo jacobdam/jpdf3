@@ -3,7 +3,7 @@
 - **When:** 2026-11-20 (supervised partial run), 2026-11-22 (this record, #21), and the owner's steps of #208
   (2026-11-22 to 2026-11-28, added 2026-11-28).
 - **What:** AUTOMATION §14 step 3. Trigger each rule once on a scratch branch and confirm it is caught.
-- **Status:** 8 of 8 drills pass. `/hold` failed first (#210) and passed its re-run after the fix (#266). Drill 5
+- **Status:** 8 of 8 drills pass (drill 8 only in its marker half). `/hold` failed first (#210) and passed its re-run after the fix (#266). Drill 5
   ran as a comment, not an issue (issue creation is limited to collaborators), and drill 8 showed the marker but not
   an agent's rerun. The owner's steps are in #208, closed as completed on 2026-11-28.
 - **Calibration:** measured in retro 0001 (docs/retros/0001.md, *Calibration*): median session 24.6 min, mean
@@ -106,7 +106,7 @@ The `HALT` file stopped the driver at its check (16:50:48). The driver was start
 `20261120T165104Z` 16 s later. That session never logs `finished`: its stream log (`ops/logs/20261120T165104Z.jsonl`,
 local) has no `result` line, and its last line, at 16:53:01.914 UTC, is a tool result `Exit code 137` (SIGKILL) for
 a `git commit` and `git push` in the `read-aloud` worktree (#31). So it was killed, not halted; the log doesn't say
-by whom. The next driver start, 36 s later, found the owner's `halt` issue and exited at its check (16:53:37) without
+by whom. 35 s after the kill, the driver's check found the owner's `halt` issue and exited (16:53:37) without
 starting a session. Session `20261120T165524Z` then took up the killed session's work in the same worktree and
 finished it (PR #34, merged 17:02 UTC). What the drill shows is the check's behavior: each trigger stops the loop
 before the **next** session; a running session is stopped only by a kill.
@@ -119,7 +119,7 @@ scratch PR #324 (ready, auto-merge on) got `/hold`: run green, `isDraft: true`, 
 auto-merge still off. T4: #324 closed unmerged.
 
 ### Drill 8: forced judge infra failure (owner, PR #226, closed unmerged)
-After `reference`, the owner deleted the `ref-` caches and reran `judge-verdict` (run 45022829095, attempt 2), which
+After `reference`, the owner deleted the single `ref-smoke-v1-` cache entry (on main) and reran `judge-verdict` (run 45022829095, attempt 2), which
 printed `JUDGE-INFRA-FAILURE: reference cache missing`
 ([job](https://github.com/jacobdam/jpdf3/actions/runs/45022829095/job/137212492378)). The PR told agents not to work
 it, so no session reran it; TICK rule b's rerun was not observed live.
