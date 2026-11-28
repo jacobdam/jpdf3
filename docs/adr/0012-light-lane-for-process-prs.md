@@ -84,8 +84,9 @@ milestone **`Ops`**, not the current one, unless:
    the next milestone's first issues;
 2. it is a wrong pick or a failure of `cargo xtask next-session` seen in live use (a session
    was sent to the wrong work, or the scheduler failed);
-3. it is `crash` or `security` (ADR 0009 unchanged: `sev:critical`/`sev:high` in the current
-   milestone for rule d, `sev:medium`/`sev:low` in M10);
+3. it is `crash` or `security` (ADR 0009: `sev:critical`/`sev:high` in the current
+   milestone for rule d, or, for a latent high whose path doesn't exist yet, `deferred` in the
+   milestone where the path appears (ADR 0009, Latent highs); `sev:medium`/`sev:low` in M10);
 4. it is about a strict-list subject (§1: the guard, the owner feed, `ops/proposals/`, the
    judge, the review rules).
 

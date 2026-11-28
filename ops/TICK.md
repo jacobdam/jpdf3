@@ -203,7 +203,12 @@ d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`*
    `owner-todo`, §0). Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
    When you file one, set it, and put `sev:medium` / `sev:low` issues in milestone M10: they
-   wait for the release gate and are not picked before then. An unlabeled `security` issue →
+   wait for the release gate and are not picked before then. A **latent** `sev:critical` /
+   `sev:high` issue, one whose failure path doesn't exist on main yet, goes in the milestone
+   where the path appears (never later than M4), labeled `deferred` with its `Undefer when:`
+   line (§5). The comment that files, regrades or defers it says why the path is missing and
+   where it appears, and the Planner checks it (§9 step 1a); when unsure, the current milestone
+   without `deferred` (ADR 0009, Latent highs). An unlabeled `security` issue →
    label it first (higher level when unsure).
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
 f. **A leftover branch/worktree from a dead session** → resume it if valuable, else delete it.
@@ -597,7 +602,8 @@ session.
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
   unless (1) it blocks the current milestone's gate or last step, or the next milestone's first
   issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use;
-  (3) it is `crash` or `security` (rule d and ADR 0009 as they are); or (4) it is about a
+  (3) it is `crash` or `security` (rule d and ADR 0009; a latent high goes in the milestone
+  where its path appears, `deferred`, rule d's latent-high line); or (4) it is about a
   strict-list subject (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge, the
   review rules). Until #308's `area:` labels exist, judge "process-area" by the files the issue
   would change. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
@@ -880,6 +886,18 @@ gate them.
    the issue body when the label came without a comment). If that text names no condition,
    leave the label and list the issue in `ops/QUEUE.md` under `## Deferred without a
    condition` for the next retro (§7 step 1).
+
+   **Latent highs** (ADR 0009, owner #466): for each `deferred` issue labeled `sev:critical` or
+   `sev:high` whose condition doesn't hold, check that its body or a comment names the missing
+   failure path and the milestone where it appears, and that the path is still missing on main.
+   If the path exists on main, or nothing names it, or you are unsure: remove `deferred`, move
+   it to the current milestone and comment `🤖 jpdf-agent Undeferred: not latent (<the path on
+   main, no path named, or why unsure>)`, so rule d picks it. Otherwise, if no milestone is named, name the
+   one where the path appears in a comment; if it is in another milestone than that one, or
+   later than M4, move it there (M4 at the latest) with a comment saying why. Neither of these
+   changes what the owner set: when the newest untagged owner comment about the issue's
+   milestone or condition (on the issue, or on a PR whose comment names the issue) set them,
+   they stay as set, and a doubt about them goes in a comment for the owner instead.
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
    scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
