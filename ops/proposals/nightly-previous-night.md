@@ -129,7 +129,8 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
   repeats every night (a broken `cargo-fuzz` install, say), the saved entry is never
   replaced and each restore keeps it from eviction, so every later night diffs against that
   same old night. Regressions since then are still found, but each one is reported again
-  every night (the issue gets a "Seen again" comment, item 16) until the failure is fixed.
+  on its open issue (a "Seen again" comment, item 16, within the night's write cap) until the
+  failure is fixed.
 - **Eviction.** The repository's cache is shared with the corpus caches (10 GB, least recently
   used goes first). An evicted entry costs one night without a diff.
 - **Trust.** The previous file is written by the agent's own code in an earlier run of this
@@ -159,7 +160,9 @@ night's results, and #19 stays open.
    runs' `nightly-report` artifacts; the checksum step of the third run prints the
    `sha256sum` of the second run's `regress.json`, which differs from the first run's (each
    run records its own `ms`). The same check on the second run shows the first run's
-   checksum. If the keep step copied nothing, the third run prints the first run's checksum.
+   checksum. If the keep step copies on the first night but doesn't overwrite later (`cp -n`), the third
+   run prints the first run's checksum; if it copies nothing at all, step 2 has no
+   `Cache saved with key` line and the third run prints `no previous regress.json`.
 5. `gh cache list --key nightly-regress-` lists the three entries, all on `refs/heads/main`.
 
 The plan doesn't exercise a night that exits 1 or 75, or a regression filed end to end; those
