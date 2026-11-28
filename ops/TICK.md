@@ -143,8 +143,9 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   (`audit due`, `retro due`; the reason is on the `Rule:` line), step 8 is rule j
   (`planner due`: the milestone has no plan, no Planner ran in 7 days, or the work mix is below
   70%; the reason is on the `Rule:` line), then rule k (`design product v1 [#N]`, `design product #N`: a Design: product
-  session, §10), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`); a
-  `planner due` or `planner` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
+  session, §10), step 10 is rule i (`worker ready #N`) and step 11 is rule j (`planner`, or
+  `planner new-issues` on a day the Planner already ran, ADR 0015); a `planner due`, `planner`
+  or `planner new-issues` pick is a Planner session (§9); the rules still say how to do the work; the brief's `Load:` list is what to read first and its `Notes:` list
   is for the journal (and for removing worktrees whose PRs are merged). The journal's
   `Session:` line is the first line as printed (§5), and its `Picked:` line says why. The
   scheduler skips issues labeled `owner-todo`, `blocked` or `deferred` (step 10 also `in-progress`, `design`, `design-pending` and `design-product`), and issues that an
@@ -154,8 +155,9 @@ Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/n
   branch starts with `owner/`, the owner's own change (AUTOMATION.md §6.1, #298), or it is
   labeled `needs-design` (step 6's, #275)). For a PR labeled `design` that isn't a draft, its
   issue's `owner-todo` is the window's own (§8 step 5) and doesn't stop rule c (#372).
-- **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner`
-  or `- Session: planner due` record dated today, UTC, on main or an open agent PR). Do nothing, write nothing (no journal,
+- **Exit 0, `idle`:** nothing applies and the Planner already ran today (a `- Session: planner…`
+  record dated today, UTC, on main or an open agent PR), and either 3 journal files dated today
+  hold one or no issue is new since the newest (rule j, ADR 0015). Do nothing, write nothing (no journal,
   no PR), exit at once (ADR 0011 §3).
 - **Exit 2 (unknown):** a `gh` or network error. Do no work, write nothing, exit.
 - **Any other exit (the scheduler is broken):** apply rules b and c below by hand. Then find the
@@ -222,8 +224,15 @@ j. **Planner** → §9. Picked at step 8 (`planner due`: the current milestone h
    `ops/QUEUE.md` on main, no Planner record is dated in the last 7 UTC days, or the work mix is
    below 70%: fewer than 14 of the newest 20 counted `Session:` records of the last 7 days are
    milestone work, ADR 0011 §3; with fewer than 20 there, it isn't measured) or step 11
-   (`planner`: nothing else applies), at most once a day: its record, `- Session: planner` or
-   `- Session: planner due`, makes later step 8 terms that day off and step 11 `idle`.
+   (`planner`: nothing else applies), at most 3 times a UTC day (ADR 0015): its record,
+   `- Session: planner…` (`planner`, `planner due` or `planner new-issues`), makes later step 8
+   terms that day off. Step 11 then picks `planner new-issues` only while fewer than 3 journal
+   files dated today hold such a record (one file on two refs counts once) and an issue is
+   *new*: open, in the current milestone, without `ready`, a skip label, `in-progress`,
+   `design`, `design-pending` or `design-product`, not in flight, and created at or after the
+   end of the minute in the newest such file's name (`HHMM-`, §5; a name without a valid time
+   reads as the end of its day). Its `Rule:` line lists the new issues' numbers. Otherwise
+   step 11 is `idle`.
 k. **Design: product** → §10. Picked at step 8 after the Planner's terms: `design product v1`
    or `design product v1 #N` (`docs/PRODUCT.md` is not on main) or `design product #N` (the lowest open issue labeled
    `design-product` and `ready`, once the file is on main); neither while an open agent PR
@@ -811,7 +820,9 @@ specs/tooling/design-technical.md.
    the issue is an owner instruction.
 
 ## 9. PLANNER session (ADR 0011 §1; specs/tooling/next-session.md steps 8 and 11)
-Picked as `planner due` (step 8) or `planner` (step 11). The Planner makes the current
+Picked as `planner due` (step 8), `planner` (step 11) or `planner new-issues` (step 11, a rerun
+on a day the Planner already ran, for issues filed after its newest run, ADR 0015; the `Rule:`
+line lists them, and steps 2 and 2b are what they need). The Planner makes the current
 milestone's backlog workable; it is **the only gate into `ready`** besides the owner. Other
 sessions file Worker issues (a split's parts, review deferrals, discoveries, a design ADR's
 tasks) without `ready`, and the next Planner run adds it. Issues for the design queue (`design`
@@ -878,8 +889,9 @@ gate them.
    critical path to the milestone's gate, the design-ahead list and the work mix (the brief's
    `work mix:` note, as printed, in a `## Work mix` section). The labels stay the source of truth, and step 10
    picks from them. Change the file (and its `Planned:` date) only when its content changes.
-6. **Record:** the journal entry (`- Session: <first line>`, which makes later picks that day
-   skip step 8 and turn step 11 into `idle`) is written even when nothing changed. When
+6. **Record:** the journal entry (`- Session: <first line>`, such as `- Session: planner
+   new-issues`, which makes later picks that day skip step 8, counts as one of the day's 3 runs
+   and makes step 11 `idle` until an issue is filed after its file name's minute) is written even when nothing changed. When
    `ops/QUEUE.md` (or `docs/milestones/mN.md`, step 4) changes, it is a work PR
    (`Planner YYYY-MM-DD: <one line>`, `Closes` nothing) reviewed by §4 (ADR 0011 §3: only
    record commits skip review: journal and pending lesson files not on origin/main, §4 step 6); the brief adds this section and ADR 0011 §1, and

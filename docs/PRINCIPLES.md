@@ -134,8 +134,7 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   time reads as the end of its day).
 - **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound).
 - **Enforced by:** `cargo xtask next-session` (xtask/src/next_session.rs) and its `--from`
-  fixtures (xtask/tests/next_session.rs), from ADR 0015 task 1 on. Until then the scheduler
-  picks the Planner at most once a day, which keeps the invariant with no reruns. That a
+  fixtures (xtask/tests/next_session.rs), from ADR 0015 task 1 on (#440). That a
   session filing Worker issues leaves `ready` off is reviewer vigilance.
 - **Reviewers check:** a change to step 8 or 11 keeps the count per distinct file (one file
   on two refs counts once), compares an issue's creation time to the newest record's minute

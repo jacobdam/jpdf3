@@ -87,7 +87,8 @@ GitHub (public repo jacobdam/jpdf3)
    i. `ready` task in the current milestone (`Depends on:` issues closed, lowest number); j's
       no-plan and 7-day terms come before it (the scheduler's step 8)
    j. the milestone has no plan in `ops/QUEUE.md`, no Planner ran in 7 days, or nothing else
-      applies → Planner (at most once a day: ready the milestone's workable issues, or run the
+      applies → Planner (at most 3 times a UTC day, a rerun only for an issue filed after the
+      day's last run, ADR 0015: ready the milestone's workable issues, or run the
       gate (§9) and generate the next milestone's backlog; ops/TICK.md §9), else idle
    k. after j's no-plan and 7-day terms, before i: `docs/PRODUCT.md` missing on main, or a
       `ready` issue labeled `design-product` → Design: product (ops/TICK.md §10)
@@ -148,7 +149,10 @@ Task 2 part 1 (#244) adds the **Planner** session (ops/TICK.md §9). It is the o
 `ready` besides the owner: other sessions file Worker issues without it. The scheduler's step 8
 makes it due when the current milestone has no plan (the `Milestone:` line of `ops/QUEUE.md`
 on main) or no `Session: planner` record is dated in the last 7 UTC days, at most once a day;
-step 11 still runs it when nothing else applies. Its exit artifact is `ops/QUEUE.md` (the
+step 11 still runs it when nothing else applies. ADR 0015 (#440) lets step 11 run it again on
+the same day (`planner new-issues`, at most 3 Planner runs a UTC day) when an issue was filed in
+the current milestone after the day's last run, so a discovery or a design's tasks wait one
+session for `ready`, not until 00:00 UTC. Its exit artifact is `ops/QUEUE.md` (the
 ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
 work PR when it changes. Part 2 (#288) adds the **work-mix budget** (ADR 0011 §3): of the
 newest 20 `Session:` records of the last 7 days (owner-instruction and Design sessions left out),
