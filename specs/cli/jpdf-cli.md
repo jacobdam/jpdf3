@@ -50,8 +50,8 @@ Lenient reads (CONSTITUTION 17, #78; audit 0001):
   having none. If no trailer in the chain has one, the error is
   `trailer /Root is not a reference` as before.
 - **Page leaves without `/Type`.** A kid whose `/Type` is missing or not a name is inferred
-  from its shape: with a `/Kids` entry it is an intermediate node (so exit 3, `nested page
-  trees`), without one a page. A kid whose `/Type` is a name other than `/Page` or `/Pages`
+  from its shape: with a non-null `/Kids` entry it is an intermediate node (so exit 3, `nested
+  page trees`), without one (or with `/Kids null`, which §7.3.7 makes the same as no entry) a page. A kid whose `/Type` is a name other than `/Page` or `/Pages`
   stays malformed (`page tree kid has no valid /Type`).
 - **Offsets past the end of the file.** An in-use xref entry (`n`) whose offset is at or
   beyond the file's length can't resolve, so it is read as free and a reference to it is the
@@ -60,7 +60,9 @@ Lenient reads (CONSTITUTION 17, #78; audit 0001):
 - **`startxref` (or `/Prev`) not at `xref`.** Only an indirect object `N G obj << … /Type
   /XRef … >>` at that offset, a cross-reference stream (§7.5.8), is `not implemented:
   cross-reference streams` (exit 3). Anything else there (an integer that starts no object,
-  another object, other bytes) is malformed: `expected 'xref'` (exit 2).
+  another object, bytes that fail to lex or parse after the integer, other bytes) is
+  malformed: `expected 'xref'` at that offset (exit 2). A limit hit while reading that object
+  (nesting depth, string bytes, the lexing budget) is reported as that limit, exit 2.
 - **Hybrid files** (§7.5.8.4: a classic table whose trailer has `/XRefStm`). They are built so
   that a reader without cross-reference streams uses the table alone, and this engine does:
   `/XRefStm` is ignored, so objects listed only in the stream (in object streams) resolve to
@@ -171,7 +173,7 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
 
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
 packed into a sorted `Vec` of 12-byte records (newest entry per object number); the stored
-trailer keeps only the first usable `/Root` and `/Size` (at most 2 entries, since #109); the
+trailer keeps one usable `/Root` and one usable `/Size`, each from the newest trailer in the `/Prev` chain that has one (#78; at most 2 entries, since #109); the
 page-tree walk keeps at most one uncached parsed object alive. Since #107 the resolve cache
 (specs/core/resolve-cache.md) keeps every resolved object that fits
 `max_retained_bytes_per_document`, so the catalog, `/Pages` and the kid dictionaries can stay
@@ -241,11 +243,13 @@ Self-check (#77):
   (offset `len`); treating any `/Type` name, or any `N G obj` without the dictionary check, as
   a stream fails the startxref tests; inferring every untyped kid as a page fails the kid test's
   untyped `/Kids` cases (each checked by a hand mutant before review). Still passing: an
-  untyped kid whose `/Kids` is any value at all is an intermediate node (`/Kids 5` too, which is
+  untyped kid whose `/Kids` is any non-null value is an intermediate node (`/Kids 5` too, which is
   then reported as `nested page trees`, exit 3, rather than malformed); the stricter answer
   would need the nested-tree walk, which doesn't exist yet. The xref-stream check parses one
   object at the section offset through the normal `Parser`, so every per-parse limit and the
-  lexing budget apply to it; it adds no arithmetic. The end-of-file comparison is between a
+  lexing budget apply to it; it adds no arithmetic. A look-ahead that maps every error to
+  `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
+  that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
   `u32` widened to `usize` and the slice length, with no arithmetic.
 - Residual: once opened, the descriptor is fixed, so a swap after the `fstat` changes nothing;
   a swap between `stat` and `open` opens non-blocking and the `fstat` check refuses it.

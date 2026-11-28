@@ -81,10 +81,11 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
             .ok_or(CosError::Malformed("page tree kid is not a dictionary"))?;
         // §7.7.3.2–§7.7.3.3 require /Type; real writers omit it. Read leniently
         // (CONSTITUTION 17, #78): with no name there, a node with /Kids is an intermediate
-        // node, one without is a page. A name other than these two stays malformed.
+        // node, one without is a page (a null value is no entry, §7.3.7). A name other than
+        // these two stays malformed.
         let node_type = match dict.get(b"Type").and_then(Object::as_name) {
             Some(name) => name,
-            None if dict.get(b"Kids").is_some() => b"Pages",
+            None if !matches!(dict.get(b"Kids"), None | Some(Object::Null)) => b"Pages",
             None => b"Page",
         };
         match node_type {

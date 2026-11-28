@@ -627,6 +627,7 @@ fn kid_without_type_is_inferred_from_its_shape() {
     assert_eq!(with_kid("<< /Type 7 /Parent 2 0 R >>"), Ok(1));
     assert_eq!(with_kid("<< /Type (Page) /Parent 2 0 R >>"), Ok(1));
     assert_eq!(with_kid("<< /Type /Page /Kids [4 0 R] >>"), Ok(1));
+    assert_eq!(with_kid("<< /Parent 2 0 R /Kids null >>"), Ok(1));
     assert_eq!(
         with_kid("<< /Parent 2 0 R /Kids [4 0 R] /Count 1 >>"),
         Err(EngineError::Unsupported("nested page trees"))
@@ -713,14 +714,27 @@ fn startxref_at_a_non_xref_object_is_malformed() {
 /// an object listed only in the stream resolves to null.
 #[test]
 fn hybrid_file_is_read_through_its_table() {
-    let (pdf, _) = build(b"%PDF-1.7\n", 1, &page_tree(2), "/XRefStm 9");
+    // Object 5 is a real cross-reference stream (§7.5.8) that, if it were read, would mark
+    // every object free; `/XRefStm` points at it (its offset doesn't depend on the trailer).
+    let mut objs = page_tree(2);
+    objs.push(
+        b"<< /Type /XRef /Size 6 /W [1 0 0] /Length 6 >>\nstream\n\0\0\0\0\0\0\nendstream".to_vec(),
+    );
+    let (probe, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+    let stream_at = probe.windows(8).position(|w| w == b"5 0 obj\n").unwrap();
+    let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, &format!("/XRefStm {stream_at}"));
+    assert_eq!(
+        pdf.len(),
+        probe.len() + format!("/XRefStm {stream_at}").len()
+    );
     assert_eq!(open(&pdf), Ok(2));
-    // The second page listed as free in the table (as if it were in an object stream).
+    // The second page (object 4, the second-last entry) listed as free in the table, as if it
+    // were in an object stream.
     let text = String::from_utf8_lossy(&pdf).into_owned();
     let entries: Vec<usize> = text.match_indices(" 00000 n\r\n").map(|(i, _)| i).collect();
-    let last = *entries.last().unwrap();
+    assert_eq!(entries.len(), 5);
     let mut only_in_stream = pdf.clone();
-    only_in_stream[last + 7] = b'f';
+    only_in_stream[entries[3] + 7] = b'f';
     assert_eq!(
         open(&only_in_stream),
         Err(EngineError::Malformed {

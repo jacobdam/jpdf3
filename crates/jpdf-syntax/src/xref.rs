@@ -439,16 +439,24 @@ fn parse_section(
 
 /// After the integer at a section offset: whether `G obj << … /Type /XRef … >>` follows, the
 /// start of a cross-reference stream (ISO 32000-2 §7.5.8.2). Anything else at a `startxref` or
-/// `/Prev` offset is not a cross-reference section at all (#78).
+/// `/Prev` offset is not a cross-reference section at all (#78), and that includes bytes that
+/// fail to lex or parse there: a malformed look-ahead is `false`, so the caller reports
+/// `expected 'xref'`. A limit error is returned as it is.
 fn is_xref_stream(p: &mut Parser<'_, '_>) -> Result<bool, SyntaxError> {
-    match (p.lexer.next_token()?, p.lexer.next_token()?) {
-        (Some(Token::Integer(_)), Some(Token::Keyword(b"obj"))) => {}
-        _ => return Ok(false),
+    let found = (|| {
+        match (p.lexer.next_token()?, p.lexer.next_token()?) {
+            (Some(Token::Integer(_)), Some(Token::Keyword(b"obj"))) => {}
+            _ => return Ok(false),
+        }
+        Ok(match p.parse_object()? {
+            Object::Dict(d) => d.get(b"Type").and_then(Object::as_name) == Some(&b"XRef"[..]),
+            _ => false,
+        })
+    })();
+    match found {
+        Err(SyntaxError::Malformed { .. }) => Ok(false),
+        other => other,
     }
-    Ok(match p.parse_object()? {
-        Object::Dict(d) => d.get(b"Type").and_then(Object::as_name) == Some(&b"XRef"[..]),
-        _ => false,
-    })
 }
 
 #[cfg(test)]
@@ -1005,6 +1013,21 @@ mod tests {
         assert_eq!(at(b"12 junk"), not_xref);
         assert_eq!(at(b"12"), not_xref);
         assert_eq!(at(b"<< /Type /XRef >>"), not_xref);
+        // Bytes that fail to lex or parse after the integer are not a section either (R1.1).
+        assert_eq!(at(b"12 0 obj << /Type /XRef"), not_xref);
+        assert_eq!(at(b"12 (abc"), not_xref);
+        assert_eq!(at(b"12 0 obj << 5 /XRef >>"), not_xref);
+        // A limit hit during the look-ahead stays a limit error.
+        let tight = Limits {
+            max_nesting_depth: 2,
+            ..Limits::default()
+        };
+        let mut deep = b"12 0 obj << /Type /XRef /A [[[1]]] >>".to_vec();
+        deep.extend(b"\nstartxref\n0\n%%EOF");
+        assert_eq!(
+            XrefDocument::parse(&deep, &tight).map(|_| ()),
+            Err(SyntaxError::LimitExceeded("nesting depth"))
+        );
     }
 
     /// The same test for a `/Prev` offset: the newest section parses, and the error names the
