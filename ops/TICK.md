@@ -1005,9 +1005,10 @@ gate them.
    `design` issue labeled `ready`, unless one is open. List them in `ops/QUEUE.md`.
 4. **Milestone backlog empty** (no open issue in it). The `mN` tag can't be deleted (the guard
    forbids delete pushes), so the close runs in stages, each in its own session (#508): the
-   checklist, the owner notice and its window, the close. **M0** closes without them (owner,
-   #508): tag, close and create the next issues as the close stage below says, with no
-   checklist or notice; #527 records the checklist for `m0` afterwards. Every Planner run
+   checklist, the owner notice and its window, the close. **M0** (owner, #508) runs only item
+   (a) of the checklist and, when it finds a passing gate, the close stage at once in the same
+   session, skipping its re-check: no (b) to (d), no `docs/milestones/m0.md` checklist PR and no
+   notice; #527 records the rest of the checklist for `m0` afterwards. Every Planner run
    whose current milestone has an open issue closes that milestone's open close notice, if
    any, with a tagged comment naming the issue (the close stopped).
    - **Already closing:** don't run a second checklist when (1) an open close notice for `Mn`
@@ -1057,7 +1058,8 @@ gate them.
      commit> after 24 h unless you /hold it (/approve closes it sooner)`. For a milestone the
      owner must approve, it says `... closes and mN is tagged on <judged commit> only on your
      /approve`; these are M4 (the owner preview, PLAN §8) and any milestone for which the owner
-     asks for it in an untagged comment on the notice or on owner issue #508. Owner commands
+     asks for it in an untagged comment on owner issue #508 or on any close notice for that
+     milestone, closed ones included. Owner commands
      on the notice are untagged `jacobdam` comments whose body starts with `/approve`, `/hold`
      or `/release` (any ASCII case, then whitespace or the end), ordered by `created_at`. The
      window starts at the later of the notice's creation and the owner's last `/release` on
@@ -1067,8 +1069,9 @@ gate them.
      owner-approved milestone it is the only way to close. Each gets §0's replies.
    - **Close** (a Planner run whose step 4 finds the window ended or an `/approve` counting; or
      the session that takes a counting `/approve` under rule a): check again that `Mn` has no
-     open issue, that no issue in `Mn` was closed after the judged commit's committer time (an
-     issue filed and fixed since then holds work no gate judged), and that (c) finds no issue
+     open issue, that no issue in `Mn` was closed at or after the start of the `Checklist run:` minute (an issue
+     filed and fixed since then holds work no gate judged; one closed before it either came
+     with a commit that (a) would have refused or is listed in (c)), and that (c) finds no issue
      that left after the notice was filed. If a check fails, close the notice with a tagged
      comment saying which, and stop: the next empty backlog runs the checklist again.
      Otherwise tag the judged commit (`git tag mN <judged commit>`, `git push origin mN`),
