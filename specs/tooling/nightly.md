@@ -364,7 +364,7 @@ No document persistence. GitHub issues and comments (item 16, only with `--file-
 `work/` under `DIR` (and the `.tmp` names after a failed rename, item 10). In the repository's
 ignored paths: the fuzz pass's seeds and corpus under `fuzz/corpus/`, its artifacts under
 `fuzz/artifacts/`, its logs under `target/fuzz-logs/` (specs/tooling/fuzz.md). The previous night's file is passed in by the caller (with no previous file there are no regression findings, item 16): the CI step that downloads
-it needs the owner (`.github/` is protected) and is not proposed yet (ops/proposals/nightly-file-issues.md, "Not in this proposal").
+it needs the owner (`.github/` is protected) and is proposed in ops/proposals/nightly-previous-night.md (#497).
 
 ## Undo
 Not applicable (development tool).
