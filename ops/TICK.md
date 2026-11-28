@@ -137,7 +137,8 @@ session (§5) in a records PR.
 
 ## 2. Pick exactly one thing (strict priority)
 Run the scheduler from the main checkout (ADR 0011 §2, task 1a; specs/tooling/next-session.md):
-`cargo xtask next-session`. It is read-only and prints a pick (first line) and a brief.
+`cargo xtask next-session`. It reads only, apart from its local pick log
+(`ops/state/picks.tsv`, ADR 0018), and prints a pick (first line) and a brief.
 - **Exit 0, a pick:** do that item. Steps 1–5 are rules a–f below, step 6 is a **Design:
   technical** session (§8) on a PR labeled `needs-design` (`design-technical needs-design #N`)
   or a `design` and `ready` issue (`design-technical design-issue #N`), step 7 is rules g and h

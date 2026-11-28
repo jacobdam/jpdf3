@@ -1,6 +1,7 @@
 //! `cargo xtask next-session`: the session scheduler, precedence steps 1–8, 10 and 11 (ADR 0011
-//! §2, tasks 1a, 1b, 2 and 3; specs/tooling/next-session.md), with the work-mix budget of §3. Read-only: it runs read commands and writes
-//! nothing.
+//! §2, tasks 1a, 1b, 2 and 3; specs/tooling/next-session.md), with the work-mix budget of §3. It runs
+//! read commands only; its one write is a live run's line in the pick log (ADR 0018 task 2,
+//! [`PICK_LOG`]), which never changes the pick or the exit code.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -15,6 +16,11 @@ const TAG: &str = "🤖 jpdf-agent";
 const ISSUE_URL: &str = "https://github.com/jacobdam/jpdf3/issues/";
 const FEED_SCRIPT: &str = "ops/driver/owner-issues.sh";
 const ALARM_FILE: &str = "ops/state/judge-alarm-since";
+/// The pick log (ADR 0018 task 2; specs/tooling/next-session.md, Persistence): one line per
+/// live run, in the main checkout (the common git directory's parent), local and git-ignored.
+const PICK_LOG: &str = "ops/state/picks.tsv";
+/// Most bytes of the pick's first line kept in a log line (Limits).
+const MAX_LOG_PICK: usize = 512;
 const SKIP_LABELS: [&str; 3] = ["owner-todo", "blocked", "deferred"];
 /// The head-branch prefix of the owner's own protected changes (AUTOMATION.md §6.1, #298).
 const OWNER_BRANCH: &str = "owner/";
@@ -448,10 +454,19 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
     })
 }
 
-/// Runs the scheduler; returns the pick and brief (stdout).
+/// Runs the scheduler; returns the pick and brief (stdout). A live run (no `--from`) appends
+/// its outcome to the pick log first, whatever it is (ADR 0018 task 2).
 pub fn run(root: &Path, opts: &Options) -> Result<String, Error> {
-    let inp = load(root, opts.from.as_deref())?;
-    decide(&inp).map_err(Error::Broken)
+    let out = load(root, opts.from.as_deref()).and_then(|inp| decide(&inp).map_err(Error::Broken));
+    finish(root, opts.from.is_none(), out)
+}
+
+/// The end of `run`: a live run logs its outcome, any outcome, then the brief is returned.
+fn finish(root: &Path, live: bool, out: Result<Decision, Error>) -> Result<String, Error> {
+    if live {
+        log_pick(root, &out);
+    }
+    out.map(|d| d.brief)
 }
 
 /// `cargo xtask status` (specs/tooling/status.md): the generated status, from the same inputs.
@@ -1236,6 +1251,9 @@ struct Pick {
     first: String,
     rule: String,
     load: Vec<String>,
+    /// For an `idle` pick, the issues waiting for a Planner run (ADR 0018 task 2): step 11's
+    /// new issues, whether or not the day's Planner runs are spent. Empty otherwise.
+    waiting: Vec<u64>,
 }
 
 fn pick(first: String, rule: &str, load: Vec<String>) -> Pick {
@@ -1243,6 +1261,7 @@ fn pick(first: String, rule: &str, load: Vec<String>) -> Pick {
         first,
         rule: rule.to_owned(),
         load,
+        waiting: Vec::new(),
     }
 }
 
@@ -2270,11 +2289,14 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
                 ],
             )
         } else if planned {
-            pick(
-                "idle".to_owned(),
-                "j (nothing applies and the Planner ran today): exit now, write no record",
-                Vec::new(),
-            )
+            Pick {
+                waiting: new_issues.clone(),
+                ..pick(
+                    "idle".to_owned(),
+                    "j (nothing applies and the Planner ran today): exit now, write no record",
+                    Vec::new(),
+                )
+            }
         } else {
             pick(
                 "planner".to_owned(),
@@ -2287,6 +2309,14 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
             )
         }
     });
+    // Numbers only, as in the rerun's rule line (Security); the pick log records them.
+    if !p.waiting.is_empty() {
+        let list: Vec<String> = p.waiting.iter().map(|n| format!("#{n}")).collect();
+        notes.push(format!(
+            "waiting for a Planner run (new since its newest run, but the Planner ran {runs} times today, at most {PLANNER_RUNS}): {}",
+            list.join(", ")
+        ));
+    }
     // The Planner writes the reading into ops/QUEUE.md (ops/TICK.md §9).
     if p.first.starts_with("planner") {
         notes.push(mix.note());
@@ -2294,7 +2324,14 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
     Ok((p, notes))
 }
 
-fn decide(inp: &Inputs) -> Result<String, String> {
+/// The brief (stdout) and the pick it was printed from, whose first line and waiting issues
+/// (the ones the brief's note lists) go into the pick log.
+struct Decision {
+    brief: String,
+    pick: Pick,
+}
+
+fn decide(inp: &Inputs) -> Result<Decision, String> {
     let (p, notes) = choose(inp)?;
     let mut out = format!("{}\n\nRule: {}\nLoad:\n", p.first, p.rule);
     for l in &p.load {
@@ -2306,7 +2343,108 @@ fn decide(inp: &Inputs) -> Result<String, String> {
             let _ = writeln!(out, "- {n}");
         }
     }
-    Ok(out)
+    Ok(Decision {
+        brief: out,
+        pick: p,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pick log (ADR 0018 task 2)
+
+/// The exit code `main` gives this outcome (0, 2 for `Unknown`, 1 for `Broken`).
+fn exit_code(out: &Result<Decision, Error>) -> u8 {
+    match out {
+        Ok(_) => 0,
+        Err(Error::Unknown(_)) => 2,
+        Err(Error::Broken(_)) => 1,
+    }
+}
+
+/// One pick log line: the UTC time, the exit code, the pick's first line (empty on an error)
+/// and the waiting issues (`#N` comma-separated, empty when none), tab-separated. A control
+/// character in the first line becomes a space and it is cut to [`MAX_LOG_PICK`] bytes, so a
+/// line is always one line of four fields.
+fn log_line(now: i64, out: &Result<Decision, Error>) -> String {
+    let (first, waiting) = match out {
+        Ok(d) => (d.pick.first.as_str(), d.pick.waiting.as_slice()),
+        Err(_) => ("", &[][..]),
+    };
+    let mut pick: String = first
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if pick.len() > MAX_LOG_PICK {
+        let mut cut = MAX_LOG_PICK;
+        while !pick.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        pick.truncate(cut);
+    }
+    let waiting: Vec<String> = waiting.iter().map(|n| format!("#{n}")).collect();
+    format!(
+        "{}\t{}\t{pick}\t{}\n",
+        iso(now),
+        exit_code(out),
+        waiting.join(",")
+    )
+}
+
+/// The main checkout of the repository that holds `dir`: the parent of its common git
+/// directory, so a run from a linked worktree finds the same checkout as one from the main one.
+fn main_checkout(dir: &Path) -> Result<PathBuf, String> {
+    let (out, _) = crate::macos::capture(
+        "git",
+        &[
+            "-C",
+            &dir.to_string_lossy(),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        None,
+    )?;
+    checkout_of(&out)
+}
+
+/// The main checkout from `git rev-parse --git-common-dir`'s output: the parent of an absolute
+/// path (one trailing newline allowed). Anything else is an error.
+fn checkout_of(out: &str) -> Result<PathBuf, String> {
+    let common = PathBuf::from(out.trim_end_matches(['\n', '\r']));
+    match common.parent() {
+        Some(p) if common.is_absolute() => Ok(p.to_path_buf()),
+        _ => Err(format!("unexpected git common dir {:?}", common.display())),
+    }
+}
+
+/// Appends `line` to `checkout`'s pick log, creating `ops/state/` if needed. One write call
+/// per line, so lines of concurrent runs don't interleave within a line.
+fn append_log(checkout: &Path, line: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let path = checkout.join(PICK_LOG);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(line.as_bytes()))
+        .map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+/// A live run's log line in the main checkout of `root`; a failure is a stderr warning only.
+fn log_pick(root: &Path, out: &Result<Decision, Error>) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok());
+    let written = now
+        .ok_or_else(|| "system clock out of range".to_owned())
+        .and_then(|now| append_log(&main_checkout(root)?, &log_line(now, out)));
+    if let Err(e) = written {
+        eprintln!("xtask: next-session: warning: pick log not written: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -2567,5 +2705,135 @@ mod tests {
             r("ops/journal/2026-11-24/p.md", "planner"),
         ];
         assert_eq!(planner_today(&bad, today), (2, None));
+    }
+
+    fn decision(first: &str, waiting: &[u64]) -> Result<Decision, Error> {
+        Ok(Decision {
+            brief: format!("{first}\n\nRule: r\n"),
+            pick: Pick {
+                waiting: waiting.to_vec(),
+                ..pick(first.to_owned(), "r", Vec::new())
+            },
+        })
+    }
+
+    #[test]
+    fn pick_log_line() {
+        // 2026-11-24T06:00:00Z
+        let t = 1_795_500_000;
+        assert_eq!(
+            log_line(t, &decision("idle", &[702, 703])),
+            "2026-11-24T06:00:00Z\t0\tidle\t#702,#703\n"
+        );
+        assert_eq!(
+            log_line(t, &decision("idle", &[])),
+            "2026-11-24T06:00:00Z\t0\tidle\t\n"
+        );
+        assert_eq!(
+            log_line(t, &decision("worker ready #19", &[])),
+            "2026-11-24T06:00:00Z\t0\tworker ready #19\t\n"
+        );
+        // An error logs its exit code and no pick: the message stays on stderr only.
+        assert_eq!(
+            log_line(t, &Err(Error::Unknown("gh: SECRET".to_owned()))),
+            "2026-11-24T06:00:00Z\t2\t\t\n"
+        );
+        assert_eq!(
+            log_line(t, &Err(Error::Broken("bad".to_owned()))),
+            "2026-11-24T06:00:00Z\t1\t\t\n"
+        );
+    }
+
+    #[test]
+    fn pick_log_line_stays_one_line_of_four_fields() {
+        let t = 0;
+        // Control characters (a tab, a newline, CR, DEL) become spaces; other text is kept.
+        assert_eq!(
+            log_line(
+                t,
+                &decision("worker leftover-worktree a\tb\nc\rd\u{7f}é", &[])
+            ),
+            "1970-01-01T00:00:00Z\t0\tworker leftover-worktree a b c d é\t\n"
+        );
+        // At the limit the first line is kept whole; one byte past it is cut to the limit.
+        let at = "x".repeat(MAX_LOG_PICK);
+        let line = log_line(t, &decision(&at, &[]));
+        assert_eq!(line.split('\t').nth(2), Some(at.as_str()));
+        let past = format!("{at}y");
+        let line = log_line(t, &decision(&past, &[]));
+        assert_eq!(line.split('\t').nth(2), Some(at.as_str()));
+        // A cut never splits a character: a 2-byte character across the limit goes whole.
+        let across = format!("{}é", "x".repeat(MAX_LOG_PICK - 1));
+        let line = log_line(t, &decision(&across, &[]));
+        assert_eq!(
+            line.split('\t').nth(2),
+            Some("x".repeat(MAX_LOG_PICK - 1).as_str())
+        );
+        for l in [line, log_line(t, &decision("a\nb", &[1]))] {
+            assert_eq!(l.matches('\n').count(), 1, "{l:?}");
+            assert!(l.ends_with('\n'));
+            assert_eq!(l.split('\t').count(), 4, "{l:?}");
+        }
+    }
+
+    #[test]
+    fn pick_log_appends() {
+        let dir = std::env::temp_dir().join(format!("xtask-pick-log-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        append_log(&dir, "a\n").unwrap();
+        append_log(&dir, "b\n").unwrap();
+        assert_eq!(fs::read_to_string(dir.join(PICK_LOG)).unwrap(), "a\nb\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pick_log_checkout_of_git_output() {
+        assert_eq!(checkout_of("/a/b/.git\n"), Ok(PathBuf::from("/a/b")));
+        assert_eq!(checkout_of("/a/b/.git"), Ok(PathBuf::from("/a/b")));
+        // Relative, empty, the root (no parent): errors.
+        for bad in ["", "\n", ".git\n", "a/.git", "/"] {
+            assert!(checkout_of(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn pick_log_finish_logs_a_live_runs_pick() {
+        // `run`'s last step on an exit-0 decision, in a fresh repository: the idle pick with its
+        // waiting issues, a Planner pick, then an error; the brief and errors pass through.
+        let dir = std::env::temp_dir().join(format!("xtask-pick-finish-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let git = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(git.success());
+        let log = || fs::read_to_string(dir.join(PICK_LOG)).unwrap_or_default();
+        // Not live (`--from`): nothing written, the brief returned.
+        let b = finish(&dir, false, decision("idle", &[702, 703])).ok();
+        assert_eq!(b.as_deref(), Some("idle\n\nRule: r\n"));
+        assert_eq!(log(), "");
+        let b = finish(&dir, true, decision("idle", &[702, 703])).ok();
+        assert_eq!(b.as_deref(), Some("idle\n\nRule: r\n"));
+        assert!(finish(&dir, true, decision("planner", &[])).is_ok());
+        let e = finish(&dir, true, Err(Error::Unknown("x".to_owned())));
+        assert!(matches!(e, Err(Error::Unknown(m)) if m == "x"));
+        let text = log();
+        let fields: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
+        let tails: Vec<&[&str]> = fields
+            .iter()
+            .map(|f| f.get(1..).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            tails,
+            [
+                &["0", "idle", "#702,#703"][..],
+                &["0", "planner", ""],
+                &["2", "", ""]
+            ],
+            "{text:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -21,7 +21,8 @@ triage comment it links, so a record-only update doesn't restart the window. #37
 owner's `/approve`, which ends that window early, and lets step 3's first term pick a design
 PR that fails in its window. ADR 0015 task 1 (#440) adds step 11's rerun: on a day the Planner
 already ran, `planner new-issues` for an issue filed after its newest run, at most 3 Planner
-runs a UTC day.
+runs a UTC day. ADR 0018 task 2 (#481) adds the pick log (Persistence) and the idle brief's
+waiting note.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
@@ -49,9 +50,11 @@ runs a UTC day.
     and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
     worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
     retro that step 7 didn't pick because its PR is open, and a due Design: product term that
-    step 8 didn't pick for the same reason; on a `planner`, `planner due` or `planner new-issues`
+    step 8 didn't pick for the same reason; on an `idle` pick, the issues *waiting* for a Planner
+    run (step 11); on a `planner`, `planner due` or `planner new-issues`
     pick, last, the work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
-- **Inputs.** It runs only read commands from the current directory (the main checkout). Each
+- **Inputs.** It runs only read commands from the current directory (the main checkout or a
+  worktree; its one write is the pick log, Persistence). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
   1. `feed.jsonl`: the stdout of `ops/driver/owner-issues.sh` (JSON lines, the owner feed);
@@ -116,7 +119,8 @@ runs a UTC day.
   ADR 0015):
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone,createdAt`.
 
-  Nothing is written anywhere: not to GitHub, git or the file system.
+  Nothing is written to GitHub or git. The one file write is a live run's line in the pick
+  log (Persistence); `--from` writes nothing.
 - **Common terms.**
   - *Tagged:* text whose body starts, after leading whitespace, with `🤖 jpdf-agent` (agent
     text; CONSTITUTION 1). An owner reply is a comment by `jacobdam` (the shared account).
@@ -420,7 +424,12 @@ runs a UTC day.
         issues are new since its newest run: #A, #B): the Planner again, ADR 0015`, lowest
         number first, numbers only; the brief loads what `planner` loads. Its record says
         `- Session: planner new-issues`, which moves the rerun time to its own minute;
-      - otherwise **`idle`**: the session exits at once and writes nothing.
+      - otherwise **`idle`**: the session exits at once and writes nothing. When issues are
+        new in the sense above but the day's 3 Planner runs are spent, they are *waiting*:
+        the brief's `Notes:` list has the line `waiting for a Planner run (new since its newest
+        run, but the Planner ran <n> times today, at most 3): #A, #B` (lowest number first,
+        numbers only), and the pick log records them (ADR 0018 task 2). With no new issue
+        there is no such line.
 
       A Planner record on a closed unmerged PR is not on any listed ref, so it doesn't count
       (that run's labels may still stand; one more run that day is harmless). The rerun sits at
@@ -472,18 +481,46 @@ runs a UTC day.
   the tags) are digits only, within the years 1970–9999 (`cargo xtask metrics`' rule).
 
 ## Persistence
-None. It writes nothing. The session copies the first line into its journal entry as
+The session copies the first line into its journal entry as
 `- Session: <first line>` (TICK §5), which step 11 reads back on later runs.
+
+**Pick log** (ADR 0018 task 2, #481). Each live run (no `--from`) appends one line to
+`ops/state/picks.tsv` in the **main checkout**: the parent of `git rev-parse
+--path-format=absolute --git-common-dir` run in the current directory, so a run from a linked
+worktree (or a subdirectory) writes the same file as one from the main checkout. `ops/state/`
+is git-ignored local state, like `judge-alarm-since`, and is created when missing. The line
+is four tab-separated fields and a newline:
+1. the UTC time of the write, `YYYY-MM-DDTHH:MM:SSZ`;
+2. the exit code: `0`, `2` (unknown) or `1` (broken);
+3. on exit 0, the pick's first line, each control character (tab, newline, CR, DEL, …) turned
+   into a space and cut to 512 bytes at a character boundary; empty on exit 1 or 2 (the error
+   text stays on stderr);
+4. for an `idle` pick, the waiting issues (step 11) as `#A,#B`, lowest first; else empty.
+
+Every run that gets past argument parsing logs its outcome, exit 1 and 2 included; a usage
+error (exit 1 before the scheduler starts) and a panic write no line. The line is written with
+one append, after the decision and before the brief is printed; it never changes the pick, the
+brief or the exit code. The write is a best-effort record, not a step in P4's sense (ADR
+0013): its result is always a warning at most, it decides nothing and nothing after it
+depends on it, so it runs after a failed load or decision without a driver. `--from` writes nothing. `cargo xtask status` writes nothing.
+`cargo xtask metrics` reads the file (ADR 0018 task 3); a session's pick is the first line
+whose time falls in its window.
 
 ## Undo
 Not applicable.
 
 ## Errors
-Every error goes to stderr as `xtask: next-session: <message>` with the exit code above. With
+Every error goes to stderr as `xtask: next-session: <message>` with the exit code above. A pick
+log that can't be written (no repository found, `ops/state` not a directory, a write error, a
+clock before 1970) prints `xtask: next-session: warning: pick log not written: <reason>` on
+stderr and changes nothing else. With
 `--from`, a missing input file other than `judge-alarm-since` is exit 1 (the fixture is broken),
 never 2 (no command ran).
 
 ## Limits
+- Pick log: the first line is cut to 512 bytes per line (above); the file has no size cap. At
+  about 70 bytes a line and under 300 runs a day it grows by about 20 KB a day; the owner can
+  delete or rotate it (the metrics read what is there).
 - Command output: `macos::capture` caps each pipe at `MAX_TOOL_OUTPUT`; over it is exit 2.
   `--from` files are read whole (test fixtures and saved inputs, written by us).
 - JSON nesting: `jpdf_testgen::json` caps depth at 128.
@@ -602,8 +639,16 @@ never 2 (no command ran).
   list.
 - **Read-only.** It runs `gh issue list`, `gh pr list`, `gh run list`, `gh api` reads (GET
   only: milestones, issue events, PR timelines), `git worktree list`,
-  `git log`, `git for-each-ref`, `git ls-tree`, `git cat-file` and the protected feed script,
-  which only reads. It writes no file.
+  `git log`, `git for-each-ref`, `git ls-tree`, `git cat-file`, `git rev-parse` and the
+  protected feed script, which only reads. Its one write is the pick log, a live run's line in
+  the main checkout's `ops/state/picks.tsv`.
+- **The pick log is unprotected and forgeable.** Any local process or session can edit
+  `ops/state/picks.tsv`, so it is evidence for the retro's counts (ADR 0018), never an
+  instruction or a gate: nothing picks work or grants anything from it. It holds what the
+  brief already prints and no more: the time, the exit code, the first line (numbers, run ids,
+  branch names, URLs; no titles or bodies) and issue numbers, never an error message or a
+  title (P6). A control character in the first line is a space, so a line can't forge another
+  line or field.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
   branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
   rest of the day's fallback picks into `idle` or `planner new-issues` (step 11), and turn step 8 off: both of its terms for that
@@ -863,6 +908,27 @@ of inputs where no step before 11 applies (→ `planner`):
   `area:Engine`, `engine`, `area: engine`, `area:`), a product issue each step 10 filter drops,
   and areas.toml deciding the kind; malformed `pr-files.json`, `all-issues.json` and
   `areas.toml` exit 1, also when step 1 picks;
+- the idle brief's waiting note (#481): with the day's 3 Planner runs spent and two new issues,
+  `idle` with the line listing `#702, #703` and no title; near misses: an issue filed before the
+  newest run and one with an open dependency (idle, no line), and 2 runs (`planner new-issues`,
+  no line);
+- the pick log (#481), live runs in fresh git repositories under `CARGO_TARGET_TMPDIR` with
+  `GIT_CEILING_DIRECTORIES` so no run reaches the real checkout (no feed script there, so each
+  run is exit 2): two runs append two lines `<time>\t2\t\t`, the exit code and empty stdout
+  unchanged; runs from a linked worktree and its subdirectory write the main checkout's file
+  and nothing in the worktree; `ops/state` as a file, and a directory outside any repository,
+  warn on stderr and keep exit 2; a `--from` run inside a repository writes nothing (and
+  nothing on stderr). The `usage_and_live_failure` live run sets `GIT_CEILING_DIRECTORIES` for
+  the same reason. Unit tests build the line from a decision: an idle pick with and without
+  waiting issues, a Worker pick, exit 2 and 1 (no pick, no error text), control characters as
+  spaces, a first line at 512 bytes kept, one past cut, a 2-byte character across the limit
+  dropped whole, four fields and one newline; two appends to a new `ops/state/`; the common-dir
+  parse (an absolute path with and without its newline; empty, relative and `/` are errors);
+  and `run`'s last step (`finish`) in a fresh repository: not live writes nothing, live writes
+  `0 idle #702,#703`, `0 planner` and `2` for an error, returning the brief or the error
+  unchanged. A live run that reaches exit 0 isn't run end to end (it needs every `gh` and `git`
+  input faked); `finish` takes the decision `run` makes, and the log reads the same `Pick`
+  whose waiting list the brief's note prints;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form, the `Depends on:` parser, the journal listing over several days, the
   `ops/QUEUE.md` listing line, the `Milestone:` line and the record words of the work mix
