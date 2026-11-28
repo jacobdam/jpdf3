@@ -433,7 +433,8 @@ fn failure(why: String) -> Checked {
 pub fn deny_result(c: &Captured, packages: &[Package]) -> Checked {
     let mut result = deny_verdict(c);
     for p in packages {
-        if let Some(license) = p.license.as_deref().filter(|l| l.contains("OFL-1.1")) {
+        let ofl = |l: &&str| l.to_ascii_uppercase().contains("OFL-1.1");
+        if let Some(license) = p.license.as_deref().filter(ofl) {
             result.details.push(clean(&format!(
                 "note: {}@{} is licensed {license}: OFL-1.1 is allowed for fonts only (CONSTITUTION 10); check it by hand",
                 p.name, p.version

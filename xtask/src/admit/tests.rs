@@ -359,6 +359,9 @@ fn metadata_shapes_it_does_not_know_are_errors() {
         doc(&[dep]),
         doc(&[probe]),
         doc(&[probe, probe, dep]),
+        // A sourceless package that is not the probe, with no probe listed: only the name
+        // decides that it isn't the probe.
+        doc(&[&probe.replace("jpdf-admit-probe", "other"), dep]),
         edit(r#""source":"registry+x""#, r#""source":null"#),
         edit(r#","source":"registry+x""#, ""),
         edit(r#""source":"registry+x""#, r#""source":7"#),
@@ -460,6 +463,15 @@ fn deny_notes_ofl_licenses_whatever_the_result() {
     let broken = deny_result(&cap(1, "", "error: boom\n"), &packages);
     assert!(failed(&broken));
     assert_eq!(lines(&broken), note);
+    // Any ASCII case counts, as cargo-deny reads license fields leniently.
+    let mut lower = pkg("font-lower", false);
+    lower.license = Some("ofl-1.1".to_owned());
+    let c = deny_result(&cap(0, DENY_OK, ""), &[lower]);
+    assert_eq!(
+        lines(&c),
+        "note: font-lower@1.0.0 is licensed ofl-1.1: OFL-1.1 is allowed for fonts only \
+         (CONSTITUTION 10); check it by hand"
+    );
 }
 
 // ---- the judge's dependency scan ----

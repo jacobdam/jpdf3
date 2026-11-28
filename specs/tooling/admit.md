@@ -141,10 +141,12 @@ candidate breaks. A command that can't start (`cargo deny` or `cargo vet` not in
 wrong `--python`) fails its own step only (and, for `vet`, `build-time` when the graph has a
 build-time package).
 
-`deny` also adds, whatever its result, one note per package whose license expression contains
-`OFL-1.1`: `note: <name>@<version> is licensed <expression>: OFL-1.1 is allowed for fonts only
+`deny` also adds, whatever its result, one note per package whose `license` expression contains
+`OFL-1.1` in any ASCII case: `note: <name>@<version> is licensed <expression>: OFL-1.1 is allowed for fonts only
 (CONSTITUTION 10); check it by hand`. `deny.toml` allows OFL-1.1 for every crate, since it
-can't tell a font from code, so a note never changes the outcome.
+can't tell a font from code, so a note never changes the outcome. The note is best effort: a
+crate with only a `license-file` (no `license` field) that cargo-deny identifies as OFL-1.1
+from the file's text gets none.
 
 ### Output
 On stdout, one line per step that ran, `admit: <step>: ok`, `admit: <step>: rejected` or
@@ -186,8 +188,9 @@ both fail `probe` (exit 1); cargo's quoted message says which.
 - Arguments: name ≤ 64 bytes, version ≤ 64 bytes, `--features` ≤ 32 names of ≤ 64 bytes each;
   tests at each limit and one past it.
 - Output: ≤ 40 detail lines per step and ≤ 300 bytes per line; tests at each limit and one past.
-- Tool output is read whole into memory (`Command::output`). It comes from cargo, cargo-deny and
-  the judge's script run on registry crates, not from a document.
+- Tool output is read whole into memory (`Command::output`). It comes from cargo, cargo-deny,
+  cargo-vet (its JSON report, crate-derived `suggest` data included) and the judge's script run
+  on registry crates, not from a document.
 - No step has a timeout (macOS has no `timeout`, ops/LESSONS.md): a stalled download stalls the
   tool. It is run by hand in a session, which can stop it.
 
@@ -214,7 +217,12 @@ both fail `probe` (exit 1); cargo's quoted message says which.
   dependencies fresh, to the newest compatible versions, while the judge reads the repo's
   `Cargo.lock`, where a shared dependency unifies with the version already pinned there (the
   probe's `foo 1.9` may pass where the repo's `foo 1.2` has `unsafe`). Re-run the judge's
-  checks on the PR that adds the crate; this tool doesn't replace them.
+  checks on the PR that adds the crate; this tool doesn't replace them. Above all, `vet` here
+  fetches the imported audits live, while the judge runs `cargo vet --locked` against the
+  repo's `supply-chain/imports.lock`, which holds only the audits the repo's current graph
+  needs (none today). So a candidate this tool admits still fails the judge's vet step on the
+  PR that adds it until `imports.lock` carries its audits, and that file is protected: the
+  update needs the owner's signed commit (CONSTITUTION 12).
 - **Crate data is data** (CONSTITUTION 1): tool output and crate metadata (names, versions,
   license expressions) are matched and printed through `clean`, never executed or used as a
   path. Only the validated `<crate>`, `<version>` and feature names reach the manifest.
