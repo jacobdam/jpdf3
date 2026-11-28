@@ -56,10 +56,11 @@ or about a route that names a PR competing with rule c.
   GitHub account can react on a public repo. A reaction carries no text, so the tag (CONSTITUTION
   1) can't mark it, and the owner's own 🚀 on a comment would read as "handled". Reading
   reactions would also need a protected change to the feed for every item.
-- **Routing review bodies fails (PR #524 rounds 2 to 5).** A review body has a different
-  lifetime from every other item: the feed lists it only while its PR is open (a limit
-  `ops/driver/owner-issues.sh` states), and GitHub takes no reaction on it. Each fix of the draft
-  added a term for that lifetime, and each term opened the next gap:
+- **Routing review bodies fails (PR #524 rounds 2 to 5).** A review body has a different lifetime
+  from every other item: the feed lists it only while its PR is open (a limit
+  `ops/driver/owner-issues.sh` states), and GitHub's REST API has no reactions endpoint for it
+  (so task 3's guard shapes can't ack it). Each fix of the draft added a term for that lifetime,
+  and each term opened the next gap:
   - R2.1: a route stopped counting when the review's PR closed, so the review lost its priority;
     the fix read the PR's reviews in the scheduler.
   - R3.1: once the route also closed, nothing listed the review to post its `done:`; the fix
@@ -94,13 +95,14 @@ them; a routed PR is picked by the same test as rule c.**
    - **routed:** not handled, and its work is carried by an open item the scheduler reads: an
      open PR or issue authored by `jacobdam`, with a tagged body holding a line
      `Owner instruction: <its URL>` (exact URL, then whitespace or the end), and for an issue
-     the label `owner-work`; an untagged owner issue labeled `owner-work` routes itself;
+     the label `owner-work`; an untagged owner issue labeled `owner-work` routes itself, and is
+     routed only that way (a closed owner issue's `done:` is found by that label, term 4 below);
    - **unrouted:** neither.
 
    A *route* is such an open PR or issue, and it is a route only while the URL on its line is a
    pending owner item (not handled): a line naming a stranger's comment, a pre-floor comment, a
-   handled item, a review body or any other URL makes no route, so it gets no rule a priority
-   (its issue is worked, if at all, by the normal rules).
+   handled item, a review body, an owner issue or any other URL makes no route, so it gets no
+   rule a priority (its issue is worked, if at all, by the normal rules).
 2. **One session moves the unrouted ones.** The **owner feed** session takes every unrouted item
    the scheduler lists, oldest first, and leaves each one handled or routed before it exits. It
    writes no code, spec, ADR, test or proposal, and it takes no review body (its brief lists
@@ -116,50 +118,63 @@ them; a routed PR is picked by the same test as rule c.**
    - a **route**: file a tagged issue with the `Owner instruction:` line and `owner-work` (plus
      `design` or `design-product` when the work is a design), or add `owner-work` to an untagged
      owner issue, or, for rework of an open agent PR asked in a comment or an inline review
-     comment on it, add the line to the PR's body, turn it back into a draft, disable its
-     auto-merge and post `ai-review` failure with a link to the item.
-3. **Routed work keeps rule a's priority, by rule c's own test for PRs.** Precedence step 1
-   picks the routes after the review bodies (invariant 5) and before every other step: an open
-   `owner-work` issue that no open PR links and that carries no skip label, as
-   `worker owner-routed #N` (`design-technical owner-routed #N` with `design`,
-   `design owner-routed #N` with `design-product`); an open routed PR that step 3's failing-own-PR
-   term would pick, as `worker owner-routed #N`. That test is shared, not copied: failing, not
-   held, not on an `owner/` branch, not `needs-design`, and no skip label on the PR or on the
-   issue it closes (with step 3's design-window exception for that issue's `owner-todo`). So one
-   skip label parks a routed PR for step 1 and step 3 alike, and removing it brings back one
-   pick, the route. An open route issue that an open PR links leaves the work to that PR, which
-   step 3 picks by the same test when it fails. While a route is parked or green its item stays
-   routed (no owner feed pick for it); it moves again when the label goes or the PR fails.
-   A route is not picked while an unrouted owner item sits on it (a comment or an inline review
-   comment on the route issue or PR, or on an open PR that links the route issue; the scheduler
-   reads where an item sits from the `/issues/<n>` or `/pull/<n>` segment of its URL, matched
-   as a whole number): that item may change the work, so the owner feed session reads it first,
-   and it is picked without the quiet period (below). A review body on a route is picked first
-   anyway (invariant 5). When the route closes or merges, the item is unrouted again, and the
-   next owner feed session posts its `done:` (or routes it again when the PR closed unmerged).
+     comment on it, add the line to the PR's body, disable its auto-merge and post `ai-review`
+     failure with a link to the item. It doesn't turn the PR into a draft: the failing required
+     check already stops the merge, and a draft would change which branch of step 3's test
+     applies (a design PR's window `owner-todo` parks a draft, below).
+3. **Routed work keeps rule a's priority, by rule c's own test for PRs.** Precedence step 1 picks
+   the routes after the review bodies (invariant 5) and before every other step: an open
+   `owner-work` issue that no open PR links and that carries no skip label, as `worker
+   owner-routed #N` (`design-technical owner-routed #N` with `design`, `design owner-routed #N`
+   with `design-product`); an open routed PR, or an open PR that links (`Closes #N`) an open
+   route issue, that step 3's failing-own-PR term would pick, as `worker owner-routed #<PR>`.
+   That test is shared, not copied (task 1 extracts it from the closure in `choose` into one
+   function that both steps call): failing, not held, not on an `owner/` branch, not
+   `needs-design`, and no skip label on the PR or on the issue it closes, except that the issue's
+   `owner-todo` doesn't park a design PR that is not a draft (its 24-hour window's own label,
+   #372). So one skip label parks a routed PR for step 1 and step 3 alike, and removing it brings
+   back one pick, the route; a design PR reworked in its window stays a route that is picked,
+   since the rework route doesn't draft it (invariant 2). While a route is parked or green its
+   item stays routed (no owner feed pick for it); it moves again when the label goes or the PR
+   fails. A route is not picked while an unrouted owner item sits on it (a comment or an inline
+   review comment on the route issue or PR, or on an open PR that links the route issue; the
+   scheduler reads where an item sits from the `/issues/<n>` or `/pull/<n>` segment of its URL,
+   matched as a whole number): that item may change the work, so the owner feed session reads it
+   first, and it is picked without the quiet period (below). A review body on a route waits
+   behind an older unrouted item on the same PR (invariant 5). When the route closes or merges,
+   the item is unrouted again, and the next owner feed session posts its `done:` (or routes it
+   again when the PR closed unmerged).
 4. **Reactions are display, never state.** The owner feed session (and any session that routes
    or handles an item) adds 👀 to a routed item and 🚀 to a handled one where GitHub allows a
    reaction (issues, issue comments, inline review comments). No script reads a reaction, and a
    reaction replaces no reply that the feed or the scheduler reads.
-5. **Review bodies stay as today.** A review body from `FLOOR` on with no `done:` reply, not
-   named by the body of an open agent PR that is not failing (or is parked or `needs-design`;
-   today's in-flight test), is picked at once as `worker owner-comment <url>`, first in step 1.
-   That session gives it ops/TICK.md §0's two replies and does its work as today, including the
-   rework of the PR it sits on. Its known limit is unchanged: the feed drops a review body when
-   its PR closes, so a `done:` not posted by then is never asked for (`ops/driver/owner-issues.sh`
-   states it).
+5. **Review bodies keep today's per-item pick.** A review body from `FLOOR` on with no `done:`
+   reply, not named by the body of an open agent PR that is not failing (or is parked or
+   `needs-design`; today's in-flight test), is picked at once as `worker owner-comment <url>`,
+   first in step 1, unless an older unrouted owner item sits on the same PR `<n>` (a comment or
+   inline review comment whose URL has `/pull/<n>`, or one on the issue that PR closes): then
+   that older item goes first, as an `owner-feed` pick at once (term 3), so the review's session
+   never works before an older correction is read. This keeps today's oldest-first order among
+   the items on one PR. Across different PRs and issues the order changes: today owner issues and
+   older comments anywhere come first, and under this ADR a review body comes before the owner
+   feed session (which takes the others in one batch). That session gives it ops/TICK.md §0's two
+   replies and does its work as today, including the rework of the PR it sits on. Its known limit
+   is unchanged: the feed drops a review body when its PR closes, so a `done:` not posted by then
+   is never asked for (`ops/driver/owner-issues.sh` states it).
 
 ## Enforcement
 1. **types:** not available: the states live on GitHub, written by sessions through `gh`.
-2. **a lint or gate:** the scheduler is the gate (ADR 0011 §2). It computes the three states
-   from `feed.jsonl` and one new input (the open issues labeled `owner-work`, with author, body
-   and labels) plus the bodies of open PRs, which `prs.json` already has, so an item counts as
-   routed only when a `jacobdam` route with the exact line and label exists; a stranger's tagged
-   issue, a closed route, a line naming a review body or a line in a comment route nothing. A
-   routed PR is picked through the function step 3 uses for failing own PRs, so the two terms
-   can't drift. Tested offline with `--from` fixtures (task 1, task 2). The guard needs one
-   protected change to allow the reaction writes (task 3), and the records fast path is a
-   protected CI change (task 4); both go through `ops/proposals/`.
+2. **a lint or gate:** the scheduler is the gate (ADR 0011 §2). It computes the three states from
+   `feed.jsonl`, one new input (the open issues labeled `owner-work`, with author, body and
+   labels), one new field (`labels` on `owner-closed.json`, today `number,body,comments`, for
+   term 4) and the bodies of open PRs, which `prs.json` already has, so an item counts as routed
+   only when a `jacobdam` route with the exact line and label exists; a stranger's tagged issue,
+   a closed route, a line naming a review body or a line in a comment route nothing. A routed PR
+   is picked through one function that step 3 also uses for failing own PRs (task 1 extracts it
+   from step 3's inline closure), so the two terms can't drift. Tested offline with `--from`
+   fixtures (task 1, task 2). The guard needs one protected change to allow the reaction writes
+   (task 3), and the records fast path is a protected CI change (task 4); both go through
+   `ops/proposals/`.
 3. **a measurement:** the success check below, counted from `git log origin/main`,
    `ops/state/picks.tsv` (ADR 0018) and the journal.
 4. **reviewer vigilance:** principle P10 (below) for the session's own judgement: whether an item
@@ -173,14 +188,16 @@ them; a routed PR is picked by the same test as rule c.**
    time (`created_at`) is at least 10 minutes old (a quiet period, so a burst of owner comments
    is one session), or the oldest is at least 60 minutes old (so a steady trickle still gets a
    session each hour), or an unrouted owner issue has no time in the feed, or an unrouted item
-   suspends a route pick (invariant 3: on a route that step 1.2 would pick without it); the last
-   two are picked at once. An item on a route that wouldn't be picked anyway (a green or parked
-   routed PR, a route issue an open PR links) waits for the quiet period like any other.
+   suspends a pick (invariant 3: on a route that step 1.2 would pick without it; invariant 5: an
+   older item on the PR of a pending review body); the last two are picked at once. An item on a
+   route that wouldn't be picked anyway (a green or parked routed PR, a route issue an open PR
+   links) waits for the quiet period like any other.
    The brief lists every unrouted item, oldest first, at most 25 (the rest wait for the next
    pick), and notes the items waiting for the quiet period when it doesn't pick;
 4. the closed owner issues of today's `owner-done` term, read as unrouted items of (3): a closed
    owner issue of the last 14 days, labeled `owner-work` or with a legacy "picked up" reply, and
-   no "done:" reply.
+   no "done:" reply (owner issues are routed only by their own label, invariant 1, so this finds
+   every routed one).
 
 `worker owner-issue #N` and `worker owner-done #N` are gone, and `worker owner-comment <url>`
 remains for review bodies only; an `/approve` that step 3's design window counts stays out of
@@ -211,14 +228,19 @@ keep the full run (main red, rule b, reads them).
   - routes: a route by a stranger with the tag; a route issue with the line and no
     `owner-work`; `owner-work` with the line naming another URL, or the URL followed by a digit
     (`…-1234` for `…-123`); a route whose line names a stranger's comment, one whose item is
-    already handled, and one naming an owner review body (no route in all three; the review is
-    still picked by step 1.1); a closed route (the item is unrouted again, so `owner-feed`);
+    already handled, one naming an owner review body (the review is still picked by step 1.1),
+    and one naming an owner issue's URL (no route in all four; the owner issue is still an
+    unrouted item); a closed route (the item is unrouted again, so `owner-feed`);
   - routed PRs, by the shared test: every fixture of step 3's failing-own-PR term rerun with the
     PR as a route picks `worker owner-routed #N` exactly when step 3 picks the PR. Named among
     them: green (no pick), failing (picked), held (no pick), `needs-design` (no pick), on an
     `owner/` branch (no pick); its closed issue labeled `owner-todo`, `blocked` or `deferred`
     (no pick by step 1 or step 3), and the same with the label removed (one pick, the route); a
-    route issue labeled `owner-todo` that a failing PR links (no pick of either);
+    route issue labeled `owner-todo` that a failing PR links (no pick of either); a failing PR
+    that links an open route issue while main is red (picked as `worker owner-routed #<PR>`,
+    ahead of main red), and the same PR green (no pick); a routed design PR in its window, not a
+    draft, failing after the rework route, its issue with the window's `owner-todo` (picked), and
+    the same PR as a draft (no pick by step 1 or step 3);
   - items: an owner issue labeled `owner-todo`, `blocked` or `deferred` (no item; one pick after
     the label goes); a pre-floor owner comment updated within the last 14 days, so the feed
     still shows it (never an item);
@@ -230,10 +252,13 @@ keep the full run (main red, rule b, reads them).
     and never in the `owner-feed` brief); the same with a tagged `jacobdam` `done:` naming it
     (no pick); named by the body of an open agent PR that is green (no pick) or failing (picked);
     a review body on a failing routed PR (the review is picked, not the route); a stranger's, a
-    tagged or a pre-floor review (no pick);
+    tagged or a pre-floor review (no pick); an owner comment on PR #N older than a review body on
+    #N (`owner-feed` at once, the review not picked), the same comment once handled or routed
+    (the review picked), and an older owner comment on another PR (the review picked first);
   - the pick: the quiet period at 9:59 and 10:00 minutes, the trickle bound at 59:59 and 60:00,
     an issue item without a time; 25 and 26 items in the brief; a closed owner issue with
-    `owner-work`, with a legacy "picked up", with neither.
+    `owner-work`, with a legacy "picked up", with neither, and with `owner-work` and a `done:`
+    (no pick), read from `owner-closed.json`'s new `labels` field.
 
   What broken implementation still passes: one that treats a route that a session filed for
   the wrong item (wrong URL by mistake, right shape) as correct. Only P10's reviewer line and
@@ -282,8 +307,8 @@ PR #524 (the draft) is closed unmerged; its ledger is this ADR's input. It had n
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Depends on |
 |---|---|---|
-| 1 | `cargo xtask next-session` owner routes: the `owner-work` input, the *routed* state (invariant 1), the `owner-routed #N` picks for issues and for failing PRs through step 3's shared failing-own-PR test (invariant 3), review bodies kept first in step 1 under today's term, items with a route left out of today's per-item picks; specs/tooling/next-session.md; `--from` fixtures for every term of Verification's first list that this task adds; ops/TICK.md §0: a session working an owner item that needs a PR may route it instead of doing it (the route's shape), and the route's PR body links the item as today. Create the `owner-work` label | #529 |
-| 2 | `cargo xtask next-session` owner feed pick: `owner-feed` replaces `owner-issue`, `owner-done` and the `owner-comment` pick for comments and inline review comments (the pick terms above: quiet period, trickle bound, issues at once, suspension at once, 25 items, the closed-issue term); the work mix leaves `owner-feed` out; ops/TICK.md: a new section for the owner feed session (allowed actions, bound, the journal rule) and §2's pick list; AUTOMATION.md and ADR 0011 §1's table row by reference to this ADR | 1 |
+| 1 | `cargo xtask next-session` owner routes: the `owner-work` input, the *routed* state (invariant 1), the `owner-routed` picks for issues and for failing routed PRs and PRs of route issues through one failing-own-PR function extracted from step 3 and shared with it (invariant 3), review bodies kept first in step 1 under today's term except behind an older unrouted item on the same PR (invariant 5), items with a route left out of today's per-item picks; specs/tooling/next-session.md; `--from` fixtures for every term of Verification's first list that this task adds; ops/TICK.md §0: a session working an owner item that needs a PR may route it instead of doing it (the route's shape), and the route's PR body links the item as today. Create the `owner-work` label | #529 |
+| 2 | `cargo xtask next-session` owner feed pick: `owner-feed` replaces `owner-issue`, `owner-done` and the `owner-comment` pick for comments and inline review comments (the pick terms above: quiet period, trickle bound, issues at once, suspension at once, 25 items, the closed-issue term with the `labels` field on `owner-closed.json`); the work mix leaves `owner-feed` out; ops/TICK.md: a new section for the owner feed session (allowed actions, bound, the journal rule) and §2's pick list; AUTOMATION.md and ADR 0011 §1's table row by reference to this ADR | 1 |
 | 3 | Proposal `ops/proposals/guard-reactions.md`: the guard allows the reaction writes of Verification (exact shapes) with its tests (ADR 0014); once the owner has applied it, the ops/TICK.md §0 text: 👀 and 🚀 per invariant 4, and "picked up" replies only for review bodies, which take no reaction. Until then sessions skip reactions | #529 |
 | 4 | Proposal `ops/proposals/ci-records-fast-path.md`: the records-only classifier (run from the base commit) and the `ci.yml` and `judge-verdict` changes, with its tests (ADR 0014) | #529 |
 
@@ -305,9 +330,11 @@ New principle, in docs/PRINCIPLES.md:
 >   also labeled `owner-work`), or by the label `owner-work` on the untagged owner issue itself,
 >   and only while that URL is a pending owner item; every other item is *unrouted*. The
 >   scheduler computes these states from that text and those labels only, and nothing reads a
->   reaction as state. A routed PR is picked only through step 3's own failing-own-PR test, so a
+>   reaction as state. An owner issue is routed only by its own label. A routed PR, or the PR of
+>   a route issue, is picked only through the failing-own-PR function step 3 also uses, so a
 >   skip label on it or its issue parks both picks. A review body is never routed: it keeps
->   today's per-item pick, first in step 1. The owner feed session takes every unrouted item its
+>   today's per-item pick, first in step 1 unless an older unrouted owner item sits on its PR,
+>   which the owner feed session reads first. The owner feed session takes every unrouted item its
 >   brief lists and leaves each one handled (carried out, or a question back) or routed; it
 >   writes no code, spec, ADR, test or proposal, and writes a journal entry only for an
 >   `Ignored:` line, a lesson or an item left unrouted. Routes keep rule a's priority
@@ -320,13 +347,15 @@ New principle, in docs/PRINCIPLES.md:
 > - **Reviewers check:** a scheduler change reads a route only from a `jacobdam` author with a
 >   tagged body, the exact `Owner instruction:` URL of a pending owner item and (for an issue)
 >   `owner-work`, treats a closed route as unrouted, keeps the floor and skip-label terms of an
->   owner item, keeps review bodies out of routes and the owner feed brief, and picks a routed
->   PR through the same function as step 3, not a copy of it; no rule or tool reads a reaction,
->   or counts a reaction as a reply; a TICK passage for the owner feed session adds no output
->   beyond ADR 0020's allowed actions; a session type that stops writing its journal shows that
->   no scheduler term or metrics join reads its records.
+>   owner item, keeps review bodies out of routes and the owner feed brief and behind an older
+>   item on their PR, and picks a routed PR or a route issue's PR through the same function as
+>   step 3, not a copy of it; no rule or tool reads a reaction, or counts a reaction as a reply;
+>   a TICK passage for the owner feed session adds no output beyond ADR 0020's allowed actions;
+>   a session type that stops writing its journal shows that no scheduler term or metrics join
+>   reads its records.
 > - **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`, `ops/TICK.md`,
->   `AUTOMATION.md`, `ops/proposals/`.
+>   `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `AUTOMATION.md`,
+>   `ops/proposals/`.
 
 ## Requirements on future callers
 - **ADR 0018 task 3 (#482)** and any later metrics join: a `picks.tsv` line whose first line

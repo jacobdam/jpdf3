@@ -264,9 +264,11 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   also labeled `owner-work`), or by the label `owner-work` on the untagged owner issue itself,
   and only while that URL is a pending owner item; every other item is *unrouted*. The
   scheduler computes these states from that text and those labels only, and nothing reads a
-  reaction as state. A routed PR is picked only through step 3's own failing-own-PR test, so a
+  reaction as state. An owner issue is routed only by its own label. A routed PR, or the PR of
+  a route issue, is picked only through the failing-own-PR function step 3 also uses, so a
   skip label on it or its issue parks both picks. A review body is never routed: it keeps
-  today's per-item pick, first in step 1. The owner feed session takes every unrouted item its
+  today's per-item pick, first in step 1 unless an older unrouted owner item sits on its PR,
+  which the owner feed session reads first. The owner feed session takes every unrouted item its
   brief lists and leaves each one handled (carried out, or a question back) or routed; it
   writes no code, spec, ADR, test or proposal, and writes a journal entry only for an
   `Ignored:` line, a lesson or an item left unrouted. Routes keep rule a's priority
@@ -279,10 +281,12 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
 - **Reviewers check:** a scheduler change reads a route only from a `jacobdam` author with a
   tagged body, the exact `Owner instruction:` URL of a pending owner item and (for an issue)
   `owner-work`, treats a closed route as unrouted, keeps the floor and skip-label terms of an
-  owner item, keeps review bodies out of routes and the owner feed brief, and picks a routed
-  PR through the same function as step 3, not a copy of it; no rule or tool reads a reaction,
-  or counts a reaction as a reply; a TICK passage for the owner feed session adds no output
-  beyond ADR 0020's allowed actions; a session type that stops writing its journal shows that
-  no scheduler term or metrics join reads its records.
+  owner item, keeps review bodies out of routes and the owner feed brief and behind an older
+  item on their PR, and picks a routed PR or a route issue's PR through the same function as
+  step 3, not a copy of it; no rule or tool reads a reaction, or counts a reaction as a reply;
+  a TICK passage for the owner feed session adds no output beyond ADR 0020's allowed actions;
+  a session type that stops writing its journal shows that no scheduler term or metrics join
+  reads its records.
 - **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`, `ops/TICK.md`,
-  `AUTOMATION.md`, `ops/proposals/`.
+  `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `AUTOMATION.md`,
+  `ops/proposals/`.
