@@ -110,8 +110,12 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 [audits.zcash.audits]
 ```
 
-The first line of the file is empty, as in today's file. The text inside the entries (the
-`notes` typos included) is the auditors' and is data.
+If `ops/proposals/vet-imports-drop-isrg.md` (#442) is applied first, the file has no
+`[audits.isrg.audits]` section and the blank line after it (SHA-256
+`1bbfa5091ce31dcff06abc537b75018bcab477d1ee838778044efacfd87e6f85` on 2026-11-28); applied
+after this one, it removes those two lines by hand. The first line of the file is empty, as in
+today's file. The text inside the entries (the `notes` typos included) is the auditors' and is
+data.
 
 ## Test plan
 
