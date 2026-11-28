@@ -71,16 +71,20 @@ The missing decision: **a pending owner item has two text states the scheduler c
    - **unrouted:** neither.
 
    A *route* is such an open PR or issue, and it is a route only while the URL on its line is a
-   pending owner item (not handled): a line naming a stranger's comment, a pre-floor comment, a
+   pending owner item (not handled; for a review body, see below): a line naming a stranger's comment, a pre-floor comment, a
    handled item or any other URL makes no route, so it gets no rule a priority (its issue is
-   worked, if at all, by the normal rules). The feed lists review bodies only on open PRs, so a
-   review body leaves it when its PR closes, handled or not. For a route line that names a review
-   body (`…/pull/<n>#pullrequestreview-<id>`) not in the feed, the scheduler reads PR `<n>`'s
-   reviews and conversation comments itself (read commands, not the protected feed) and counts
-   the review as a pending owner item when it is by `jacobdam`, untagged, non-empty, submitted
-   at or after `FLOOR`, and no tagged `jacobdam` `done:` reply on PR `<n>` names it. Such a review
-   stays an owner item while a route names it, and once that route closes it is listed as an
-   unrouted item like any other, so its `done:` is posted.
+   worked, if at all, by the normal rules). **Review bodies are the exception.** The feed lists
+   review bodies only on open PRs, so one leaves it when its PR closes, handled or not (a limit
+   `ops/driver/owner-issues.sh` states today), and no later session could see it to post a
+   late `done:`. So a review body is handled when it is routed: the owner feed session routes it
+   only by a tagged `owner-work` issue (never by a PR body) and posts its `done:` at once, naming
+   the route (`routed to #M`, then `waiting on owner: nothing`); the route issue's PR links the
+   review as today. A route line that names a review body
+   (`…/pull/<n>#pullrequestreview-<id>`) counts while the review is by `jacobdam`, untagged,
+   non-empty and submitted at or after `FLOOR`, whatever its handled state: the scheduler reads
+   PR `<n>`'s reviews itself (a read command, not the protected feed), whether `<n>` is open or
+   closed. This is the one case where `done:` comes before the work lands; the route issue and
+   its PR carry the rest of the trace.
 2. **One session moves the unrouted ones.** The **owner feed** session takes every unrouted item
    the scheduler lists, oldest first, and leaves each one handled or routed before it exits. It
    writes no code, spec, ADR, test or proposal. Its allowed actions:
@@ -93,8 +97,9 @@ The missing decision: **a pending owner item has two text states the scheduler c
      `waiting on owner: an answer to the question above`; the owner's answer is a new item;
    - a **route**: file a tagged issue with the `Owner instruction:` line and `owner-work` (plus
      `design` or `design-product` when the work is a design), or add `owner-work` to an untagged
-     owner issue, or, for rework of an open agent PR, add the line to the PR's body, turn it back
-     into a draft and post `ai-review` failure with a link to the item.
+     owner issue, or, for rework of an open agent PR asked in a comment or an inline review
+     comment, add the line to the PR's body, turn it back into a draft and post `ai-review`
+     failure with a link to the item (a review body is routed by an issue, above).
 3. **Routed work keeps rule a's priority.** Precedence step 1 picks the routes before every
    other step: an open `owner-work` issue that no open PR links and that carries no skip label, as
    `worker owner-routed #N` (`design-technical owner-routed #N` with `design`,
@@ -115,8 +120,8 @@ The missing decision: **a pending owner item has two text states the scheduler c
 1. **types:** not available: the states live on GitHub, written by sessions through `gh`.
 2. **a lint or gate:** the scheduler is the gate (ADR 0011 §2). It computes the three states
    from `feed.jsonl` and new inputs (the open issues labeled `owner-work` with author, body and
-   labels; the bodies of open PRs, which `prs.json` already has; the reviews and conversation
-   comments of each closed PR whose review a route line names, invariant 1), so an item counts as routed
+   labels; the bodies of open PRs, which `prs.json` already has; the reviews of each PR whose
+   review body a route line names, invariant 1), so an item counts as routed
    only when a `jacobdam` route with the exact line and label exists; a stranger's tagged issue,
    a closed route or a line in a comment route nothing. Tested offline with `--from` fixtures
    (task 1, task 2). The guard needs one protected change to allow the reaction writes
@@ -173,9 +178,10 @@ full run (main red, rule b, reads them).
   the trickle bound at 59:59 and 60:00, an issue item without a time; 25 and 26 items in the
   brief; a closed owner issue with `owner-work`, with a legacy "picked up", with neither; a
   pre-floor owner comment updated within the last 14 days, so the feed still shows it (never an
-  item); a review body on a closed PR named by an open route (an item, route kept) and the same
-  review with a `done:` reply on that PR, by a stranger, or tagged (no item, no route), and that
-  route closed (the review listed as unrouted); an owner issue labeled `owner-todo`,
+  item); a route issue naming an owner review body, on an open PR and on a closed one, each with
+  and without a tagged `jacobdam` `done:` reply (a route in all four); the same line naming a
+  review by a stranger, a tagged review or a pre-floor review (no route); a PR body naming a
+  review body (no route); an owner issue labeled `owner-todo`,
   `blocked` or `deferred` (no item; one pick after the label goes); a route whose line names a
   stranger's comment, and one whose item is already handled (no route pick, and the issue is no
   route); a route with an unrouted owner comment on it, an inline review comment, a review
@@ -240,12 +246,13 @@ New principle, in docs/PRINCIPLES.md:
 > - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
 >   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
 >   inline review comment or review body from the feed's `FLOOR` on, not an `/approve` that the
->   design window counts, #372; a review body a route names stays one after its PR closes) is
+>   design window counts, #372; a review body is handled when routed, by an issue, and its route counts while it names a
+>   `jacobdam` review from `FLOOR` on) is
 >   *handled* only by a
 >   tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
 >   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
 >   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
->   owner issue itself, and only while that URL is a pending owner item; every other item is
+>   owner issue itself, and only while that URL is a pending owner item (a review body: as above); every other item is
 >   *unrouted*. The scheduler computes these states from
 >   that text and those labels only, and nothing reads a reaction as state. The owner feed
 >   session takes every unrouted item its brief lists and leaves each one handled (carried out,
