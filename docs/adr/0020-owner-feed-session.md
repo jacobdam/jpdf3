@@ -22,9 +22,12 @@ The numbers, for 2026-11-28 up to 10:48 UTC (`git log origin/main`, `ops/journal
   sessions: one that did the work and posted "picked up", and a later one picked only to post
   "done:" once the work PR had merged (ops/TICK.md §0: "done:" waits for the merge, which lands
   after the session exits).
-- Each records PR runs the full CI (PR #521: 10:42:31 to 10:46:32 UTC, every judge job) and
-  then a full `ci` run on main when it merges; two main runs were cancelled at 10:16 and 10:18
-  UTC by the next merge.
+- Each records PR runs the PR CI (PR #521: 10:42:31 to 10:46:32 UTC, the Linux judge jobs
+  `reference`, `policy`, `untrusted`, `project-linux` and `judge-verdict`; `project-macos` and
+  `project-nightly` skip on PRs) and then a full `ci` run on main when it merges. Main runs queue
+  behind each other: the runs for b23aba1 (#504) and f134fe4 (#506) were cancelled at 10:18:44
+  and 10:18:54 UTC while waiting behind the run of records PR #507's merge (10:13:51 to
+  10:19:12).
 
 The class: **an owner item's state lives in a session instead of on GitHub.** The scheduler can
 see "pending" (no `done:` reply) and nothing finer, so it hands each item to a full Worker
@@ -51,8 +54,14 @@ The missing decision: **a pending owner item has two text states the scheduler c
 *routed* and *handled*, and one session moves every unrouted item to one of them.**
 
 ## The invariant
-1. **States.** Each owner item in the feed (`ops/driver/owner-issues.sh`, unchanged) is in one of
-   three states, computed by `cargo xtask next-session` from tagged text and labels only:
+1. **States.** An *owner item* is a line of the feed (`ops/driver/owner-issues.sh`, unchanged)
+   that today's precedence step 1 already considers, and only those: an owner issue (kind
+   `issue`, `is_pr` false) without a skip label (`owner-todo`, `blocked`, `deferred`: it is
+   parked, the owner's turn, and comes back when the label goes, as today); an owner comment,
+   inline review comment or review body created at or after the feed's `FLOOR` (earlier ones need
+   no reply, TICK §0, and the feed ignores `done:` replies for them, so they are never items); not
+   an `/approve` that step 3's design window counts (#372). Each owner item is in one of three
+   states, computed by `cargo xtask next-session` from tagged text and labels only:
    - **handled:** a tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>` exists (today's
      marker, read by the feed itself);
    - **routed:** not handled, and its work is carried by an open item the scheduler reads: an
@@ -60,13 +69,18 @@ The missing decision: **a pending owner item has two text states the scheduler c
      `Owner instruction: <its URL>` (exact URL, then whitespace or the end), and for an issue
      the label `owner-work`; an untagged owner issue labeled `owner-work` routes itself;
    - **unrouted:** neither.
+
+   A *route* is such an open PR or issue, and it is a route only while the URL on its line is a
+   pending owner item (not handled): a line naming a stranger's comment, a pre-floor comment, a
+   handled item or any other URL makes no route, so it gets no rule a priority (its issue is
+   worked, if at all, by the normal rules).
 2. **One session moves the unrouted ones.** The **owner feed** session takes every unrouted item
    the scheduler lists, oldest first, and leaves each one handled or routed before it exits. It
    writes no code, spec, ADR, test or proposal. Its allowed actions:
    - a `done:` reply (TICK §0's form: what changed, then `waiting on owner: …`) after it carried
      the item out in place: labels, milestones, assignees, closing or reopening an issue, editing
-     a tagged body, filing issues (without `ready`, so the Planner gates them, unless the owner
-     asked for `ready`), a tagged comment elsewhere, a `/hold` or `/release` follow-up (ops/TICK.md
+     a tagged body, filing issues (without `ready`: the Planner gates them, P6; work the owner
+     wants now is a route, below), a tagged comment elsewhere, a `/hold` or `/release` follow-up (ops/TICK.md
      §5: `owner-todo`, auto-merge after a `/release`), a "done:" for an item whose route closed;
    - a **question back**: a `done:` reply that asks one question and ends
      `waiting on owner: an answer to the question above`; the owner's answer is a new item;
@@ -78,7 +92,10 @@ The missing decision: **a pending owner item has two text states the scheduler c
    other step: an open `owner-work` issue that no open PR links and that carries no skip label, as
    `worker owner-routed #N` (`design-technical owner-routed #N` with `design`,
    `design owner-routed #N` with `design-product`); an open routed PR that is failing (step 3's
-   test, not held, not `needs-design`), as `worker owner-routed #N`. When the route closes or
+   test, not held, not `needs-design`), as `worker owner-routed #N`. A route is not picked while
+   an unrouted owner item sits on it (a comment on the route issue or PR, or on an open PR
+   that links the route issue): that item may change the work, so the owner feed session reads
+   it first, and it is picked without the quiet period (below). When the route closes or
    merges, the item is unrouted again, and the next owner feed session posts its `done:` (or
    routes it again when the PR closed unmerged).
 4. **Reactions are display, never state.** The owner feed session (and any session that routes
@@ -106,7 +123,8 @@ The missing decision: **a pending owner item has two text states the scheduler c
 2. `owner-feed` when at least one item is unrouted and either the newest unrouted item with a
    time (`created_at`) is at least 10 minutes old (a quiet period, so a burst of owner comments
    is one session), or the oldest is at least 60 minutes old (so a steady trickle still gets a
-   session each hour), or an unrouted owner issue has no time in the feed (it is picked at once).
+   session each hour), or an unrouted owner issue has no time in the feed, or an unrouted item
+   sits on a route (invariant 3); the last two are picked at once.
    The brief lists every unrouted item, oldest first, at most 25 (the rest wait for the next
    pick), and notes the items waiting for the quiet period when it doesn't pick;
 3. the closed owner issues of today's `owner-done` term, read as unrouted items of (2): a closed
@@ -125,8 +143,9 @@ are not Planner records (steps 8 and 11), and the work mix leaves owner sessions
 §3; task 2 adds `owner-feed` to the left-out words). Every other session type writes its journal
 as today.
 
-**The records fast path.** A PR whose every changed path is a record path (ADR 0011 §3's record
-commit, applied to the PR's whole diff against its base: each path added or modified under
+**The records fast path.** A PR whose every changed path is a record path (a stricter subset of
+ADR 0011 §3's record commit, applied to the PR's whole diff against its base; the legacy
+`ops/journal/YYYY-MM-DD.md` files, which §3 also accepts, take the full run: each path added or modified under
 `ops/journal/YYYY-MM-DD/<name>.md`, or added as `ops/lessons/pending/<name>.md` other than
 `README.md`, each a regular file of mode 100644, no rename, delete or other mode) skips the
 build, test and judge jobs, and `judge-verdict` passes it with the reason "records only". The
@@ -141,7 +160,12 @@ full run (main red, rule b, reads them).
   `…-123`); a closed route (the item is unrouted again, so `owner-feed`); a routed PR that is
   green (no pick), failing (picked), held (no pick); the quiet period at 9:59 and 10:00 minutes,
   the trickle bound at 59:59 and 60:00, an issue item without a time; 25 and 26 items in the
-  brief; a closed owner issue with `owner-work`, with a legacy "picked up", with neither.
+  brief; a closed owner issue with `owner-work`, with a legacy "picked up", with neither; a
+  pre-floor owner comment (never an item, also at 59 days); an owner issue labeled `owner-todo`,
+  `blocked` or `deferred` (no item; one pick after the label goes); a route whose line names a
+  stranger's comment, and one whose item is already handled (no route pick, and the issue is no
+  route); a route with a newer owner comment on it, and on the PR that links it (no route pick,
+  `owner-feed` at once), and the same comment once handled (the route is picked again).
   What broken implementation still passes: one that treats a route that a session filed for
   the wrong item (wrong URL by mistake, right shape) as correct. Only P10's reviewer line and
   the owner's view (👀 on the comment, the cross-reference GitHub shows on the route) catch it.
@@ -153,8 +177,11 @@ full run (main red, rule b, reads them).
 - **Guard (task 3).** The proposal's tests (ADR 0014) allow exactly
   `gh api -X POST repos/jacobdam/jpdf3/issues/<n>/reactions`, `…/issues/comments/<n>/reactions`
   and `…/pulls/comments/<n>/reactions` with one field `content` of `eyes` or `rocket`, and block
-  each near miss: another repo, another content value, a second field (`-f body=…`), a query
-  string, a path with `..` or a trailing segment, `DELETE`, the same path under `pulls/<n>/`.
+  each near miss: another repo, another content value, a second field (`-f body=…`), the field
+  given by `-F`, `--field` or `--raw-field` with another name, `--input <file>` or `--input -`,
+  `--method=PATCH` or `DELETE`, an extra `-H` header, `--hostname`, a query string, a path with
+  `..` or a trailing segment, the same path under `pulls/<n>/`. Each allowed form is tested with
+  `-X POST` and `--method=POST`.
   What broken guard still passes: none of those shapes; a reaction on the wrong item is display
   only.
 - **Records fast path (task 4).** The proposal's classifier tests: records-only diffs (a new
@@ -174,6 +201,7 @@ full run (main red, rule b, reads them).
 | #238 | kept | the umbrella of session types; this ADR adds one (the owner feed), as #238's table invites |
 | #263 | kept (M10, `owner-todo`) | its findings are about `owner-issues.sh`, which this ADR leaves unchanged; the handled marker it hardens is the one invariant 1 keeps |
 | #217 | kept (M10) | the same feed's tag filter; unchanged here |
+| #236, #433, #438, #463, #465, #466, #478, #493 | not changed (evidence) | their two-session instructions are the cost counted above; each is closed or proceeds under its own ADR |
 | #482 | kept, with a requirement (below) | ADR 0018 task 3 joins picks with journal records; an owner feed pick without a journal is a session, not a gap. The `design-window` session posts the requirement on #482 with the tasks |
 
 ## Tasks
@@ -193,23 +221,28 @@ while the proposal waits, ops/TICK.md §0).
 New principle, in docs/PRINCIPLES.md:
 
 > **P10.** Owner items move through text states; one session routes them; reactions are display
-> - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh`) is *handled* only by a
+> - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
+>   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
+>   inline review comment or review body from the feed's `FLOOR` on) is *handled* only by a
 >   tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
 >   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
 >   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
->   owner issue itself; every other item is *unrouted*. The scheduler computes these states from
+>   owner issue itself, and only while that URL is a pending owner item; every other item is
+>   *unrouted*. The scheduler computes these states from
 >   that text and those labels only, and nothing reads a reaction as state. The owner feed
 >   session takes every unrouted item its brief lists and leaves each one handled (carried out,
 >   or a question back) or routed; it writes no code, spec, ADR, test or proposal, and writes a
 >   journal entry only for an `Ignored:` line, a lesson or an item left unrouted. Routes keep
->   rule a's priority (precedence step 1).
+>   rule a's priority (precedence step 1), except while an unrouted owner item sits on the route,
+>   which the owner feed session reads first.
 > - **Decided in:** ADR 0020 (amending ADR 0011 §1 and §2, ops/TICK.md §0).
 > - **Enforced by:** `cargo xtask next-session`'s step 1 terms and their `--from` fixtures (ADR
 >   0020 tasks 1 and 2); the guard's exact reaction shapes (task 3, an `ops/proposals/` change);
 >   the rest is reviewer vigilance.
 > - **Reviewers check:** a scheduler change reads a route only from a `jacobdam` author with a
->   tagged body, the exact `Owner instruction:` URL and (for an issue) `owner-work`, and treats a
->   closed route as unrouted; no rule or tool reads a reaction, or counts a reaction as a reply;
+>   tagged body, the exact `Owner instruction:` URL of a pending owner item and (for an issue)
+>   `owner-work`, treats a closed route as unrouted, and keeps the floor and skip-label terms of
+>   an owner item; no rule or tool reads a reaction, or counts a reaction as a reply;
 >   a TICK passage for the owner feed session adds no output beyond ADR 0020's allowed actions;
 >   a session type that stops writing its journal shows that no scheduler term or metrics join
 >   reads its records.
