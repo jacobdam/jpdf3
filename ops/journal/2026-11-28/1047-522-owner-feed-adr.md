@@ -1,0 +1,9 @@
+## 10:47 UTC #522 ADR 0020: one owner feed session routes every pending owner item (escalated to design)
+- Session: worker owner-comment https://github.com/jacobdam/jpdf3/issues/522#issuecomment-7238115763
+- Picked: rule a because the owner endorsed tagged design issue #522 with an untagged "ok", which made it an instruction with no "done:" reply (ADR 0011 §7); worked as a Design: technical session, ops/TICK.md §8 output 2
+- Did: posted "picked up" on #522 and claimed it. PR #524 (label `design`, strict lane): docs/adr/0020-owner-feed-session.md and P10 in docs/PRINCIPLES.md. An owner item is handled (today's `done:`), routed (an `owner-work` issue or an agent PR whose tagged `jacobdam` body has `Owner instruction: <URL>`) or unrouted. An `owner-feed` session takes every unrouted item after a 10-minute quiet period (60 minutes at most). Routes keep rule a's priority as `owner-routed #N`. Reactions are display only. The journal is skipped when there is nothing to record, and records-only PRs get a CI fast path (a proposal). Four tasks, to be filed when the design is accepted. Removed the merged worktrees 509-left, t/431-contrast, t/490-refile-owner-close and t/500-unknown-schema (scheduler notes).
+- Result: the round 5 final check reported R5.1 (major: rule c still picks a PR whose `Rework:` route issue is parked) and found that R4.2's fix doesn't close it, so the PR is escalated to design (ops/TICK.md §4 step 6): draft, `ai-review` failure on this record commit, `needs-design`, ledger on #522. The design step for #522 is not spent (no earlier escalation, ruling, question or `Designed in:`). The "done:" on #522 waits.
+- Cost: about 75% of the context; review rounds 4/4 plus the final check (round 5); regraded 0, overturned by the next reviewer 0; deferred: none
+- Codex: skipped (no crates/ or tools/ path)
+- Lesson: see ops/lessons/pending/2026-11-28-1047-522-owner-feed-adr.md
+- Ignored: none
