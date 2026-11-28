@@ -133,13 +133,13 @@ fn xref_file(prefix: &[u8], objects: &[&[u8]], generations: &[u16]) -> Vec<u8> {
         offsets.push(out.len());
         out.extend(*body);
     }
-    let xref_at = out.len();
-    let size = offsets.len() + 1;
+    // The table starts after the newline written before `xref`.
+    let xref_at = out.len().saturating_add(1);
+    let size = offsets.len().saturating_add(1);
     out.extend(format!("\nxref\n0 {size}\n0000000000 65535 f\r\n").as_bytes());
     for (o, g) in offsets.iter().zip(generations) {
         out.extend(format!("{o:010} {g:05} n\r\n").as_bytes());
     }
-    let xref_at = xref_at + 1;
     out.extend(format!("trailer\n<< /Size {size} >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
     out
 }
