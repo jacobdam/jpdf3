@@ -21,8 +21,8 @@ No issue has a product `area:` label yet (#308, M1), so step 10 picks lowest num
 None.
 
 ## In flight
-None besides this Planner PR. PR #521 (records only) holds the 10:37Z `planner new-issues`
-session's journal entry; it ran no Planner pass because this run was under way.
+None besides this Planner PR. The 10:37Z `planner new-issues` session ran no Planner pass
+because this run was under way; its journal entry is on main (PR #521, records only).
 
 ## Not workable now
 None in M0: #509 is its only open issue.
@@ -43,9 +43,9 @@ applies it), #513 (4), #514 (5), #515 (6, `mem-lint`), #516 (7, `jpdf-alloc`), #
 The judge's M0 gate passes on the latest nightly, run 45999791450 (2026-11-27, head 6bbfd59):
 `gates/gates.json` has M0 `pass: true`, `failing: []`. The only work left in M0 is #509 (one
 session). Once it merges, M0's backlog is empty and the next Planner run tags `m0`, writes
-`docs/milestones/m0.md`, closes M0 and opens M1 (§9 step 4). Today already has 4
-`- Session: planner…` records (the cap is 3) (00:04Z, 05:32Z, the 10:37Z one in PR #521, and this run's), so
-step 11 picks no rerun today; that run is the 2026-11-29 one (step 8: the work mix is below
+`docs/milestones/m0.md`, closes M0 and opens M1 (§9 step 4). Today has 3
+`- Session: planner…` journal files on main (00:04Z, 05:32Z, and the 10:37Z one from PR #521),
+the cap, plus this run's in this PR, so step 11 picks no rerun today; that run is the 2026-11-29 one (step 8: the work mix is below
 70%) unless the owner runs one by hand.
 The tag isn't pushed in this run: step 1b put #509 in M0, so the backlog is not empty.
 
