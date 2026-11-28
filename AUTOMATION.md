@@ -123,8 +123,9 @@ and the local worktrees, step 7 (rules g, h: audit, then retro, from main's firs
 tags, the judge alarm and `blocked` label events; the audit counts product merges, ADR 0011 §3)
 and step 10 (rule i: the lowest ready issue in the current milestone whose `Depends on:` issues
 are closed), and step 11 when none applies: `planner` (rule j) unless a `Session: planner`
-record dated today is on main or an open agent PR, then `idle` (the session exits with no
-record). Every journal entry carries the pick as its `Session:` line, and the records go into
+record dated today is on main or an open agent PR, then `planner new-issues` while fewer than
+3 journal files dated today hold one and an issue was filed in the current milestone after the
+newest (ADR 0015), else `idle` (the session exits with no record). Every journal entry carries the pick as its `Session:` line, and the records go into
 the work PR as a record commit, which ADR 0010's final check ignores (ADR 0011 §3). Exit 2
 means unknown (no work); any other failure sends the session to the legacy rules b and c and the
 scheduler's own `next-session: …` bug issue. Each later task updates this file and TICK for the

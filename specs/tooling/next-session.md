@@ -601,7 +601,7 @@ never 2 (no command ran).
   which only reads. It writes no file.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
   branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
-  rest of the day's fallback picks into `idle`, and turn step 8 off: both of its terms for that
+  rest of the day's fallback picks into `idle` or `planner new-issues` (step 11), and turn step 8 off: both of its terms for that
   day, and the 7-day term for 7 days. The cost is bounded: `idle` happens only when steps 1–10
   found nothing, the milestone term comes back the next UTC day, and the 7-day term after 7
   days (a forged record delays a Planner run by at most that long; step 11 still runs it
@@ -821,7 +821,7 @@ of inputs where no step before 11 applies (→ `planner`):
   the file's text; the current milestone moving to M1; no current milestone; the 7-day term at
   6 and 7 days and a record dated tomorrow, `planner due` as a Planner record and the other
   kinds as near misses, the window at the last second of a day and at midnight; the once-a-day
-  bound (a `planner due` record today turns both terms off and step 11 into `idle`, and step
+  bound (a `planner due` record today turns both terms off and step 11 into `idle` (no issue new since it), and step
   10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
   test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - step 8's Design: product (#249): `design product v1` with the base log minus its
