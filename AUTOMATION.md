@@ -111,9 +111,9 @@ GitHub (public repo jacobdam/jpdf3)
 ADR 0012 amends it: QC (task 5) and the `area:` labels (task 4 part 2) are M1 work, Design: UI
 (task 7) M3, the user advocate (task 8) M4, and the area threshold and Gardener (task 4 part 3)
 wait in `Ops` while the Planner names issue groups by judgement (ops/TICK.md §9 step 2a).
-`Ops` work enters a numbered milestone only by ADR 0019 clause 4's pulls: a milestone term starts
-to hold, an overlap the Planner finds when it plans a milestone, an audit's request (one at a
-time) or a retro's (ops/TICK.md §9 steps 2 and 3).
+`Ops` work enters a numbered milestone only by ADR 0019 clause 4's pulls: term 1 or 2 starts to
+hold, an overlap the Planner finds when it plans a milestone, an audit's request (at most one per
+audit) or a retro's (ops/TICK.md §9 steps 2 and 3).
 The protocol above is the current one. ADR 0011 replaces step 2's self-selection with
 **session types** chosen by a read-only scheduler, `cargo xtask next-session`: Worker, Design
 (technical, product, UI), Audit, QC, User advocate, Retro, Planner and Gardener, each with a

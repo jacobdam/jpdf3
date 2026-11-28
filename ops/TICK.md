@@ -618,8 +618,8 @@ session.
   pick or a failure of `cargo xtask next-session` seen in live use (not work that measures,
   logs or reports such events); (3) it is `crash` or `security` (rule d and ADR 0009; a latent
   high goes in the milestone where its path appears, `deferred`, rule d's latent-high line);
-  (4) it is an owner pick for that milestone (below); or (6) a `Pulled from Ops:` comment holds
-  it there (§9 step 2). (Term 5, ADR 0018 clause 4's `stall` issues, is added here by #480.)
+  (4) it is an owner pick for that milestone (below); or (6) a `Pulled from Ops:` comment (a
+  tagged comment by `jacobdam`, §9 step 2) holds it there. (Term 5, ADR 0018 clause 4's `stall` issues, is added here by #480.)
   **A strict-list subject** (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge,
   the review rules) **chooses no milestone**: such an issue goes to `Ops` unless a term holds,
   and its PR is in the strict lane wherever the issue sits (§4 Lanes). Moving it changes when it
@@ -678,9 +678,11 @@ session.
   `🤖 jpdf-agent Audit NNNN asks the Planner to pull this into <Mn>: <why>` (`<Mn>` the current
   milestone; §9 step 2 makes the pull). Open the link of every `Owner pick:` marker on an open
   issue (`gh search issues --repo jacobdam/jpdf3 --state open '"Owner pick:" in:comments'`) and
-  check it as §9 step 2 does; and list every open issue that a `Pulled from Ops:` comment holds,
-  with the pull it names. A marker the Planner honored that fails the check, or a pull that
-  none of §9 step 2's pulls allows, is a finding for the Planner.
+  check it as §9 step 2 does; and list every open issue that a `Pulled from Ops:` comment by
+  `jacobdam` holds, with the pull it names. A marker the Planner honored that fails the check, a
+  pull that none of §9 step 2's pulls allows, and an open issue outside the milestone its owner
+  pick names (a valid marker or an owner statement on the issue, read as §9 step 2 does) are
+  findings for the Planner.
 - **Record:** write `docs/audits/NNNN.md`.
 
 ## 7. RETRO session (process, not product)
@@ -1015,23 +1017,28 @@ gate them.
    moves to `Ops` (ADR 0012 §2, ADR 0019 clause 1; P9).
    **Owner picks and pulls stay** (ADR 0019 clauses 3 and 4): no move of this step (the move to
    `Ops`, the milestone moves) takes an owner pick out of its milestone, or an issue that a
-   `Pulled from Ops:` comment holds (term 6) while no newer owner statement moved it; a doubt
-   about one goes in a tagged comment for the owner. Read the picks so: each untagged `jacobdam`
-   comment on the issue that names a milestone is a statement; each `Owner pick:` marker (a
+   `Pulled from Ops:` comment by `jacobdam` holds (term 6) while no newer owner statement moved
+   it; a doubt about one goes in a tagged comment for the owner. Read the picks so: each
+   untagged `jacobdam` comment on the issue that names a milestone for the issue (where it
+   belongs, not a milestone it merely mentions) is a statement; each `Owner pick:` marker (a
    tagged `jacobdam` comment whose first line is `🤖 jpdf-agent Owner pick: <Mn> (<URL>)`) is
    only a pointer: read the comment its URL links, through the endpoint its anchor names
    (`gh api repos/jacobdam/jpdf3/issues/comments/<id>` for `#issuecomment-<id>`,
    `.../pulls/comments/<id>` for `#discussion_r<id>`, `.../pulls/<n>/reviews/<id>` for
    `#pullrequestreview-<id>`), and honor it only when that comment is by `jacobdam`, untagged
-   by the owner feed's test (§5 Discoveries), and names the issue by number and the milestone.
-   A marker that fails the check, or whose link you can't read, is ignored: say so in a tagged
+   by the owner feed's test (§5 Discoveries), and names the issue by number and a milestone for
+   it; the pick is the milestone that comment names, and a marker whose `<Mn>` differs from it
+   fails the check. A marker that fails the check, or whose link you can't read, is ignored: say so in a tagged
    comment on the issue (the owner can restate the pick there). Order the statements by the
    owner comment's `created_at`, never the marker's; the newest decides.
    **Pulls from `Ops`** (ADR 0019 clause 4): an `Ops` issue moves into the current milestone
    only when term 1 or 2 now holds for it, an audit asked for it (a tagged `jacobdam` comment on
    it starting `🤖 jpdf-agent Audit NNNN asks the Planner to pull this into <Mn>:`, §6, naming
-   the current milestone), a retro asked for it (ADR 0012 §2), or step 3's overlap pull finds
-   it. Make the move and post a tagged comment on the issue whose first line is
+   the current milestone), a retro asked for it (ADR 0012 §2: an action item of a
+   `docs/retros/NNNN.md` on main that names the issue and the current milestone), or step 3's
+   overlap pull finds it. No pull takes an owner pick for `Ops` out of `Ops`, and an audit's or
+   a retro's request older than the issue's newest owner statement (by `created_at`; for a
+   retro, its merge on main) doesn't count. Make the move and post a tagged comment on the issue whose first line is
    `🤖 jpdf-agent Pulled from Ops: <Mn> (<the pull and its reason>)`; that comment keeps it in
    `<Mn>` (term 6) until it closes or a newer owner statement moves it. **Once, on the first run after ADR 0012
    merges:** create the `Ops` milestone if it is missing (`gh api
@@ -1062,8 +1069,9 @@ gate them.
    run, **pull by overlap** (ADR 0019 clause 4): each open `Ops` issue whose fix changes a file
    or rule that one of this milestone's issues changes (judged from the two issues' text until
    #308's `area:` labels exist) moves into the milestone, with step 2's `Pulled from Ops:`
-   comment naming the overlapping issue. This pull happens only here, when the milestone is
-   planned, never on a later run.
+   comment naming the overlapping issue. This pull happens only while the milestone has no plan
+   on main (the `planner due` case above, which a Planner PR still open past midnight repeats,
+   step 6); once a plan for it is on main, no run pulls by overlap.
 4. **Milestone backlog empty** (no open issue in it). The `mN` tag can't be deleted (the guard
    forbids delete pushes), so the close runs in stages, each in its own session (#508): the
    checklist, the owner notice and its window, the close. **M0** (owner, #508) runs only item
