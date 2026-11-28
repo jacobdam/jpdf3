@@ -197,8 +197,8 @@ inherits (the judge's policy check requires `[lints] workspace = true` in each),
 arithmetic the lint flags, in any target of any member (libraries, binaries, unit and
 integration tests, `xtask`, the tools), fails CI's
 `cargo clippy --workspace --all-targets --locked -- -D warnings` (not `cargo build`). The
-lint skips what it can evaluate as a constant (`NOW - 60`) and some expressions it treats as
-in range (`300 + i` over `0..9` in `xtask/tests/next_session.rs` passes it). The crate roots
+lint skips what it can evaluate as a constant (`NOW - 60`) and some non-constant
+expressions (`300 + i` over `0..9` in `xtask/tests/next_session.rs` passes it). The crate roots
 of `jpdf-syntax`, `jpdf-cos`, `jpdf-engine` and `jpdf-cli` also keep their own `#![deny]`
 from #77. The fuzz project (`fuzz/`) is its own
 workspace and is not covered. Integers are exactly `i64::MIN..=i64::MAX` (§7.3.3 leaves the range

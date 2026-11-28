@@ -999,7 +999,8 @@ mod tests {
                                     return self.limit(out);
                                 }
                                 for _ in 0..len {
-                                    // dist ≤ out.len() (checked above) and dist ≥ 1 (DIST_BASE starts at 1).
+                                    // dist ≤ out.len() (checked above) and dist ≥ 1
+                                    // (DIST_BASE starts at 1).
                                     out.push(out[out.len().saturating_sub(dist)]);
                                 }
                             }
