@@ -141,9 +141,9 @@ candidate breaks. A command that can't start (`cargo deny` or `cargo vet` not in
 wrong `--python`) fails its own step only (and, for `vet`, `build-time` when the graph has a
 build-time package).
 
-`deny` also adds, whatever its result, one note per package whose `license` expression contains
-`OFL-1.1` in any ASCII case: `note: <name>@<version> is licensed <expression>: OFL-1.1 is allowed for fonts only
-(CONSTITUTION 10); check it by hand`. `deny.toml` allows OFL-1.1 for every crate, since it
+`deny` also adds, whatever its result, one note per package whose `license` expression
+contains `OFL-1.1` in any ASCII case: `note: <name>@<version> is licensed <expression>:
+OFL-1.1 is allowed for fonts only (CONSTITUTION 10); check it by hand`. `deny.toml` allows OFL-1.1 for every crate, since it
 can't tell a font from code, so a note never changes the outcome. The note is best effort: a
 crate with only a `license-file` (no `license` field) that cargo-deny identifies as OFL-1.1
 from the file's text gets none.
@@ -281,7 +281,7 @@ imported audit files. No budget is enforced.
 - `commands_are_pinned`: every command's program and arguments.
 - `metadata_lists_third_party_packages`, `metadata_shapes_it_does_not_know_are_errors`.
 - `deny_pass_and_rejection`, `deny_without_a_matching_summary_fails`,
-  `deny_notes_ofl_licenses_whatever_the_result` (an `OFL-1.0` near miss gets no note),
+  `deny_notes_ofl_licenses_whatever_the_result` (a lowercase `ofl-1.1` gets one, an `OFL-1.0` near miss none),
   `judge_scan_results`.
 - `vet_pass_and_rejection`, `vet_results_it_cannot_read_fail`, `build_time_needs_an_audit`
   (the same name at another version and a non-build-time unvetted crate as near misses).
