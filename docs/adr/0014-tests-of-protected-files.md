@@ -70,12 +70,20 @@ what they run against, on which platforms, and who runs them.
 1. Every test of a protected file is an entry in one manifest,
    `ops/protected-tests/manifest.toml`, next to the scripts it lists, under
    `ops/protected-tests/`. An entry names its script, the protected paths it tests (its
-   targets), the platforms it must pass on and the tools it needs.
-2. An entry runs against its targets at their protected paths on the checked-out tree. It runs
-   against a copy only when the runner is told to put that copy in place of the target.
+   targets, each matching a pattern of `ops/judge/protected.txt` and existing on the tree), the
+   platforms it must pass on, the tools it needs and its helper files (fake programs and
+   fixtures such as `fakebin/`).
+2. An entry runs against its targets at their protected paths on the checked-out tree: the
+   runner passes each target path to the script as its argument. To test a copy (a proposal's
+   version), the runner passes the copy's path instead; it never writes, moves or replaces a
+   file at a protected path (CONSTITUTION 12), so the protected file's bytes are the same after
+   any run.
 3. An entry's platforms include every platform where a target runs: macOS for `ops/driver/`
    (the Mac mini, AUTOMATION.md), Linux for a `.github/workflows/` file whose job runs on
-   `ubuntu-*`. An entry may list more.
+   `ubuntu-*`. An entry may list more. A platform means every machine that runs the entry for
+   it: macOS is both the Mac mini (sessions) and GitHub's `macos-15` runner (`ci macos`), Linux
+   is the `ubuntu-*` runner (`ci linux`); an entry finds its tools on each of them (no
+   hard-coded `/opt/homebrew/bin/python3.14`) or fails there.
 4. Every entry passes on main on each of its platforms. A tool it needs that is missing fails
    the entry; it never skips it.
 5. Once a proposal is applied, its `ops/proposals/<topic>/` directory holds no test and no copy
@@ -90,10 +98,14 @@ directories, and run the runner on each platform.
    files.
 2. **A lint or gate: used.** `cargo xtask protected-tests` (task 2) will read the manifest, run
    every entry for the host platform against the live targets, and fail on: a failing entry; a
-   missing tool; a script under `ops/protected-tests/` that no entry lists; an entry whose
-   platforms break invariant 3 (a table in the runner maps target prefixes to their platforms).
-   `cargo xtask ci linux` will run the Linux entries on every PR and `cargo xtask ci macos` the
-   macOS entries on main and nightly (project-macos skips PRs), task 3. Both are `cargo xtask`
+   missing tool; a file under `ops/protected-tests/` that no entry lists as its script or a
+   helper; a target that doesn't exist or matches no pattern of `ops/judge/protected.txt` (so an
+   entry can't point at a proposal's copy); a target that matches no row of the runner's
+   platform table (a table maps target prefixes to their platforms), and an entry whose
+   platforms break invariant 3.
+   `cargo xtask ci linux` will run the Linux entries on every PR (task 3) and
+   `cargo xtask ci macos` the macOS entries on main and nightly (project-macos skips PRs;
+   task 4). Both are `cargo xtask`
    code, not protected, so no proposal is needed. Invariant 5 has no gate: "applied" is the
    owner's merge, which the runner can't tell from the tree.
 3. **A measurement: used, in that the gate is one.** It will run each test against the file
@@ -101,25 +113,38 @@ directories, and run the runner on each platform.
 4. **Reviewer vigilance: used** for what the gate can't see: P5 in docs/PRINCIPLES.md (a test
    that ignores its target argument, invariant 5, a proposal's own test run).
 
+**Lane.** A PR that changes `ops/protected-tests/` is in the strict lane, as one that changes
+`ops/proposals/` is today (ADR 0012 §1): these tests pin the owner feed and the driver, so
+dropping a case from one is a strict-list change. Moving the tests out of `ops/proposals/`
+would otherwise take them off the strict list (`ops/` makes the new directory `process`), so
+task 2 adds `ops/protected-tests/` to the strict list in ops/TICK.md §4 and ADR 0012 §1 in the
+same PR that creates the directory.
+
 **Proposals from now on.** A proposal that changes a protected file runs the runner with its
-copy in place of the target before round 1 and states the result in its PR, so a change that
+copy's path in place of the target's before round 1 and states the result in its PR, so a change that
 breaks another proposal's test is seen then. A test it adds or changes for the new behavior
 lives in its `ops/proposals/<topic>/` directory until the owner applies it, because the same
 test in `ops/protected-tests/` would fail against today's file and turn CI red; the
 proposal's apply steps move it into `ops/protected-tests/` and its manifest in the same signed
-commit that changes the protected file. The runner will be able to run such a test in place of the
-manifest's copy, without changing `ops/protected-tests/` (task 2).
+commit that changes the protected file. The runner will be able to run such a test (by its path
+in the proposal's directory) in place of the manifest's script, without changing
+`ops/protected-tests/` (task 2).
 
 ## Verification
 - The runner's own tests (task 2): a fixture manifest with an entry that passes, one that
-  fails, one whose tool is missing (fails, not skipped), a script no entry lists (fails), a
-  driver target listed only for Linux (fails), and a copy substitution that is seen by the
-  entry (a target copy that fails the fixture test turns the run red), each with its near
-  miss.
-- The first real run (task 2's PR): every moved test passes on macOS against main's files, with
-  #366 and task 1 fixed first; the PR lists each entry's result.
-- CI (task 3): the Linux entries' step shows in `ci linux`'s log on a PR; a hand-broken Linux
-  entry turns the step red in the task's PR description (shown, then reverted).
+  fails, one whose tool is missing (fails, not skipped), a file no entry lists as script or
+  helper (fails), a target that doesn't exist, one outside `ops/judge/protected.txt` (a
+  proposal's copy) and one no platform row matches (each fails), a driver target listed only
+  for Linux (fails), and a copy substitution that is seen by the entry (a copy that fails the
+  fixture test turns the run red) while the target file's bytes are unchanged after the run,
+  each with its near miss.
+- The first real run (task 2's PR): every moved test passes against main's files on every
+  platform it lists (macOS on the Mac mini; Linux in the PR's `ci linux` run or a local Linux
+  container), with #366 and task 1 fixed first; the PR lists each entry's result per platform.
+- CI (tasks 3 and 4): the entries' step shows in `ci linux`'s log on a PR and in `ci macos`'s on
+  the hosted runner (task 4 runs it there with `gh workflow run ci.yml --ref <branch>` before
+  merging); a hand-broken entry turns the step red in each task's PR description (shown, then
+  reverted).
 
 **What broken implementation still passes:**
 - a script that ignores its target argument and tests something else (the reviewer reads the
@@ -129,7 +154,7 @@ manifest's copy, without changing `ops/protected-tests/` (task 2).
   marker) and its review cover this, not the runner;
 - a PR that breaks a macOS entry: PR CI runs only Linux entries, so it merges and main's
   project-macos turns red, which rule b picks up. A session's local checks run the runner on
-  the Mac mini (task 4), which narrows that gap;
+  the Mac mini (task 5), which narrows that gap;
 - an applied proposal whose directory still holds a test (invariant 5): reviewers and the next
   audit's housekeeping (ops/TICK.md §6) see it.
 
@@ -146,10 +171,11 @@ manifest's copy, without changing `ops/protected-tests/` (task 2).
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Depends on |
 |---|---|---|
-| 1 | `ops/proposals/codex-review-isolation/test-codex.sh` against the live `ops/driver/codex-review.sh`: case 3 aborts (`HB_READ[@]: unbound variable`) since PR #291 changed the `FS_POLICY` block. Make every case pass on macOS with the live file as its argument; a case that only repeats `codex-homebrew-read/test-policy.sh` may be removed, with the reason in the PR (CONSTITUTION 14). | #420 |
-| 2 | `cargo xtask protected-tests` (specs/tooling/protected-tests.md): the manifest, the runner (on `xtask/src/steps.rs`, one step per entry, P4), the copy substitution for targets and tests, and the gate checks of Enforcement level 2. Move the eight tests of the table above (and `fakebin/`) into `ops/protected-tests/` with the live targets as their defaults, and give `ops/protected-tests/` an owner in `ops/areas.toml` (`process`). The PR lists each entry's result on macOS. | #420, #366, task 1 |
-| 3 | CI: `cargo xtask ci linux` moves onto `xtask/src/steps.rs` (ADR 0013, Requirements on future callers: the next PR that adds a check) with a protected-tests step for the Linux entries; `cargo xtask ci macos` runs the macOS entries as a step of its own after the app tests. | task 2 |
-| 4 | Process text: `ops/proposals/README.md` gets the proposal life cycle (the runner with the copy before round 1; new tests in the proposal's directory; apply steps that move them); ops/TICK.md §3's local checks run `cargo xtask protected-tests` for a PR that changes `ops/protected-tests/` or `ops/proposals/`; the applied proposals' Status lines name their applying commit and their entries; their whole-file copies (`driver-keep-open-worktrees/driver.sh`, `driver-portable-df/driver.sh`, `owner-comment-tracking/owner-issues.sh`, `hold-automerge/owner-commands.yml`) are deleted. | task 2 |
+| 1 | `ops/proposals/codex-review-isolation/test-codex.sh` against the live `ops/driver/codex-review.sh`: case 3 aborts (`HB_READ[@]: unbound variable`) since PR #291 changed the `FS_POLICY` block, and with the extraction fixed it would still fail, because it asserts `/opt/homebrew` is granted and the policy has 8 keys, which PR #291 changed on purpose (9 `HB_READ` directories, no `/opt/homebrew`). Make every case pass on macOS with the live file as its argument; each changed assertion, and any case removed because it only repeats `codex-homebrew-read/test-policy.sh`, is explained in the PR (CONSTITUTION 14). | #420 |
+| 2 | `cargo xtask protected-tests` (specs/tooling/protected-tests.md): the manifest, the runner (on `xtask/src/steps.rs`, one step per entry, P4), the copy substitution for targets and tests, and the gate checks of Enforcement level 2. Move the eight tests of the table above (and `fakebin/`, as helpers) into `ops/protected-tests/` with the live targets as their defaults; tests that hard-code a host path (the Homebrew Python) find their tools instead. Add `ops/protected-tests/` to the strict list in ops/TICK.md §4 and ADR 0012 §1 (Lane, above). The PR lists each entry's result on every platform it lists. | #420, #366, task 1 |
+| 3 | CI, Linux: `cargo xtask ci linux` moves onto `xtask/src/steps.rs` (ADR 0013, Requirements on future callers: the next PR that adds a check) with a protected-tests step for the Linux entries. | task 2 |
+| 4 | CI, macOS: `cargo xtask ci macos` moves onto `xtask/src/steps.rs` too (`macos::ci` already runs its checks after an earlier failure, so a third check meets P4's trigger) with a protected-tests step for the macOS entries after the app tests; checked on the hosted runner before merging. | task 2 |
+| 5 | Process text: `ops/proposals/README.md` gets the proposal life cycle (the runner with the copy before round 1; new tests in the proposal's directory; apply steps that move them); ops/TICK.md §3's local checks run `cargo xtask protected-tests` for a PR that changes `ops/protected-tests/` or `ops/proposals/`; the applied proposals' Status lines name their applying commit and their entries; their whole-file copies (`driver-keep-open-worktrees/driver.sh`, `driver-portable-df/driver.sh`, `owner-comment-tracking/owner-issues.sh`, `hold-automerge/owner-commands.yml`) are deleted. | task 2 |
 
 Each task issue carries `Designed in: #420` and `Depends on:` lines (ops/TICK.md §8 step 3).
 
@@ -157,20 +183,36 @@ Each task issue carries `Designed in: #420` and `Depends on:` lines (ops/TICK.md
 P5 in docs/PRINCIPLES.md (added by this ADR):
 
 > **P5. A protected file's tests run against the file, on its platform, from one manifest**
-> - **Invariant:** every test of a protected file is an entry in
->   `ops/protected-tests/manifest.toml` with its targets, platforms and tools; it runs against
->   its targets at their protected paths unless the runner is told to put a copy in their place;
->   its platforms include every platform where a target runs (macOS for `ops/driver/`, Linux for
->   a workflow job on `ubuntu-*`); it passes on main there, and a missing tool fails it. An
->   applied proposal's `ops/proposals/<topic>/` directory holds no test and no copy of a
->   protected file.
-
-Paths: `ops/protected-tests/`, `ops/proposals/`, the runner's future module
-(`xtask/src/protected_tests*`).
+> - **Invariant:** every test of a protected file (CONSTITUTION 12) is an entry in
+>   `ops/protected-tests/manifest.toml` with its script, targets, platforms, tools and helper
+>   files; each target matches `ops/judge/protected.txt` and exists. The runner passes each
+>   target's protected path to the script, or a copy's path when told to test a copy, and never
+>   writes a file at a protected path. An entry's platforms include every platform where a
+>   target runs (macOS for `ops/driver/`: the Mac mini and the hosted `macos-15` runner; Linux
+>   for a workflow job on `ubuntu-*`); it passes on main on each, and a missing tool fails it. A
+>   PR that changes `ops/protected-tests/` is in the strict lane. An applied proposal's
+>   `ops/proposals/<topic>/` directory holds no test and no copy of a protected file.
+> - **Decided in:** ADR 0014.
+> - **Enforced by:** reviewer vigilance until ADR 0014's tasks land: today the tests still sit in
+>   the applied proposals' directories and nothing runs them. Then `cargo xtask protected-tests`
+>   (task 2: a failing entry, a missing tool, an unlisted file, a missing or unprotected target,
+>   a target or platform the platform table rejects) in `cargo xtask ci linux` for the Linux
+>   entries (task 3) and `cargo xtask ci macos` for the macOS ones (task 4). "Applied" has no
+>   gate.
+> - **Reviewers check:** until ADR 0014 task 2 has merged, only that a changed test of a
+>   protected file still takes its target as an argument and passes on the target's platform.
+>   From then on: a new or changed test of a protected file has a manifest entry with the
+>   target's platforms and helpers, and takes the protected path from the runner; the runner
+>   never writes a protected path. From ADR 0014 task 5 on (the proposal life cycle): a proposal
+>   PR ran the runner with its copy's path and says which entries fail on purpose; a test it
+>   changes stays in its own directory and its apply steps move it into `ops/protected-tests/`
+>   in the same signed commit; an applied proposal's directory keeps only its `.md` and `.diff`
+>   records.
+> - **Paths:** `ops/protected-tests/`, `ops/proposals/`, `xtask/src/protected_tests*`.
 
 ## Requirements on future callers
-- A new proposal for a protected file runs `cargo xtask protected-tests` with its copy in place
-  of the target before round 1, and its PR says which entries pass and which fail on purpose
+- A new proposal for a protected file runs `cargo xtask protected-tests` with its copy's path in
+  place of the target's before round 1, and its PR says which entries pass and which fail on purpose
   (a case that pins the behavior the proposal changes), with the replacement test in its
   directory.
 - A proposal's apply steps (the owner's signed commit) move its new or changed tests into
