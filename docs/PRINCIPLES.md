@@ -129,10 +129,12 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   journal files dated today (UTC) hold a `- Session: planner…` record, and on a day that
   already has one, only at step 11 (nothing before it applies) and only when an issue is
   *new*: open, in the current milestone, without `ready`, a skip label, `in-progress`,
-  `design`, `design-pending` or `design-product`, not in flight, and created at or after the
+  `design`, `design-pending` or `design-product`, not in flight, with every issue on its
+  `Depends on:` line closed (owner issue #478), and created at or after the
   end of the minute in the newest such record's file name (`HHMM-`; a name without a valid
   time reads as the end of its day).
-- **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound).
+- **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound); the dependency term by
+  owner issue #478.
 - **Enforced by:** `cargo xtask next-session` (xtask/src/next_session.rs) and its `--from`
   fixtures (xtask/tests/next_session.rs), from ADR 0015 task 1 on (#440). That a
   session filing Worker issues leaves `ready` off is reviewer vigilance.
