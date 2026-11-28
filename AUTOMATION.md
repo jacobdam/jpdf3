@@ -79,7 +79,8 @@ GitHub (public repo jacobdam/jpdf3)
       real failure → fix; red for 3 sessions → revert the culprit merge
    c. own open PR failing CI or review → fix (max 3 attempts per PR, then §8)
    d. `crash` issues, `security` issues labeled `sev:critical` / `sev:high` (ADR 0009;
-      medium/low wait in M10 for the release gate)
+      medium/low wait in M10 for the release gate; a latent high, whose path doesn't exist
+      yet, waits `deferred` in the milestone where the path appears)
    e. ratchet or nightly regressions, `flaky` tests
    f. leftover branch from a dead session → resume or discard
    g. every 10th product merge or 7 days → AUDIT session instead (§10)

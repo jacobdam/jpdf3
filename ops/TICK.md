@@ -203,7 +203,11 @@ d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`*
    `owner-todo`, §0). Every
    `security` issue carries one `sev:*` label (rubric: `docs/adr/0009-security-severity-and-release-gates.md`).
    When you file one, set it, and put `sev:medium` / `sev:low` issues in milestone M10: they
-   wait for the release gate and are not picked before then. An unlabeled `security` issue →
+   wait for the release gate and are not picked before then. A **latent** `sev:critical` /
+   `sev:high` issue, one whose failure path doesn't exist on main yet, goes in the milestone
+   where the path appears (never later than M4), labeled `deferred` with its `Undefer when:`
+   line (§5), and the filing comment names the missing path; when unsure, the current milestone
+   without `deferred` (ADR 0009, Latent highs). An unlabeled `security` issue →
    label it first (higher level when unsure).
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
 f. **A leftover branch/worktree from a dead session** → resume it if valuable, else delete it.
@@ -597,7 +601,8 @@ session.
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
   unless (1) it blocks the current milestone's gate or last step, or the next milestone's first
   issues; (2) it is a wrong pick or a failure of `cargo xtask next-session` seen in live use;
-  (3) it is `crash` or `security` (rule d and ADR 0009 as they are); or (4) it is about a
+  (3) it is `crash` or `security` (rule d and ADR 0009; a latent high goes in the milestone
+  where its path appears, `deferred`, rule d's latent-high line); or (4) it is about a
   strict-list subject (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge, the
   review rules). Until #308's `area:` labels exist, judge "process-area" by the files the issue
   would change. If there is no `Ops` milestone, create it first (the command in §9 step 2); if
