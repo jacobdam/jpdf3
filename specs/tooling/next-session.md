@@ -120,7 +120,10 @@ runs a UTC day.
 - **Common terms.**
   - *Tagged:* text whose body starts, after leading whitespace, with `🤖 jpdf-agent` (agent
     text; CONSTITUTION 1). An owner reply is a comment by `jacobdam` (the shared account).
-  - *Skip labels:* `owner-todo` (the owner's turn), `blocked`, `deferred`.
+  - *Skip labels:* `owner-todo` (the owner's turn), `blocked`, `deferred`. A `deferred`
+    issue carries an `Undefer when:` condition in the comment that set the label, and the
+    Planner lifts it when the condition holds (ops/TICK.md §5 and §9 step 1a, #461); the
+    scheduler doesn't read the condition and keeps skipping the label until it is removed.
   - *Agent PRs:* the entries of `prs.json` whose body is tagged. `--author @me` is the shared
     account, so untagged PRs there are the owner's and are ignored everywhere below.
   - *Linked issue* of a PR: the first `Closes #N` in its body with digits after the `#` (a

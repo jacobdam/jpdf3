@@ -577,6 +577,19 @@ session.
   an issue waits, a standing decision) goes on the issue it is about as a comment (file one,
   as Discoveries below says, if there is none; one the owner can act on gets `owner-todo`, §0);
   a lasting decision goes into PLAN.md or an ADR.
+- **Deferring an issue** (owner, #461): `deferred` is a skip label (the scheduler and §9 step 2
+  pass over it), so whoever adds it says when it comes off. The tagged comment that adds the
+  label (§9 step 4a's, or any other session's) ends with exactly one line
+  `Undefer when: <condition>`, in one of these forms:
+  - `#A closed`, `#A and #B closed` or `#A or #B closed` (issue numbers);
+  - `milestone Mn is current` (`Mn` is the lowest open `M<n>`, as rule i reads it);
+  - free text, which the Planner judges (`the PR that adds the image-decode caller`,
+    `a retro finds an issue group the Planner missed`).
+
+  When the issue should go somewhere other than back to its milestone once lifted (the design
+  queue, say), the comment says so above that line. A review deferral (`deferred: #N`, §4
+  step 4) files an issue without `ready`, not with this label, and needs no line. The Planner
+  re-checks every condition (§9 step 1a); the scheduler doesn't read it.
 - **Discoveries** → new issues (`discovery` + milestone), without `ready` (the Planner adds it, §9).
   A discovery, deferral or follow-up about process-area work (`ops/areas.toml`'s `process` and
   `records` areas, any lane) goes in the milestone **`Ops`** (ADR 0012 §2), not the current one,
@@ -633,7 +646,9 @@ session.
    estimate, judge metric trends, UX scores. Review convergence (ADR 0010): review rounds per PR
    (median, share that reached the cap or the final check), regrades per PR and how many the
    next reviewer overturned; and re-read every issue deferred from a review since the last retro:
-   count the ones that were real bugs that should have blocked their merge.
+   count the ones that were real bugs that should have blocked their merge. For each issue under
+   `## Deferred without a condition` in `ops/QUEUE.md` (§9 step 1a), post its `Undefer when:`
+   line (§5) or, if its reason no longer holds, remove `deferred`, each with a comment.
    `git fetch`, then `cargo xtask metrics --index <main checkout>/ops/logs/index.tsv` prints the
    throughput, review-round, stuck and audit/retro-lag numbers (specs/tooling/metrics.md); count
    the rest by hand. Refresh the metrics dashboard's snapshot in the retro PR:
@@ -822,7 +837,7 @@ specs/tooling/design-technical.md.
 ## 9. PLANNER session (ADR 0011 §1; specs/tooling/next-session.md steps 8 and 11)
 Picked as `planner due` (step 8), `planner` (step 11) or `planner new-issues` (step 11, a rerun
 on a day the Planner already ran, for issues filed after its newest run, ADR 0015; the `Rule:`
-line lists them, and steps 2 and 2b are what they need). The Planner makes the current
+line lists them, and steps 1a, 2 and 2b are what they need). The Planner makes the current
 milestone's backlog workable; it is **the only gate into `ready`** besides the owner. Other
 sessions file Worker issues (a split's parts, review deferrals, discoveries, a design ADR's
 tasks) without `ready`, and the next Planner run adds it. Issues for the design queue (`design`
@@ -832,6 +847,29 @@ gate them.
 1. **Load:** `ops/QUEUE.md`, the current milestone's open issues
    (`gh issue list --state open --milestone <Mn> --limit 200 --json number,title,labels,body`),
    PLAN.md §8 (the milestone's row) and `cargo xtask metrics`. No code.
+1a. **Deferrals** (owner, #461; every run, reruns included): load every open issue labeled
+   `deferred`, in any milestone or none
+   (`gh issue list --state open --label deferred --limit 200 --json number,title,labels,milestone`),
+   and read the `Undefer when:` line of each one's newest tagged comment that has one (§5,
+   Deferring an issue). The condition holds when:
+   - `#A closed`: GitHub shows #A closed (`gh issue view A --json state`); with `and`, both
+     are closed; with `or`, either is;
+   - `milestone Mn is current`: `Mn` is the lowest open `M<n>`;
+   - free text: your judgement from GitHub and main; when unsure, it doesn't hold. A
+     condition that waits for the owner (an owner issue's "the owner decides") holds only
+     once the owner says so in an untagged comment or removes the label.
+
+   When it holds, remove `deferred` and comment
+   `🤖 jpdf-agent Undeferred: <the condition> holds (<the closing issue, PR or milestone>)`.
+   The issue then goes where its deferral comment says: a `crash` issue, or a `security` one
+   labeled `sev:critical` or `sev:high`, is rule d's whatever its milestone (ADR 0009); one
+   that waits to be queued for design also gets `design` and `ready` in the same session (§8
+   takes any milestone, none included, so it needs no milestone); any other goes through step
+   2 when it is in the current milestone, else waits for its own. With no `Undefer when:` line,
+   post a tagged comment that ends with one, taken from the deferral comment's text (or from
+   the issue body when the label came without a comment). If that text names no condition,
+   leave the label and list the issue in `ops/QUEUE.md` under `## Deferred without a
+   condition` for the next retro (§7 step 1).
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
    scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
@@ -881,12 +919,15 @@ gate them.
    row) and the journeys, each sized by §0 and given its product `area:` label from
    `ops/areas.toml` (until #308 creates the labels there are none, and step 10 doesn't reorder),
    and ready the ones step 2 allows. You may move process issues to a later milestone or label them `deferred`,
-   with a comment saying why; never close one for the budget.
+   with a comment saying why that ends with its `Undefer when:` line (§5); never close one for
+   the budget.
 5. **Write `ops/QUEUE.md`** from what GitHub shows after steps 2–4a: the `Milestone: <Mn>` line
    (the scheduler's step 8 reads it from main), a `Planned:` line with the date, the ready list
    in step 10's order (lowest number first, dependencies closed; product issues first while the
    work mix is below 70%), the issues waiting on a dependency, the ones not workable and why, the
-   critical path to the milestone's gate, the design-ahead list and the work mix (the brief's
+   critical path to the milestone's gate, the design-ahead list, the open `deferred` issues
+   with their `Undefer when:` conditions (step 1a's `## Deferred without a condition` section
+   when it lists any), and the work mix (the brief's
    `work mix:` note, as printed, in a `## Work mix` section). The labels stay the source of truth, and step 10
    picks from them. Change the file (and its `Planned:` date) only when its content changes.
 6. **Record:** the journal entry (`- Session: <first line>`, such as `- Session: planner
