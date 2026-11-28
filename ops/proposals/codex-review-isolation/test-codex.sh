@@ -15,7 +15,8 @@ not() { ! "$@"; }
 # extract <first line prefix> <last line prefix>: the lines from the first to the last, inclusive.
 # Both markers must be found: an end marker that a later change lost would otherwise eval the rest
 # of the file (as codex-homebrew-read/test-policy.sh's R1.3). awk exits 3 at the end of the file
-# without the end marker.
+# without the end marker. `exit 2` leaves only the $(...) around it, so every caller assigns the
+# block to a variable with `|| exit 2` before using it: a lost marker stops the whole run.
 extract() {
   local t; t="$(awk -v a="$1" -v b="$2" 'index($0,a)==1{on=1} on{print} on&&index($0,b)==1{done=1; exit}
     END{exit done?0:3}' "$S")" || { echo "markers not found in $S: $1 ... $2" >&2; exit 2; }
@@ -24,7 +25,8 @@ extract() {
 }
 
 # 1. rmtree (AS.55): a 0444 file hard-linked from outside keeps its mode; read-only dirs go away.
-eval "$(extract 'rmtree() {' '}')"
+RMTREE="$(extract 'rmtree() {' '}')" || exit 2
+eval "$RMTREE"
 mkdir -p t/sub; echo x > outside; chmod 444 outside; ln outside t/sub/link; chmod 555 t/sub t
 rmtree t
 ok test ! -e t
@@ -33,7 +35,7 @@ mkdir -p t2; ln outside t2/link; chmod -R u+w t2; rm -rf t2
 ok test "$(stat -f %Lp outside)" = 644   # the old pass on the same layout: the AS.55 bug
 
 # 2. The leftover sweep (R1.1): only old .codex-review-tmp.* entries go, whatever their names.
-SWEEP="$(extract 'while IFS= read -r -d '"''"' d; do rmtree "$d"; done' '  < <(find . -maxdepth 1')"
+SWEEP="$(extract 'while IFS= read -r -d '"''"' d; do rmtree "$d"; done' '  < <(find . -maxdepth 1')" || exit 2
 mkdir sweep && (
   cd sweep || exit 1
   mkdir victim keepdir '.codex-review-tmp.x *' '.codex-review-tmp.x victim' .codex-review-tmp.new
@@ -50,23 +52,24 @@ mkdir sweep && (
 # lost marker stops the run here instead of evaluating the rest of the file.
 POLICY_BLOCK="$(extract 'q() {' 'FS_POLICY+=" }"')" || exit 2
 FS_POLICY="$(HOME='/Users/a "b"\c'; eval "$POLICY_BLOCK"; printf '%s' "$FS_POLICY")"
-# The exact Homebrew grant list is codex-homebrew-read/test-policy.sh's case; this one checks the
-# quoting: all four $HOME grants under the quoted HOME, the rest under the Homebrew prefix by name.
+# The exact Homebrew grant list is codex-homebrew-read/test-policy.sh's case, so run that test on
+# the same target too; this one checks the quoting: all four $HOME grants under the quoted HOME,
+# the rest normalized paths strictly inside the Homebrew prefix (no grant on the prefix itself).
 ok /opt/homebrew/bin/python3.14 -I -c '
-import sys, tomllib
+import os, sys, tomllib
 t = tomllib.loads("x = " + sys.argv[1])["x"]
 h = "/Users/a \"b\"\\c/"
 assert t[":root"] == "deny" and t[":minimal"] == "read" and t[":slash_tmp"] == "deny", t
 home = {h + p for p in (".rustup/toolchains", ".rustup/settings.toml", ".cargo/bin", ".cargo/registry")}
 assert all(t.get(k) == "read" for k in home), t
-assert all(v == "read" and k.startswith("/opt/homebrew/") for k, v in t.items()
-           if not k.startswith(":") and k not in home), t
+assert all(v == "read" and k.startswith("/opt/homebrew/") and os.path.normpath(k) == k
+           for k, v in t.items() if not k.startswith(":") and k not in home), t
 assert "/opt/homebrew" not in t and len(t) == 3 + len(home) + 9, t
 assert not any("credentials" in k or ".codex" in k or ".ssh" in k for k in t), t
 ' "$FS_POLICY"
 
 # 4. Toolchain file (CX.3, R1.2): required, strict, and its channel goes into RUSTUP_TOOLCHAIN.
-TC="$(extract '[[ ! -e "$SRC/rust-toolchain" && ! -L' 'BASE_ENV+=(RUSTUP_TOOLCHAIN')"
+TC="$(extract '[[ ! -e "$SRC/rust-toolchain" && ! -L' 'BASE_ENV+=(RUSTUP_TOOLCHAIN')" || exit 2
 tc() { ( SRC="$1"; BASE_ENV=(); fail() { exit 1; }; eval "$TC"; printf '%s\n' "${BASE_ENV[*]}" ) 2>/dev/null; }
 tc_ok() { [[ "$(tc "$1")" == "RUSTUP_TOOLCHAIN=$2" ]]; }
 mkdir -p r1 r2 r3 r4 r5 r6 r7 r8 r9
@@ -85,7 +88,7 @@ ok not tc_ok r9 ""                            # no toolchain file at all (R1.2)
 ok tc_ok "$REPO" "$(sed -nE 's/^channel = "(.*)"$/\1/p' "$REPO/rust-toolchain.toml")"   # the real file
 
 # 5. .cargo above the export (CX.3, R1.3): only the worktree, the main checkout and $HOME.
-WALK="$(extract 'MAIN="$(common "$TOP")"' 'done')"
+WALK="$(extract 'MAIN="$(common "$TOP")"' 'done')" || exit 2
 walk() {  # walk <dir with a .cargo, or ""> [file to create in it]: 0 if the walk accepts the layout
   # The layout sits inside this repo, whose real ancestors have .cargo directories, so above $L the
   # walk jumps straight to / (which has none).
@@ -107,7 +110,8 @@ ok not walk "$L/main/.claude/worktrees/wt/target"; ok not walk "$L/main/.claude/
 ok not walk "$L"
 
 # 6. symlink pre-check (CX.2): a repo with a symlinked directory is refused before extraction.
-pre() { ( XGIT=(git); TOP="$1"; fail() { exit 1; }; eval "$(extract '"${XGIT[@]}" -C "$TOP" ls-tree' '  || fail "HEAD contains')" ) 2>/dev/null; }
+PRE="$(extract '"${XGIT[@]}" -C "$TOP" ls-tree' '  || fail "HEAD contains')" || exit 2
+pre() { ( XGIT=(git); TOP="$1"; fail() { exit 1; }; eval "$PRE" ) 2>/dev/null; }
 g() { git -C "$1" -c user.name=x -c user.email=x@x "${@:2}"; }
 mkdir -p plain linked; g plain init -q; echo a > plain/a; g plain add -A; g plain commit -qm x
 g linked init -q; mkdir linked/ops; ln -s ../../elsewhere linked/ops/judge; echo a > linked/a
@@ -116,7 +120,8 @@ mkdir empty; g empty init -q
 ok pre plain; ok not pre linked; ok not pre empty
 
 # 7. Output check (CX.16, R1.4): exactly one JSON value of the schema's shape.
-eval "$(extract "OUT_CHECK='" "    and ([.file, .title, .detail, .fix]")"
+OC_BLOCK="$(extract "OUT_CHECK='" "    and ([.file, .title, .detail, .fix]")" || exit 2
+eval "$OC_BLOCK"
 oc() { printf '%s' "$1" | jq -s -e "$OUT_CHECK" >/dev/null 2>&1; }
 f='{"severity":"major","file":"a","line":3,"title":"t","detail":"d","fix":"f"}'
 ok oc '{"verdict":"v","findings":[]}'
@@ -133,7 +138,7 @@ for bad in '{"verdict":"v","findings":[null]}' '{"verdict":"v","findings":[{}]}'
   ok not oc "$bad"
 done
 # and what gets written is that one object, not a stream
-WRITE="$(extract 'T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq -s' 'T="$(mktemp')"
+WRITE="$(extract 'T="$(mktemp .codex-review-tmp.out.XXXXXX)" && jq -s' 'T="$(mktemp')" || exit 2
 [[ "$WRITE" == *"jq -s '.[0] + {status:\"ok\",reason:\"\"}'"* ]]; ok test $? -eq 0
 
 echo "pass=$pass fail=$failn"; (( failn == 0 ))
