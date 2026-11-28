@@ -301,7 +301,7 @@ fn long_distances() -> Vector {
     for (&base, &extra) in DIST_BASE.iter().zip(&DIST_EXTRA) {
         let top = base.saturating_add((1usize << extra).saturating_sub(1));
         for dist in [base, top] {
-            let len_code = step % LEN_BASE.len();
+            let len_code = step.checked_rem(LEN_BASE.len()).unwrap_or(0);
             let len_extra = if step % 2 == 1 {
                 (1u32 << LEN_EXTRA.get(len_code).copied().unwrap_or(0)).saturating_sub(1)
             } else {
@@ -595,7 +595,7 @@ impl BitWriter {
 
     fn bit(&mut self, bit: u32) {
         self.acc |= bit << self.used;
-        self.used += 1;
+        self.used = self.used.saturating_add(1);
         if self.used == 8 {
             self.out
                 .push(self.acc.to_le_bytes().first().copied().unwrap_or(0));
@@ -833,7 +833,7 @@ mod tests {
         fn bit(&mut self) -> Option<u32> {
             let byte = *self.data.get(self.pos / 8)?;
             let bit = u32::from(byte >> (self.pos % 8) & 1);
-            self.pos += 1;
+            self.pos = self.pos.saturating_add(1);
             Some(bit)
         }
         /// `n` bits, least significant first.
@@ -848,13 +848,13 @@ mod tests {
         fn fixed_symbol(&mut self) -> Option<u32> {
             let c7 = self.msb(7)?;
             if c7 <= 0b001_0111 {
-                return Some(256 + c7);
+                return c7.checked_add(256);
             }
             let c8 = c7 << 1 | self.bit()?;
             match c8 {
-                0x30..=0xbf => Some(c8 - 0x30),
-                0xc0..=0xc7 => Some(280 + c8 - 0xc0),
-                _ => Some(144 + (c8 << 1 | self.bit()?) - 0x190),
+                0x30..=0xbf => c8.checked_sub(0x30),
+                0xc0..=0xc7 => c8.checked_sub(0xc0)?.checked_add(280),
+                _ => (c8 << 1 | self.bit()?).checked_sub(0x190)?.checked_add(144),
             }
         }
     }
@@ -942,7 +942,8 @@ mod tests {
                 match btype {
                     0 => {
                         let start = r.pos.div_ceil(8);
-                        let Some(lens) = body.get(start..start + 4) else {
+                        let data = start.saturating_add(4);
+                        let Some(lens) = body.get(start..data) else {
                             return self.truncated(out);
                         };
                         let len = u16::from_le_bytes([lens[0], lens[1]]);
@@ -950,15 +951,15 @@ mod tests {
                             return Err(BackendError::Malformed("stored LEN/NLEN"));
                         }
                         let len = usize::from(len);
-                        let avail = body.len().saturating_sub(start + 4).min(len);
-                        if self.over(out.len() + avail, limits) {
+                        let avail = body.len().saturating_sub(data).min(len);
+                        if self.over(out.len().saturating_add(avail), limits) {
                             return self.limit(out);
                         }
-                        out.extend_from_slice(&body[start + 4..start + 4 + avail]);
+                        out.extend_from_slice(&body[data..data.saturating_add(avail)]);
                         if avail < len {
                             return self.truncated(out);
                         }
-                        r.pos = (start + 4 + len) * 8;
+                        r.pos = data.saturating_add(len).saturating_mul(8);
                     }
                     1 => loop {
                         let Some(sym) = r.fixed_symbol() else {
@@ -966,18 +967,19 @@ mod tests {
                         };
                         match sym {
                             0..=255 => {
-                                if self.over(out.len() + 1, limits) {
+                                if self.over(out.len().saturating_add(1), limits) {
                                     return self.limit(out);
                                 }
                                 out.push(u8::try_from(sym).unwrap());
                             }
                             256 => break,
                             257..=285 => {
-                                let i = usize::try_from(sym - 257).unwrap();
+                                let i = usize::try_from(sym.saturating_sub(257)).unwrap();
                                 let Some(extra) = r.lsb(LEN_EXTRA[i]) else {
                                     return self.truncated(out);
                                 };
-                                let len = LEN_BASE[i] + usize::try_from(extra).unwrap();
+                                let len =
+                                    LEN_BASE[i].saturating_add(usize::try_from(extra).unwrap());
                                 let Some(code) = r.msb(5) else {
                                     return self.truncated(out);
                                 };
@@ -988,15 +990,17 @@ mod tests {
                                 let Some(extra) = r.lsb(DIST_EXTRA[d]) else {
                                     return self.truncated(out);
                                 };
-                                let dist = DIST_BASE[d] + usize::try_from(extra).unwrap();
+                                let dist =
+                                    DIST_BASE[d].saturating_add(usize::try_from(extra).unwrap());
                                 if dist > out.len() || (self.small_window && dist > 2048) {
                                     return Err(BackendError::Malformed("distance"));
                                 }
-                                if self.over(out.len() + len, limits) {
+                                if self.over(out.len().saturating_add(len), limits) {
                                     return self.limit(out);
                                 }
                                 for _ in 0..len {
-                                    out.push(out[out.len() - dist]);
+                                    // 1 ≤ dist ≤ out.len(), checked above.
+                                    out.push(out[out.len().saturating_sub(dist)]);
                                 }
                             }
                             _ => return Err(BackendError::Malformed("symbol")),
@@ -1009,7 +1013,7 @@ mod tests {
                 }
             }
             let end = r.pos.div_ceil(8);
-            if format == FlateFormat::Zlib && body.get(end..end + 4).is_none() {
+            if format == FlateFormat::Zlib && body.get(end..end.saturating_add(4)).is_none() {
                 return self.truncated(out);
             }
             Ok(Decoded {
@@ -1028,7 +1032,8 @@ mod tests {
             _level: CompressionLevel,
             limits: &DecodeLimits,
         ) -> Result<Vec<u8>, BackendError> {
-            self.deflate_calls.set(self.deflate_calls.get() + 1);
+            self.deflate_calls
+                .set(self.deflate_calls.get().saturating_add(1));
             let mut out = Vec::new();
             if format == FlateFormat::Zlib {
                 out.extend_from_slice(&[0x78, 0x01]);
@@ -1037,7 +1042,7 @@ mod tests {
             if chunks.is_empty() {
                 chunks.push(&[]);
             }
-            let last = chunks.len() - 1;
+            let last = chunks.len().saturating_sub(1);
             for (i, chunk) in chunks.into_iter().enumerate() {
                 let len = u16::try_from(chunk.len()).unwrap();
                 out.push(u8::from(i == last));

@@ -190,7 +190,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
             });
             continue;
         };
-        let bits = key.len() * 8;
+        let bits = key.len().saturating_mul(8);
         let result = aes(Direction::Encrypt, &key, &AES_IV, plain, Padding::None);
         report.check(
             "crypto.aes_kat",
@@ -205,7 +205,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
         );
     }
 
-    for key_len in [16, 32] {
+    for (key_len, bits) in [(16, 128), (32, 256)] {
         let key = pseudo_random(key_len, 13);
         let iv = [7u8; 16];
         for len in 0..=33usize {
@@ -229,11 +229,12 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
                 )?;
                 Ok((sealed.len(), opened))
             });
-            let padded_len = (len / 16 + 1) * 16;
+            // len ≤ 33, so neither step saturates.
+            let padded_len = (len / 16).saturating_add(1).saturating_mul(16);
             report.check(
                 "crypto.aes_padding",
                 matches!(&round, Some(Ok((sealed, opened))) if *sealed == padded_len && *opened == data),
-                || format!("AES-{} PKCS#7 round trip of {len} bytes: {}", key_len * 8, describe(&round)),
+                || format!("AES-{bits} PKCS#7 round trip of {len} bytes: {}", describe(&round)),
             );
         }
 
@@ -260,7 +261,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
             report.check(
                 "crypto.aes_padding",
                 matches!(&sealed, Some(Ok(c)) if *c == reference),
-                || format!("AES-{} PKCS#7 encryption of {len} bytes differs from the explicitly padded data: {}", key_len * 8, describe(&sealed)),
+                || format!("AES-{bits} PKCS#7 encryption of {len} bytes differs from the explicitly padded data: {}", describe(&sealed)),
             );
             let opened = aes(Direction::Decrypt, &key, &iv, &reference, Padding::Pkcs7);
             report.check(
@@ -268,8 +269,7 @@ fn aes_checks(report: &mut Report, cipher: &dyn Cipher) {
                 matches!(&opened, Some(Ok(p)) if *p == data),
                 || {
                     format!(
-                        "AES-{} PKCS#7 decryption of {len} explicitly padded bytes: {}",
-                        key_len * 8,
+                        "AES-{bits} PKCS#7 decryption of {len} explicitly padded bytes: {}",
                         describe(&opened)
                     )
                 },
@@ -521,7 +521,10 @@ mod tests {
             for &b in &self.data {
                 h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
             }
-            let len = self.algorithm.output_len() - usize::from(self.short_digest);
+            let len = self
+                .algorithm
+                .output_len()
+                .saturating_sub(usize::from(self.short_digest));
             h.to_be_bytes().iter().copied().cycle().take(len).collect()
         }
     }
@@ -588,8 +591,8 @@ mod tests {
     fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
         let mut s: Vec<u8> = (0..=255).collect();
         let mut j = 0u8;
-        for i in 0..256 {
-            j = j.wrapping_add(s[i]).wrapping_add(key[i % key.len()]);
+        for (i, &k) in (0..256).zip(key.iter().cycle()) {
+            j = j.wrapping_add(s[i]).wrapping_add(k);
             s.swap(i, usize::from(j));
         }
         let (mut i, mut j) = (0u8, 0u8);
@@ -634,16 +637,21 @@ mod tests {
             if key.len() != 16 && key.len() != 32 {
                 return Err(BackendError::InvalidArgument("AES key length"));
             }
-            let k: Vec<u8> = (0..16).map(|i| key[i] ^ key[key.len() - 16 + i]).collect();
+            // The key is 16 or 32 bytes: fold its first 16 bytes with its last 16.
+            let tail = key.iter().skip(key.len().saturating_sub(16));
+            let k: Vec<u8> = key.iter().zip(tail).map(|(a, b)| a ^ b).collect();
             let iv = if self.ignore_iv { [0; 16] } else { *iv };
             match direction {
                 Direction::Encrypt => {
                     let mut input = data.to_vec();
                     match padding {
                         Padding::Pkcs7 => {
-                            let pad = 16 - data.len() % 16;
+                            let pad = 16usize.saturating_sub(data.len() % 16);
                             let fill = if self.x923_padding { 0 } else { pad };
-                            input.extend(std::iter::repeat_n(u8::try_from(fill).unwrap(), pad - 1));
+                            input.extend(std::iter::repeat_n(
+                                u8::try_from(fill).unwrap(),
+                                pad.saturating_sub(1),
+                            ));
                             input.push(u8::try_from(pad).unwrap());
                         }
                         Padding::None if !data.len().is_multiple_of(16) => {
@@ -684,13 +692,13 @@ mod tests {
                         let fill = if self.x923_padding { 0 } else { pad };
                         let ok = (1..=16).contains(&pad)
                             && (self.last_byte_only_padding
-                                || out[out.len() - pad..out.len() - 1]
-                                    .iter()
-                                    .all(|&b| usize::from(b) == fill));
+                                || out
+                                    .get(out.len().saturating_sub(pad)..out.len().saturating_sub(1))
+                                    .is_some_and(|s| s.iter().all(|&b| usize::from(b) == fill)));
                         if !ok && !self.lenient_padding {
                             return Err(BackendError::Malformed("padding"));
                         }
-                        out.truncate(out.len() - pad.min(out.len()));
+                        out.truncate(out.len().saturating_sub(pad));
                     }
                     if out.len() > self.cap(limits) {
                         return Err(BackendError::LimitExceeded("output"));

@@ -25,7 +25,8 @@ fn offset_problem(file: &[u8]) -> Option<String> {
     let Some(xref) = text.rfind("\nxref\n") else {
         return Some("no xref section".into());
     };
-    let mut lines = text[xref + 1..].lines().skip(1);
+    // Skips the newline before `xref`, then the `xref` line itself.
+    let mut lines = text[xref..].lines().skip(2);
     let header = lines.next().unwrap_or_default();
     let mut parts = header.split(' ').map(|p| p.parse::<usize>());
     let (Some(Ok(first)), Some(Ok(count))) = (parts.next(), parts.next()) else {
@@ -38,21 +39,20 @@ fn offset_problem(file: &[u8]) -> Option<String> {
             entries.len()
         ));
     }
-    for (i, line) in entries.into_iter().enumerate() {
+    for (num, line) in (first..).zip(entries) {
         if line.ends_with(" f") {
             continue;
         }
         let Some(offset) = line.get(..10).and_then(|o| o.parse::<usize>().ok()) else {
             return Some(format!("bad entry {line:?}"));
         };
-        let want = format!("{} 0 obj", first + i);
+        let want = format!("{num} 0 obj");
         if !file
             .get(offset..)
             .is_some_and(|rest| rest.starts_with(want.as_bytes()))
         {
             return Some(format!(
-                "entry {} points at byte {offset}, which is not `{want}`",
-                first + i
+                "entry {num} points at byte {offset}, which is not `{want}`"
             ));
         }
     }

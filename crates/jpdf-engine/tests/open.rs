@@ -18,7 +18,7 @@ fn build<T: AsRef<[u8]>>(
         &Revision {
             first_num,
             objects: &bodies,
-            size: first_num + objects.len(),
+            size: first_num.saturating_add(objects.len()),
             prev: None,
             trailer_extra: trailer_extra.as_bytes(),
         },
@@ -394,7 +394,8 @@ impl Rng {
     }
 
     fn below(&mut self, n: usize) -> usize {
-        usize::try_from(self.next() % u64::try_from(n).unwrap_or(u64::MAX)).unwrap_or(0)
+        let n = u64::try_from(n).unwrap_or(u64::MAX);
+        usize::try_from(self.next().checked_rem(n).unwrap_or(0)).unwrap_or(0)
     }
 }
 

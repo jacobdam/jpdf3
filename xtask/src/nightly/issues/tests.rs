@@ -225,7 +225,9 @@ struct FakeGh {
 
 impl FakeGh {
     fn add(&mut self, open: bool, label: &str, body: &str) -> u64 {
-        let n = 100 + u64::try_from(self.issues.len()).unwrap();
+        let n = u64::try_from(self.issues.len())
+            .unwrap()
+            .saturating_add(100);
         self.issues
             .push((n, open, vec![label.into()], body.into(), Vec::new()));
         n
@@ -239,7 +241,7 @@ impl FakeGh {
 impl Gh for FakeGh {
     fn run(&mut self, args: &[String]) -> Result<String, String> {
         self.calls.push(args.to_vec());
-        if self.fail_at == Some(self.calls.len() - 1) {
+        if self.fail_at == self.calls.len().checked_sub(1) {
             return Err("gh: HTTP 502".into());
         }
         let a: Vec<&str> = args.iter().map(String::as_str).collect();

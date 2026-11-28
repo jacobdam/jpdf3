@@ -43,10 +43,11 @@ fn compress(h: &mut [u32; 5], block: &[u8; 64]) {
     for (wt, bytes) in w.iter_mut().zip(block.as_chunks::<4>().0) {
         *wt = u32::from_be_bytes(*bytes);
     }
-    for t in 16..80 {
+    for t in 16..80usize {
         // `t` is 16..80, so every index is in 0..80 and `get` never misses.
         let at = |i: usize| w.get(i).copied().unwrap_or_default();
-        let x = at(t - 3) ^ at(t - 8) ^ at(t - 14) ^ at(t - 16);
+        let back = |k: usize| at(t.saturating_sub(k));
+        let x = back(3) ^ back(8) ^ back(14) ^ back(16);
         if let Some(wt) = w.get_mut(t) {
             *wt = x.rotate_left(1);
         }

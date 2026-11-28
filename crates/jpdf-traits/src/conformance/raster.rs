@@ -171,7 +171,10 @@ fn output_problem(pixmap: &Pixmap, width: u32, height: u32) -> Option<String> {
             pixmap.width, pixmap.height
         ));
     }
-    let len = u64::from(width) * u64::from(height) * 4;
+    // Saturates only past any real buffer's length, which then can't match.
+    let len = u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(4);
     if u64::try_from(pixmap.data.len()).ok() != Some(len) {
         return Some(format!("{} bytes, expected {len}", pixmap.data.len()));
     }
@@ -534,7 +537,7 @@ impl Suite<'_> {
             };
             let out = self.draw(c, what, &[stroke(&across, &style)]);
             self.expect_region(c, what, out.as_ref(), OPAQUE_RED, |x, y| {
-                (7..9).contains(&y) && (x + offset) % 8 < 4
+                (7..9).contains(&y) && x.saturating_add(offset) % 8 < 4
             });
         }
         // Dash lengths are in user space: [2 2] at scale 2 has an 8-pixel period.
@@ -889,7 +892,8 @@ impl Suite<'_> {
             data: &data,
         };
         let premultiplied = |col: u32, row: u32| -> [f32; 4] {
-            let i = usize::try_from((row * 3 + col) * 4).unwrap_or(usize::MAX);
+            let i = row.saturating_mul(3).saturating_add(col).saturating_mul(4);
+            let i = usize::try_from(i).unwrap_or(usize::MAX);
             let px = data.get(i..i.saturating_add(4)).unwrap_or(&[0, 0, 0, 0]);
             let a = px.get(3).map_or(0.0, |v| f32::from(*v));
             let ch = |k: usize| px.get(k).map_or(0.0, |v| f32::from(*v)) * a / 255.0;
@@ -910,7 +914,7 @@ impl Suite<'_> {
             self.expect(c, &what, out.as_ref(), |x, y| {
                 let inside = (5..8).contains(&x) && (7..9).contains(&y);
                 Some(if inside {
-                    (premultiplied(x - 5, y - 7), 1.0)
+                    (premultiplied(x.saturating_sub(5), y.saturating_sub(7)), 1.0)
                 } else {
                     (CLEAR, 0.0)
                 })
@@ -921,7 +925,10 @@ impl Suite<'_> {
         self.expect(c, "4x nearest image", out.as_ref(), |x, y| {
             let inside = (4..16).contains(&x) && (12..20).contains(&y);
             Some(if inside {
-                (premultiplied((x - 4) / 4, (y - 12) / 4), 1.0)
+                (
+                    premultiplied(x.saturating_sub(4) / 4, y.saturating_sub(12) / 4),
+                    1.0,
+                )
             } else {
                 (CLEAR, 0.0)
             })
@@ -1356,7 +1363,7 @@ impl Suite<'_> {
         let r = rect(4.0, 4.0, 20.0, 20.0);
         let paint_r = [fill(&r, RED, true)];
         for (w, h) in [(32, 32), (64, 16), (16, 64)] {
-            let px = u64::from(w) * u64::from(h);
+            let px = u64::from(w).saturating_mul(u64::from(h));
             boundary(
                 self,
                 "raster.limits.canvas",
@@ -1368,7 +1375,7 @@ impl Suite<'_> {
                     ..base
                 },
                 RasterLimits {
-                    max_canvas_pixels: px - 1,
+                    max_canvas_pixels: px.saturating_sub(1),
                     ..base
                 },
             );
@@ -1590,7 +1597,7 @@ impl Suite<'_> {
             let mut next = move || it.next().unwrap_or(0);
             let mut value = || {
                 VALUES
-                    .get(usize::from(next()) % VALUES.len())
+                    .get(usize::from(next()).checked_rem(VALUES.len()).unwrap_or(0))
                     .copied()
                     .unwrap_or(0.0)
             };

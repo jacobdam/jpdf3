@@ -15,7 +15,7 @@ pub(crate) fn hex(s: &str) -> Option<Vec<u8>> {
         .map(|&[hi, lo]| {
             let hi = char::from(hi).to_digit(16)?;
             let lo = char::from(lo).to_digit(16)?;
-            u8::try_from(hi * 16 + lo).ok()
+            u8::try_from(hi.checked_mul(16)?.checked_add(lo)?).ok()
         })
         .collect()
 }

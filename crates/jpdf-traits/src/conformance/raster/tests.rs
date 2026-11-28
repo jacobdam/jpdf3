@@ -97,15 +97,14 @@ fn flatten(path: &[PathSegment]) -> Vec<(Polygon, bool)> {
 
 /// Winding number of `polygons` (implicitly closed) around `(x, y)`.
 fn winding(polygons: &[Polygon], (x, y): P) -> i32 {
-    let mut w = 0;
+    let mut w = 0i32;
     for poly in polygons {
-        for i in 0..poly.len() {
-            let a = poly[i];
-            let b = poly[(i + 1) % poly.len()];
+        // Each edge: a point and the next one, the last joined to the first.
+        for (&a, &b) in poly.iter().zip(poly.iter().cycle().skip(1)) {
             if (a.1 <= y) != (b.1 <= y) {
                 let cross_x = a.0 + (y - a.1) / (b.1 - a.1) * (b.0 - a.0);
                 if cross_x > x {
-                    w += if b.1 > a.1 { 1 } else { -1 };
+                    w = w.saturating_add(if b.1 > a.1 { 1 } else { -1 });
                 }
             }
         }
@@ -120,7 +119,7 @@ fn coverage(w: u32, h: u32, aa: bool, inside: &dyn Fn(P) -> bool) -> Vec<f32> {
         for x in 0..w {
             let (x, y) = (f64::from(x), f64::from(y));
             out.push(if aa {
-                let mut n = 0;
+                let mut n = 0u8;
                 for j in 0..4 {
                     for i in 0..4 {
                         let s = (
@@ -128,11 +127,11 @@ fn coverage(w: u32, h: u32, aa: bool, inside: &dyn Fn(P) -> bool) -> Vec<f32> {
                             y + (f64::from(j) + 0.5) / 4.0,
                         );
                         if inside(s) {
-                            n += 1;
+                            n = n.saturating_add(1);
                         }
                     }
                 }
-                n as f32 / 16.0
+                f32::from(n) / 16.0
             } else if inside((x + 0.5, y + 0.5)) {
                 1.0
             } else {
@@ -147,8 +146,8 @@ fn coverage(w: u32, h: u32, aa: bool, inside: &dyn Fn(P) -> bool) -> Vec<f32> {
 /// inside its bounding box (strokes of long dashed lines make many off-canvas polygons).
 fn union_coverage(w: u32, h: u32, aa: bool, polys: &[Polygon]) -> Vec<f32> {
     let k: u32 = if aa { 4 } else { 1 };
-    let (gw, gh) = (w * k, h * k);
-    let mut grid = vec![false; (gw * gh) as usize];
+    let (gw, gh) = (w.saturating_mul(k), h.saturating_mul(k));
+    let mut grid = vec![false; gw.saturating_mul(gh) as usize];
     let scale = f64::from(k);
     for poly in polys {
         let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -163,7 +162,7 @@ fn union_coverage(w: u32, h: u32, aa: bool, polys: &[Polygon]) -> Vec<f32> {
         let one = std::slice::from_ref(poly);
         for j in range(y0, y1, gh) {
             for i in range(x0, x1, gw) {
-                let cell = &mut grid[(j * gw + i) as usize];
+                let cell = &mut grid[j.saturating_mul(gw).saturating_add(i) as usize];
                 if !*cell {
                     let s = ((f64::from(i) + 0.5) / scale, (f64::from(j) + 0.5) / scale);
                     *cell = winding(one, s) != 0;
@@ -177,13 +176,21 @@ fn union_coverage(w: u32, h: u32, aa: bool, polys: &[Polygon]) -> Vec<f32> {
             let mut n = 0u32;
             for j in 0..k {
                 for i in 0..k {
-                    n += u32::from(grid[((y * k + j) * gw + x * k + i) as usize]);
+                    let row = y.saturating_mul(k).saturating_add(j);
+                    let col = x.saturating_mul(k).saturating_add(i);
+                    let cell = row.saturating_mul(gw).saturating_add(col);
+                    n = n.saturating_add(u32::from(grid[cell as usize]));
                 }
             }
-            out.push(n as f32 / (k * k) as f32);
+            out.push(n as f32 / k.saturating_mul(k) as f32);
         }
     }
     out
+}
+
+/// The dash pattern entry after `index` in a pattern of `len` entries (`len` > 0).
+fn next_dash(index: usize, len: usize) -> usize {
+    index.saturating_add(1).checked_rem(len).unwrap_or(0)
 }
 
 /// Splits a polyline into dashes (user space).
@@ -205,7 +212,7 @@ fn dash_polyline(
     while skip > 0.0 {
         if skip >= left {
             skip -= left;
-            index = (index + 1) % pattern.len();
+            index = next_dash(index, pattern.len());
             left = pattern[index];
         } else {
             left -= skip;
@@ -224,7 +231,7 @@ fn dash_polyline(
         let mut pos = 0.0;
         while len - pos > left {
             // Bounded even when `pos + left == pos` (lengths near 1e30).
-            steps += 1;
+            steps = steps.saturating_add(1);
             if steps > max.saturating_mul(2).saturating_add(2) {
                 return Err(BackendError::LimitExceeded("dashes"));
             }
@@ -237,7 +244,7 @@ fn dash_polyline(
             } else {
                 current.push(p);
             }
-            index = (index + 1) % pattern.len();
+            index = next_dash(index, pattern.len());
             left = pattern[index];
         }
         left -= len - pos;
@@ -290,8 +297,12 @@ fn stroke_polygons(
         return;
     }
     let n = pts.len();
-    let segs: Vec<(P, P)> = (0..if closed { n } else { n - 1 })
-        .map(|i| (pts[i], pts[(i + 1) % n]))
+    // Each point with the next one; a closed path also joins the last to the first.
+    let segs: Vec<(P, P)> = pts
+        .iter()
+        .zip(pts.iter().cycle().skip(1))
+        .take(if closed { n } else { n.saturating_sub(1) })
+        .map(|(&a, &b)| (a, b))
         .collect();
     let dir = |(a, b): (P, P)| {
         let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
@@ -311,8 +322,8 @@ fn stroke_polygons(
     if !closed {
         for (p, d) in [
             (pts[0], dir(segs[0])),
-            (pts[n - 1], {
-                let e = dir(segs[segs.len() - 1]);
+            (pts[n.saturating_sub(1)], {
+                let e = dir(segs[segs.len().saturating_sub(1)]);
                 (-e.0, -e.1)
             }),
         ] {
@@ -336,11 +347,13 @@ fn stroke_polygons(
     let joins: Vec<usize> = if closed {
         (0..n).collect()
     } else {
-        (1..n - 1).collect()
+        (1..n.saturating_sub(1)).collect()
     };
     for i in joins {
-        let d0 = dir(segs[(i + segs.len() - 1) % segs.len()]);
-        let d1 = dir(segs[i % segs.len()]);
+        // The segments before and after point `i` (wrapping round on a closed path).
+        let before = i.checked_sub(1).unwrap_or(segs.len().saturating_sub(1));
+        let d0 = dir(segs[before]);
+        let d1 = dir(segs[i.checked_rem(segs.len()).unwrap_or(0)]);
         let v = pts[i];
         let cross = d0.0 * d1.1 - d0.1 * d1.0;
         if cross.abs() < 1e-12 {
@@ -426,7 +439,7 @@ impl Toy {
                     max.saturating_sub(dashes)
                 };
                 let pieces = dash_polyline(&line, &style.dash, phase, limit)?;
-                dashes += pieces.len();
+                dashes = dashes.saturating_add(pieces.len());
                 pieces.into_iter().map(|p| (p, false)).collect()
             };
             let reach = if hairline {
@@ -532,7 +545,7 @@ impl Rasterizer for Toy {
             check_scene(width, height, commands, limits)?;
         }
         let (w, h) = (width, height);
-        let n = (w * h) as usize;
+        let n = w.saturating_mul(h) as usize;
         let max_dashes = usize::try_from(limits.max_path_segments).unwrap_or(usize::MAX);
         let mut base = vec![[0.0f32; 4]; n];
         let mut layers: Vec<Layer> = Vec::new();
@@ -608,16 +621,21 @@ impl Rasterizer for Toy {
                             if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
                                 continue;
                             }
-                            let col = to_u32(u * f64::from(image.width)).min(image.width - 1);
-                            let row_up = to_u32(v * f64::from(image.height)).min(image.height - 1);
+                            let last_col = image.width.saturating_sub(1);
+                            let last_row = image.height.saturating_sub(1);
+                            let col = to_u32(u * f64::from(image.width)).min(last_col);
+                            let row_up = to_u32(v * f64::from(image.height)).min(last_row);
                             let row = if self.flip_image {
                                 row_up
                             } else {
-                                image.height - 1 - row_up
+                                last_row.saturating_sub(row_up)
                             };
-                            let k = ((row * image.width + col) * 4) as usize;
-                            let px = &image.data[k..k + 4];
-                            let i = (y * w + x) as usize;
+                            let k = row
+                                .saturating_mul(image.width)
+                                .saturating_add(col)
+                                .saturating_mul(4) as usize;
+                            let px = &image.data[k..k.saturating_add(4)];
+                            let i = y.saturating_mul(w).saturating_add(x) as usize;
                             let alpha =
                                 f32::from(px[3]) / 255.0 * opacity * clip[i] * object_opacity;
                             let cs = [px[0], px[1], px[2]].map(|v| f32::from(v) / 255.0);
