@@ -589,8 +589,10 @@ test("the dashboard has the CSP meta tag first and no inline script", async ({ p
 /** WCAG 2 contrast ratio of two computed `rgb(...)` colors. */
 function contrast(a: string, b: string): number {
   const lum = (c: string) => {
-    const m = /^rgba?\((\d+), (\d+), (\d+)/.exec(c);
+    // An opaque color only: a translucent one would need blending first (#369 R1.1, R1.2).
+    const m = /^rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)$/.exec(c);
     if (m === null) throw new Error(`not an rgb color: ${c}`);
+    if (m[4] !== undefined && Number(m[4]) < 1) throw new Error(`a translucent color: ${c}`);
     const [r, g, bl] = [m[1], m[2], m[3]].map((x) => {
       const v = Number(x) / 255;
       return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
@@ -602,8 +604,9 @@ function contrast(a: string, b: string): number {
 }
 
 /**
- * Every element of the page matching one of `selectors`, as its selector, text color and
- * effective background (the nearest ancestor-or-self background that isn't transparent).
+ * Every element of the page matching one of `selectors`, and each of its descendants that
+ * holds text, as its selector, text color and effective background (the nearest
+ * ancestor-or-self background that isn't transparent).
  */
 async function textColors(
   page: Page,
@@ -612,13 +615,26 @@ async function textColors(
   return page.evaluate((sels) => {
     const bgOf = (el: Element | null): string => {
       for (let e = el; e !== null; e = e.parentElement) {
-        const c = getComputedStyle(e).backgroundColor;
+        const style = getComputedStyle(e);
+        // A background image has no one color, so `contrast` refuses it, except a gradient
+        // whose every stop is fully transparent (MUI's dark-mode Paper overlay at elevation 0).
+        const img = style.backgroundImage;
+        const clear = /^linear-gradient\((rgba\(\d+, \d+, \d+, 0\)(, )?)+\)$/.test(img);
+        if (img !== "none" && !clear) return `image: ${img}`;
+        const c = style.backgroundColor;
         if (c !== "transparent" && !/^rgba\(.*, 0\)$/.test(c)) return c;
       }
       return getComputedStyle(document.body).backgroundColor;
     };
+    // The matched element and every descendant that holds text of its own (#369 R1.3).
+    const texts = (el: Element): Element[] => [
+      el,
+      ...[...el.querySelectorAll("*")].filter((d) =>
+        [...d.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()),
+      ),
+    ];
     return sels.flatMap((sel) =>
-      [...document.querySelectorAll(sel)].map((el) => ({
+      [...document.querySelectorAll(sel)].flatMap(texts).map((el) => ({
         sel,
         color: getComputedStyle(el).color,
         bg: bgOf(el),
