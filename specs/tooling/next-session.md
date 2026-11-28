@@ -821,7 +821,7 @@ of inputs where no step before 11 applies (→ `planner`):
   the file's text; the current milestone moving to M1; no current milestone; the 7-day term at
   6 and 7 days and a record dated tomorrow, `planner due` as a Planner record and the other
   kinds as near misses, the window at the last second of a day and at midnight; the once-a-day
-  bound (a `planner due` record today turns both terms off and step 11 into `idle` (no issue new since it), and step
+  bound (a `planner due` record today turns both terms off and step 11 into `idle` when no issue is new since it, and step
   10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
   test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - step 8's Design: product (#249): `design product v1` with the base log minus its
