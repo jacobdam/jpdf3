@@ -299,9 +299,10 @@ resolves only the catalog, the page-tree root and its kids.
 - `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
   (five old/new trailer pairs, the kept entries, their order and exact capacity),
   `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
-  (one `/XRef` dictionary against nine near misses: another `/Type`, a string `XRef`, another
+  (one `/XRef` dictionary against twelve near misses: another `/Type`, a string `XRef`, another
   key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
-  dictionary), `offset_at_end_of_file_reads_as_free` (the same offset boundary at the xref layer).
+  dictionary, and three that fail to lex or parse: a truncated dictionary, an unterminated
+  string, a non-name key; plus a nesting-depth case that stays a limit error), `offset_at_end_of_file_reads_as_free` (the same offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.
