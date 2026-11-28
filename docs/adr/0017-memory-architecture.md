@@ -165,7 +165,7 @@ It doesn't touch the workspace's clippy run or the protected root `clippy.toml`,
 `disallowed_methods` resolves `v.clone()` to `Clone::clone`, so a clone of input data (a
 `Vec<u8>`, an `Object`) can be denied only by denying every clone; the same holds for
 `ToOwned::to_owned`, `From::from` and `Into::into` into a `Vec` or `String`, and
-`Extend::extend`. These stay allowed. A copy of input-sized data through them is a P7 reviewer
+`Extend::extend`. These stay allowed. A copy of input-sized data through them is a P8 reviewer
 check, the checkpoint in the surrounding loop bounds how far it can go past `S`, and the
 measurement catches what is left.
 
@@ -270,7 +270,7 @@ peak got worse.
    gains `jpdf-mem` and `jpdf-alloc` in the tasks that add them.
 3. **A measurement:** the limits harness on Linux and macOS and the fuzz replay (§4), with the
    baseline and the OS ceiling.
-4. **Reviewer vigilance:** P7 in docs/PRINCIPLES.md: that each input loop has its checkpoint,
+4. **Reviewer vigilance:** P8 in docs/PRINCIPLES.md: that each input loop has its checkpoint,
    that a backend call is inside a reservation, that a binary installs the allocator, and the
    process rule for findings (below). These are the parts no lint sees.
 
@@ -292,7 +292,7 @@ peak got worse.
   passing: a std method that allocates but isn't on the list, and the trait methods §3 can't list
   (`Clone::clone`, `ToOwned::to_owned`, `From`/`Into` into a `Vec` or `String`,
   `Extend::extend`) applied to input-sized data. The list is checked against std's `alloc` API
-  when the toolchain is updated (audit sessions), the trait methods are a P7 reviewer check, and
+  when the toolchain is updated (audit sessions), the trait methods are a P8 reviewer check, and
   the measurement catches what both miss.
 - The harness: a `jpdf-cli` without the allocator fails (counted peak 0); one that leaks or
   grows fails its baseline; one that aborts at the cap is a `crash`; one that ignores
@@ -333,7 +333,7 @@ peak got worse.
 | 8 | `cargo xtask limits`: both peaks per case in `limits.json`, the baseline `ops/metrics/limits-peaks.json` keyed by platform and `--mib`, the failure rules of §4 with their exact-boundary tests (Verification), the `memory-cap`, #146 and `many-small` cases, and a `--mib 64` run in `cargo xtask ci linux`; specs/tooling/limits.md, ci-linux.md and nightly.md, and the gate's lift condition in specs/core/memory-budget.md and specs/tooling/cli-dependency-gate.md. Closes #146. About 1000 lines. | task 7 |
 | 9 | macOS measurement: `cargo xtask ci macos` runs the harness at `--mib 64` with the footprint from `/usr/bin/time -l` and the macOS failure rules of §4 (ceiling and footprint baseline), plus #165's re-resolve case; spec updates. Closes #165 only if the #165 case passes (else as in the #165 row). About 500 lines. | task 8 |
 | 10 | Fuzz: every target installs `CappedAlloc` at its `H` of 1024 MiB (§1); the nightly replays each corpus with a `--sanitizer none` build under `ulimit -v 2097152` and reports aborts as crashes; specs/tooling/fuzz.md and nightly.md. About 500 lines. | task 7 |
-| 11 | Remove the model: rewrite specs/core/memory-budget.md (the cap, the charging rule, the measurement, the per-call bounds that stay, the requirements list), delete `MemoryBudget` (crates/jpdf-syntax/src/budget.rs) and its tests, update P7's "Enforced by". `ImageInputBudget`, `charge_output` and `alloc_bytes` stay (§2). Mostly deletions, about 400 added lines. | task 6, task 8 |
+| 11 | Remove the model: rewrite specs/core/memory-budget.md (the cap, the charging rule, the measurement, the per-call bounds that stay, the requirements list), delete `MemoryBudget` (crates/jpdf-syntax/src/budget.rs) and its tests, update P8's "Enforced by". `ImageInputBudget`, `charge_output` and `alloc_bytes` stay (§2). Mostly deletions, about 400 added lines. | task 6, task 8 |
 
 Each task issue carries `Designed in: #236` and `Depends on:` lines and is a sub-issue of #236
 (ops/TICK.md §8 step 5).
@@ -341,7 +341,7 @@ Each task issue carries `Designed in: #236` and `Depends on:` lines and is a sub
 ## What reviewers check against
 This ADR adds one entry to docs/PRINCIPLES.md, quoted here as merged; reviewers of later PRs on its paths get it in their brief (ops/TICK.md §4).
 
-> ## P7. One memory cap at the allocator, one charging path, measured
+> ## P8. One memory cap at the allocator, one charging path, measured
 > - **Invariant:** in a process that holds the engine, the bytes Rust's global allocator has
 >   handed out never pass the hard cap `H` (1536 MiB, or lower; 1024 MiB in the fuzz targets),
 >   counted by `jpdf_alloc::CappedAlloc`. In the non-test code of the crates under `crates/` and

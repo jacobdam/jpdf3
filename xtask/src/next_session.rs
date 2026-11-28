@@ -2238,7 +2238,8 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
         });
     }
     // Step 11 (ADR 0015): on a day with a Planner record, rerun it while fewer than 3 files
-    // dated today hold one and an issue is new: one the newest run couldn't see.
+    // dated today hold one and an issue is new: one the newest run couldn't see, with every
+    // dependency closed (#478).
     let (runs, new_from) = planner_today(&records, now.div_euclid(86_400));
     let new_issues: Vec<u64> = issues
         .iter()
@@ -2247,6 +2248,9 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
         .filter(|i| !has_label(&i.labels, "ready"))
         .filter(|i| !NOT_READY_LABELS.iter().any(|l| has_label(&i.labels, l)))
         .filter(|i| new_from.as_deref().is_some_and(|t| i.created.as_str() >= t))
+        // Step 10's dependency test (#478): an issue waiting on an open issue (a design
+        // ADR's task before the ADR merges) can't be worked, so it starts no rerun.
+        .filter(|i| !dependencies(&i.body).into_iter().any(open))
         .map(|i| i.number)
         .collect();
     let p = chosen.unwrap_or_else(|| {

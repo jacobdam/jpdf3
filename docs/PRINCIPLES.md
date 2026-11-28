@@ -128,10 +128,12 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   journal files dated today (UTC) hold a `- Session: planner…` record, and on a day that
   already has one, only at step 11 (nothing before it applies) and only when an issue is
   *new*: open, in the current milestone, without `ready`, a skip label, `in-progress`,
-  `design`, `design-pending` or `design-product`, not in flight, and created at or after the
+  `design`, `design-pending` or `design-product`, not in flight, with every issue on its
+  `Depends on:` line closed (owner issue #478), and created at or after the
   end of the minute in the newest such record's file name (`HHMM-`; a name without a valid
   time reads as the end of its day).
-- **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound).
+- **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound); the dependency term by
+  owner issue #478.
 - **Enforced by:** `cargo xtask next-session` (xtask/src/next_session.rs) and its `--from`
   fixtures (xtask/tests/next_session.rs), from ADR 0015 task 1 on (#440). That a
   session filing Worker issues leaves `ready` off is reviewer vigilance.
@@ -143,7 +145,43 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
 - **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`,
   `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `ops/TICK.md`.
 
-## P7. One memory cap at the allocator, one charging path, measured
+## P7. The retro measures R13 daily and never gates or orders work
+- **Invariant:** every daily or weekly retro record (`docs/retros/NNNN.md`, second line
+  `Kind: daily` or `Kind: weekly`, third `Period: YYYY-MM-DD..YYYY-MM-DD`; an incident record
+  whose period would be empty writes `Kind: incident` and `Period: none` and reports today so
+  far for the incident only, ADR 0018) answers three questions with numbers
+  from `cargo xtask metrics`: is the current milestone moving (open count, moves, forecast,
+  product share of merges), where the sessions went (unknown, idle, rework, records, product,
+  process; idle hours and idle hours with work waiting), and where the owner stepped in (one
+  action, one intervention; target 0, exempt kinds counted apart), plus the skip-label table
+  and the quality floor. Daily periods neither overlap nor skip a day; a weekly period spans
+  the days since the previous weekly one, and rules that count weekly retros read it.
+  `cargo xtask next-session` makes the retro due when no retro record is dated today (UTC). On
+  any issue or PR but its own `retro` issue and PR and the issues it files, a retro adds or
+  removes no label and moves no milestone; it never edits `ops/QUEUE.md` or reorders a PLAN.md
+  task. Each stall it finds is one `discovery` + `stall` issue in the current milestone, without
+  `ready`, one open per cause. At most 3 action items are under measurement at a time, each on a
+  distinct number, each judged on the 7 UTC days after its merge day, extended at most once.
+- **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row, §2's read-only bullet, §5's
+  area cycle, §6's "two retros in a row" and its Success check, and ADR 0012 §2 and its
+  Success check).
+- **Enforced by:** the scheduler's daily term and its fixtures (ADR 0018 task 1),
+  `cargo xtask metrics` (tasks 3–5); the rest is reviewer vigilance.
+- **Reviewers check:** a retro session ran no label or milestone write on another issue and no
+  QUEUE.md write; its record has every section with numbers from the tool (not by hand once
+  the tool computes them) and a `Period:` as ADR 0018 sets it (a daily one starts the day
+  after the newest dated `Period:` end, a weekly one the day after the previous weekly end,
+  both end yesterday; an incident record with an empty period writes `Kind: incident` and
+  `Period: none`);
+  a new action item keeps the count under measurement at 3 or fewer with a number no other
+  item uses; a verdict cites the item's 7-day window; a change to the session classes or the
+  intervention kinds updates both ADR 0018's definitions and the metrics fixtures.
+- **Paths:** `docs/retros/`, `xtask/src/metrics.rs`, `xtask/src/metrics/`,
+  `xtask/tests/metrics.rs`, `xtask/tests/fixtures/metrics/`, `specs/tooling/metrics.md`,
+  `xtask/src/next_session.rs`, `xtask/src/next_session/`, `xtask/tests/next_session.rs`,
+  `specs/tooling/next-session.md`, `ops/TICK.md`.
+
+## P8. One memory cap at the allocator, one charging path, measured
 - **Invariant:** in a process that holds the engine, the bytes Rust's global allocator has
   handed out never pass the hard cap `H` (1536 MiB, or lower; 1024 MiB in the fuzz targets),
   counted by `jpdf_alloc::CappedAlloc`. In the non-test code of the crates under `crates/` and
