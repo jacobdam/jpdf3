@@ -139,8 +139,8 @@ in the proposal's directory) in place of the manifest's script, without changing
   fixture test turns the run red) while the target file's bytes are unchanged after the run,
   each with its near miss.
 - The first real run (task 2's PR): every moved test passes against main's files on every
-  platform it lists (macOS on the Mac mini; Linux in the PR's `ci linux` run or a local Linux
-  container), with #366 and task 1 fixed first; the PR lists each entry's result per platform.
+  platform it lists (macOS on the Mac mini; Linux in a local Linux container, since `ci linux`
+  runs no entry before task 3), with #366 and task 1 fixed first; the PR lists each entry's result per platform.
 - CI (tasks 3 and 4): the entries' step shows in `ci linux`'s log on a PR and in `ci macos`'s on
   the hosted runner (task 4 runs it there with `gh workflow run ci.yml --ref <branch>` before
   merging); a hand-broken entry turns the step red in each task's PR description (shown, then
@@ -164,7 +164,7 @@ in the proposal's directory) in place of the manifest's script, without changing
 | #342 | closed already; no change | applied in PR #355; its test moves in task 2 |
 | #344 | closed already; no change | done in PR #365; its cases move with the test |
 | #366 | kept; task 2 depends on it | the moved test must pass on macOS (invariant 3); the fix is the issue's own |
-| #367 | kept | one more case in a test that is kept; it doesn't depend on the move (a `git mv` keeps the edit, whichever merges first) |
+| #367 | kept | one more case in a test that is kept (best after #366: until then that test's other cases fail on macOS); it doesn't depend on the move (a `git mv` keeps the edit, whichever merges first) |
 | #195 | kept, workable now | the test outlives its proposal and runs against `ops/driver/codex-review.sh` (invariant 2), so R3.1 and R3.2 are cases of a live test; the Planner can gate it into `ready` |
 | #179 | closed already; no change | its `test-owner-issues.sh` moves in task 2 |
 
@@ -200,7 +200,8 @@ P5 in docs/PRINCIPLES.md (added by this ADR):
 >   entries (task 3) and `cargo xtask ci macos` for the macOS ones (task 4). "Applied" has no
 >   gate.
 > - **Reviewers check:** until ADR 0014 task 2 has merged, only that a changed test of a
->   protected file still takes its target as an argument and passes on the target's platform.
+>   protected file still takes its target as an argument and the cases it adds or
+>   changes pass on the target's platform.
 >   From then on: a new or changed test of a protected file has a manifest entry with the
 >   target's platforms and helpers, and takes the protected path from the runner; the runner
 >   never writes a protected path. From ADR 0014 task 5 on (the proposal life cycle): a proposal

@@ -110,7 +110,8 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   entries (task 3) and `cargo xtask ci macos` for the macOS ones (task 4). "Applied" has no
   gate.
 - **Reviewers check:** until ADR 0014 task 2 has merged, only that a changed test of a
-  protected file still takes its target as an argument and passes on the target's platform.
+  protected file still takes its target as an argument and the cases it adds or
+  changes pass on the target's platform.
   From then on: a new or changed test of a protected file has a manifest entry with the
   target's platforms and helpers, and takes the protected path from the runner; the runner
   never writes a protected path. From ADR 0014 task 5 on (the proposal life cycle): a proposal
