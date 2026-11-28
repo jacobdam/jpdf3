@@ -81,7 +81,7 @@ the Planner can read.
      tagged comment by `jacobdam` whose first line is
      `🤖 jpdf-agent Owner pick: <Mn> (<URL of the owner comment>)`. The marker is only a
      pointer: the Planner honors it only after it reads the linked comment
-     (the endpoint its URL's anchor names, as the owner feed reads them: `issues/comments/<id>`
+     (the endpoint its URL's anchor names, one per comment kind the owner feed reads: `issues/comments/<id>`
      for `#issuecomment-`, `pulls/comments/<id>` for `#discussion_r`, the PR's
      `pulls/<n>/reviews/<id>` for `#pullrequestreview-`) and finds it by `jacobdam`, untagged
      by the owner feed's test, naming the issue by number and the milestone. A marker that
