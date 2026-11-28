@@ -603,19 +603,31 @@ function contrast(a: string, b: string): number {
   return (x + 0.05) / (y + 0.05);
 }
 
+type Pseudo = "::before" | "::after" | null;
+
 /**
  * Every element of the page matching one of `selectors`, and each of its descendants that
- * holds text, as its selector, text color and effective background (the nearest
- * ancestor-or-self background that isn't transparent).
+ * holds text, as its selector, text color, text fill color, opacity (the product of the
+ * ancestor-or-self opacities) and effective background (the nearest ancestor-or-self
+ * background that isn't transparent). Also each `::before` and `::after` whose `content` isn't
+ * `none`, of the matched element or of any descendant, with its own style first (#431).
  */
 async function textColors(
   page: Page,
   selectors: readonly string[],
-): Promise<{ sel: string; color: string; bg: string }[]> {
+): Promise<
+  { sel: string; what: string; color: string; fill: string; opacity: number; bg: string }[]
+> {
   return page.evaluate((sels) => {
-    const bgOf = (el: Element | null): string => {
-      for (let e = el; e !== null; e = e.parentElement) {
-        const style = getComputedStyle(e);
+    // A pseudo-element's own style, then its element's and each ancestor's.
+    const chain = (el: Element, pseudo: Pseudo): CSSStyleDeclaration[] => {
+      const styles = pseudo === null ? [] : [getComputedStyle(el, pseudo)];
+      for (let e: Element | null = el; e !== null; e = e.parentElement)
+        styles.push(getComputedStyle(e));
+      return styles;
+    };
+    const bgOf = (el: Element, pseudo: Pseudo): string => {
+      for (const style of chain(el, pseudo)) {
         // A background image has no one color, so `contrast` refuses it, except a gradient
         // whose every stop is fully transparent (MUI's dark-mode Paper overlay at elevation 0).
         const img = style.backgroundImage;
@@ -633,23 +645,47 @@ async function textColors(
         [...d.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()),
       ),
     ];
-    return sels.flatMap((sel) =>
-      [...document.querySelectorAll(sel)].flatMap(texts).map((el) => ({
+    // The matched element's and every descendant's `::before`/`::after` that has content.
+    const pseudos = (el: Element): [Element, Pseudo][] =>
+      [el, ...el.querySelectorAll("*")].flatMap((e) =>
+        (["::before", "::after"] as const)
+          .filter((p) => getComputedStyle(e, p).content !== "none")
+          .map((p): [Element, Pseudo] => [e, p]),
+      );
+    const entry = (sel: string, el: Element, pseudo: Pseudo) => {
+      const style = getComputedStyle(el, pseudo);
+      return {
         sel,
-        color: getComputedStyle(el).color,
-        bg: bgOf(el),
-      })),
+        what: `${el.tagName.toLowerCase()}${pseudo ?? ""}`,
+        color: style.color,
+        fill: style.getPropertyValue("-webkit-text-fill-color"),
+        opacity: chain(el, pseudo).reduce((o, s) => o * Number(s.opacity), 1),
+        bg: bgOf(el, pseudo),
+      };
+    };
+    return sels.flatMap((sel) =>
+      [...document.querySelectorAll(sel)].flatMap((el) => [
+        ...texts(el).map((t) => entry(sel, t, null)),
+        ...pseudos(el).map(([e, p]) => entry(sel, e, p)),
+      ]),
     );
   }, selectors);
 }
 
-/** `textColors` with at least one element per selector, each at 4.5:1 or more. */
+/**
+ * `textColors` with at least one element per selector, each fully opaque, with a text fill
+ * color equal to its color and at 4.5:1 or more.
+ */
 async function expectReadable(page: Page, selectors: readonly string[]): Promise<void> {
   const found = await textColors(page, selectors);
   for (const sel of selectors)
     expect(found.filter((f) => f.sel === sel).length, `${sel} on the page`).toBeGreaterThan(0);
-  for (const f of found)
-    expect(contrast(f.color, f.bg), `${f.sel}: ${f.color} on ${f.bg}`).toBeGreaterThanOrEqual(4.5);
+  for (const f of found) {
+    const at = `${f.sel} ${f.what}`;
+    expect(f.opacity, `${at}: opacity`).toBe(1);
+    expect(f.fill, `${at}: -webkit-text-fill-color`).toBe(f.color);
+    expect(contrast(f.color, f.bg), `${at}: ${f.color} on ${f.bg}`).toBeGreaterThanOrEqual(4.5);
+  }
 }
 
 for (const scheme of ["light", "dark"] as const) {
