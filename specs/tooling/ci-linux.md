@@ -74,6 +74,6 @@ alone, the other four `Ok`: all five still run in order, exit 1; the dashboard s
 (copied, no page, no snapshot, an error); and the real dashboard adapter against a scratch
 `DIR`, copying into `DIR/site/dashboard/data.json` and failing on a snapshot that is a
 directory.
-`xtask/tests/check_specs.rs` (`ci_linux_runs_the_check_after_writing_e2e` and its
-neighbours) also runs the real `ci linux` in fixture trees and pins its stderr order and
-exit 1, which covers part of the real wiring.
+`xtask/tests/check_specs.rs` also runs the real `ci linux` in fixture trees and checks
+exit 1; `ci_linux_runs_the_check_after_writing_e2e` pins the order of its last three checks'
+lines (check-specs, fuzz, arlington), which covers part of the real wiring.
