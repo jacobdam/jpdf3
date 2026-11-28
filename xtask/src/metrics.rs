@@ -80,14 +80,22 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
     if !(1..=9999).contains(&y) || !(1..=12).contains(&m) || d < 1 || d > month_len(y, m) {
         return None;
     }
-    // Bounded inputs: every intermediate stays far below i64::MAX.
-    let y = if m <= 2 { y - 1 } else { y };
+    // Bounded inputs: every intermediate stays far below i64::MAX, so `?` never returns.
+    let y = if m <= 2 { y.checked_sub(1)? } else { y };
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);
-    let mp = (m + 9).rem_euclid(12);
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + doe - 719_468)
+    let mp = m.checked_add(9)?.rem_euclid(12);
+    let doy = (mp.checked_mul(153)?.checked_add(2)? / 5)
+        .checked_add(d)?
+        .checked_sub(1)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    era.checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)
 }
 
 fn month_len(y: i64, m: i64) -> i64 {
@@ -100,16 +108,37 @@ fn month_len(y: i64, m: i64) -> i64 {
 }
 
 /// The civil date of a day number from `days_from_civil`.
+///
+/// `doe` is in 0..146 097, `yoe` in 0..400 and `era` at most `i64::MAX / 146 097`, so only
+/// the first shift can saturate, for a day within 719 468 of `i64::MAX` (no date of years
+/// 1..=9999); every other step is exact.
 fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
+    let z = z.saturating_add(719_468);
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
+    let yoe = (doe
+        .saturating_sub(doe / 1460)
+        .saturating_add(doe / 36_524)
+        .saturating_sub(doe / 146_096))
+        / 365;
+    let doy = doe.saturating_sub(
+        yoe.saturating_mul(365)
+            .saturating_add(yoe / 4)
+            .saturating_sub(yoe / 100),
+    );
+    let mp = doy.saturating_mul(5).saturating_add(2) / 153;
+    let d = doy
+        .saturating_sub(mp.saturating_mul(153).saturating_add(2) / 5)
+        .saturating_add(1);
+    let m = if mp < 10 {
+        mp.saturating_add(3)
+    } else {
+        mp.saturating_sub(9)
+    };
+    let y = era
+        .saturating_mul(400)
+        .saturating_add(yoe)
+        .saturating_add(i64::from(m <= 2));
     (y, m, d)
 }
 

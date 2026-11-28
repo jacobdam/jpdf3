@@ -690,9 +690,9 @@ impl Fake {
     }
 
     fn drive(&mut self, write_ok: bool) -> (Log, Report) {
-        let mut wrote = 0;
+        let mut wrote = 0u32;
         let mut write = || {
-            wrote += 1;
+            wrote = wrote.saturating_add(1);
             if write_ok {
                 Ok(())
             } else {

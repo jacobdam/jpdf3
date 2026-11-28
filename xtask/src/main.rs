@@ -34,7 +34,7 @@ fn main() -> ExitCode {
     let flag = |name: &str| {
         args.iter()
             .position(|a| a == name)
-            .and_then(|i| args.get(i + 1))
+            .and_then(|i| args.get(i.saturating_add(1)))
             .map(PathBuf::from)
     };
     let out = flag("--out").unwrap_or_else(|| PathBuf::from("target/xtask-out"));

@@ -86,7 +86,7 @@ pub fn read_dir(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, Error> 
                 if !f.metadata()?.is_file() {
                     return Err(std::io::Error::other("not a regular file"));
                 }
-                f.take(parse::MAX_FILE_BYTES as u64 + 1)
+                f.take((parse::MAX_FILE_BYTES as u64).saturating_add(1))
                     .read_to_end(&mut bytes)
             })
             .map_err(|source| Error::Io {

@@ -112,7 +112,7 @@ impl<'a> Out<'a> {
                     .get(..usize::try_from(k).unwrap_or(0))
                     .unwrap_or_default(),
             )?;
-            left -= k;
+            left = left.saturating_sub(k);
         }
         Ok(())
     }
@@ -142,7 +142,9 @@ fn len(b: &[u8]) -> u64 {
 /// CLI read and hold a file of the target size.
 fn padded_header(o: &mut Out, target: u64, body: u64) -> io::Result<()> {
     let head = b"%PDF-1.7\n%";
-    let pad = target.saturating_sub(body).saturating_sub(len(head) + 1);
+    let pad = target
+        .saturating_sub(body)
+        .saturating_sub(len(head).saturating_add(1));
     o.put(head)?;
     o.fill(b'x', pad)?;
     o.put(b"\n")
@@ -193,7 +195,9 @@ fn nested_strings(o: &mut Out, target: u64) -> io::Result<()> {
             base,
             "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
         )];
-        let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+        let kids: Vec<String> = (0..pages)
+            .map(|i| format!("{} 0 R", i.saturating_add(3)))
+            .collect();
         offsets.push(push(
             &mut v,
             base,
@@ -206,7 +210,7 @@ fn nested_strings(o: &mut Out, target: u64) -> io::Result<()> {
             offsets.push(push(
                 &mut v,
                 base,
-                &format!("{:07} 0 obj << /Type /Page /S (", i + 3),
+                &format!("{:07} 0 obj << /Type /Page /S (", i.saturating_add(3)),
             ));
         }
         for _ in 0..pages {
@@ -231,7 +235,9 @@ fn shared_body(o: &mut Out, target: u64) -> io::Result<()> {
             base,
             "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
         )];
-        let refs: Vec<String> = (0..kids).map(|i| format!("{} 0 R", i + 3)).collect();
+        let refs: Vec<String> = (0..kids)
+            .map(|i| format!("{} 0 R", i.saturating_add(3)))
+            .collect();
         offsets.push(push(
             &mut v,
             base,
@@ -244,7 +250,7 @@ fn shared_body(o: &mut Out, target: u64) -> io::Result<()> {
             offsets.push(push(
                 &mut v,
                 base,
-                &format!("{:07} 0 obj << /Type /Page %", i + 3),
+                &format!("{:07} 0 obj << /Type /Page %", i.saturating_add(3)),
             ));
         }
         v.extend_from_slice(b"\n/S (");
@@ -271,8 +277,10 @@ fn stacked_prev(o: &mut Out, target: u64) -> io::Result<()> {
         let step = len(opening(0).as_bytes());
         let mut v = Vec::new();
         for i in 0..sections {
-            let next = if i + 1 < sections {
-                base + (i + 1) * step
+            let next = if i.saturating_add(1) < sections {
+                i.saturating_add(1)
+                    .saturating_mul(step)
+                    .saturating_add(base)
             } else {
                 base
             };
@@ -300,20 +308,20 @@ fn xref_entries(o: &mut Out, target: u64) -> io::Result<()> {
     o.text("2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\n")?;
     let at = o.pos;
     let tail = 128;
-    let entries = target.saturating_sub(at + tail) / 20;
+    let entries = target.saturating_sub(at.saturating_add(tail)) / 20;
     o.text(&format!("xref\n0 {entries:010}\n0000000000 65535 f\r\n"))?;
     o.text(&format!("{catalog:010} 00000 n\r\n{pages:010} 00000 n\r\n"))?;
     let free = b"0000000000 00000 f\r\n";
-    let mut block = Vec::with_capacity(free.len() * 4096);
+    let mut block = Vec::with_capacity(free.len().saturating_mul(4096));
     for _ in 0..4096 {
         block.extend_from_slice(free);
     }
     let mut left = entries.saturating_sub(3);
     while left > 0 {
         let k = left.min(4096);
-        let n = usize::try_from(k * 20).unwrap_or(0);
+        let n = usize::try_from(k.saturating_mul(20)).unwrap_or(0);
         o.put(block.get(..n).unwrap_or_default())?;
-        left -= k;
+        left = left.saturating_sub(k);
     }
     o.text(&format!(
         "trailer\n<< /Size {entries} /Root 1 0 R >>\nstartxref\n{at}\n%%EOF\n"
@@ -331,14 +339,14 @@ fn pair_bytes() -> u64 {
     let entries: u64 = (0..MAX_ENTRIES)
         .map(|k| len(format!(" /k{k} 0").as_bytes()))
         .sum();
-    MAX_STRING + entries
+    MAX_STRING.saturating_add(entries)
 }
 
 /// `max-per-object` page pairs for `target`: as many whole pairs as fit, at least one. Each
 /// pair is at least [`pair_bytes`], so the file reaches half the target (one pair when the
 /// target is under two pairs, else ⌊T / pair⌋ pairs ≥ T − pair ≥ T/2).
 fn max_pairs(target: u64) -> u64 {
-    (target / pair_bytes()).max(1)
+    target.checked_div(pair_bytes()).unwrap_or(0).max(1)
 }
 
 /// `nested-strings` pages: the first kid's string holds every later header and close (45
@@ -365,19 +373,24 @@ fn dense_pages(target: u64) -> u64 {
 /// objects-per-parse limit). A valid file: it must open, with every page resolved.
 fn max_per_object(o: &mut Out, target: u64) -> io::Result<()> {
     let (string, entries) = (MAX_STRING, MAX_ENTRIES);
-    let pages = max_pairs(target) * 2;
+    let pages = max_pairs(target).saturating_mul(2);
     o.text("%PDF-1.7\n")?;
     let mut offsets = vec![o.pos];
     o.text("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")?;
     offsets.push(o.pos);
-    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+    let kids: Vec<String> = (0..pages)
+        .map(|i| format!("{} 0 R", i.saturating_add(3)))
+        .collect();
     o.text(&format!(
         "2 0 obj << /Type /Pages /Kids [{}] /Count {pages} >> endobj\n",
         kids.join(" ")
     ))?;
     for i in 0..pages {
         offsets.push(o.pos);
-        o.text(&format!("{} 0 obj << /Type /Page /Parent 2 0 R ", i + 3))?;
+        o.text(&format!(
+            "{} 0 obj << /Type /Page /Parent 2 0 R ",
+            i.saturating_add(3)
+        ))?;
         if i % 2 == 0 {
             o.text("/S (")?;
             o.fill(b'a', string)?;
@@ -399,15 +412,19 @@ fn max_per_object(o: &mut Out, target: u64) -> io::Result<()> {
 fn dense_kids(o: &mut Out, target: u64) -> io::Result<()> {
     let pages = dense_pages(target);
     // Per page: the kid reference, the object and its xref entry, at most 100 bytes.
-    let pad = (target / pages).saturating_sub(100).max(1);
+    let pad = target
+        .checked_div(pages)
+        .unwrap_or(0)
+        .saturating_sub(100)
+        .max(1);
     o.text("%PDF-1.7\n")?;
-    let mut offsets = Vec::with_capacity(usize::try_from(pages + 2).unwrap_or(0));
+    let mut offsets = Vec::with_capacity(usize::try_from(pages.saturating_add(2)).unwrap_or(0));
     offsets.push(o.pos);
     o.text("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")?;
     offsets.push(o.pos);
     o.text("2 0 obj << /Type /Pages /Kids [")?;
     for i in 0..pages {
-        o.text(&format!("{} 0 R ", i + 3))?;
+        o.text(&format!("{} 0 R ", i.saturating_add(3)))?;
     }
     o.text(&format!("] /Count {pages} >> endobj\n"))?;
     let filler = vec![b'p'; usize::try_from(pad).unwrap_or(1)];
@@ -415,7 +432,7 @@ fn dense_kids(o: &mut Out, target: u64) -> io::Result<()> {
         offsets.push(o.pos);
         o.text(&format!(
             "{} 0 obj << /Type /Page /Parent 2 0 R /P (",
-            i + 3
+            i.saturating_add(3)
         ))?;
         o.put(&filler)?;
         o.text(") >> endobj\n")?;
@@ -430,7 +447,7 @@ fn long_comment(o: &mut Out, target: u64) -> io::Result<()> {
     let catalog = o.pos;
     o.text("1 0 obj << /Type /Catalog %")?;
     let tail = 512;
-    let comment = target.saturating_sub(o.pos + tail);
+    let comment = target.saturating_sub(o.pos.saturating_add(tail));
     o.fill(b'c', comment)?;
     o.text("\n/Pages 2 0 R >> endobj\n")?;
     let pages = o.pos;

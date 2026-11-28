@@ -41,12 +41,14 @@ impl Sha1 {
             .len
             .wrapping_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
         while !data.is_empty() {
-            let take = (64 - self.fill).min(data.len());
+            // `fill` stays in 0..64, so none of these saturates.
+            let take = 64usize.saturating_sub(self.fill).min(data.len());
             let (head, rest) = data.split_at(take);
-            if let Some(dst) = self.block.get_mut(self.fill..self.fill + take) {
+            let end = self.fill.saturating_add(take);
+            if let Some(dst) = self.block.get_mut(self.fill..end) {
                 dst.copy_from_slice(head);
             }
-            self.fill += take;
+            self.fill = end;
             data = rest;
             if self.fill == 64 {
                 let block = self.block;
@@ -77,9 +79,9 @@ impl Sha1 {
         }
         // W[t] = ROTL1(W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16]) for 16 ≤ t < 80.
         let at = |w: &[u32; 80], i: usize| w.get(i).copied().unwrap_or(0);
-        for t in 16..80 {
-            let v =
-                (at(&w, t - 3) ^ at(&w, t - 8) ^ at(&w, t - 14) ^ at(&w, t - 16)).rotate_left(1);
+        for t in 16..80usize {
+            let back = |k: usize| at(&w, t.saturating_sub(k));
+            let v = (back(3) ^ back(8) ^ back(14) ^ back(16)).rotate_left(1);
             if let Some(slot) = w.get_mut(t) {
                 *slot = v;
             }

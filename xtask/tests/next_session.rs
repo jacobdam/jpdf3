@@ -2296,7 +2296,7 @@ fn usage_and_live_failure() {
 /// `n` commits after the audit record, each changing `path`.
 fn merges(n: u64, path: &str) -> Vec<String> {
     (0..n)
-        .map(|i| commit(200 + i, NOW - 60, "m", &[("M", path)]))
+        .map(|i| commit(i.saturating_add(200), NOW - 60, "m", &[("M", path)]))
         .collect()
 }
 

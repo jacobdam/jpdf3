@@ -339,7 +339,7 @@ fn visible_text(line: &str, in_comment: &mut bool) -> String {
             match rest.find("-->") {
                 Some(i) => {
                     *in_comment = false;
-                    rest = rest.get(i + 3..).unwrap_or_default();
+                    rest = rest.get(i.saturating_add(3)..).unwrap_or_default();
                 }
                 None => return out,
             }
@@ -511,7 +511,8 @@ fn split_journey_id(s: &str) -> Option<(&str, &str)> {
         .chars()
         .next()
         .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-    let id_len = 2 + area + 1 + digits;
+    // `J-`, the area, `-`, the digits.
+    let id_len = area.saturating_add(digits).saturating_add(3);
     boundary.then(|| s.get(..id_len).map(|id| (id, rest)))?
 }
 
@@ -541,7 +542,7 @@ pub fn parse_journeys(text: &str) -> (Vec<Journey>, Vec<String>) {
     let mut fence = Fence::default();
     let mut fence_start = 0;
     for (n, line) in text.lines().enumerate() {
-        let lineno = n + 1;
+        let lineno = n.saturating_add(1);
         let was_open = fence.open.is_some();
         let in_fence = fence.line(line);
         if !was_open && fence.open.is_some() {
@@ -808,7 +809,7 @@ fn link_targets(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut escaping = BTreeSet::new();
     let mut rest = text;
     while let Some(i) = rest.find("](") {
-        let tail = rest.get(i + 2..).unwrap_or_default();
+        let tail = rest.get(i.saturating_add(2)..).unwrap_or_default();
         let len = tail.find([')', ' ']).unwrap_or(tail.len());
         let target = tail.get(..len).unwrap_or_default();
         let external = target.contains("://") || target.starts_with('/') || target.starts_with('#');

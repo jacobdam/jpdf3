@@ -391,7 +391,8 @@ pub fn check_scene(
     if width == 0 || height == 0 {
         return Err(InvalidArgument("zero-size canvas"));
     }
-    let pixels = u64::from(width) * u64::from(height);
+    // u32 × u32 fits a u64, so this never saturates.
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
     if pixels > limits.max_canvas_pixels {
         return Err(LimitExceeded("canvas pixels"));
     }
@@ -455,8 +456,8 @@ pub fn check_scene(
                 if !unit(*opacity) {
                     return Err(InvalidArgument("opacity out of range"));
                 }
-                // u32 × u32 fits a u64; × 4 may not (checked).
-                let image_pixels = u64::from(image.width) * u64::from(image.height);
+                // u32 × u32 fits a u64 (never saturates); × 4 may not (checked).
+                let image_pixels = u64::from(image.width).saturating_mul(u64::from(image.height));
                 let expected = image_pixels.checked_mul(4);
                 if image_pixels == 0
                     || expected.is_none()

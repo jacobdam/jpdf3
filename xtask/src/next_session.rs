@@ -553,7 +553,7 @@ fn window_parked(labels: &[String]) -> bool {
 fn names_url(body: &str, url: &str) -> bool {
     body.match_indices(url).any(|(i, _)| {
         !body
-            .get(i + url.len()..)
+            .get(i.saturating_add(url.len())..)
             .and_then(|r| r.chars().next())
             .is_some_and(|c| c.is_ascii_digit())
     })
@@ -1025,7 +1025,7 @@ fn dependencies(body: &str) -> Vec<u64> {
                 out.push(n);
                 r = x.get(len..).unwrap_or_default().trim_start();
                 if r.starts_with('(') {
-                    match r.find(')').and_then(|i| r.get(i + 1..)) {
+                    match r.find(')').and_then(|i| r.get(i.saturating_add(1)..)) {
                         Some(after) => r = after,
                         None => break,
                     }
@@ -1529,8 +1529,8 @@ fn planner_ran(records: &[(&str, i64, &str)], today: i64) -> (bool, bool) {
     for (_, day, rest) in records {
         if rest.split_whitespace().next() == Some("planner") {
             ran |= *day == today;
-            // `today - day` can't overflow: both are days of years 0000–9999 at most.
-            week |= *day <= today && today - *day < RECORD_DAYS;
+            // Both are days of years 0000–9999 at most, so `today - day` never saturates.
+            week |= *day <= today && today.saturating_sub(*day) < RECORD_DAYS;
         }
     }
     (ran, week)
@@ -1548,10 +1548,15 @@ fn record_minute(name: &str) -> Option<i64> {
     if ![h1, h2, m1, m2].iter().all(u8::is_ascii_digit) {
         return None;
     }
-    // Each is an ASCII digit, so `c - b'0'` is 0–9.
-    let d = |c: u8| i64::from(c - b'0');
-    let (h, m) = (d(h1) * 10 + d(h2), d(m1) * 10 + d(m2));
-    (h < 24 && m < 60).then_some(h * 60 + m)
+    // Each is an ASCII digit, so `c - b'0'` is 0–9 and no step below fails.
+    let d = |c: u8| i64::from(c.saturating_sub(b'0'));
+    let two = |a: u8, b: u8| d(a).checked_mul(10)?.checked_add(d(b));
+    let (h, m) = (two(h1, h2)?, two(m1, m2)?);
+    if h < 24 && m < 60 {
+        h.checked_mul(60)?.checked_add(m)
+    } else {
+        None
+    }
 }
 
 /// Today's Planner runs (ADR 0015 §2–3): the distinct journal files dated `today` that hold a
@@ -1576,8 +1581,8 @@ fn planner_today(records: &[(&str, i64, &str)], today: i64) -> (usize, Option<St
     // Checked: `today` is a day of the years 1970–9999 and `m` < 1440, so it fits.
     let from = newest.and_then(|m| {
         today
-            .checked_mul(86_400)
-            .and_then(|s| s.checked_add((m + 1) * 60))
+            .checked_mul(86_400)?
+            .checked_add(m.checked_add(1)?.checked_mul(60)?)
     });
     (files.len(), from.map(iso))
 }
@@ -1683,7 +1688,7 @@ enum Mix {
 impl Mix {
     /// Below the budget: `counted / MIX_WINDOW < MIX_PERCENT / 100`, in whole numbers.
     fn below(&self) -> bool {
-        matches!(self, Mix::Measured(c) if c * 100 < MIX_PERCENT * MIX_WINDOW)
+        matches!(self, Mix::Measured(c) if c.saturating_mul(100) < MIX_PERCENT * MIX_WINDOW)
     }
 
     fn note(&self) -> String {
@@ -1694,7 +1699,7 @@ impl Mix {
             Mix::NoMilestone => "work mix: not measured (no current milestone)".to_owned(),
             Mix::Measured(c) => format!(
                 "work mix: {c} of the last {MIX_WINDOW} sessions on milestone work ({}%; budget {MIX_PERCENT}%)",
-                c * 100 / MIX_WINDOW
+                c.saturating_mul(100) / MIX_WINDOW
             ),
         }
     }
@@ -1728,7 +1733,7 @@ fn work_mix(
     if window.len() < MIX_WINDOW {
         return Mix::Few(window.len());
     }
-    let window = window.split_off(window.len() - MIX_WINDOW);
+    let window = window.split_off(window.len().saturating_sub(MIX_WINDOW));
     let in_current = |n: u64| {
         milestones
             .get(&n)
@@ -2377,7 +2382,7 @@ fn log_line(now: i64, out: &Result<Decision, Error>) -> String {
     if pick.len() > MAX_LOG_PICK {
         let mut cut = MAX_LOG_PICK;
         while !pick.is_char_boundary(cut) {
-            cut -= 1;
+            cut = cut.saturating_sub(1);
         }
         pick.truncate(cut);
     }

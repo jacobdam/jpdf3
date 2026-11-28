@@ -271,9 +271,12 @@ impl Parser<'_> {
             if !(0xDC00..0xE000).contains(&lo) {
                 return Err(self.err("unpaired surrogate"));
             }
-            0x10000_u32
-                .checked_add(((hi - 0xD800) << 10) | (lo - 0xDC00))
-                .ok_or_else(|| self.err("invalid surrogate pair"))?
+            // Both ranges were checked above, so neither subtraction fails.
+            let pair = hi
+                .checked_sub(0xD800)
+                .zip(lo.checked_sub(0xDC00))
+                .and_then(|(h, l)| 0x10000_u32.checked_add((h << 10) | l));
+            pair.ok_or_else(|| self.err("invalid surrogate pair"))?
         } else {
             hi
         };

@@ -149,17 +149,17 @@ pub fn lint(areas_text: &str, tree: &str, issues: &str) -> Result<Report, String
     for issue in &list {
         let found = issue_problems(issue, &names);
         if !found.is_empty() {
-            bad_issues += 1;
+            bad_issues = bad_issues.saturating_add(1);
         }
         for p in found {
-            problems += 1;
+            problems = problems.saturating_add(1);
             let _ = writeln!(text, "#{}: {p}", issue.number);
         }
     }
     for a in &areas {
         for p in &a.paths {
             if !covers(p, &files) {
-                problems += 1;
+                problems = problems.saturating_add(1);
                 let _ = writeln!(
                     text,
                     "{AREAS_FILE}: path {p} of area {} matches no tracked file",
@@ -325,7 +325,7 @@ struct Partial {
 
 pub fn parse_areas(text: &str) -> Result<Vec<Area>, String> {
     let mut partials: Vec<Partial> = Vec::new();
-    let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l));
+    let mut lines = (1usize..).zip(text.lines());
     while let Some((n, raw)) = lines.next() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {

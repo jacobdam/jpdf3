@@ -658,7 +658,10 @@ fn ccitt_params(report: &mut Report, decoder: &dyn CcittDecoder, f: &CcittFixtur
             "Rows at the largest value the limits allow",
             CcittParams {
                 rows: u32::try_from(
-                    (capped.max_image_pixels / u64::from(width.max(1)))
+                    capped
+                        .max_image_pixels
+                        .checked_div(u64::from(width))
+                        .unwrap_or(capped.max_image_pixels)
                         .min(u64::from(capped.max_image_dimension)),
                 )
                 .unwrap_or(u32::MAX),
@@ -797,7 +800,7 @@ impl Raster for DecodedImage {
         // channels, and a CMYK image with K all 0 would hide a dropped K.
         let half = 1u32
             .checked_shl(u32::from(self.source_bits))
-            .map_or(u32::MAX, |range| ((range - 1) / 2).max(1));
+            .map_or(u32::MAX, |range| (range.saturating_sub(1) / 2).max(1));
         // An alpha channel (last component) may be flat: mostly opaque masks are normal.
         let step = usize::from(self.components.max(1));
         let colour = if self.has_alpha {
@@ -811,7 +814,7 @@ impl Raster for DecodedImage {
                 .skip(c)
                 .step_by(step)
                 .fold((u16::MAX, 0u16), |(lo, hi), v| (lo.min(v), hi.max(v)));
-            max >= min && u32::from(max - min) >= half
+            max.checked_sub(min).is_some_and(|d| u32::from(d) >= half)
         })
     }
     fn rows_varied(&self, rows: u32) -> bool {
@@ -1489,15 +1492,18 @@ mod tests {
                 } else {
                     width.max(height)
                 } > limits.max_image_dimension
-                    || u64::from(width) * u64::from(height) > limits.max_image_pixels
+                    || u64::from(width).saturating_mul(u64::from(height)) > limits.max_image_pixels
                     || components > limits.max_image_components)
             {
                 return Err(BackendError::LimitExceeded("image"));
             }
+            // Toy dimensions are u16, so none of these saturates.
             let len = if packed {
-                usize::try_from(width.div_ceil(8) * height).unwrap()
+                usize::try_from(width.div_ceil(8).saturating_mul(height)).unwrap()
             } else {
-                usize::try_from(width * height).unwrap() * usize::from(components)
+                usize::try_from(width.saturating_mul(height))
+                    .unwrap()
+                    .saturating_mul(usize::from(components))
             };
             let max_output = if self.zero_unlimited_output && limits.max_output_bytes == 0 {
                 usize::MAX
@@ -1519,9 +1525,11 @@ mod tests {
                 return Err(BackendError::Malformed("sample"));
             }
             if self.scale_low_depth && source_bits < 8 {
-                let max = (1u32 << source_bits) - 1;
+                // source_bits is 1 to 7 here, so max is at least 1.
+                let max = (1u32 << source_bits).saturating_sub(1);
                 for v in &mut samples {
-                    *v = u8::try_from(u32::from(*v) * 255 / max).unwrap();
+                    let scaled = u32::from(*v).saturating_mul(255).checked_div(max);
+                    *v = u8::try_from(scaled.unwrap()).unwrap();
                 }
             }
             let implied = implied_transform(components, adobe_app14);
@@ -1775,7 +1783,7 @@ mod tests {
                 let product = if self.ccitt_u32_product {
                     u64::from(params.columns.wrapping_mul(params.rows))
                 } else {
-                    u64::from(params.columns) * u64::from(params.rows)
+                    u64::from(params.columns).saturating_mul(u64::from(params.rows))
                 };
                 if params.columns > limits.max_image_dimension
                     || (rows_checked
@@ -1807,10 +1815,12 @@ mod tests {
             10 => (8, Some(2)),
             _ => (8, Some(1)),
         };
-        let len = usize::from(width) * usize::from(height) * usize::from(components);
-        let mask = u8::try_from((1u16 << source_bits) - 1).unwrap();
+        let len = usize::from(width)
+            .saturating_mul(usize::from(height))
+            .saturating_mul(usize::from(components));
+        let mask = u8::try_from((1u16 << source_bits).saturating_sub(1)).unwrap();
         let samples: Vec<u8> = (0..len)
-            .map(|i| u8::try_from(i * 7 % 256).unwrap() & mask)
+            .map(|i| u8::try_from(i.saturating_mul(7) % 256).unwrap() & mask)
             .collect();
         let [w0, w1] = width.to_be_bytes();
         let [h0, h1] = height.to_be_bytes();
@@ -1837,9 +1847,9 @@ mod tests {
     /// A packed bitmap after the toy header, stored XORed with `key`; the expected bitmap has
     /// its padding cleared.
     fn toy_bitmap(width: u16, height: u16, key: u8) -> (Vec<u8>, Bitmap) {
-        let len = usize::from(width.div_ceil(8)) * usize::from(height);
+        let len = usize::from(width.div_ceil(8)).saturating_mul(usize::from(height));
         let mut data: Vec<u8> = (0..len)
-            .map(|i| u8::try_from(i * 37 % 256).unwrap())
+            .map(|i| u8::try_from(i.saturating_mul(37) % 256).unwrap())
             .collect();
         mask_padding(&mut data, u32::from(width));
         let [w0, w1] = width.to_be_bytes();
@@ -1872,8 +1882,8 @@ mod tests {
     /// intact.
     fn last_byte_cut(input: &[u8], height: u32) -> Option<Salvage> {
         Some(Salvage {
-            cut: input.len() - 1,
-            rows: height - 1,
+            cut: input.len().saturating_sub(1),
+            rows: height.saturating_sub(1),
         })
     }
 

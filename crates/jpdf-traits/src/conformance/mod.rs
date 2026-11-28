@@ -195,7 +195,7 @@ fn sample_offsets(len: usize, samples: usize) -> Vec<usize> {
     if len <= samples.saturating_add(16) {
         return (0..len).collect();
     }
-    let step = (len / samples.max(1)).max(1);
+    let step = len.checked_div(samples.max(1)).unwrap_or(1).max(1);
     let mut offsets: Vec<usize> = (0..len).step_by(step).collect();
     offsets.extend(len.saturating_sub(16)..len);
     offsets.sort_unstable();
