@@ -1,9 +1,11 @@
-//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders, and the
-//! `ci linux` step that copies it next to the page. Spec: specs/tooling/dashboard.md.
+//! `cargo xtask dashboard`: the metrics snapshot the Pages dashboard renders. Spec:
+//! specs/tooling/dashboard.md. The `ci linux` step that copies it next to the page is
+//! `ci_linux::copy_into_site` (#433: the code the judge runs stays in a strict-lane file).
 //!
 //! GitHub text (comments, titles) is data: this module only counts review headers in it, as
 //! `cargo xtask metrics` does, and escapes issue titles with the shared `json_str`.
 
+use crate::ci_linux::SNAPSHOT;
 use crate::metrics::{
     LIST_LIMIT, array, day_of, fmt_day, gh, json_str, label_names, median, num, parse_date,
     parse_list, parse_sessions, read, read_optional, review_of, string, today,
@@ -18,10 +20,6 @@ use std::path::{Path, PathBuf};
 pub const WEEKS: i64 = 12;
 /// The forecast's trailing window (ops/TICK.md §7 step 5: the trailing 4-week rate).
 pub const RATE_DAYS: i64 = 28;
-/// Largest snapshot `ci linux` copies into the site.
-pub const MAX_SNAPSHOT_BYTES: u64 = 1 << 20;
-/// The committed snapshot, relative to the repo root.
-pub const SNAPSHOT: &str = "ops/metrics/dashboard.json";
 /// Nightly runs listed (about 28 weeks of daily nightlies, newest first).
 pub const NIGHTLY_LIMIT: usize = 200;
 /// Nightly runs tried per week before the week counts as missing.
@@ -839,51 +837,6 @@ pub fn run(repo: &Path, opts: &Options) -> Result<PathBuf, String> {
     Ok(opts.out.clone())
 }
 
-/// What [`copy_into_site`] did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Copied {
-    Yes,
-    /// No `site/dashboard/` (the web build failed or didn't run).
-    NoPage,
-    /// No committed snapshot.
-    NoSnapshot,
-}
-
-/// The `ci linux` step: copies the committed snapshot to `site/dashboard/data.json` when the
-/// web build wrote `site/dashboard/`.
-pub fn copy_into_site(repo: &Path, site: &Path) -> Result<Copied, String> {
-    use std::io::Read as _;
-    let dir = site.join("dashboard");
-    if !dir.is_dir() {
-        return Ok(Copied::NoPage);
-    }
-    let src = repo.join(SNAPSHOT);
-    let file = match jpdf_fsio::open_nonblocking(&src) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Copied::NoSnapshot),
-        Err(e) => return Err(format!("open {}: {e}", src.display())),
-    };
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("open {}: {e}", src.display()))?;
-    if !meta.is_file() {
-        return Err(format!("{}: not a regular file", src.display()));
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_SNAPSHOT_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("read {}: {e}", src.display()))?;
-    if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_SNAPSHOT_BYTES) {
-        return Err(format!(
-            "{}: larger than {MAX_SNAPSHOT_BYTES} bytes",
-            src.display()
-        ));
-    }
-    let dst = dir.join("data.json");
-    fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
-    Ok(Copied::Yes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,51 +1284,6 @@ mod tests {
         );
         let text = fs::read_to_string(&out).unwrap_or_default();
         assert!(text.contains(r#"{"start": "2026-11-23", "end": "2026-11-25", "merged_prs": 1, "median_rounds": 3, "sessions": null}"#), "{text}");
-        let _ = fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn copies_the_snapshot_up_to_one_mib() {
-        let base =
-            std::env::temp_dir().join(format!("xtask-dashboard-copy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&base);
-        let (repo, site) = (base.join("repo"), base.join("site"));
-        assert!(fs::create_dir_all(repo.join("ops/metrics")).is_ok());
-        let snap = repo.join(SNAPSHOT);
-        assert!(fs::write(&snap, "{}").is_ok());
-        assert_eq!(
-            copy_into_site(&repo, &site),
-            Ok(Copied::NoPage),
-            "no page: nothing copied"
-        );
-        assert!(fs::create_dir_all(site.join("dashboard")).is_ok());
-        let data = site.join("dashboard/data.json");
-        let limit = usize::try_from(MAX_SNAPSHOT_BYTES).unwrap_or(0);
-        assert!(fs::write(&snap, vec![b' '; limit]).is_ok());
-        assert_eq!(copy_into_site(&repo, &site), Ok(Copied::Yes));
-        assert_eq!(
-            fs::metadata(&data).map(|m| m.len()).ok(),
-            Some(MAX_SNAPSHOT_BYTES)
-        );
-        assert!(fs::write(&snap, vec![b' '; limit + 1]).is_ok());
-        let r = copy_into_site(&repo, &site);
-        assert!(
-            r.as_ref()
-                .is_err_and(|e| e.contains("larger than 1048576 bytes")),
-            "{r:?}"
-        );
-        assert!(fs::remove_file(&snap).is_ok() && fs::create_dir_all(&snap).is_ok());
-        let r = copy_into_site(&repo, &site);
-        assert!(
-            r.as_ref().is_err_and(|e| e.contains("not a regular file")),
-            "{r:?}"
-        );
-        assert!(fs::remove_dir_all(&snap).is_ok());
-        assert_eq!(
-            copy_into_site(&repo, &site),
-            Ok(Copied::NoSnapshot),
-            "no snapshot: nothing copied"
-        );
         let _ = fs::remove_dir_all(&base);
     }
 
