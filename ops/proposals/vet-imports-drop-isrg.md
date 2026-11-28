@@ -39,8 +39,10 @@ No result depends on the import today:
   (`ops/proposals/vet-imports-miniz-oxide.md`, not yet applied: `imports.lock` on main is
   unchanged), is vetted without it (probe below).
 
-M1 admits new dependencies (#446 and later adapters), so the owner decided to settle this in M1
-before one is vetted by ISRG alone (comment on #442, 2026-11-28).
+M1 admits new dependencies (#446 and later adapters), so #442 was moved from M0 to M1 on
+2026-11-28 (its `milestoned` event at 08:56Z), to be settled before one is vetted by ISRG alone.
+The reason is recorded in a tagged comment on #442 by the owner's interactive session, which is
+a record of that move, not an owner instruction (CONSTITUTION 1).
 
 ## Options
 
@@ -49,9 +51,10 @@ project trusts stays the four the owner chose. Nothing admitted or planned loses
 If an ISRG audit is ever the only one for a crate we need, adding the source then is a
 deliberate change to CONSTITUTION 9, made with that crate in view.
 
-**B: list ISRG in CONSTITUTION 9** (and AUTOMATION.md §6.4). The store stays as it is. ISRG
-(the Internet Security Research Group, through its Divvi Up project's `libprio-rs`) then becomes
-a fifth trusted source for every future dependency, though no current or planned one needs it.
+**B: list ISRG in CONSTITUTION 9** (and AUTOMATION.md §6.4, PLAN.md §3). The store stays as
+it is. ISRG (the Internet Security Research Group, through its Divvi Up project's `libprio-rs`)
+then becomes a fifth trusted source for every future dependency, though no current or planned
+one needs it.
 
 ## Option A: the change
 
@@ -81,10 +84,11 @@ vet step would go red on main.
  [audits.mozilla.audits]
 ```
 
-Edit both by hand. Don't run `cargo vet` without `--locked` in the repo to rewrite the lock: if
-`vet-imports-miniz-oxide.md` has been applied by then, the repo still has no third-party
-dependency, so vet prunes the miniz_oxide and adler2 audits that proposal added. The hand edit
-gives the right file in either order, since it touches only the `isrg` lines:
+Edit both by hand rather than letting an unlocked `cargo vet` rewrite the lock: an unlocked run
+fetches every imported source again and writes whatever changed upstream since these probes
+into the file, so the commit would hold more than the `isrg` lines. The hand edit gives the
+right file in either order with `vet-imports-miniz-oxide.md`, since it touches only the `isrg`
+lines:
 
 - applied before the miniz_oxide proposal: `imports.lock` becomes the four empty sections,
   byte for byte the file `cargo vet` writes for a dependency-free graph with the new
@@ -96,8 +100,8 @@ gives the right file in either order, since it touches only the `isrg` lines:
   `config.toml` (SHA-256 `1bbfa5091ce31dcff06abc537b75018bcab477d1ee838778044efacfd87e6f85`,
   2026-11-28; an imported source that changed since then gives another file).
 
-AUTOMATION.md §6.4 and CONSTITUTION 9 already say this and stay as they are. ADR 0016's
-sentence about the import stays as a record of its runs.
+CONSTITUTION 9, AUTOMATION.md §6.4 and PLAN.md §3 already say this and stay as they are. ADR
+0016's sentence about the import stays as a record of its runs.
 
 ## Option B: the change
 
@@ -110,13 +114,19 @@ sentence about the import stays as a record of its runs.
 +   Zcash, ISRG). Agents never record their own audits or exemptions.
 ```
 
-`AUTOMATION.md` §6.4 (not protected; in the same commit so the two never disagree):
+`AUTOMATION.md` §6.4 and rule 3 of `PLAN.md` §3's "Admission rules for any third-party crate"
+(neither is protected; in the same commit, so no doc disagrees with the rule):
 
 ```diff
 -- **Audit:** `cargo vet` accepts **imported audits only** (Google, Mozilla, Bytecode Alliance,
 -  Zcash). The agent cannot record its own audits.
 +- **Audit:** `cargo vet` accepts **imported audits only** (Google, Mozilla, Bytecode Alliance,
 +  Zcash, ISRG). The agent cannot record its own audits.
+```
+
+```diff
+-3. `cargo vet` with **imported audits only** (Google, Mozilla, Bytecode Alliance, Zcash).
++3. `cargo vet` with **imported audits only** (Google, Mozilla, Bytecode Alliance, Zcash, ISRG).
 ```
 
 `supply-chain/` is unchanged.
@@ -157,7 +167,8 @@ whose `audits.toml` is main's.
    first, the same: its audits are unused on main). With the `imports.lock` edit undone, the same
    command fails with `imports.lock is out-of-date` (probe 2), which shows the two files must
    go in one commit.
-2. `git diff` shows exactly the 2 + 2 removed lines above, nothing else.
+2. `git diff` shows exactly the 3 + 2 removed lines above (each file's blank line included),
+   nothing else.
 3. The judge on this PR is green, but its `policy` job vets the base commit's `supply-chain/`
    (`vet-imports-miniz-oxide.md`, "Why before the adapter"), so step 1 is the real test, and
    the first `ci` run on main after the merge vets the new files.
