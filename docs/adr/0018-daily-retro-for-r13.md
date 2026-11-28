@@ -283,8 +283,8 @@ next weekly retro (clause 6), whatever its number.
   whose `Period:` ends 2 days before yesterday (the next period starts the day after it); an
   incident retro after a daily one the same day (`Period: none`, skipped by the next); a
   weekly period of 7 days next to a daily one of 1; a journal file `1621-…` joined to a
-  session that started at 16:21:36 (joined) and one at 16:22:00 with a 1621 window ended at
-  16:21:59 (not); an `auto_squash_enabled` PR and the issue its `ClosedEvent.closer` names
+  session that started at 16:21:36 (joined) and to one that started at 16:22:00 (not: the
+  16:21 minute ends before that window opens); an `auto_squash_enabled` PR and the issue its `ClosedEvent.closer` names
   (not counted) next to a merge with no auto-merge event (counted); a `human` label at 60 s
   (kind 1) and at 61 s (not kind 1).
 - What no fixture catches: a session that changes a label by hand inside a retro (clause 3),
