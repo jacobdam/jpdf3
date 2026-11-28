@@ -739,3 +739,39 @@ for (const scheme of ["light", "dark"] as const) {
     await expectReadable(page, ['[role="alert"]']);
   });
 }
+
+// The check itself rejects each fade #431 names, so a later edit to `textColors` can't drop
+// one unnoticed. Each rule is injected as a constructed stylesheet (CSSOM, allowed by the CSP).
+for (const [name, css, message] of [
+  ["an ancestor's opacity", "main { opacity: 0.5 }", /\[role="alert"\] div: opacity/],
+  ["the text element's own opacity", ".MuiAlert-message { opacity: 0.2 }", /div: opacity/],
+  [
+    "a text fill color",
+    '[role="alert"] { -webkit-text-fill-color: #eee }',
+    /div: -webkit-text-fill-color/,
+  ],
+  [
+    "a descendant's ::after text",
+    '.MuiAlert-message::after { content: "x"; color: #eee }',
+    /div::after: rgb\(238, 238, 238\) on/,
+  ],
+  [
+    "a pseudo-element's own opacity",
+    '[role="alert"]::before { content: "x"; opacity: 0.2 }',
+    /div::before: opacity/,
+  ],
+] as const) {
+  test(`the contrast check rejects ${name}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await serve(page, snapshot({ version: 2 }));
+    await page.goto("./dashboard/");
+    await expect(page.getByText(INVALID)).toBeVisible();
+    await expectReadable(page, ['[role="alert"]']);
+    await page.evaluate((rule) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(rule);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    }, css);
+    await expect(expectReadable(page, ['[role="alert"]'])).rejects.toThrow(message);
+  });
+}
