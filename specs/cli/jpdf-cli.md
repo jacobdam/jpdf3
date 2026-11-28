@@ -37,9 +37,35 @@ After validation every command except `info` exits **3** (not implemented) witho
 - a classic cross-reference table found through the last `startxref` in the final 64 KiB
   (§7.5.5; trailing junk is tolerated), with `/Prev` chains (§7.5.6);
 - an unencrypted document;
-- a catalog `/Pages` node whose `/Kids` are all distinct `/Type /Page` leaves (§7.7.3). A
+- a catalog `/Pages` node whose `/Kids` are all distinct `/Page` leaves (§7.7.3). A
   `/Count` that disagrees with the kids is read leniently (CONSTITUTION 17): the number of
   kids found wins; a missing or non-integer `/Count` is ignored the same way.
+
+Lenient reads (CONSTITUTION 17, #78; audit 0001):
+- **Update trailers that omit entries.** §7.5.6 says an update's trailer should repeat the
+  previous trailer's entries, and real writers often leave `/Root` or `/Size` out. While
+  walking `/Prev`, the engine keeps, for each of `/Root` (a reference) and `/Size` (an
+  integer), the value from the newest trailer that has a usable one, so `<< /Size 4 /Prev N >>`
+  takes `/Root` from the older trailer. A trailer whose `/Root` is not a reference counts as
+  having none. If no trailer in the chain has one, the error is
+  `trailer /Root is not a reference` as before.
+- **Page leaves without `/Type`.** A kid whose `/Type` is missing or not a name is inferred
+  from its shape: with a `/Kids` entry it is an intermediate node (so exit 3, `nested page
+  trees`), without one a page. A kid whose `/Type` is a name other than `/Page` or `/Pages`
+  stays malformed (`page tree kid has no valid /Type`).
+- **Offsets past the end of the file.** An in-use xref entry (`n`) whose offset is at or
+  beyond the file's length can't resolve, so it is read as free and a reference to it is the
+  null object (§7.3.10), the same as an offset beyond `u32`. An offset one byte inside the
+  file is in use and is checked against the object header there.
+- **`startxref` (or `/Prev`) not at `xref`.** Only an indirect object `N G obj << … /Type
+  /XRef … >>` at that offset, a cross-reference stream (§7.5.8), is `not implemented:
+  cross-reference streams` (exit 3). Anything else there (an integer that starts no object,
+  another object, other bytes) is malformed: `expected 'xref'` (exit 2).
+- **Hybrid files** (§7.5.8.4: a classic table whose trailer has `/XRefStm`). They are built so
+  that a reader without cross-reference streams uses the table alone, and this engine does:
+  `/XRefStm` is ignored, so objects listed only in the stream (in object streams) resolve to
+  null. Once cross-reference streams are read (M1, PLAN §8), the stream's entries must be
+  merged in as §7.5.8.4 says.
 
 `--password` is accepted and ignored for unencrypted files.
 
@@ -76,7 +102,7 @@ Not applicable (read-only).
 | FILE larger than `max_file_size` | 2 | `jpdf-cli: limit exceeded: file size` |
 | malformed file (no `startxref`, bad xref, object header mismatch, overlapping objects, bad page tree, …) | 2 | `jpdf-cli: malformed PDF: <what>[ at byte <offset>]` (offset when the lexer knows it) |
 | a limit exceeded | 2 | `jpdf-cli: limit exceeded: <which>` |
-| unsupported structure (xref stream, hybrid `/XRefStm`, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
+| unsupported structure (xref stream, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
 | any non-`info` command | 3 | `jpdf-cli: not implemented: <command>` |
 
 No other exit code is ever produced; panics are bugs (no `catch_unwind` that would hide them
