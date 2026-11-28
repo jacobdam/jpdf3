@@ -33,13 +33,14 @@ lowest number first.
   all done, per the owner session's comment on #208 dated 2026-11-27.
 
 ## In flight
-None: no agent PR is open.
+None besides this Planner PR (#421).
 
 ## Not workable now
 - #15, #16, #19: umbrellas. Each closes after its open sub-issues: #15 after #369, #16 after #413
   and #304, #19 after #383.
 - #195: waits for #420's decision on proposal tests.
-- #208: the owner's drill steps. All are done, and #21's PR records them and closes it.
+- #208: the owner's drill steps, a sub-issue of #21 (linked today). All are done. The PR for
+  #21 records them in docs/retros/0000-pilot.md, closes #21, and closes #208 with it.
 - Set aside (`deferred`): #146.
 
 ## Critical path
