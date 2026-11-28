@@ -157,7 +157,10 @@ the same day (`planner new-issues`, at most 3 Planner runs a UTC day) when an is
 the current milestone after the day's last run, so a discovery or a design's tasks wait one
 session for `ready`, not until 00:00 UTC. Its exit artifact is `ops/QUEUE.md` (the
 ordered ready list, what waits, the critical path, the design-ahead list), reviewed like any
-work PR when it changes. Part 2 (#288) adds the **work-mix budget** (ADR 0011 §3): of the
+work PR when it changes. Every run also re-checks the `deferred` issues (#461): the comment
+that sets the label ends with an `Undefer when:` condition (an issue closed, a milestone
+current, or free text the Planner judges), and the Planner removes the label once it holds, so a
+deferral never outlives its reason (ops/TICK.md §5 and §9 step 1a). Part 2 (#288) adds the **work-mix budget** (ADR 0011 §3): of the
 newest 20 `Session:` records of the last 7 days (owner-instruction and Design sessions left out),
 at least 70% should be Worker or QC sessions on a current-milestone issue whose agent PR changes
 a product path. Below that, step 8 makes the Planner due (once a day) to add product issues, and

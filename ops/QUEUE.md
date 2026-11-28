@@ -47,7 +47,8 @@ None besides this Planner PR.
   #431 (PR #460 R1.1; `ready` removed again, with a comment on #15).
 - #208: the owner's drill steps, a sub-issue of #21. All are done. The PR for #21 records them
   in docs/retros/0000-pilot.md, closes #21, and closes #208 with it.
-- Set aside (`deferred`): #146.
+- Set aside (`deferred`): none in M0. #146's deferral was lifted on 2026-11-28 (owner issue #461,
+  PR #464), so rule d picks it.
 
 ## Sub-issues (step 2b)
 #424 to #427 are already sub-issues of #420. #431 and #442 are a review deferral and a review
