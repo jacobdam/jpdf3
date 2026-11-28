@@ -223,3 +223,33 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   filed for it.
 - **Paths:** `crates/`, `tools/jpdf-cli/`, `fuzz/`, `bindings/`, `apps/macos/JPDFHelper/`,
   `xtask/src/limits.rs`, `xtask/src/limits/`, `specs/core/memory-budget.md`.
+
+## P9. A milestone holds its exit path; a subject's sensitivity sets its lane, not its milestone
+- **Invariant:** an open process-area issue (ADR 0012 §2's scope) is in a numbered milestone
+  only by one of the terms of ADR 0019 clause 1: its gate, last step or the next milestone's
+  first issues need it (1); it fixes a wrong pick or a `cargo xtask next-session` failure seen
+  live, not work that measures or reports one (2); `crash` or `security` as ADR 0009 places it
+  (3); an owner pick (4); a `stall` issue (5, ADR 0018); a pull from `Ops` (6). Otherwise it is
+  in `Ops`. A strict-list subject chooses no milestone; its PR is strict wherever the issue
+  sits. An owner pick is the newest owner statement about the issue's milestone: an untagged
+  `jacobdam` comment on the issue naming the milestone, or an untagged `jacobdam` comment
+  elsewhere naming the issue and the milestone, which a tagged `jacobdam` marker
+  `🤖 jpdf-agent Owner pick: <Mn> (<URL>)` on the issue points to; the marker counts only once
+  the Planner has read the linked comment and found it so, and statements are ordered by the
+  owner comment's `created_at`, never the marker's. No §9 step 2 move takes a pick out; ADR
+  0009's latent-high moves still apply, naming the pick for the owner. An `Ops` issue enters a
+  numbered milestone only by one of clause 4's pulls (term 1 or 2 holds, an overlap found when
+  the milestone is planned, an audit's request, a retro's request), recorded in a tagged
+  `jacobdam` comment `🤖 jpdf-agent Pulled from Ops: <Mn> (<why>)` that keeps it there.
+- **Decided in:** ADR 0019 (amending ADR 0012 §2).
+- **Enforced by:** the Planner's ops/TICK.md §9 step 2 on every run (ADR 0019 task 1); the
+  audit's list of strict-list `Ops` issues (§6) and the weekly retro's `Ops` count (§7 step 4);
+  the rest is reviewer vigilance. ADR 0018 task 3 (#482) measures the moves once it lands.
+- **Reviewers check:** a TICK passage that files issues or moves them between milestones keeps
+  clause 1's terms and adds none without an ADR; it doesn't file a strict-list follow-up in a
+  numbered milestone on its subject alone; a rule that reads an owner pick reads it only from
+  `jacobdam` comments, untagged as the owner feed tests it, or from the `Owner pick:` marker
+  after reading its link, ordered by the owner comment's `created_at`; no Planner text moves an
+  owner pick or pulls an `Ops` issue into a milestone by overlap except when the milestone is
+  planned.
+- **Paths:** `ops/TICK.md`, `AUTOMATION.md`, `ops/QUEUE.md`.
