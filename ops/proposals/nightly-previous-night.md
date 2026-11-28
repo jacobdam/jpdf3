@@ -38,6 +38,8 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
 +          path: prev-nightly/regress.json
 +          key: nightly-regress-${{ github.run_id }}-${{ github.run_attempt }}
 +          restore-keys: nightly-regress-
++      - name: Show the restored file's checksum
++        run: sha256sum prev-nightly/regress.json || echo "no previous regress.json"
        - name: "cargo xtask nightly (agent-owned - long fuzz, regress corpus, bench, files issues)"
 +        id: nightly
          working-directory: pr
@@ -121,6 +123,13 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
   previous". Recovery if it happens: delete the entries
   (`gh cache list --key nightly-regress-` and `gh cache delete <id>`), and the next night
   starts without a diff.
+- **A night that always exits 1 freezes the baseline.** A night whose runs all finished but
+  that exits 1 afterwards (a bench or fuzz pass `failed`, a `gh` failure while filing, a
+  `nightly.json` write failure: items 10, 15 and 16) is not saved either. If such a failure
+  repeats every night (a broken `cargo-fuzz` install, say), the saved entry is never
+  replaced and each restore keeps it from eviction, so every later night diffs against that
+  same old night. Regressions since then are still found, but each one is reported again
+  every night (the issue gets a "Seen again" comment, item 16) until the failure is fixed.
 - **Eviction.** The repository's cache is shared with the corpus caches (10 GB, least recently
   used goes first). An evicted entry costs one night without a diff.
 - **Trust.** The previous file is written by the agent's own code in an earlier run of this
@@ -145,10 +154,12 @@ night's results, and #19 stays open.
    `nightly: regress diff: <C> changes, <N> new crash/timeout, <F> fixed`, and this run's
    `regress-diff.json` names `../prev-nightly/regress.json` as `previous`.
 4. Run it a third time. Its restore step logs `Cache restored from key:
-   nightly-regress-<second run id>-1` (not the first run's: the keep step copied this night's
-   file). Download the second and third runs' `nightly-report` artifacts and check three of
-   the third run's `regress-diff.json` `changes` against them: each `before` is the second
-   run's status for that blob and op, each `after` the third run's.
+   nightly-regress-<second run id>-1`. That shows only that the second run's save step ran
+   (the key comes from the run id), so check the content too: download the first and second
+   runs' `nightly-report` artifacts; the checksum step of the third run prints the
+   `sha256sum` of the second run's `regress.json`, which differs from the first run's (each
+   run records its own `ms`). The same check on the second run shows the first run's
+   checksum. If the keep step copied nothing, the third run prints the first run's checksum.
 5. `gh cache list --key nightly-regress-` lists the three entries, all on `refs/heads/main`.
 
 The plan doesn't exercise a night that exits 1 or 75, or a regression filed end to end; those
