@@ -26,8 +26,12 @@ This adds imported audits only. It records no audit of our own and no exemption
 
 ## Why before the adapter, and in its own PR
 
-A PR that changes a protected path passes the judge only if every commit in it is signed by
-the owner, so the agent's adapter commits can't share a PR with this change. The new entries
+The judge doesn't vet a PR with the PR's own `supply-chain/`: its "Pin protected config from
+the judge copy" step (`.github/workflows/ci.yml`, job `policy`) replaces `supply-chain/` with
+the copy at the PR's base commit before `cargo vet --locked` runs. So #446's PR passes vet only
+if its base, main, already holds these audits, and a shared PR would fail even with every
+commit signed. (A PR that changes a protected path also passes only if every commit in it is
+signed by the owner, so the agent's adapter commits couldn't share it anyway.) The new entries
 are harmless while unused: `cargo vet --locked` on a graph with no third-party package succeeds
 with them (checked on 2026-11-28, cargo-vet 0.10.3: `Vetting Succeeded (because you have no
 third-party dependencies)`). So this lands first, and #446 depends on #445.
@@ -111,8 +115,9 @@ The first line of the file is empty, as in today's file. The text inside the ent
 
 ## Test plan
 
-1. On the branch: `cargo vet --locked` passes (no third-party dependency yet, so the new entries
-   are unused); the judge is green on the PR.
+1. On the branch, locally: `cargo vet --locked` passes (no third-party dependency yet, so the
+   new entries are unused). The judge on this PR is green too, but it vets the base commit's
+   `supply-chain/` (above), so it doesn't test the new file: steps 1 and 2 do.
 2. In the scratch dir of step 1: `cargo vet --locked` prints `Vetting Succeeded (2 fully
    audited)` (checked on 2026-11-28), so the adapter's graph is vetted from the lock alone.
 3. After it merges, #446's PR adds the dependency, and the judge's `cargo vet --locked` passes
