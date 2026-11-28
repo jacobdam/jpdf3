@@ -4,9 +4,10 @@
 use jpdf_engine::{Document, EngineError, Limits};
 use jpdf_testgen::minimal_pdf;
 
-/// `max_file_size` at the file's exact length opens; one byte less refuses it, in the engine's
-/// own check (`file_size_limit_is_enforced` in open.rs is the one-past side through the same
-/// path; this pins the `>` against `>=` and `==`).
+/// `max_file_size` at the file's exact length opens; one byte less refuses it. This pins the
+/// boundary of `Document::open` as a whole: the engine's own check and the one in
+/// `XrefDocument::parse` give the same error, so the one-past side can't tell which refused it,
+/// and the at-limit side shows that neither is stricter than `>`.
 #[test]
 fn file_size_limit_is_exact() {
     let pdf = minimal_pdf(1);
@@ -19,7 +20,7 @@ fn file_size_limit_is_exact() {
     };
     assert_eq!(at(pdf.len()), Ok(1));
     assert_eq!(
-        at(pdf.len() - 1),
+        at(pdf.len().saturating_sub(1)),
         Err(EngineError::LimitExceeded("file size"))
     );
 }

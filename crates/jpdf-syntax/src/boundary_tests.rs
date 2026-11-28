@@ -3,9 +3,14 @@
 //! sit in their own module so they go through the same crate-internal entry points
 //! (`Parser`, `XrefDocument`) as the code under test.
 
-use crate::error::malformed;
 use crate::lexer::{LexBudget, Parser};
 use crate::{Limits, ObjRef, Object, SyntaxError, XrefDocument};
+
+/// The expected error, built here rather than through the crate's own `malformed` helper, so
+/// a change in what that helper reports fails these tests.
+fn err(what: &'static str, offset: usize) -> SyntaxError {
+    SyntaxError::Malformed { what, offset }
+}
 
 fn parse_with(src: &[u8], limits: &Limits) -> Result<Object, SyntaxError> {
     let budget = LexBudget::new(src.len(), limits);
@@ -16,11 +21,13 @@ fn parse(src: &[u8]) -> Result<Object, SyntaxError> {
     parse_with(src, &Limits::default())
 }
 
-/// The CLI prints these messages (ops/judge/CONTRACT.md §1).
+/// `SyntaxError`'s own text. The CLI prints the `EngineError` it becomes, which keeps this text
+/// for every variant (crates/jpdf-engine/tests/boundaries.rs and tools/jpdf-cli/tests/messages.rs
+/// pin that path, ops/judge/CONTRACT.md §1).
 #[test]
 fn display_text_of_every_variant() {
     let cases = [
-        (malformed("bad", 9), "malformed PDF: bad at byte 9"),
+        (err("bad", 9), "malformed PDF: bad at byte 9"),
         (
             SyntaxError::LimitExceeded("nesting depth"),
             "limit exceeded: nesting depth",
@@ -68,11 +75,30 @@ fn objects_per_document_limit_is_exact() {
     );
 }
 
-/// The lexing budget at its exact boundary. Every byte stepped over is charged and the total
-/// is checked before the next token: a 4-byte string, then the end of input, fits a budget of
-/// exactly 4 bytes and fails with 3.
+/// The lexing budget at its exact boundary inside one token: a run of regular characters is
+/// checked after each byte, so `1234` parses with a budget of exactly 4 bytes and fails with 3.
 #[test]
 fn lex_budget_is_exact() {
+    let lex = |slack| {
+        let limits = Limits {
+            lex_budget_factor: 0,
+            lex_budget_slack: slack,
+            ..Limits::default()
+        };
+        parse_with(b"1234", &limits)
+    };
+    assert_eq!(lex(4), Ok(Object::Integer(1234)));
+    assert_eq!(
+        lex(3),
+        Err(SyntaxError::LimitExceeded("bytes lexed per document"))
+    );
+}
+
+/// A string's last byte is charged after the string's last check, so the total is checked at
+/// the next token read: `(xx)` and then the end of input fit a budget of exactly 4 bytes and
+/// fail with 3 at that read (the string itself still parses with 3).
+#[test]
+fn lex_budget_is_checked_at_the_next_token() {
     let src = b"(xx)";
     let lex = |slack| {
         let limits = Limits {
@@ -158,22 +184,24 @@ fn resolve_checks_both_header_numbers() {
         doc.resolve(r(1, 0)).map(|o| (*o).clone())
     };
     assert_eq!(header(b"1 0 obj 7 endobj"), Ok(Object::Integer(7)));
-    let mismatch = Err(malformed("object header does not match xref", 9));
+    let mismatch = Err(err("object header does not match xref", 9));
     assert_eq!(header(b"1 1 obj 7 endobj"), mismatch);
     assert_eq!(header(b"2 0 obj 7 endobj"), mismatch);
 }
 
 /// A reference whose generation differs from the xref entry's is the null object, without
-/// reading the object (ISO 32000-2 §7.3.10); the matching generation reads it.
+/// reading the object (ISO 32000-2 §7.3.10). The entry points at bytes that are no object, so
+/// any read fails: on a fresh document the other generation is null, and the matching one,
+/// which is read, fails on the header.
 #[test]
 fn resolve_with_another_generation_is_null() {
-    let data = xref_file(b"%PDF-1.7\n", &[b"1 3 obj 7 endobj"], &[3]);
+    let data = xref_file(b"%PDF-1.7\n", &[b"garbage"], &[3]);
     let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+    assert_eq!(doc.resolve(r(1, 0)).map(|o| (*o).clone()), Ok(Object::Null));
     assert_eq!(
         doc.resolve(r(1, 3)).map(|o| (*o).clone()),
-        Ok(Object::Integer(7))
+        Err(err("object header does not match xref", 9))
     );
-    assert_eq!(doc.resolve(r(1, 0)).map(|o| (*o).clone()), Ok(Object::Null));
 }
 
 /// Two objects that touch (the second starts at the byte where the first one's value ends)
@@ -194,6 +222,46 @@ fn adjacent_objects_do_not_overlap() {
     }
 }
 
+/// One byte of overlap is rejected in either resolve order: object 1's value `/A2` ends one byte
+/// after object 2 starts (at that `2`). This is the reject side of `adjacent_objects_do_not_overlap`.
+#[test]
+fn objects_overlapping_by_one_byte_are_rejected() {
+    let data = xref_file(b"%PDF-1.7\n", &[b"1 0 obj /A", b"2 0 obj<<>>"], &[0, 0]);
+    let (first, second) = (9, 19);
+    let resolve = |doc: &XrefDocument<'_>, num| doc.resolve(r(num, 0)).map(|o| (*o).clone());
+    let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+    assert_eq!(resolve(&doc, 1), Ok(Object::Name(b"A2".to_vec())));
+    assert_eq!(
+        resolve(&doc, 2),
+        Err(err("indirect objects overlap", second))
+    );
+    let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+    assert_eq!(resolve(&doc, 2), Ok(Object::Dict(crate::Dict::default())));
+    assert_eq!(
+        resolve(&doc, 1),
+        Err(err("indirect objects overlap", first))
+    );
+}
+
+/// `max_xref_entries` at a small exact boundary on a complete file: its table has 2 entries
+/// (the free head and object 1), so a limit of 2 parses and 1 is refused.
+#[test]
+fn xref_entry_limit_is_exact_on_a_complete_file() {
+    let data = tiny_file();
+    let at = |max_xref_entries| {
+        let limits = Limits {
+            max_xref_entries,
+            ..Limits::default()
+        };
+        XrefDocument::parse(&data, &limits).map(|_| ())
+    };
+    assert_eq!(at(2), Ok(()));
+    assert_eq!(
+        at(1),
+        Err(SyntaxError::LimitExceeded("cross-reference entries"))
+    );
+}
+
 /// `startxref` is searched for in the last 64 KiB (`STARTXREF_WINDOW`): a keyword starting
 /// exactly 64 KiB before the end is found, one byte earlier it is not.
 #[test]
@@ -201,8 +269,8 @@ fn startxref_window_is_exact() {
     let at_distance = |distance: usize| {
         let mut data = b"xref\n0 1\n0000000000 65535 f\r\ntrailer\n<< /Size 1 >>\n".to_vec();
         data.extend(b"startxref\n0\n%");
-        let keyword_at = data.len() - b"startxref\n0\n%".len();
-        data.resize(keyword_at + distance, b'x');
+        let keyword_at = data.len().saturating_sub(b"startxref\n0\n%".len());
+        data.resize(keyword_at.saturating_add(distance), b'x');
         (
             data.len(),
             XrefDocument::parse(&data, &Limits::default()).map(|_| ()),
@@ -210,7 +278,7 @@ fn startxref_window_is_exact() {
     };
     assert_eq!(at_distance(64 * 1024).1, Ok(()));
     let (len, past) = at_distance(64 * 1024 + 1);
-    assert_eq!(past, Err(malformed("startxref not found", len)));
+    assert_eq!(past, Err(err("startxref not found", len)));
 }
 
 /// ISO 32000-2 §7.2.3, Table 2: `)`, `{` and `}` end a name and are not tokens of their own
@@ -221,7 +289,7 @@ fn closing_paren_and_braces_are_delimiters() {
     for (src, at) in [(&b"[/A)]"[..], 3), (b"[/A{]", 3), (b"[/A}]", 3)] {
         assert_eq!(
             parse(src),
-            Err(malformed("unexpected delimiter", at)),
+            Err(err("unexpected delimiter", at)),
             "{}",
             String::from_utf8_lossy(src)
         );
@@ -265,7 +333,7 @@ fn xref_file_size_limit_is_exact() {
     };
     assert_eq!(at(data.len()), Ok(()));
     assert_eq!(
-        at(data.len() - 1),
+        at(data.len().saturating_sub(1)),
         Err(SyntaxError::LimitExceeded("file size"))
     );
 }
@@ -286,13 +354,10 @@ fn startxref_offset_at_the_file_length_is_invalid() {
         )
     };
     let (keyword_at, at_len) = with_offset(80);
-    assert_eq!(
-        at_len,
-        Err(malformed("invalid startxref offset", keyword_at))
-    );
+    assert_eq!(at_len, Err(err("invalid startxref offset", keyword_at)));
     // One byte less points at the last byte, a space: the offset is accepted and the section
     // read there fails on its content instead.
-    assert_eq!(with_offset(79).1, Err(malformed("expected 'xref'", 79)));
+    assert_eq!(with_offset(79).1, Err(err("expected 'xref'", 79)));
 }
 
 /// An in-use entry with a negative offset is not an entry (only a positive offset too large
@@ -302,7 +367,7 @@ fn negative_xref_offset_is_an_invalid_entry() {
     let data = b"xref\n0 1\n-000000001 00000 n\r\ntrailer\n<< /Size 1 >>\nstartxref\n0\n%%EOF";
     assert_eq!(
         XrefDocument::parse(data, &Limits::default()).map(|_| ()),
-        Err(malformed("invalid xref entry", 8))
+        Err(err("invalid xref entry", 8))
     );
 }
 
@@ -318,7 +383,7 @@ fn subsection_ending_at_the_largest_object_number_parses() {
     let two = b"xref\n4294967295 2\n0000000000 00000 f\r\n0000000000 00000 f\r\ntrailer\n<< >>\nstartxref\n0\n%%EOF";
     assert_eq!(
         XrefDocument::parse(two, &Limits::default()).map(|_| ()),
-        Err(malformed("object number out of range", 17))
+        Err(err("object number out of range", 17))
     );
 }
 
@@ -330,7 +395,7 @@ fn sign_or_point_alone_is_not_a_number() {
     for src in [&b"-"[..], b"+", b"."] {
         assert_eq!(
             parse(src),
-            Err(malformed("unexpected keyword", 0)),
+            Err(err("unexpected keyword", 0)),
             "{}",
             String::from_utf8_lossy(src)
         );

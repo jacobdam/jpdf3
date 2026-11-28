@@ -1,5 +1,5 @@
-//! `CosError` messages and sources. The CLI prints these (ops/judge/CONTRACT.md §1), so the
-//! text is pinned (#87 item 7).
+//! `CosError`'s own text and source (#87 item 7). The CLI prints the `EngineError` a
+//! `CosError` becomes, which crates/jpdf-engine/tests/boundaries.rs pins.
 
 use std::error::Error;
 
@@ -8,9 +8,15 @@ use jpdf_syntax::SyntaxError;
 
 #[test]
 fn display_text_of_every_variant() {
-    let syntax = SyntaxError::LimitExceeded("pages");
+    let syntax = SyntaxError::Malformed {
+        what: "bad xref",
+        offset: 12,
+    };
     let cases = [
-        (CosError::Syntax(syntax.clone()), "limit exceeded: pages"),
+        (
+            CosError::Syntax(syntax),
+            "malformed PDF: bad xref at byte 12",
+        ),
         (CosError::Malformed("bad kid"), "malformed PDF: bad kid"),
         (CosError::LimitExceeded("pages"), "limit exceeded: pages"),
         (CosError::Unsupported("nested"), "not implemented: nested"),
@@ -29,8 +35,8 @@ fn source_is_the_wrapped_syntax_error() {
     };
     let e = CosError::from(inner.clone());
     assert_eq!(e, CosError::Syntax(inner.clone()));
-    let source = e.source().map(ToString::to_string);
-    assert_eq!(source, Some(inner.to_string()));
+    let source = e.source().and_then(|s| s.downcast_ref::<SyntaxError>());
+    assert_eq!(source, Some(&inner));
     for other in [
         CosError::Malformed("m"),
         CosError::LimitExceeded("l"),
