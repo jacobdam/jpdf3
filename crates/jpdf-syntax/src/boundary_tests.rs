@@ -23,9 +23,9 @@ fn parse(src: &[u8]) -> Result<Object, SyntaxError> {
 
 /// `SyntaxError`'s own text. The CLI prints the `EngineError` it becomes (ops/judge/CONTRACT.md
 /// §1). The conversion is checked only for the cases that `Document::open` meets in the engine
-/// tests (crates/jpdf-engine/tests/open.rs and boundaries.rs: among them the empty file, the
-/// file size and the xref entry limit), and tools/jpdf-cli/tests/messages.rs checks one full
-/// stderr line (an empty file).
+/// tests (crates/jpdf-engine/tests/open.rs and boundaries.rs: among them the empty file and the
+/// xref entry limit), and tools/jpdf-cli/tests/messages.rs checks one full stderr line (an
+/// empty file).
 #[test]
 fn display_text_of_every_variant() {
     let cases = [
@@ -192,9 +192,10 @@ fn resolve_checks_both_header_numbers() {
 }
 
 /// A reference whose generation differs from the xref entry's is the null object, without
-/// reading the object (ISO 32000-2 §7.3.10): on a fresh document, resolving it lexes no byte
-/// and records no span. The matching generation then reads the object, which the same counters
-/// see.
+/// reading the object (ISO 32000-2 §7.3.10): on a fresh document, resolving it charges no byte
+/// to the lexing budget and records no span. The entry's offset holds `1 3 obj`, so any token
+/// read there charges at least one byte. The matching generation then reads the object, which
+/// the same counters see.
 #[test]
 fn resolve_with_another_generation_is_null() {
     let data = xref_file(b"%PDF-1.7\n", &[b"1 3 obj 7 endobj"], &[3]);

@@ -137,8 +137,8 @@ impl<'a> XrefDocument<'a> {
         self.retained.get()
     }
 
-    /// Bytes lexed so far and object spans recorded (tests: proves whether a resolve read the
-    /// file).
+    /// Bytes charged to the lexing budget so far and object spans recorded (tests). A token read
+    /// that charges no byte (a lexer error at the first byte) leaves both unchanged.
     #[cfg(test)]
     pub(crate) fn read_state(&self) -> (usize, usize) {
         (self.budget.used(), self.spans.borrow().len())
