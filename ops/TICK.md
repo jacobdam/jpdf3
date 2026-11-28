@@ -892,7 +892,7 @@ gate them.
    failure path and the milestone where it appears, and that the path is still missing on main.
    If the path exists on main, or nothing names it, or you are unsure: remove `deferred`, move
    it to the current milestone and comment `🤖 jpdf-agent Undeferred: not latent (<the path on
-   main, or no path named>)`, so rule d picks it. Otherwise, if no milestone is named, name the
+   main, no path named, or why unsure>)`, so rule d picks it. Otherwise, if no milestone is named, name the
    one where the path appears in a comment; if it is in another milestone than that one, or
    later than M4, move it there (M4 at the latest) with a comment saying why. Neither of these
    changes what the owner set: when the newest untagged owner comment about the issue's
