@@ -7,6 +7,8 @@
 #![deny(clippy::arithmetic_side_effects)]
 
 mod budget;
+#[cfg(test)]
+mod boundary_tests;
 mod error;
 mod lexer;
 mod object;
