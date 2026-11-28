@@ -71,8 +71,8 @@ The missing decision: **a pending owner item has two text states the scheduler c
    - **unrouted:** neither.
 
    A *route* is such an open PR or issue, and it is a route only while the URL on its line is a
-   pending owner item (not handled; for a review body, see below): a line naming a stranger's comment, a pre-floor comment, a
-   handled item or any other URL makes no route, so it gets no rule a priority (its issue is
+   pending owner item (not handled; for a review body, see below): a line naming a stranger's
+   comment, a pre-floor comment, a handled item or any other URL makes no route, so it gets no rule a priority (its issue is
    worked, if at all, by the normal rules). **Review bodies are the exception.** The feed lists
    review bodies only on open PRs, so one leaves it when its PR closes, handled or not (a limit
    `ops/driver/owner-issues.sh` states today), and no later session could see it to post a
@@ -83,16 +83,24 @@ The missing decision: **a pending owner item has two text states the scheduler c
    (`…/pull/<n>#pullrequestreview-<id>`) counts while the review is by `jacobdam`, untagged,
    non-empty and submitted at or after `FLOOR`, whatever its handled state: the scheduler reads
    PR `<n>`'s reviews itself (a read command, not the protected feed), whether `<n>` is open or
-   closed. This is the one case where `done:` comes before the work lands; the route issue and
-   its PR carry the rest of the trace.
+   closed. This is the one case where `done:` comes before the work lands. When the review asks
+   for rework of open agent PR `<n>`, the route issue also has the line `Rework: #<n>`, and the
+   session turns PR `<n>` back into a draft, disables its auto-merge and posts `ai-review`
+   failure linking the route issue, so it can't merge the rejected approach; while that route
+   issue is open, PR `<n>` is not picked as a route of its own (step 1.1 picks the issue, whose
+   session reworks the PR on its branch and closes the issue with a tagged comment naming the
+   push). A session that closes such a route issue without the work landing (not planned, its
+   PR closed unmerged) says so in a tagged comment on PR `<n>` naming the review and ending
+   `waiting on owner: …`, since no later pick brings a handled review back.
 2. **One session moves the unrouted ones.** The **owner feed** session takes every unrouted item
    the scheduler lists, oldest first, and leaves each one handled or routed before it exits. It
    writes no code, spec, ADR, test or proposal. Its allowed actions:
    - a `done:` reply (TICK §0's form: what changed, then `waiting on owner: …`) after it carried
      the item out in place: labels, milestones, assignees, closing or reopening an issue, editing
      a tagged body, filing issues (without `ready`: the Planner gates them, P6; work the owner
-     wants now is a route, below), a tagged comment elsewhere, a `/hold` or `/release` follow-up (ops/TICK.md
-     §5: `owner-todo`, auto-merge after a `/release`), a "done:" for an item whose route closed;
+     wants now is a route, below), a tagged comment elsewhere, a `/hold` or `/release`
+     follow-up (ops/TICK.md §5: `owner-todo`, auto-merge after a `/release`), a "done:" for an
+     item whose route closed;
    - a **question back**: a `done:` reply that asks one question and ends
      `waiting on owner: an answer to the question above`; the owner's answer is a new item;
    - a **route**: file a tagged issue with the `Owner instruction:` line and `owner-work` (plus
@@ -107,9 +115,9 @@ The missing decision: **a pending owner item has two text states the scheduler c
    test, not held, not `needs-design`), as `worker owner-routed #N`. A route is not picked while
    an unrouted owner item of any kind sits on it (a comment, inline review comment or review
    body on the route issue or PR, or on an open PR that links the route issue): that item may
-   change the work, so the owner feed session reads
-   it first, and it is picked without the quiet period (below). When the route closes or
-   merges, the item is unrouted again, and the next owner feed session posts its `done:` (or
+   change the work, so the owner feed session reads it first, and it is picked without the
+   quiet period (below). When the route closes or merges, the item (other than a review body,
+   invariant 1) is unrouted again, and the next owner feed session posts its `done:` (or
    routes it again when the PR closed unmerged).
 4. **Reactions are display, never state.** The owner feed session (and any session that routes
    or handles an item) adds 👀 to a routed item and 🚀 to a handled one where GitHub allows a
@@ -160,8 +168,8 @@ are not Planner records (steps 8 and 11), and the work mix leaves owner sessions
 as today.
 
 **The records fast path.** A PR whose every changed path is a record path (a stricter subset of
-ADR 0011 §3's record commit, applied to the PR's whole diff against its base: each path added or modified under
-`ops/journal/YYYY-MM-DD/<name>.md`, or added as `ops/lessons/pending/<name>.md` other than
+ADR 0011 §3's record commit, applied to the PR's whole diff against its base: each path added
+or modified under `ops/journal/YYYY-MM-DD/<name>.md`, or added as `ops/lessons/pending/<name>.md` other than
 `README.md`, each a regular file of mode 100644, no rename, delete or other mode) skips the
 build, test and judge jobs, and `judge-verdict` passes it with the reason "records only". The
 legacy `ops/journal/YYYY-MM-DD.md` files, which §3 also accepts, take the full run. The
@@ -181,7 +189,9 @@ full run (main red, rule b, reads them).
   item); a route issue naming an owner review body, on an open PR and on a closed one, each with
   and without a tagged `jacobdam` `done:` reply (a route in all four); the same line naming a
   review by a stranger, a tagged review or a pre-floor review (no route); a PR body naming a
-  review body (no route); an owner issue labeled `owner-todo`,
+  review body (no route); a route issue with `Rework: #<n>` while PR `<n>` is a failing route
+  of its own (the issue is picked, PR `<n>` isn't), and once the issue closes (PR `<n>` is
+  picked again); an owner issue labeled `owner-todo`,
   `blocked` or `deferred` (no item; one pick after the label goes); a route whose line names a
   stranger's comment, and one whose item is already handled (no route pick, and the issue is no
   route); a route with an unrouted owner comment on it, an inline review comment, a review
@@ -246,15 +256,14 @@ New principle, in docs/PRINCIPLES.md:
 > - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
 >   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
 >   inline review comment or review body from the feed's `FLOOR` on, not an `/approve` that the
->   design window counts, #372; a review body is handled when routed, by an issue, and its route counts while it names a
->   `jacobdam` review from `FLOOR` on) is
->   *handled* only by a
->   tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
+>   design window counts, #372; a review body is routed only by an issue and handled at routing,
+>   and that route counts while it names a `jacobdam` review from `FLOOR` on) is *handled* only
+>   by a tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
 >   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
 >   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
->   owner issue itself, and only while that URL is a pending owner item (a review body: as above); every other item is
->   *unrouted*. The scheduler computes these states from
->   that text and those labels only, and nothing reads a reaction as state. The owner feed
+>   owner issue itself, and only while that URL is a pending owner item (a review body: as
+>   above); every other item is *unrouted*. The scheduler computes these states from that text
+>   and those labels only, and nothing reads a reaction as state. The owner feed
 >   session takes every unrouted item its brief lists and leaves each one handled (carried out,
 >   or a question back) or routed; it writes no code, spec, ADR, test or proposal, and writes a
 >   journal entry only for an `Ignored:` line, a lesson or an item left unrouted. Routes keep

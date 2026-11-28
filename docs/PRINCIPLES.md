@@ -258,15 +258,14 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
 - **Invariant:** an owner item (a line of `ops/driver/owner-issues.sh` that precedence step 1
   considers: an owner issue without `owner-todo`, `blocked` or `deferred`, or an owner comment,
   inline review comment or review body from the feed's `FLOOR` on, not an `/approve` that the
-  design window counts, #372; a review body is handled when routed, by an issue, and its route counts while it names a
-  `jacobdam` review from `FLOOR` on) is
-  *handled* only by a
-  tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
+  design window counts, #372; a review body is routed only by an issue and handled at routing,
+  and that route counts while it names a `jacobdam` review from `FLOOR` on) is *handled* only
+  by a tagged `jacobdam` reply `🤖 jpdf-agent done: <its URL>`, and *routed* only by an open PR or
   issue authored by `jacobdam` whose tagged body has the line `Owner instruction: <its URL>`
   (exact URL; an issue also labeled `owner-work`), or by the label `owner-work` on the untagged
-  owner issue itself, and only while that URL is a pending owner item (a review body: as above); every other item is
-  *unrouted*. The scheduler computes these states from
-  that text and those labels only, and nothing reads a reaction as state. The owner feed
+  owner issue itself, and only while that URL is a pending owner item (a review body: as
+  above); every other item is *unrouted*. The scheduler computes these states from that text
+  and those labels only, and nothing reads a reaction as state. The owner feed
   session takes every unrouted item its brief lists and leaves each one handled (carried out,
   or a question back) or routed; it writes no code, spec, ADR, test or proposal, and writes a
   journal entry only for an `Ignored:` line, a lesson or an item left unrouted. Routes keep
