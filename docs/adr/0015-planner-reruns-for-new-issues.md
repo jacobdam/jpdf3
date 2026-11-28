@@ -116,14 +116,16 @@ Planner files dated today, the pick is `idle`.
   one file on two refs (counts once); a `planner due` record (counts); `planners` and
   `Planner` (don't count, as today); two Planner records today, where only the newer one's
   minute counts, with the newer one listed first and the two on different refs (`0300-…` on
-  main, `0004-…` on an open PR, so taking the last-listed record fails); a file name with no time, `2460-…` and `0060-…` (end of day); an earlier step
+  main, `0004-…` on an open PR, so taking the last-listed record fails); a file name with no
+  time, `2460-…` and `0060-…` (end of day); an earlier step
   outranking the rerun; a `createdAt` not in the form `YYYY-MM-DDTHH:MM:SSZ` (exit 1).
 - **Forged or late records** (the spec's Security section): a record is self-reported, so
   anyone who can push a branch with a tagged open PR can write one. A forged record named
   `2359-…`, or 3 forged files dated today, suppress reruns for the rest of the day. That is
   today's bound, so the cost is the same as now: at most until 00:00 UTC. A forged record
   can't add a run, because a record that is visible only ever raises the day's count or moves
-  the newest minute later (a record that leaves the list is the case above). An issue can be made new only by creating it in the current milestone, and
+  the newest minute later (a record that leaves the list is the case above). An issue can be
+  made new only by creating it in the current milestone, and
   setting a milestone needs triage access to the repository, which only the shared account
   has. An outsider's issue has no milestone, so it is never new. An agent session that files
   issues on every run can trigger at most 2 reruns a day.
@@ -216,10 +218,12 @@ fixtures, one by one.
 - **Not covered:** an issue that becomes gateable after the day's run but was created before
   it is never new, so it waits until the next UTC day as today: an issue whose `blocked`,
   `deferred` or `design-pending` label is removed, or an `Ops` or later-milestone issue moved
-  into the current milestone. Moves into the current milestone are made by the Planner itself
-  (ops/TICK.md §9 step 2, ADR 0012 §2), which can ready the issue in the same run, so only a
-  removed label is left; the retro's count (Enforcement level 3) shows whether that case needs
-  a term of its own. An issue filed while other work is ready waits until the ready list
+  into the current milestone. The Planner's own moves (ops/TICK.md §9 step 2, ADR 0012 §2)
+  can ready the issue in the same run. That leaves three cases: a removed label, an issue the
+  owner moves in by hand, and a Planner run that closes `Mn` (§9 step 4), after which the
+  current milestone is `Mn+1` and its open issues (11 in M1 on 2026-11-28, #308 and #248 among
+  them) were all created before that run's record, so none is new. The retro's count
+  (Enforcement level 3) shows whether any of them needs a term of its own. An issue filed while other work is ready waits until the ready list
   empties. Step 11 runs last, by design: the Planner orders work, it doesn't interrupt it.
   Issues filed in `Ops` or another milestone never trigger a rerun (step 10 doesn't pick
   them either). A day whose 3 runs are spent waits until 00:00 UTC, as every day does today.
