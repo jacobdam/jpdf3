@@ -716,34 +716,37 @@ fn startxref_at_a_non_xref_object_is_malformed() {
 fn hybrid_file_is_read_through_its_table() {
     // Object 5 is a real cross-reference stream (§7.5.8), `/W [1 1 1]`, `/Index [3 2]`: object 3
     // free (type 0) and object 4 compressed in object stream 6 at index 0 (type 2). Object 6 is
-    // that object stream (§7.5.7), holding a complete page 4. `/XRefStm` points at object 5 (its
-    // offset doesn't depend on the trailer).
-    let page = "4 0 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>";
-    let mut objs = page_tree(2);
-    objs.push(
-        b"<< /Type /XRef /Size 7 /Index [3 2] /W [1 1 1] /Length 6 >>\nstream\n\x00\x00\x00\x02\x06\x00\nendstream"
-            .to_vec(),
-    );
-    objs.push(
-        format!(
-            "<< /Type /ObjStm /N 1 /First 4 /Length {} >>\nstream\n{page}\nendstream",
-            page.len()
-        )
-        .into_bytes(),
-    );
-    let (probe, _) = build(b"%PDF-1.7\n", 1, &objs, "");
-    let stream_at = probe.windows(8).position(|w| w == b"5 0 obj\n").unwrap();
-    let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, &format!("/XRefStm {stream_at}"));
-    assert_eq!(
-        pdf.len(),
-        probe.len() + format!("/XRefStm {stream_at}").len()
-    );
-    // The table lists both pages in use: a reader that let the stream override it would lose
-    // page 3 (free in the stream).
-    assert_eq!(open(&pdf), Ok(2));
+    // that object stream (§7.5.7), holding `compressed` as object 4. `/XRefStm` points at object
+    // 5 (its offset doesn't depend on the trailer).
+    let hybrid = |compressed: &str| {
+        let body = format!("4 0 {compressed}");
+        let mut objs = page_tree(2);
+        objs.push(
+            b"<< /Type /XRef /Size 7 /Index [3 2] /W [1 1 1] /Length 6 >>\nstream\n\x00\x00\x00\x02\x06\x00\nendstream"
+                .to_vec(),
+        );
+        objs.push(
+            format!(
+                "<< /Type /ObjStm /N 1 /First 4 /Length {} >>\nstream\n{body}\nendstream",
+                body.len()
+            )
+            .into_bytes(),
+        );
+        let (probe, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+        let stream_at = probe.windows(8).position(|w| w == b"5 0 obj\n").unwrap();
+        let extra = format!("/XRefStm {stream_at}");
+        let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, &extra);
+        assert_eq!(pdf.len(), probe.len() + extra.len());
+        pdf
+    };
+    // The table lists both pages in use, and the stream would make object 3 free and object 4 an
+    // intermediate node: a reader that let either stream entry override the table would lose
+    // page 3 or report nested page trees.
+    assert_eq!(open(&hybrid("<< /Type /Pages /Kids [] /Count 0 >>")), Ok(2));
     // Object 4's table record replaced by a complete free record (next free object 0,
-    // generation 1): it is now listed only in the stream, as a compressed page, and a reader that
-    // filled free table slots from the stream would count 2 pages. The kid is null instead.
+    // generation 1), with a complete compressed page in the stream: a reader that filled free
+    // table slots from the stream would count 2 pages. The kid is null instead.
+    let pdf = hybrid("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>");
     let text = String::from_utf8_lossy(&pdf).into_owned();
     let entries: Vec<usize> = text.match_indices(" 00000 n\r\n").map(|(i, _)| i).collect();
     assert_eq!(entries.len(), 6);

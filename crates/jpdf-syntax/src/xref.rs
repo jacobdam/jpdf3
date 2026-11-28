@@ -1073,6 +1073,9 @@ mod tests {
             (b"12 0 obj << /Type >>", 22, &not_xref),
             (b"12 0 obj 7", 22, &not_xref),
             (b"junk", 6, &not_xref),
+            // A first token that fails to lex (a lone `>`), and one after the integer (R4.1).
+            (b">", 3, &not_xref),
+            (b"12 0 >", 8, &not_xref),
         ] {
             let mut data = body.to_vec();
             data.extend(b"\nstartxref\n0\n%%EOF");
@@ -1111,6 +1114,8 @@ mod tests {
             // Bytes that fail to lex, first token or after the integer, at a non-zero offset.
             (&b"(abc\n"[..], malformed("expected 'xref'", 9)),
             (&b"12 (abc\n"[..], malformed("expected 'xref'", 9)),
+            // Whitespace first: the answer names the section offset, not the token's (S4.4).
+            (&b"  (abc\n"[..], malformed("expected 'xref'", 9)),
         ] {
             // At two offsets (R3.4): after the header, and after a padding comment; a malformed
             // answer names the offset `/Prev` gives.

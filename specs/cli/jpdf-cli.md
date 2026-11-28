@@ -250,7 +250,9 @@ Self-check (#77):
   lexing budget apply to it, the bytes of its last token included: the lexer checks the budget
   before each token, so the section-offset classification checks it once more before any
   answer (the stream, a header mismatch, a dictionary that fails to parse, a first token that
-  fails to lex, a keyword), and a spent budget is always the limit error. It adds no
+  fails to lex, a keyword), so none of these answers is given with the budget spent; a limit
+  error that the lexer or parser already returned (nesting depth, string bytes) comes back
+  unchanged, even when the budget is also spent. It adds no
   arithmetic. A look-ahead that maps every error to
   `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
   that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
@@ -310,12 +312,15 @@ resolves only the catalog, the page-tree root and its kids.
   key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
   dictionary, and four that fail to lex or parse: a truncated dictionary, an unterminated
   string after the integer and as the first token, a non-name key; the `/Prev` test repeats
-  the two unterminated strings at offsets 9 and 19, each answer naming its offset; plus limit
+  the two unterminated strings, and one after leading whitespace, at offsets 9 and 19, each
+  answer naming the section offset; plus limit
   cases that stay limit errors: nesting depth in the dictionary, string bytes in the first,
   second and third token),
-  `section_offset_look_ahead_is_inside_the_lexing_budget` (five outcomes, each at the exact
+  `section_offset_look_ahead_is_inside_the_lexing_budget` (seven outcomes, each at the exact
   number of bytes it lexes and one byte under it: the stream at 28, a header mismatch at 9, a
-  dictionary that fails to parse at 22, a non-dictionary object at 22, a keyword at 6), `offset_at_end_of_file_reads_as_free` (the same
+  dictionary that fails to parse at 22, a non-dictionary object at 22, a keyword at 6, a first
+  token that fails to lex (a lone `>`) at 3, a token after the integer that fails to lex
+  (`12 0 >`) at 8), `offset_at_end_of_file_reads_as_free` (the same
   offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
