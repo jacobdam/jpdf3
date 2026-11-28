@@ -119,7 +119,8 @@ waiting note.
   ADR 0015):
   `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone,createdAt`.
 
-  Nothing is written anywhere: not to GitHub, git or the file system.
+  Nothing is written to GitHub or git. The one file write is a live run's line in the pick
+  log (Persistence); `--from` writes nothing.
 - **Common terms.**
   - *Tagged:* text whose body starts, after leading whitespace, with `🤖 jpdf-agent` (agent
     text; CONSTITUTION 1). An owner reply is a comment by `jacobdam` (the shared account).
@@ -426,7 +427,7 @@ waiting note.
       - otherwise **`idle`**: the session exits at once and writes nothing. When issues are
         new in the sense above but the day's 3 Planner runs are spent, they are *waiting*:
         the brief's `Notes:` list has the line `waiting for a Planner run (new since its newest
-        run, but the Planner ran <n> of at most 3 times today): #A, #B` (lowest number first,
+        run, but the Planner ran <n> times today, at most 3): #A, #B` (lowest number first,
         numbers only), and the pick log records them (ADR 0018 task 2). With no new issue
         there is no such line.
 
@@ -496,9 +497,12 @@ is four tab-separated fields and a newline:
    text stays on stderr);
 4. for an `idle` pick, the waiting issues (step 11) as `#A,#B`, lowest first; else empty.
 
-A run's outcome is logged whatever it is, including exit 1 and 2. The line is written with one
-append, after the decision and before the brief is printed; it never changes the pick, the
-brief or the exit code. `--from` writes nothing. `cargo xtask status` writes nothing.
+Every run that gets past argument parsing logs its outcome, exit 1 and 2 included; a usage
+error (exit 1 before the scheduler starts) and a panic write no line. The line is written with
+one append, after the decision and before the brief is printed; it never changes the pick, the
+brief or the exit code. The write is a best-effort record, not a step in P4's sense (ADR
+0013): its result is always a warning at most, it decides nothing and nothing after it
+depends on it, so it runs after a failed load or decision without a driver. `--from` writes nothing. `cargo xtask status` writes nothing.
 `cargo xtask metrics` reads the file (ADR 0018 task 3); a session's pick is the first line
 whose time falls in its window.
 
@@ -918,9 +922,13 @@ of inputs where no step before 11 applies (→ `planner`):
   the same reason. Unit tests build the line from a decision: an idle pick with and without
   waiting issues, a Worker pick, exit 2 and 1 (no pick, no error text), control characters as
   spaces, a first line at 512 bytes kept, one past cut, a 2-byte character across the limit
-  dropped whole, four fields and one newline; two appends to a new `ops/state/`. Not covered:
-  a live exit-0 run (it needs every `gh` and `git` input faked); the decision's waiting list
-  is the one the brief's note prints;
+  dropped whole, four fields and one newline; two appends to a new `ops/state/`; the common-dir
+  parse (an absolute path with and without its newline; empty, relative and `/` are errors);
+  and `run`'s last step (`finish`) in a fresh repository: not live writes nothing, live writes
+  `0 idle #702,#703`, `0 planner` and `2` for an error, returning the brief or the error
+  unchanged. A live run that reaches exit 0 isn't run end to end (it needs every `gh` and `git`
+  input faked); `finish` takes the decision `run` makes, and the log reads the same `Pick`
+  whose waiting list the brief's note prints;
 - unit tests in `xtask/src/next_session.rs` for the `FLOOR` line, the done: URL match, the
   ISO time form, the `Depends on:` parser, the journal listing over several days, the
   `ops/QUEUE.md` listing line, the `Milestone:` line and the record words of the work mix

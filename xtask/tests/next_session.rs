@@ -5798,7 +5798,7 @@ fn step11_idle_lists_the_issues_waiting_for_a_planner_run() {
     assert!(out.starts_with("idle\n"), "{out}");
     assert!(
         out.contains(
-            "\n- waiting for a Planner run (new since its newest run, but the Planner ran 3 of at most 3 times today): #702, #703\n"
+            "\n- waiting for a Planner run (new since its newest run, but the Planner ran 3 times today, at most 3): #702, #703\n"
         ),
         "{out}"
     );

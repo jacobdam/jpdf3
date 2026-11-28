@@ -458,7 +458,12 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
 /// its outcome to the pick log first, whatever it is (ADR 0018 task 2).
 pub fn run(root: &Path, opts: &Options) -> Result<String, Error> {
     let out = load(root, opts.from.as_deref()).and_then(|inp| decide(&inp).map_err(Error::Broken));
-    if opts.from.is_none() {
+    finish(root, opts.from.is_none(), out)
+}
+
+/// The end of `run`: a live run logs its outcome, any outcome, then the brief is returned.
+fn finish(root: &Path, live: bool, out: Result<Decision, Error>) -> Result<String, Error> {
+    if live {
         log_pick(root, &out);
     }
     out.map(|d| d.brief)
@@ -2308,7 +2313,7 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
     if !p.waiting.is_empty() {
         let list: Vec<String> = p.waiting.iter().map(|n| format!("#{n}")).collect();
         notes.push(format!(
-            "waiting for a Planner run (new since its newest run, but the Planner ran {runs} of at most {PLANNER_RUNS} times today): {}",
+            "waiting for a Planner run (new since its newest run, but the Planner ran {runs} times today, at most {PLANNER_RUNS}): {}",
             list.join(", ")
         ));
     }
@@ -2399,10 +2404,16 @@ fn main_checkout(dir: &Path) -> Result<PathBuf, String> {
         ],
         None,
     )?;
+    checkout_of(&out)
+}
+
+/// The main checkout from `git rev-parse --git-common-dir`'s output: the parent of an absolute
+/// path (one trailing newline allowed). Anything else is an error.
+fn checkout_of(out: &str) -> Result<PathBuf, String> {
     let common = PathBuf::from(out.trim_end_matches(['\n', '\r']));
     match common.parent() {
         Some(p) if common.is_absolute() => Ok(p.to_path_buf()),
-        _ => Err(format!("unexpected git common dir {}", common.display())),
+        _ => Err(format!("unexpected git common dir {:?}", common.display())),
     }
 }
 
@@ -2772,6 +2783,57 @@ mod tests {
         append_log(&dir, "a\n").unwrap();
         append_log(&dir, "b\n").unwrap();
         assert_eq!(fs::read_to_string(dir.join(PICK_LOG)).unwrap(), "a\nb\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pick_log_checkout_of_git_output() {
+        assert_eq!(checkout_of("/a/b/.git\n"), Ok(PathBuf::from("/a/b")));
+        assert_eq!(checkout_of("/a/b/.git"), Ok(PathBuf::from("/a/b")));
+        // Relative, empty, the root (no parent): errors.
+        for bad in ["", "\n", ".git\n", "a/.git", "/"] {
+            assert!(checkout_of(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn pick_log_finish_logs_a_live_runs_pick() {
+        // `run`'s last step on an exit-0 decision, in a fresh repository: the idle pick with its
+        // waiting issues, a Planner pick, then an error; the brief and errors pass through.
+        let dir = std::env::temp_dir().join(format!("xtask-pick-finish-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let git = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(git.success());
+        let log = || fs::read_to_string(dir.join(PICK_LOG)).unwrap_or_default();
+        // Not live (`--from`): nothing written, the brief returned.
+        let b = finish(&dir, false, decision("idle", &[702, 703])).ok();
+        assert_eq!(b.as_deref(), Some("idle\n\nRule: r\n"));
+        assert_eq!(log(), "");
+        let b = finish(&dir, true, decision("idle", &[702, 703])).ok();
+        assert_eq!(b.as_deref(), Some("idle\n\nRule: r\n"));
+        assert!(finish(&dir, true, decision("planner", &[])).is_ok());
+        let e = finish(&dir, true, Err(Error::Unknown("x".to_owned())));
+        assert!(matches!(e, Err(Error::Unknown(m)) if m == "x"));
+        let text = log();
+        let fields: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
+        let tails: Vec<&[&str]> = fields
+            .iter()
+            .map(|f| f.get(1..).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            tails,
+            [
+                &["0", "idle", "#702,#703"][..],
+                &["0", "planner", ""],
+                &["2", "", ""]
+            ],
+            "{text:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
