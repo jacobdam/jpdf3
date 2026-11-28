@@ -205,8 +205,9 @@ first of these kinds that matches it:
    its `closer` (GraphQL; the REST event's `commit_id` is null for these), and with its squash
    commit under kind 5. It is the agent's own after-effect, not counted, when the PR is tagged
    and the newest `auto_merge_enabled`, `auto_squash_enabled` or `auto_rebase_enabled` event
-   before the merge falls inside a session window; an auto-merge the owner enabled outside
-   every window counts. PR #464's `auto_squash_enabled` (06:07:48) fell inside its session
+   before the merge falls inside a session window with no `auto_merge_disabled` event between
+   it and the merge; an auto-merge the owner enabled, or disabled before merging by hand,
+   outside every window counts. PR #464's `auto_squash_enabled` (06:07:48) fell inside its session
    (05:53:01 to 06:08:08); it merged at 06:12:18 UTC and closed #461 at 06:12:21, after that
    session had ended: not counted. An owner action inside a window is missed (an undercount,
    stated in the report);
@@ -294,12 +295,15 @@ next weekly retro (clause 6), whatever its number.
   minute join: `1621-…` with a session that started at 16:21:36 (joined), with one that
   started at 16:22:00 (not: the 16:21 minute ends before that window opens), `0555-…` with
   the session 05:53:01 to 06:08:08 (joined: a later minute inside the window, which a
-  start-minute join misses), and `0610-…` with a session 05:53:01 to 06:08:08 (not: after the
-  window's end); an `auto_squash_enabled` PR enabled inside a window, with the issue its
-  `ClosedEvent.closer` names (one action, not counted), the same PR enabled outside every
-  window (one action, counted) and a manual merge outside every window (one action,
-  counted); a broken-scheduler pick line with exit 1 (*process*) and a session with no line
-  (*unknown*); a `human` label at 60 s (kind 1) and at 61 s (not kind 1).
+  start-minute join misses), `0608-…` with the same session (joined: its last minute, which a
+  whole-minute-inside join misses), and `0610-…` with a session 05:53:01 to 06:08:08 (not: after
+  the window's end); an `auto_squash_enabled` PR enabled inside a window, with the issue its
+  `ClosedEvent.closer` names (one action, not counted), the same PR enabled outside every window
+  (one action, counted), an enable inside a window followed by a disable and a manual merge
+  outside every window (counted), and a manual merge of an `owner/` PR outside every window (one
+  action across kinds 4 and 5, counted once); a broken-scheduler pick line with exit 1
+  (*process*) and a session with no line (*unknown*); a `human` label at 60 s (kind 1) and at 61
+  s (not kind 1).
 - What no fixture catches: a session that changes a label by hand inside a retro (clause 3),
   owner actions inside a session window (kind 4 of the intervention list) and a forged pick
   line. The first is P7's reviewer check, the others undercount or misclass one session each.
@@ -318,7 +322,7 @@ next weekly retro (clause 6), whatever its number.
 |---|---|---|
 | 1 | Daily retro rules: `cargo xtask next-session` step 7's retro term becomes "no retro record dated today (UTC)" plus today's incident terms (specs/tooling/next-session.md step 7, with Verification's fixtures); ops/TICK.md §2 rule h and §7 rewritten for invariant clauses 1–6 (daily and weekly parts, `Kind:` and `Period:` lines, action-item windows, `stall` issues; §7 step 1's "remove `deferred`" becomes a `stall` issue for the Planner, C1; "PLAN task order" leaves step 4, C4); §5's Discoveries gain the `stall` term and §9 step 2's move to `Ops` skips `stall` issues (clause 4); §5's `Undefer when:` forms gain `work mix ≥ 70%` and §9 step 1a checks it from the brief's `work mix:` note; driver sessions never add `human` (§0); AUTOMATION.md §11 (when, input, allowed changes); Status notes on ADR 0011 (§1's Retro row, §2's read-only bullet, and the retro counts of §5, §6 and its Success check read weekly retros) and ADR 0012 (§2's fifth term, its Success check's retro 0004 is the next weekly one); create the `stall` label. Strict lane: ADR 0012 and the `human` rule (which text is an instruction) are on the strict list. | #463 |
 | 2 | `cargo xtask next-session` pick log: each live run appends one line to the main checkout's `ops/state/picks.tsv` (time, exit code, first line, waiting issue numbers for `idle`); `--from` writes nothing; a write failure warns on stderr and never changes the pick or the exit code; specs/tooling/next-session.md (outputs, Security: the file is unprotected and forgeable, numbers only) | #463 |
-| 3 | `cargo xtask metrics` R13 part 1: the period rule (default `--since` from the newest record's `Period:` line), the milestone section (open count per day from creations, closes and milestone events; moves in and out; forecast; product share of merges) and the session section (index.tsv joined with `picks.tsv` and the journal records, the six classes, idle runs, idle hours with work waiting); specs/tooling/metrics.md | #463, task 1, task 2 |
+| 3 | `cargo xtask metrics` R13 part 1: the period rule (default `--since` from the newest dated `Period:` end for a daily period, the newest weekly record's for a weekly one; `Kind: incident` records skipped), the milestone section (open count per day from creations, closes and milestone events; moves in and out; forecast; product share of merges) and the session section (index.tsv joined with `picks.tsv` and the journal records, the six classes, idle runs, idle hours with work waiting); specs/tooling/metrics.md | #463, task 1, task 2 |
 | 4 | `cargo xtask metrics` R13 part 2: the skip-label table (count, ages, `Undefer when:` conditions read only from `jacobdam` comments, the five machine forms, stale deferrals against the newest Planner record) | #463, task 1, task 3 |
 | 5 | `cargo xtask metrics` R13 part 3: owner interventions (the five kinds, first match, the two exempt kinds, the auto-merge exclusion, the undercount note), over every comment, review and issue in the period (read commands; not `ops/driver/owner-issues.sh`, which lists only pending items). Its untagged test restates the feed's (body not starting with the tag after leading whitespace), and its fixtures run the same cases through the feed's jq filter so the two can't drift. Strict lane: it reads who counts as the owner (ops/TICK.md §4 Lanes) | #463, task 3 |
 

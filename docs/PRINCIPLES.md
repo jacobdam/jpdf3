@@ -145,8 +145,10 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `ops/TICK.md`.
 
 ## P7. The retro measures R13 daily and never gates or orders work
-- **Invariant:** every retro record (`docs/retros/NNNN.md`, second line `Kind: daily` or
-  `Kind: weekly`, third `Period: YYYY-MM-DD..YYYY-MM-DD`) answers three questions with numbers
+- **Invariant:** every daily or weekly retro record (`docs/retros/NNNN.md`, second line
+  `Kind: daily` or `Kind: weekly`, third `Period: YYYY-MM-DD..YYYY-MM-DD`; an incident record
+  whose period would be empty writes `Kind: incident` and `Period: none` and reports today so
+  far for the incident only, ADR 0018) answers three questions with numbers
   from `cargo xtask metrics`: is the current milestone moving (open count, moves, forecast,
   product share of merges), where the sessions went (unknown, idle, rework, records, product,
   process; idle hours and idle hours with work waiting), and where the owner stepped in (one
