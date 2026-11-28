@@ -357,7 +357,8 @@ fn parse_section(
             let stream = matches!(not_xref, Some(Token::Integer(_))) && is_xref_stream(&mut p)?;
             // `next_token` checks the lexing budget before each token, so the bytes of the last
             // one read here were charged but not checked: check them before any answer (S2.1,
-            // S3.1), so a spent budget is always the limit error.
+            // S3.1), so a spent budget is always a limit error. A limit error that the look-ahead
+            // already returned (nesting depth, string bytes) comes back unchanged (S5.1).
             p.lexer.check_budget()?;
             return Err(if stream {
                 SyntaxError::Unsupported("cross-reference streams")
@@ -1094,6 +1095,26 @@ mod tests {
                 "{name}"
             );
             assert_eq!(with_slack(n), Err(answer.clone()), "{name}");
+        }
+        // Two limits spent at once: the parser's nesting-depth error comes back unchanged, not
+        // the budget's (S5.1). With the default depth, the same slack is the budget's error.
+        let mut data = b"12 0 obj [".to_vec();
+        data.extend(b"\nstartxref\n0\n%%EOF");
+        for (depth, limit) in [
+            (0, "nesting depth"),
+            (
+                Limits::default().max_nesting_depth,
+                "bytes lexed per document",
+            ),
+        ] {
+            let l = Limits {
+                lex_budget_factor: 0,
+                lex_budget_slack: 11,
+                max_nesting_depth: depth,
+                ..Limits::default()
+            };
+            let got = XrefDocument::parse(&data, &l).map(|_| ());
+            assert_eq!(got, Err(SyntaxError::LimitExceeded(limit)), "depth {depth}");
         }
     }
 

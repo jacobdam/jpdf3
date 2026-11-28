@@ -252,7 +252,8 @@ Self-check (#77):
   answer (the stream, a header mismatch, a dictionary that fails to parse, a first token that
   fails to lex, a keyword), so none of these answers is given with the budget spent; a limit
   error that the lexer or parser already returned (nesting depth, string bytes) comes back
-  unchanged, even when the budget is also spent. It adds no
+  unchanged, even when the budget is also spent (`12 0 obj [` with depth 0 and an 11-byte
+  budget is `nesting depth`; with the default depth it is the budget's error). It adds no
   arithmetic. A look-ahead that maps every error to
   `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
   that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
@@ -302,9 +303,12 @@ resolves only the catalog, the page-tree root and its kids.
   `len`, `len + 1` and `u32::MAX` are null; `len - 1` is checked against its header),
   `startxref_at_a_non_xref_object_is_malformed` (an `/XRef` stream object stays unsupported),
   `hybrid_file_is_read_through_its_table` (`/XRefStm` points at a real cross-reference stream
-  that marks page 3 free and lists page 4, complete, as compressed in a real object stream:
-  with both pages in use in the table the count is 2, so the stream overrides nothing; with
-  page 4's record a complete free record the kid stays null, so the stream fills nothing).
+  that marks object 3 free and lists object 4 as compressed in a real object stream, in two
+  fixtures: with both pages in use in the table, the object stream holds an intermediate
+  `/Pages` node as object 4, so an override would lose page 3 or report nested page trees, and
+  the count is 2; with object 4's table record a complete free record, the object stream holds
+  a complete page as object 4, so filling the free slot would count 2 pages, and the kid stays
+  null).
 - `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
   (five old/new trailer pairs, the kept entries, their order and exact capacity),
   `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
