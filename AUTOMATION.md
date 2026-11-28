@@ -115,7 +115,8 @@ wait in `Ops` while the Planner names issue groups by judgement (ops/TICK.md §9
 hold, an overlap the Planner finds when it plans a milestone, an audit's request (at most one per
 audit) or a retro's (ops/TICK.md §9 steps 2 and 3).
 The protocol above is the current one. ADR 0011 replaces step 2's self-selection with
-**session types** chosen by a read-only scheduler, `cargo xtask next-session`: Worker, Design
+**session types** chosen by a scheduler, `cargo xtask next-session`, that reads only, apart from
+its local pick log (`ops/state/picks.tsv`, ADR 0018): Worker, Design
 (technical, product, UI), Audit, QC, User advocate, Retro, Planner and Gardener, each with a
 mechanical trigger, the context it loads, its allowed outputs, one exit artifact and a bound.
 Audit and other cadences count product merges only; `area:`/`origin:` labels make problem

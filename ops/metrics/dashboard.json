@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generated": "2026-11-27",
-  "until": "2026-11-27",
+  "generated": "2026-11-28",
+  "until": "2026-11-28",
   "weeks": [
     {"start": "2026-09-07", "end": "2026-09-13", "merged_prs": 0, "median_rounds": null, "sessions": 0},
     {"start": "2026-09-14", "end": "2026-09-20", "merged_prs": 0, "median_rounds": null, "sessions": 0},
@@ -14,22 +14,22 @@
     {"start": "2026-11-02", "end": "2026-11-08", "merged_prs": 0, "median_rounds": null, "sessions": 0},
     {"start": "2026-11-09", "end": "2026-11-15", "merged_prs": 0, "median_rounds": null, "sessions": 0},
     {"start": "2026-11-16", "end": "2026-11-22", "merged_prs": 101, "median_rounds": 2, "sessions": 70},
-    {"start": "2026-11-23", "end": "2026-11-27", "merged_prs": 57, "median_rounds": 2, "sessions": 60}
+    {"start": "2026-11-23", "end": "2026-11-28", "merged_prs": 135, "median_rounds": 2, "sessions": 422}
   ],
   "sessions": "index",
-  "journal_entries": {"prs": 42, "median": 1, "max": 4, "histogram": [{"entries": 1, "prs": 33}, {"entries": 2, "prs": 7}, {"entries": 3, "prs": 1}, {"entries": 4, "prs": 1}]},
+  "journal_entries": {"prs": 117, "median": 1, "max": 4, "histogram": [{"entries": 1, "prs": 100}, {"entries": 2, "prs": 11}, {"entries": 3, "prs": 4}, {"entries": 4, "prs": 2}]},
   "blocked": [],
   "milestones": [
-    {"title": "M0", "open": 19, "closed": 90, "closed_28d": 90, "forecast": "2026-12-03"},
-    {"title": "M1", "open": 11, "closed": 0, "closed_28d": 0, "forecast": null},
-    {"title": "M2", "open": 7, "closed": 2, "closed_28d": 2, "forecast": "2027-03-05"},
+    {"title": "M0", "open": 0, "closed": 145, "closed_28d": 145, "forecast": null},
+    {"title": "M1", "open": 29, "closed": 4, "closed_28d": 4, "forecast": "2027-06-19"},
+    {"title": "M2", "open": 14, "closed": 3, "closed_28d": 3, "forecast": "2027-04-08"},
     {"title": "M3", "open": 2, "closed": 0, "closed_28d": 0, "forecast": null},
-    {"title": "M4", "open": 7, "closed": 1, "closed_28d": 1, "forecast": "2027-06-11"},
-    {"title": "M5", "open": 1, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M4", "open": 7, "closed": 1, "closed_28d": 1, "forecast": "2027-06-12"},
+    {"title": "M5", "open": 2, "closed": 0, "closed_28d": 0, "forecast": null},
     {"title": "M6", "open": 1, "closed": 0, "closed_28d": 0, "forecast": null},
-    {"title": "M9", "open": 4, "closed": 0, "closed_28d": 0, "forecast": null},
-    {"title": "M10", "open": 29, "closed": 0, "closed_28d": 0, "forecast": null},
-    {"title": "Ops", "open": 2, "closed": 3, "closed_28d": 3, "forecast": "2026-12-16"}
+    {"title": "M9", "open": 5, "closed": 0, "closed_28d": 0, "forecast": null},
+    {"title": "M10", "open": 28, "closed": 5, "closed_28d": 5, "forecast": "2027-05-04"},
+    {"title": "Ops", "open": 17, "closed": 3, "closed_28d": 3, "forecast": "2027-05-06"}
   ],
   "judge": {"source": "nightly", "weeks": [
     {"start": "2026-09-07", "run": null, "day": null, "open_rate": null, "render_match": null, "text_f1": null, "crashes": null, "journeys_passing": null, "journeys": null},
@@ -43,7 +43,7 @@
     {"start": "2026-11-02", "run": null, "day": null, "open_rate": null, "render_match": null, "text_f1": null, "crashes": null, "journeys_passing": null, "journeys": null},
     {"start": "2026-11-09", "run": null, "day": null, "open_rate": null, "render_match": null, "text_f1": null, "crashes": null, "journeys_passing": null, "journeys": null},
     {"start": "2026-11-16", "run": 45017918523, "day": "2026-11-22", "open_rate": 0.5935, "render_match": 0, "text_f1": 0, "crashes": 0, "journeys_passing": 0, "journeys": 129},
-    {"start": "2026-11-23", "run": 45822452567, "day": "2026-11-26", "open_rate": 0.5935, "render_match": 0, "text_f1": 0, "crashes": 0, "journeys_passing": 0, "journeys": 129}
+    {"start": "2026-11-23", "run": 46149756341, "day": "2026-11-28", "open_rate": 0.5935, "render_match": 0, "text_f1": 0, "crashes": 0, "journeys_passing": 0, "journeys": 132}
   ]},
   "truncated": [],
   "malformed_index_rows": 0

@@ -91,7 +91,11 @@ milestones), ops/judge/CONTRACT.md (what the judge checks).
   §4 and ADR 0012 §1). Size it before claiming; if
   it's bigger, split it into numbered parts (`<area> 1/N`) first, then claim part 1 (file the
   later parts without `ready`: the Planner adds it, §9). When you write new issues, give each
-  one this size.
+  one this size. Estimate a Rust tool as its code × 2 (its in-module tests come out about as
+  long after rustfmt), plus a validator and a Playwright suite for a React page, and count a
+  draft's lines after `cargo fmt` (#305 reached 2091 lines, #303's draft went from about 1100
+  to 1850, and was split before its first review, #413). Write table-driven test inputs as one
+  space-split string to keep rustfmt's arrays short (retro 0003).
 - **A part is a GitHub sub-issue of its parent** (owner, #398), so the parent shows its
   progress. File it with `gh issue create --parent <parent> ...`, or link an existing issue with
   `gh issue edit <part> --parent <parent>`, each its own CLI write. The parts are: a sizing
@@ -280,7 +284,21 @@ still come first). Do these in order, one per session:
    **light-lane** PR (§4, ADR 0012 §1) skips the template's filter, gate and parser items: each
    pick, trigger or rule it adds or changes gets one test that selects it and one that doesn't
    (the nearest miss you see), each new input one parse-error case, and its description answers
-   one line: "if this is wrong, what wrong pick follows, and which session notices". Read
+   one line: "if this is wrong, what wrong pick follows, and which session notices". A rule,
+   count or check over GitHub state (owner-feed items, labels, events, windows, a PR that
+   closes no issue) also gets, before round 1 and in its spec or description, a table of every
+   case it meets, each with its next step: each record kind's lifetime (owner issues are
+   listed open only, review bodies on open PRs only), the PR merging, closing unmerged or
+   picked by rule c, a skip label, a reopen, a same-minute or same-second boundary (compare one
+   recorded instant to `closedAt`, never a window; for a close, the three cases: closed by
+   the judged commit, earlier in the same session, reopened and closed again), and each TICK
+   section keyed to an issue (§4 K and cap, §4 step 6, §5 `/hold`, §8's outputs). Every row
+   names a next step (no `n/a`). Run it against one real day's timelines first and write the
+   day and what it found under the table. GitHub's facts there: auto-merge shows as
+   `auto_squash_enabled`, an issue closed by a merge has `commit_id` null (use
+   `ClosedEvent.closer`), one owner action spans several events, and a journal `HHMM` is a
+   minute that can start before the session's first second (retro 0003: PRs #289, #312,
+   #479, #524 and #528 drew one missed case per round and reached the cap or design). Read
    the `docs/PRINCIPLES.md` entries whose `Paths:` match the files you will change first, and
    keep their invariants.
 3. **Local checks:**
