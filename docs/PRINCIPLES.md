@@ -145,35 +145,43 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
 
 ## P7. One memory cap at the allocator, one charging path, measured
 - **Invariant:** in a process that holds the engine, the bytes Rust's global allocator has
-  handed out never pass the hard cap `H` (1536 MiB, or lower), counted by
-  `jpdf_alloc::Capped`. In the library code of the crates under `crates/` and of
-  `tools/jpdf-cli`, every allocation whose size is a runtime value goes through `jpdf-mem`,
-  which refuses it with a typed error (`LimitExceeded("memory")`, CLI exit 2) once the counted
-  bytes plus reservations plus the request would pass the soft cap `S = H − 128 MiB`; code that
-  allocates on its own (a third-party decoder) runs only inside an `admit` reservation of its
-  per-call limits. Every limits-harness case and replayed fuzz input ends with exit 0 or 2, its
-  counted peak within its baseline (`ops/metrics/limits-peaks.json`), and on Linux its OS peak
-  under 2 GiB − 64 MiB. The safety of the budget is never argued from a model of allocator
-  behavior.
+  handed out never pass the hard cap `H` (1536 MiB, or lower; 1024 MiB in the fuzz targets),
+  counted by `jpdf_alloc::CappedAlloc`. In the non-test code of the crates under `crates/` and
+  of `tools/jpdf-cli` (the `cargo xtask mem-lint` scope, ADR 0017 §3), every allocation whose
+  size is a runtime value goes through `jpdf-mem`, which refuses it with a typed error
+  (`LimitExceeded("memory")`, CLI exit 2) once the counted bytes plus reservations plus the
+  request would pass the soft cap `S = H − 128 MiB`; code that allocates on its own (a
+  third-party decoder) runs only inside an `admit` reservation of its per-call limits. Every
+  limits-harness case and replayed fuzz input ends with exit 0 or 2, its counted peak within
+  its baseline (`ops/metrics/limits-peaks.json`, per platform and `--mib`), on Linux its OS
+  peak under 2 GiB − 64 MiB, and on macOS its footprint under 2 GiB − 64 MiB and within its
+  baseline. The safety of the budget is never argued from a model of allocator behavior.
 - **Decided in:** ADR 0017.
 - **Enforced by:** nothing yet; ADR 0017's tasks add it. Then: `jpdf-mem`'s fallible API
-  (types, task 1); `cargo xtask mem-lint` in `cargo xtask ci linux` (task 6); `Capped`'s refusal
-  at `H` (task 7, after the owner applies the CONSTITUTION 3 exception, tasks 2 and 3); the
-  limits harness on Linux and macOS and the fuzz replay (tasks 8 to 10). Checkpoints in input
-  loops, reservations around backend calls and the allocator's installation in each binary stay
-  reviewer vigilance. Until task 8 is merged, decode and raster stay off the jpdf-cli path
+  (types, task 1); `cargo xtask mem-lint` in `cargo xtask ci linux` (task 6); `CappedAlloc`'s
+  refusal at `H` (task 7, after the owner applies the CONSTITUTION 3 exception, tasks 2 and 3);
+  the limits harness in `cargo xtask ci linux` at `--mib 64` on every PR, in the nightly at
+  500 MiB, and on macOS in `cargo xtask ci macos` (pushes to main only), and the nightly fuzz
+  replay (tasks 8 to 10). Checkpoints in input loops, reservations around backend calls, copies
+  through trait methods the lint can't list, and the allocator's installation in each binary
+  stay reviewer vigilance. Until task 8 is merged, decode and raster stay off the jpdf-cli path
   (specs/core/memory-budget.md, Gate; specs/tooling/cli-dependency-gate.md).
 - **Reviewers check:** an allocation in the gated code goes through `jpdf-mem` (from task 6 the
-  lint sees the std methods; a method it misses is still a finding); each loop over input that
-  allocates calls `checkpoint()`; a backend call runs inside a reservation of its output plus
-  working bytes; a binary or fuzz target that holds the engine installs `Capped` and its gauge;
-  no cap, soft-cap margin or baseline goes up without the PR saying why (CONSTITUTION 14).
-  **The process rule:** a memory finding is a blocker or major only with a concrete input and
-  one of those violations, or a measurement (a harness or fuzz case that fails). A predicted
-  allocator behavior (fragmentation, arenas, retention, rounding) with no measurement is a minor
-  whose fix is a new harness case, never a new model term or default. A finding about code that
-  doesn't exist yet is answered by ADR 0017's Requirements on future callers (from task 11, the
-  list in specs/core/memory-budget.md): disputed as covered by a numbered requirement, or added
-  to the spec's list in the same PR; no issue is filed for it.
-- **Paths:** `crates/`, `tools/jpdf-cli/`, `fuzz/`, `apps/macos/JPDFHelper/`,
+  lint sees the std methods it lists; a method it misses is still a finding); input-sized data
+  isn't copied through `clone`, `to_owned`, `From`/`Into` or `extend` outside `jpdf-mem`; each
+  loop over input that allocates calls `checkpoint()`; a backend call runs inside a reservation
+  of its output plus working bytes; a binary or fuzz target that holds the engine installs
+  `CappedAlloc` and its gauge; no cap, soft-cap margin, ceiling or baseline goes up without the
+  PR saying why (CONSTITUTION 14). **The process rule:** a memory finding about allocator
+  behavior is a blocker or major only with a concrete input and one of those violations, or a
+  measurement (a harness or fuzz case that fails). A predicted allocator behavior
+  (fragmentation, arenas, retention, rounding) with no measurement is a minor whose fix is a new
+  harness case, never a new model term or default. ADR 0010's other grades still apply as they
+  are: a false statement, or a missing test for a behavior or limit the PR claims (an
+  exact-boundary test of `S`, say), is a major. A finding about code that doesn't exist yet is
+  answered by ADR 0017's Requirements on future callers or by the "Requirements on future code"
+  list in specs/core/memory-budget.md (which exists today and which ADR 0017 task 11 keeps):
+  disputed as covered by one of them, or added to that spec list in the same PR; no issue is
+  filed for it.
+- **Paths:** `crates/`, `tools/jpdf-cli/`, `fuzz/`, `bindings/`, `apps/macos/JPDFHelper/`,
   `xtask/src/limits.rs`, `xtask/src/limits/`, `specs/core/memory-budget.md`.
