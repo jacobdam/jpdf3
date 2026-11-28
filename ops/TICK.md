@@ -799,7 +799,7 @@ specs/tooling/design-technical.md.
    the merge (owner, #478): then the Planner files them (§9 step 1b). An approving review alone
    is not an `/approve`: it doesn't end the window.
    **A rejected design closes its tasks** (#478): when a PR labeled `design` closes unmerged,
-   each open task filed for it (the issues its `tasks filed:` comment lists; for PR #465, whose
+   each open task filed for it (the issues its newest `tasks filed:` comment lists; for PR #465, whose
    tasks #467–#477 are the only ones filed before #478, those issues) is
    closed as not planned with a tagged comment naming the PR, except that a PR closed by §8
    output 1 passes its tasks to the split PR (the split issue is the design issue from then on;
@@ -807,8 +807,8 @@ specs/tooling/design-technical.md.
    when the owner closes it, the Planner's next run (§9 step 1b). The design issue's next ADR PR
    files its own tasks when its window ends. **Tasks filed before #478 for a PR still
    open** (ADR 0017's #467–#477, PR #465) count as filed: the session that revises the ADR after
-   a `/hold` rewrites or closes them to match, and the `design-window` session posts the
-   `tasks filed:` comment for them.
+   a `/hold` closes them by the push rule below, and the `design-window` session lists those
+   still open in its `tasks filed:` comment.
    **The owner's `/approve` ends the window early** (#372): an untagged owner comment on the PR
    whose body starts `/approve` (any ASCII case, then whitespace or the end) counts while
    it is the owner's newest `/hold`, `/release` or `/approve` on the PR and no earlier than the
@@ -849,7 +849,7 @@ specs/tooling/design-technical.md.
    `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review` success
    (its own triage comment) the PR goes through this step again (`owner-todo`, a new window,
    and, when a `tasks filed:` comment for the PR exists (for PR #465, also its tasks #467–#477),
-   the pushing session closes the open tasks it lists as not planned with a tagged comment
+   the pushing session closes the open tasks the newest one lists as not planned with a tagged comment
    naming the push, and comments on the design issue
    `🤖 jpdf-agent tasks closed: #A, #B (PR #N, push <sha>)`, so the next window's end files
    them from the changed ADR,
