@@ -143,4 +143,4 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   the *new* test has a near-miss fixture; no title or body of a new issue is printed (numbers
   only); a session's TICK text that files Worker issues doesn't add `ready`.
 - **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`,
-  `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`.
+  `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `ops/TICK.md`.

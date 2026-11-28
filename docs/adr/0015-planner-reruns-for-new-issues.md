@@ -23,7 +23,7 @@ Seen on 2026-11-28 (#438):
 - The design session for #420 (PR #422) filed ADR 0014's tasks #423–#427 at 00:34–00:35 UTC,
   without `ready`. #423 depends only on #420, which is closed. Discovery #431 was filed at
   01:17 UTC.
-- By 02:16 UTC #366, #367, #369 and #383 had merged or been worked, #403 had an open PR (#437)
+- By 02:16 UTC #366, #367, #369 and #383 had merged or been worked, #403's PR (#437) was merging
   and #413 was the scheduler's next pick. After #413 the loop would idle until 00:00 UTC on
   2026-11-29, about 20 hours, while six issues in M0 waited for a Planner run.
 
@@ -88,7 +88,21 @@ Planner files dated today, the pick is `idle`.
   have done nothing; it never displaces other work. A rerun's record dates the newest run,
   so every issue that existed before it stops being new. A further rerun needs an issue filed
   after that, and the cap ends the chain. Issues the Planner files during its own run, after
-  its record's minute, count as new. That can cost one rerun, which is inside the cap.
+  its record's minute, count as new. That can cost one rerun, which is inside the cap. So do
+  a design ADR's tasks, filed with `Depends on: #<design issue>` while that issue stays open
+  for its 24-hour window (ops/TICK.md §8 step 5). That rerun isn't wasted: the Planner may
+  ready an issue whose dependencies are open (§9 step 2 asks only that they are named), and
+  step 10 picks it once the ADR merges. But a design PR's tasks and a split's later parts can
+  spend both of the day's reruns, and a discovery filed after them waits until 00:00 UTC.
+  Leaving out issues with an open dependency would be worse: they would never be new, so
+  they would wait for the next day even after the ADR merges.
+- **The cap counts visible records only:** the journal files that `records.txt` lists
+  (origin/main and the heads of open agent PRs). A record can leave that list: a Planner's
+  records PR closed unmerged (step 11 already says such a record doesn't count), a blob that
+  can't be read (input 15), or a session that dies before it pushes. Each lost record allows
+  one run beyond the cap, and if it was the newest, issues it had judged count as new again.
+  This is the same exposure the once-a-day bound has today (a lost record costs at most one
+  more Planner run that day), not a new one.
 - **Work mix** (ADR 0011 §3): a rerun's record counts as *other* (in the window, never
   milestone work), like any Planner record. At most 2 more such records a day can push the
   reading below 70% more often. That makes step 8 due (already off for the day once a
@@ -101,14 +115,15 @@ Planner files dated today, the pick is `idle`.
   and one with no milestone; an issue in flight; 2 Planner files today (rerun) and 3 (`idle`);
   one file on two refs (counts once); a `planner due` record (counts); `planners` and
   `Planner` (don't count, as today); two Planner records today, where only the newer one's
-  minute counts; a file name with no time, `2460-…` and `0060-…` (end of day); an earlier step
+  minute counts, with the newer one listed first and the two on different refs (`0300-…` on
+  main, `0004-…` on an open PR, so taking the last-listed record fails); a file name with no time, `2460-…` and `0060-…` (end of day); an earlier step
   outranking the rerun; a `createdAt` not in the form `YYYY-MM-DDTHH:MM:SSZ` (exit 1).
 - **Forged or late records** (the spec's Security section): a record is self-reported, so
   anyone who can push a branch with a tagged open PR can write one. A forged record named
   `2359-…`, or 3 forged files dated today, suppress reruns for the rest of the day. That is
   today's bound, so the cost is the same as now: at most until 00:00 UTC. A forged record
-  can't add a run, because a record only ever raises the day's count or moves the newest
-  minute later. An issue can be made new only by creating it in the current milestone, and
+  can't add a run, because a record that is visible only ever raises the day's count or moves
+  the newest minute later (a record that leaves the list is the case above). An issue can be made new only by creating it in the current milestone, and
   setting a milestone needs triage access to the repository, which only the shared account
   has. An outsider's issue has no milestone, so it is never new. An agent session that files
   issues on every run can trigger at most 2 reruns a day.
@@ -142,6 +157,10 @@ applies, each one removed in turn). What broken implementation still passes?
   required.
 - One that takes the **oldest** Planner record's minute: it passes unless two Planner records
   dated today bracket the issue's creation. That fixture is required.
+- One that takes the **last-listed** Planner record, not the latest minute: within one ref
+  `git ls-tree` lists names sorted, so the two agree there. It passes unless the bracketing
+  fixture lists the newer record first, on another ref (`0300-…` on main before `0004-…` on
+  an open PR's branch). That fixture is required.
 - One that reruns at step 8 rather than step 11: the precedence test catches it, since a
   ready issue (step 10) must outrank the rerun.
 - What no fixture can catch: the live `createdAt` field shape (a rename is a parse error,
@@ -155,6 +174,7 @@ applies, each one removed in turn). What broken implementation still passes?
 | #412 | kept closed | a different cause (dependency-line parsing), cited only for the cost of idle sessions |
 | #423, #424, #425, #426, #427 | kept | ADR 0014's tasks, waiting for `ready`. The next Planner run gates them (by the time task 1 merges, the 2026-11-29 run will have), and nothing in them changes |
 | #431 | kept | a discovery waiting for `ready` the same way; the Planner gates it as usual |
+| #420, #366, #367, #369, #383, #403, #413, PR #437 | kept as they are | cited for the 2026-11-28 timeline only |
 
 ## Tasks
 | # | Task (one issue, one PR, ≤ 1500 added lines, at most one new trait family, tool or crate) | Depends on |
@@ -168,7 +188,7 @@ P6, added to `docs/PRINCIPLES.md` by this ADR:
 
 > **P6. The Planner gates `ready`, at most three times a UTC day, and reruns only for a new
 > issue.** Paths: `xtask/src/next_session.rs`, `xtask/src/next_session/`,
-> `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`.
+> `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`, `ops/TICK.md`.
 
 The full entry (its invariant, enforcement and "Reviewers check" lines) is in
 `docs/PRINCIPLES.md`. Reviewers of task 1 also check the near-miss list above against its
@@ -193,7 +213,13 @@ fixtures, one by one.
 - **Harder:** up to 2 more Planner sessions and records a day. Each one is a session that
   would otherwise have printed `idle`, and its record lowers the work-mix reading. The
   scheduler reads one more field (`createdAt`) and parses the record file names' times.
-- **Not covered:** an issue filed while other work is ready waits until the ready list
+- **Not covered:** an issue that becomes gateable after the day's run but was created before
+  it is never new, so it waits until the next UTC day as today: an issue whose `blocked`,
+  `deferred` or `design-pending` label is removed, or an `Ops` or later-milestone issue moved
+  into the current milestone. Moves into the current milestone are made by the Planner itself
+  (ops/TICK.md §9 step 2, ADR 0012 §2), which can ready the issue in the same run, so only a
+  removed label is left; the retro's count (Enforcement level 3) shows whether that case needs
+  a term of its own. An issue filed while other work is ready waits until the ready list
   empties. Step 11 runs last, by design: the Planner orders work, it doesn't interrupt it.
   Issues filed in `Ops` or another milestone never trigger a rerun (step 10 doesn't pick
   them either). A day whose 3 runs are spent waits until 00:00 UTC, as every day does today.
