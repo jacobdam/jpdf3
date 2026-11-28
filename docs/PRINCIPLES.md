@@ -121,3 +121,26 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   in the same signed commit; an applied proposal's directory keeps only its `.md` and `.diff`
   records.
 - **Paths:** `ops/protected-tests/`, `ops/proposals/`, `xtask/src/protected_tests*`.
+
+## P6. The Planner gates `ready`, at most three times a UTC day, and reruns only for a new issue
+- **Invariant:** agent sessions add `ready` only in a Planner session, except for the design
+  and product queues (`design` plus `ready`, `design-product` plus `ready`, ops/TICK.md §9's
+  opening). `cargo xtask next-session` picks the Planner only while fewer than 3 distinct
+  journal files dated today (UTC) hold a `- Session: planner…` record, and on a day that
+  already has one, only at step 11 (nothing before it applies) and only when an issue is
+  *new*: open, in the current milestone, without `ready`, a skip label, `in-progress`,
+  `design`, `design-pending` or `design-product`, not in flight, and created at or after the
+  end of the minute in the newest such record's file name (`HHMM-`; a name without a valid
+  time reads as the end of its day).
+- **Decided in:** ADR 0015 (amending ADR 0011 §1's once-a-day bound).
+- **Enforced by:** `cargo xtask next-session` (xtask/src/next_session.rs) and its `--from`
+  fixtures (xtask/tests/next_session.rs), from ADR 0015 task 1 on. Until then the scheduler
+  picks the Planner at most once a day, which keeps the invariant with no reruns. That a
+  session filing Worker issues leaves `ready` off is reviewer vigilance.
+- **Reviewers check:** a change to step 8 or 11 keeps the count per distinct file (one file
+  on two refs counts once), compares an issue's creation time to the newest record's minute
+  (not its day, not the oldest record), and keeps the rerun last, after step 10; each filter of
+  the *new* test has a near-miss fixture; no title or body of a new issue is printed (numbers
+  only); a session's TICK text that files Worker issues doesn't add `ready`.
+- **Paths:** `xtask/src/next_session.rs`, `xtask/src/next_session/`,
+  `xtask/tests/next_session.rs`, `specs/tooling/next-session.md`.
