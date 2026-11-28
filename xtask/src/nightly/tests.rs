@@ -721,6 +721,9 @@ fn a_previous_file_of_another_schema_is_not_read_further() {
     for text in [
         "{\"schema\":1}",
         "{\"schema\":1,\"files\":\"not an array\",\"x\":[1]}",
+        "{\"files\":{},\"schema\":1}",
+        "{\"schema\":1,\"files\":null}",
+        "{\"schema\":1,\"files\":[1]}",
     ] {
         assert!(parse_previous(text, MAX_ROWS).is_err(), "{text}");
     }
