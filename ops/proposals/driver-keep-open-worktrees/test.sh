@@ -11,6 +11,22 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 funcs="$(sed -n '1,/^backoff=/p' "$driver" | sed '$d' | grep -v -E '^(REPO_DIR=|cd "\$REPO_DIR"|mkdir -p ops)')"
 mkdir -p "$tmp/bin"
 fail=0
+# aged SECONDS PATH...: sets each PATH's mtime to SECONDS ago, portably (#366): `touch -t` is POSIX,
+# while `touch -d` is GNU-only and macOS (where the driver runs) rejects it. The stamp is UTC on both
+# sides, so a DST change can't move it. GNU `date -d` is tried first: GNU `date -r` reads a file, and
+# BSD `date` has no `-d`. Each mtime is then read back (`stat -c` is GNU, `stat -f` BSD, in that
+# order because GNU `stat -f` means something else); a date that didn't take stops the run, so no
+# case passes on fresh mtimes.
+aged() {
+  local t=$(( $(date +%s) - $1 )) stamp f m; shift
+  stamp="$(date -u -d "@$t" +%Y%m%d%H%M.%S 2>/dev/null || date -u -r "$t" +%Y%m%d%H%M.%S 2>/dev/null)" ||
+    { echo "FAIL harness: neither date -d @$t (GNU) nor date -r $t (BSD) works"; exit 1; }
+  for f in "$@"; do
+    TZ=UTC0 touch -t "$stamp" "$f"
+    m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"
+    [[ "$m" == "$t" ]] || { echo "FAIL harness: $f has mtime [$m], want $t"; exit 1; }
+  done
+}
 # run GH_MODE OPEN_BRANCHES: builds the repo and worktrees, then runs the prune step.
 setup() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo"; cd "$tmp/repo" || exit 1
@@ -20,9 +36,9 @@ setup() {
     git worktree add -q ".claude/worktrees/${w%%:*}" -b "${w#*:}"
   done
   git worktree add -q --detach .claude/worktrees/detached
-  for d in open nopr prefix suffix detached; do touch -d '3 days ago' ".claude/worktrees/$d"; done
+  aged $(( 3*86400 )) .claude/worktrees/{open,nopr,prefix,suffix,detached}
   # Just inside the age limit: `find -mtime +2` counts whole days, so 2 days 23 hours is not old.
-  touch -d "@$(( $(date +%s) - 2*86400 - 23*3600 ))" .claude/worktrees/edge
+  aged $(( 2*86400 + 23*3600 )) .claude/worktrees/edge
 }
 run() { # GH: "ok" or "fail"; then the open PRs' head branches, "fork:<b>" for a fork's PR
   local gh="$1" b json="" sep=""; shift
@@ -57,7 +73,7 @@ check() { # name, want
 }
 setup; rm -f "$tmp/log"; run ok t/12-open t/99-other
 check "old with an open PR kept; old without one, a prefix (t/1 vs t/12-open), a longer name and a detached HEAD removed; a fresh one and one just under the age limit kept" "edge fresh open "
-grep -q 'keeping worktree open (open PR on t/12-open)' "$tmp/log" && echo "ok   the kept worktree is logged" || { echo "FAIL no keep line in the log"; fail=1; }
+grep -qs 'keeping worktree open (open PR on t/12-open)' "$tmp/log" && echo "ok   the kept worktree is logged" || { echo "FAIL no keep line in the log"; fail=1; }
 setup; run fail
 check "gh fails: nothing removed" "detached edge fresh nopr open prefix suffix "
 setup; run ok

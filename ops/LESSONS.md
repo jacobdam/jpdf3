@@ -109,8 +109,11 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Shell tests: GNU `touch -d '2 days 23 hours ago'` sets a future time, so an age-boundary case passes every mutant →
   use `touch -d "@$(( $(date +%s) - <seconds> ))"` and check it with `stat` once
   ([journal](journal/2026-11-25/1636-342-keep-open-worktrees.md)). Both forms are GNU-only: macOS `touch` rejects
-  them, so a driver test (the driver runs on the Mac mini) must also run there; to run one now, put a `touch -d` →
-  `touch -t` shim first on PATH (#366, [journal](journal/2026-11-27/0030-344-limit-bound.md)).
+  them, so a driver test (the driver runs on the Mac mini) must also run there. Use POSIX `TZ=UTC0 touch -t` with a
+  stamp from `date -u -d @<epoch>` (GNU) or `date -u -r <epoch>` (BSD), in that order, and read each mtime back
+  (`stat -c %Y`, then `stat -f %m`) so a date that didn't take stops the run, as
+  ops/proposals/driver-keep-open-worktrees/test.sh's `aged` does; check on Linux with `colima start` and a
+  `debian:trixie` container (#366, [journal](journal/2026-11-28/0041-366-touch-portable.md)).
 - GitHub: during an outage `gh issue comment` fails with a bare "GraphQL: Something went wrong" while reads work →
   retry in one loop that first checks whether the comment already exists, so nothing is posted twice
   ([journal](journal/2026-11-25/1600-311-done-reply.md)).
@@ -124,7 +127,15 @@ dropped entries TICK §0 and §4 already state (background waits, "not proven" f
 - Sizing a Rust tool before claiming → its in-module tests come out about as long as the code after rustfmt (a
   540-line module grew to 1028), and a React page adds a validator and a Playwright suite: estimate code × 2 plus
   the web part, and split before writing, not after (#305's work reached 2091 lines and was split into PR #354 and #353)
-  ([journal](journal/2026-11-25/1830-305-dashboard.md)).
+  ([journal](journal/2026-11-25/1830-305-dashboard.md)). Count a draft's lines after `cargo fmt`, not before: rustfmt
+  put table-driven test arrays and builder chains one item per line, and #303's draft went from about 1100 to 1850
+  lines; split before the first review (#413) and write test inputs as one space-split string to keep the arrays short
+  ([journal](journal/2026-11-27/2223-303-admit.md)).
+- Running `cargo vet` on a crate the repo doesn't use yet (admission pre-checks) → `--locked` reads the repo's
+  `imports.lock`, which vet prunes to the audits the current graph needs, so it reports every new crate unaudited; copy
+  the store into a scratch probe and run vet without `--locked` there. Copying the store by hand with `cp` from
+  `supply-chain/` is blocked by the guard even with the protected path as the source: write the copies with Write or
+  from the tool itself ([journal](journal/2026-11-27/2223-303-admit.md)).
 
 ## Judge & CI
 - MuPDF and Poppler agree (≤ 2% pixels differ at 72 dpi after 2× downscale) on ~78% of

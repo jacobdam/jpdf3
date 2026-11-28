@@ -81,7 +81,10 @@ driver). It builds a temp repo with seven worktrees (`t/12-open`, `t/13-nopr`, `
 just inside the age limit; and a fresh `t/14-fresh`) and a fake `gh` (needs `jq`) that acts like
 `gh pr list`: it reads at most `--limit` PRs (default 30), keeps only the `--json` fields asked
 for, applies the `-q` filter, marks fork PRs
-`isCrossRepository: true`, and fails unless asked for `--state open`:
+`isCrossRepository: true`, and fails unless asked for `--state open`. It sets the dates with
+POSIX `touch -t` and a UTC stamp, so it runs on macOS (where the driver runs) and on Linux, and
+reads each mtime back with `stat`: a date that didn't take stops the run with `FAIL harness`
+(#366; checked on macOS and in a `debian:trixie` container, with the same results in both):
 
 | Case | Proposed driver | Current driver |
 |---|---|---|
