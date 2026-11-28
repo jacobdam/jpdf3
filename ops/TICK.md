@@ -858,8 +858,9 @@ gate them.
    can neither lift a deferral nor replace its condition. The condition holds when:
    - `#A closed`: #A is closed as completed (`gh issue view A --json state,stateReason`:
      `CLOSED`, `COMPLETED`); with `and`, both are; with `or`, either is. An issue closed as not
-     planned or as a duplicate doesn't count: post a new condition that names what replaced
-     it, or list the issue under `## Deferred without a condition` (below);
+     planned or as a duplicate doesn't count; once such a close means the condition can no
+     longer hold, post a new condition that names what replaced it, or list the issue under
+     `## Deferred without a condition` (below);
    - `milestone Mn is current`: `Mn` is the lowest open `M<n>`;
    - free text: your judgement from GitHub and main; when unsure, it doesn't hold. A
      condition that waits for the owner (an owner issue's "the owner decides") holds only
