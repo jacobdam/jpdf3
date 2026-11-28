@@ -787,8 +787,8 @@ specs/tooling/design-technical.md.
    **The tasks are filed when the design is accepted** (owner, #478), not when it is reviewed, so
    a revised or rejected ADR leaves no stale tasks. The session that enables auto-merge on a
    `design` PR (the `design-window` pick, or a record-only update below) first files the tasks
-   the ADR lists (skip any already filed with its `Designed in:` line, except one that the push
-   rule or the rejected-design rule below closed: that one is filed again), each sized by §0,
+   the ADR lists (skip any already filed with its `Designed in:` line, except one that "Only a
+   task this step closed is filed again" below files again), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, each a sub-issue of the design issue (§0), so they exist
    when the ADR merges and closes the design issue. A Planner run between the filing and the
@@ -817,11 +817,15 @@ specs/tooling/design-technical.md.
    `🤖 jpdf-agent Closed as not planned: push <sha> on PR #<n>` (the push rule) or
    `🤖 jpdf-agent Closed as not planned: PR #<n> closed unmerged` (the rejected-design rule),
    `#<n>` is a PR labeled `design`, and the task's timeline
-   (`gh api repos/jacobdam/jpdf3/issues/<task>/timeline`) has no `reopened` event after that
-   comment. Any other close stands: a task the owner closed as not planned (with an untagged
-   comment, a tagged one from the owner's interactive session, or none, or after reopening one of
-   ours) is the owner's decision, and it is not filed again. When a task was filed more than once,
-   its newest copy (the highest issue number) decides.
+   (`gh api --paginate repos/jacobdam/jpdf3/issues/<task>/timeline`; without `--paginate` only
+   the first 30 events come back) has no `reopened` event after that comment. Every session that
+   runs either rule writes its close comment in exactly that form, with nothing between the tag
+   and `Closed` (an owner's interactive session too, which otherwise adds its own marker after
+   the tag). Any other close stands: a task the owner closed as not planned (with an untagged
+   comment, a tagged one from the owner's interactive session, or none, or after reopening a
+   task the push or rejected-design rule closed) is the owner's decision, and it is not filed
+   again. When a task was filed more than once, its newest copy (the highest issue number)
+   decides.
    **The owner's `/approve` ends the window early** (#372): an untagged owner comment on the PR
    whose body starts `/approve` (any ASCII case, then whitespace or the end) counts while
    it is the owner's newest `/hold`, `/release` or `/approve` on the PR and no earlier than the
