@@ -52,8 +52,9 @@ as high all the same; this section says where it lives and when it is worked.
    path is missing and where it appears. The Planner checks it on every run (TICK §9 step 1a,
    which loads every `deferred` issue in any milestone; step 2 skips them): a high whose path
    exists on main, or that names no path, loses `deferred` and moves to the current milestone;
-   one in another milestone than its path's moves there (M4 at the latest). A milestone or
-   condition the owner set in an untagged comment stays. When unsure whether the path exists,
+   one in another milestone than its path's moves there (M4 at the latest). Neither changes a
+   milestone or condition that the newest untagged owner comment about it set (on the issue, or
+   on a PR whose comment names the issue). When unsure whether the path exists,
    choose the current milestone without `deferred`, as "when unsure, pick the higher" does for the severity.
 3. **Rule d unchanged.** It still picks every high that is not `deferred` (or under another skip
    label), in any milestone. The `Undefer when:` line, which the Planner re-checks on every run

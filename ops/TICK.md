@@ -890,12 +890,14 @@ gate them.
    **Latent highs** (ADR 0009, owner #466): for each `deferred` issue labeled `sev:critical` or
    `sev:high` whose condition doesn't hold, check that its body or a comment names the missing
    failure path and the milestone where it appears, and that the path is still missing on main.
-   An issue whose milestone or condition the owner set in an untagged comment keeps them; put a
-   doubt about it in a comment for the owner instead. Otherwise, if the path exists on main, or
-   nothing names it, or you are unsure: remove `deferred`, move it to the
-   current milestone and comment `🤖 jpdf-agent Undeferred: not latent (<the path on main, or
-   no path named>)`, so rule d picks it. If it is in a milestone other than the one the path
-   appears in, or later than M4, move it there (M4 at the latest) with a comment saying why.
+   If the path exists on main, or nothing names it, or you are unsure: remove `deferred`, move
+   it to the current milestone and comment `🤖 jpdf-agent Undeferred: not latent (<the path on
+   main, or no path named>)`, so rule d picks it. Otherwise, if no milestone is named, name the
+   one where the path appears in a comment; if it is in another milestone than that one, or
+   later than M4, move it there (M4 at the latest) with a comment saying why. Neither of these
+   changes what the owner set: when the newest untagged owner comment about the issue's
+   milestone or condition (on the issue, or on a PR whose comment names the issue) set them,
+   they stay as set, and a doubt about them goes in a comment for the owner instead.
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
    scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
