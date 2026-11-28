@@ -125,11 +125,9 @@ bounds are code with tests, not prompt text. The driver stays as it is: it still
   says what was known then: "auto-merge on", "parked"). A commit that changes only files under
   `ops/journal/`, and adds or edits only pending lesson files
   not on origin/main (`ops/lessons/pending/*.md`, not its `README.md`; changing or deleting one on
-  origin/main counts; #391), or changes or deletes `ops/STATUS.md` (retired by #392; a branch
-  opened before it may still carry it, and its merge of origin/main deletes it; a commit that
-  adds the file back is not a record commit; a branch that re-adds it in a reviewed commit could
-  then edit it in record commits, which nothing reads, #403), is
-  a **record commit**: it doesn't count as "changed after
+  origin/main counts; #391), is
+  a **record commit** (`ops/STATUS.md`, retired by #392, is not a record path: its exemption
+  for branches opened before #392 ended once no open PR carried it, #403): it doesn't count as "changed after
   the last reviewed commit" for ADR 0010's final check. Neither does a merge of origin/main whose
   `git show --remerge-diff` is empty or touches only those paths; any other merge resolution
   counts, as TICK §4 step 6 says today. The check is by path (and, for a pending lesson file, by whether it is on origin/main): a commit touching any other file
