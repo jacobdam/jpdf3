@@ -409,7 +409,7 @@ fn load(root: &Path, from: Option<&Path>) -> Result<Inputs, Error> {
         ))?,
         prs,
         issues: gh(
-            "issue list --state open --limit 1000 --json number,title,labels,body,milestone",
+            "issue list --state open --limit 1000 --json number,title,labels,body,milestone,createdAt",
         )?,
         runs: gh(
             "run list --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,event",
@@ -951,6 +951,8 @@ struct Issue {
     body: String,
     /// The milestone's title, `None` without one.
     milestone: Option<String>,
+    /// `createdAt`, in GitHub's `YYYY-MM-DDTHH:MM:SSZ` form (step 11's rerun, ADR 0015).
+    created: String,
 }
 
 fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
@@ -966,6 +968,15 @@ fn parse_issues(text_: &str) -> Result<Vec<Issue>, String> {
             milestone: match field(i, "milestone", what)? {
                 Value::Null => None,
                 m => Some(text(m, "title", what)?.to_owned()),
+            },
+            created: {
+                let at = text(i, "createdAt", what)?;
+                if !valid_floor(at) {
+                    return Err(format!(
+                        "{what}: createdAt {at:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                    ));
+                }
+                at.to_owned()
             },
         });
     }
@@ -1504,6 +1515,52 @@ fn planner_ran(records: &[(&str, i64, &str)], today: i64) -> (bool, bool) {
         }
     }
     (ran, week)
+}
+
+/// The most Planner sessions a UTC day: the first run and at most two reruns (ADR 0015 §2).
+const PLANNER_RUNS: usize = 3;
+
+/// The minute of the day in a journal file name's `HHMM-` start (ops/TICK.md §5), `None`
+/// unless it starts with four digits forming a valid time (`HH` < 24, `MM` < 60) and a `-`.
+fn record_minute(name: &str) -> Option<i64> {
+    let [h1, h2, m1, m2, b'-', ..] = *name.as_bytes() else {
+        return None;
+    };
+    if ![h1, h2, m1, m2].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    // Each is an ASCII digit, so `c - b'0'` is 0–9.
+    let d = |c: u8| i64::from(c - b'0');
+    let (h, m) = (d(h1) * 10 + d(h2), d(m1) * 10 + d(m2));
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// Today's Planner runs (ADR 0015 §2–3): the distinct journal files dated `today` that hold a
+/// `- Session: planner…` record (one file on two refs counts once), and the time from which an
+/// issue is new: the end of the minute in the newest file's name, as `YYYY-MM-DDTHH:MM:SSZ`.
+/// `None` when no file is dated today, or when one has no valid time in its name: that reads as
+/// the end of its day, so no issue is new.
+fn planner_today(records: &[(&str, i64, &str)], today: i64) -> (usize, Option<String>) {
+    let files: std::collections::BTreeSet<&str> = records
+        .iter()
+        .filter(|(_, day, rest)| *day == today && rest.split_whitespace().next() == Some("planner"))
+        .map(|(path, _, _)| *path)
+        .collect();
+    let mut newest: Option<i64> = None;
+    for path in &files {
+        let name = path.rsplit('/').next().unwrap_or_default();
+        match record_minute(name) {
+            Some(m) => newest = Some(newest.map_or(m, |n| n.max(m))),
+            None => return (files.len(), None),
+        }
+    }
+    // Checked: `today` is a day of the years 1970–9999 and `m` < 1440, so it fits.
+    let from = newest.and_then(|m| {
+        today
+            .checked_mul(86_400)
+            .and_then(|s| s.checked_add((m + 1) * 60))
+    });
+    (files.len(), from.map(iso))
 }
 
 /// What a session record says it worked on, for the work mix (ADR 0011 §3).
@@ -2180,8 +2237,35 @@ fn choose(inp: &Inputs) -> Result<(Pick, Vec<String>), String> {
             )
         });
     }
+    // Step 11 (ADR 0015): on a day with a Planner record, rerun it while fewer than 3 files
+    // dated today hold one and an issue is new: one the newest run couldn't see.
+    let (runs, new_from) = planner_today(&records, now.div_euclid(86_400));
+    let new_issues: Vec<u64> = issues
+        .iter()
+        .filter(workable)
+        .filter(|i| milestone.is_some() && i.milestone == milestone)
+        .filter(|i| !has_label(&i.labels, "ready"))
+        .filter(|i| !NOT_READY_LABELS.iter().any(|l| has_label(&i.labels, l)))
+        .filter(|i| new_from.as_deref().is_some_and(|t| i.created.as_str() >= t))
+        .map(|i| i.number)
+        .collect();
     let p = chosen.unwrap_or_else(|| {
-        if planned {
+        if planned && runs < PLANNER_RUNS && !new_issues.is_empty() {
+            // Numbers only: no title or body of a new issue is printed (Security).
+            let list: Vec<String> = new_issues.iter().map(|n| format!("#{n}")).collect();
+            pick(
+                "planner new-issues".to_owned(),
+                &format!(
+                    "j (nothing applies, the Planner ran {runs} of at most {PLANNER_RUNS} times today, and these issues are new since its newest run: {}): the Planner again, ADR 0015",
+                    list.join(", ")
+                ),
+                vec![
+                    "ops/TICK.md §9".to_owned(),
+                    QUEUE.to_owned(),
+                    "PLAN.md §8".to_owned(),
+                ],
+            )
+        } else if planned {
             pick(
                 "idle".to_owned(),
                 "j (nothing applies and the Planner ran today): exit now, write no record",
@@ -2432,5 +2516,52 @@ mod tests {
         assert_eq!(linked_issue("x\nCloses #42.\nCloses #7"), Some(42));
         assert_eq!(linked_issue("closes #42"), None);
         assert_eq!(linked_issue("Closes #x"), None);
+    }
+
+    #[test]
+    fn record_minute_and_planner_day() {
+        assert_eq!(record_minute("0000-a.md"), Some(0));
+        assert_eq!(record_minute("2359-a.md"), Some(23 * 60 + 59));
+        assert_eq!(record_minute("0004-.md"), Some(4));
+        for bad in [
+            "",
+            "0004",
+            "0004.md",
+            "2400-a.md",
+            "0060-a.md",
+            "004-a.md",
+            "00a4-a.md",
+            "a.md",
+            "+004-a.md",
+            "０００４-a.md",
+        ] {
+            assert_eq!(record_minute(bad), None, "{bad:?}");
+        }
+        // 2026-11-24 is day 20 781.
+        let today = 20_781;
+        let r = |p: &'static str, t: &'static str| (p, today, t);
+        let recs = [
+            r("ops/journal/2026-11-24/0300-a.md", "planner"),
+            r("ops/journal/2026-11-24/0004-b.md", "planner due"),
+            r("ops/journal/2026-11-24/0300-a.md", "planner"),
+            r("ops/journal/2026-11-24/0500-c.md", "worker ready #1"),
+            r("ops/journal/2026-11-24/0600-d.md", "planners"),
+            ("ops/journal/2026-11-23/0700-e.md", today - 1, "planner"),
+        ];
+        assert_eq!(
+            planner_today(&recs, today),
+            (2, Some("2026-11-24T03:01:00Z".to_owned()))
+        );
+        assert_eq!(planner_today(&recs, today + 1), (0, None));
+        let late = [r("ops/journal/2026-11-24/2359-a.md", "planner")];
+        assert_eq!(
+            planner_today(&late, today),
+            (1, Some("2026-11-25T00:00:00Z".to_owned()))
+        );
+        let bad = [
+            r("ops/journal/2026-11-24/0004-a.md", "planner"),
+            r("ops/journal/2026-11-24/p.md", "planner"),
+        ];
+        assert_eq!(planner_today(&bad, today), (2, None));
     }
 }
