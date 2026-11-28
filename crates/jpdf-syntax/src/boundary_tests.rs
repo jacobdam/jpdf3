@@ -169,7 +169,10 @@ fn resolve_checks_both_header_numbers() {
 fn resolve_with_another_generation_is_null() {
     let data = xref_file(b"%PDF-1.7\n", &[b"1 3 obj 7 endobj"], &[3]);
     let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
-    assert_eq!(doc.resolve(r(1, 3)).map(|o| (*o).clone()), Ok(Object::Integer(7)));
+    assert_eq!(
+        doc.resolve(r(1, 3)).map(|o| (*o).clone()),
+        Ok(Object::Integer(7))
+    );
     assert_eq!(doc.resolve(r(1, 0)).map(|o| (*o).clone()), Ok(Object::Null));
 }
 
@@ -182,7 +185,11 @@ fn adjacent_objects_do_not_overlap() {
         let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
         for num in order {
             let o = doc.resolve(r(num, 0)).map(|o| (*o).clone());
-            assert_eq!(o, Ok(Object::Dict(crate::Dict::default())), "{order:?} {num}");
+            assert_eq!(
+                o,
+                Ok(Object::Dict(crate::Dict::default())),
+                "{order:?} {num}"
+            );
         }
     }
 }
@@ -196,7 +203,10 @@ fn startxref_window_is_exact() {
         data.extend(b"startxref\n0\n%");
         let keyword_at = data.len() - b"startxref\n0\n%".len();
         data.resize(keyword_at + distance, b'x');
-        (data.len(), XrefDocument::parse(&data, &Limits::default()).map(|_| ()))
+        (
+            data.len(),
+            XrefDocument::parse(&data, &Limits::default()).map(|_| ()),
+        )
     };
     assert_eq!(at_distance(64 * 1024).1, Ok(()));
     let (len, past) = at_distance(64 * 1024 + 1);
@@ -222,13 +232,109 @@ fn closing_paren_and_braces_are_delimiters() {
     );
 }
 
-/// Hex digits in either case (ISO 32000-2 §7.3.4.3, §7.3.5), and nibbles combined so that
-/// their bits overlap (`#FF`, `<ff>`): a `^` or `+` in place of `|` gives another byte.
+/// Hex digits in either case (ISO 32000-2 §7.3.4.3, §7.3.5) and how two nibbles form a byte.
+/// The `|` in `hi << 4 | lo` can't be told from `^` or `+` by any input: the shifted high
+/// nibble has no low bits, so cargo-mutants' `|` → `^` mutants there are equivalent.
 #[test]
 fn hex_digits_of_both_cases_combine_into_bytes() {
     assert_eq!(parse(b"<6a6B>"), Ok(Object::String(b"jk".to_vec())));
     assert_eq!(parse(b"<ff>"), Ok(Object::String(vec![0xFF])));
     assert_eq!(parse(b"<f>"), Ok(Object::String(vec![0xF0])));
-    assert_eq!(parse(b"/#ff#FF#3a"), Ok(Object::Name(vec![0xFF, 0xFF, b':'])));
+    assert_eq!(
+        parse(b"/#ff#FF#3a"),
+        Ok(Object::Name(vec![0xFF, 0xFF, b':']))
+    );
     assert_eq!(parse(b"/#Fg"), Ok(Object::Name(b"#Fg".to_vec())));
+}
+
+/// A one-object file with an empty trailer; `startxref` names the xref table.
+fn tiny_file() -> Vec<u8> {
+    xref_file(b"%PDF-1.7\n", &[b"1 0 obj 7 endobj"], &[0])
+}
+
+/// `max_file_size` at the exact file length parses; one byte less refuses it before reading.
+#[test]
+fn xref_file_size_limit_is_exact() {
+    let data = tiny_file();
+    let at = |max_file_size| {
+        let limits = Limits {
+            max_file_size,
+            ..Limits::default()
+        };
+        XrefDocument::parse(&data, &limits).map(|_| ())
+    };
+    assert_eq!(at(data.len()), Ok(()));
+    assert_eq!(
+        at(data.len() - 1),
+        Err(SyntaxError::LimitExceeded("file size"))
+    );
+}
+
+/// The `startxref` offset must be inside the file: in an 80-byte file, offset 79 (the last
+/// byte) is, 80 (the file length) is not.
+#[test]
+fn startxref_offset_at_the_file_length_is_invalid() {
+    let with_offset = |offset: usize| {
+        let mut data = b"xref\n0 1\n0000000000 65535 f\r\ntrailer\n<< /Size 1 >>\n".to_vec();
+        let keyword_at = data.len();
+        data.extend(format!("startxref\n{offset} ").as_bytes());
+        // Pad with spaces until the file is exactly 80 bytes long.
+        data.resize(80, b' ');
+        (
+            keyword_at,
+            XrefDocument::parse(&data, &Limits::default()).map(|_| ()),
+        )
+    };
+    let (keyword_at, at_len) = with_offset(80);
+    assert_eq!(
+        at_len,
+        Err(malformed("invalid startxref offset", keyword_at))
+    );
+    // One byte less points at the last byte, a space: the offset is accepted and the section
+    // read there fails on its content instead.
+    assert_eq!(with_offset(79).1, Err(malformed("expected 'xref'", 79)));
+}
+
+/// An in-use entry with a negative offset is not an entry (only a positive offset too large
+/// for any accepted file reads as free).
+#[test]
+fn negative_xref_offset_is_an_invalid_entry() {
+    let data = b"xref\n0 1\n-000000001 00000 n\r\ntrailer\n<< /Size 1 >>\nstartxref\n0\n%%EOF";
+    assert_eq!(
+        XrefDocument::parse(data, &Limits::default()).map(|_| ()),
+        Err(malformed("invalid xref entry", 8))
+    );
+}
+
+/// A subsection may end at the largest object number: the number advances only between
+/// entries, so the last entry of `4294967295 1` doesn't overflow it.
+#[test]
+fn subsection_ending_at_the_largest_object_number_parses() {
+    let data =
+        b"xref\n4294967295 1\n0000000000 00000 f\r\ntrailer\n<< /Size 1 >>\nstartxref\n0\n%%EOF";
+    let doc = XrefDocument::parse(data, &Limits::default()).map(|_| ());
+    assert_eq!(doc, Ok(()));
+    // Two entries from there do overflow it, after the first entry (read from byte 17).
+    let two = b"xref\n4294967295 2\n0000000000 00000 f\r\n0000000000 00000 f\r\ntrailer\n<< >>\nstartxref\n0\n%%EOF";
+    assert_eq!(
+        XrefDocument::parse(two, &Limits::default()).map(|_| ()),
+        Err(malformed("object number out of range", 17))
+    );
+}
+
+/// ISO 32000-2 §7.3.3: a number has at least one digit. A lone sign or point is a keyword,
+/// which is not an object, so the parser rejects it as one; with the digit count unchecked, `-`
+/// would read as the integer 0 and `.` as a malformed real.
+#[test]
+fn sign_or_point_alone_is_not_a_number() {
+    for src in [&b"-"[..], b"+", b"."] {
+        assert_eq!(
+            parse(src),
+            Err(malformed("unexpected keyword", 0)),
+            "{}",
+            String::from_utf8_lossy(src)
+        );
+    }
+    assert_eq!(parse(b"-0"), Ok(Object::Integer(0)));
+    assert_eq!(parse(b"-.0"), Ok(Object::Real(0.0)));
 }

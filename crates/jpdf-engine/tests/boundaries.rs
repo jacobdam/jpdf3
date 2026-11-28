@@ -41,10 +41,7 @@ fn display_text_of_every_variant() {
             },
             "malformed PDF: bad kid",
         ),
-        (
-            EngineError::LimitExceeded("pages"),
-            "limit exceeded: pages",
-        ),
+        (EngineError::LimitExceeded("pages"), "limit exceeded: pages"),
         (
             EngineError::Unsupported("nested page trees"),
             "not implemented: nested page trees",
