@@ -647,13 +647,20 @@ trait Steps {
     /// Item 14: this night's `nightly.json` from the bench's and the fuzz pass's results.
     fn summary(&mut self, bench: &extra::BenchResult, fuzz: &extra::FuzzResult) -> Step;
     /// Item 16: issues for the night's findings; `files` is `None` when the night stopped
-    /// before the regress runs.
+    /// before the regress runs, `extra` when it stopped before the fuzz pass ended.
     fn issues(
         &mut self,
         limits: &[CaseResult],
         previous: &Previous,
         files: Option<&[FileResult]>,
+        extra: Option<&Extra>,
     ) -> Step;
+}
+
+/// The bench's and the fuzz pass's results, for `summary` and `issues` (spec items 14, 16).
+struct Extra {
+    bench: extra::BenchResult,
+    fuzz: extra::FuzzResult,
 }
 
 /// What the steps produced that the `issues` step reads (spec item 16).
@@ -662,6 +669,7 @@ struct Night {
     previous: Option<Previous>,
     limits: Option<Vec<CaseResult>>,
     ran: Option<Ran>,
+    extra: Option<Extra>,
 }
 
 /// The nightly's order (spec items 10, 11 and 15): which steps run, and what a failure stops.
@@ -673,7 +681,10 @@ fn drive(s: &mut dyn Steps, mut log: Log) -> Log {
     // before it).
     if let (Some(previous), Some(limits)) = (&night.previous, &night.limits) {
         let files = night.ran.as_ref().map(|r| r.files.as_slice());
-        log.push("issues", s.issues(limits, previous, files));
+        log.push(
+            "issues",
+            s.issues(limits, previous, files, night.extra.as_ref()),
+        );
     }
     log
 }
@@ -723,7 +734,8 @@ fn sequence(s: &mut dyn Steps, log: &mut Log, night: &mut Night) -> Option<()> {
     log.push("bench", benched);
     let (fuzzed, fuzz) = s.fuzz();
     log.push("fuzz", fuzzed);
-    log.push("summary", s.summary(&bench, &fuzz));
+    let extra = &*night.extra.insert(Extra { bench, fuzz });
+    log.push("summary", s.summary(&extra.bench, &extra.fuzz));
     Some(())
 }
 
@@ -919,8 +931,15 @@ impl Steps for Real<'_> {
         limits: &[CaseResult],
         previous: &Previous,
         files: Option<&[FileResult]>,
+        extra: Option<&Extra>,
     ) -> Step {
-        let found = issues::findings(limits, Some(previous), files);
+        let found = issues::night_findings(
+            limits,
+            Some(previous),
+            files,
+            extra.map(|e| &e.bench),
+            extra.map(|e| &e.fuzz),
+        );
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());

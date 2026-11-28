@@ -239,6 +239,7 @@ impl Steps for Fake {
         limits: &[CaseResult],
         previous: &Previous,
         files: Option<&[FileResult]>,
+        extra: Option<&Extra>,
     ) -> Step {
         let p = match previous {
             Previous::Nothing(n) => n.as_str(),
@@ -248,7 +249,14 @@ impl Steps for Fake {
         let files = files.map_or("none".into(), |f| {
             blobs(f.iter().map(|f| (f.blob.as_str(), f.runs.is_some())))
         });
-        self.outcome(format!("issues [{}] {p} {files}", cases.join(",")))
+        // The same text as `summary`'s, so a driver that hands `issues` other results fails.
+        let extra = extra.map_or("none".into(), |e| {
+            format!(
+                "{}/{} {}/{}",
+                e.bench.status, e.bench.files, e.fuzz.status, e.fuzz.seconds
+            )
+        });
+        self.outcome(format!("issues [{}] {p} {files} {extra}", cases.join(",")))
     }
 }
 
@@ -299,7 +307,7 @@ fn every_step_runs_once_in_the_spec_order_with_its_data() {
             "bench a,b- true",
             "fuzz",
             "summary timeout/1 crash/9",
-            "issues [] fake-previous a,b-",
+            "issues [] fake-previous a,b- timeout/1 crash/9",
         ]
     );
 }
@@ -413,7 +421,7 @@ fn with_no_verified_file_the_night_stops_after_the_fetch() {
     );
     assert_eq!(
         f.calls.last().unwrap(),
-        "issues [] fake-previous none",
+        "issues [] fake-previous none none",
         "no regress files"
     );
     assert_eq!(steps::exit_code(&log), 1);
@@ -503,7 +511,8 @@ fn exit_codes_with_the_limits_cases() {
 }
 
 /// Item 16: `issues` gets the limits step's cases (a failed case, a tool failure's empty list),
-/// the previous night and this night's files, or `None` when the night stopped before the runs.
+/// the previous night and this night's files, or `None` when the night stopped before the runs,
+/// and the bench's and the fuzz pass's results, or `None` when it stopped before them (#383).
 #[test]
 fn the_issues_step_gets_what_the_night_found() {
     let mut f = Fake::new(two()).with("limits", Step::Finding);
@@ -512,16 +521,17 @@ fn the_issues_step_gets_what_the_night_found() {
     assert_eq!(log.names(), FULL);
     assert_eq!(
         f.calls.last().unwrap(),
-        "issues [deep-nesting,big-xref] fake-previous a,b-"
+        "issues [deep-nesting,big-xref] fake-previous a,b- timeout/1 crash/9"
     );
     assert_eq!(steps::exit_code(&log), 4);
-    // A stop after the runs (a failed `regress.json` write) still hands over the files.
+    // A stop after the runs (a failed `regress.json` write) still hands over the files, but
+    // no bench or fuzz results (those steps never ran).
     let mut f = Fake::new(two()).with("results", failed());
     f.cases = vec![case("deep-nesting", "crash")];
     drive(&mut f, Log::default());
     assert_eq!(
         f.calls.last().unwrap(),
-        "issues [deep-nesting] fake-previous a,b-"
+        "issues [deep-nesting] fake-previous a,b- none"
     );
     // A stop before the runs: no files.
     let mut f = Fake::new(two()).with("corpus", failed());
@@ -529,7 +539,7 @@ fn the_issues_step_gets_what_the_night_found() {
     drive(&mut f, Log::default());
     assert_eq!(
         f.calls.last().unwrap(),
-        "issues [deep-nesting] fake-previous none"
+        "issues [deep-nesting] fake-previous none none"
     );
     // A stop before the limits part: no `issues` call at all.
     let mut f = Fake::new(two()).with("watchdog", failed());

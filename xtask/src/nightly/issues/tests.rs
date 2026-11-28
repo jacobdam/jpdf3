@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::super::extra::TargetResult;
 use super::super::{FileResult, Op, Previous, Run, Statuses};
 use super::*;
 
@@ -655,4 +656,225 @@ fn a_list_of_the_wrong_shape_fails() {
         &mut map,
     )
     .unwrap();
+}
+
+// #383: the fuzz pass's and the bench's findings.
+
+fn target(name: &str, ok: bool, artifacts: &[&str]) -> TargetResult {
+    TargetResult {
+        name: name.into(),
+        ok,
+        artifacts: artifacts.iter().map(|a| (*a).to_string()).collect(),
+    }
+}
+
+fn fuzz(status: &'static str, targets: Vec<TargetResult>) -> FuzzResult {
+    FuzzResult {
+        status,
+        seconds: 1200,
+        targets,
+        error: None,
+    }
+}
+
+fn bench(status: &'static str) -> BenchResult {
+    BenchResult {
+        status,
+        files: 20,
+        exit: None,
+        signal: Some(9),
+        ms: Some(1_200_000),
+        report: false,
+        error: (status == "failed").then(|| "SECRET-ERROR".into()),
+    }
+}
+
+#[test]
+fn a_failed_fuzz_target_files_each_named_artifact_or_itself() {
+    let f = fuzz(
+        "crash",
+        vec![
+            // Two artifacts, by name order, each its own finding.
+            target(
+                "engine_open",
+                false,
+                &["fuzz/engine_open/crash-0a1b", "fuzz/engine_open/oom-2c"],
+            ),
+            // A clean target's artifacts (slow units) are not filed.
+            target("engine_objects", true, &["fuzz/engine_objects/slow-unit-9"]),
+            // No artifact: the target itself.
+            target("syntax_resolve", false, &[]),
+            // A named artifact plus ones outside the set (a space, an upper-case letter, the
+            // wrong directory, an empty name): both kinds of finding.
+            target(
+                "t4",
+                false,
+                &[
+                    "fuzz/t4/crash-a",
+                    "fuzz/t4/crash b",
+                    "fuzz/t4/Crash-c",
+                    "fuzz/other/crash-d",
+                    "fuzz/t4/",
+                ],
+            ),
+            // A target name outside the set is never filed.
+            target("Bad", false, &["fuzz/Bad/crash-e"]),
+        ],
+    );
+    let found = extra_findings(None, Some(&f));
+    assert_eq!(
+        sigs(&found),
+        [
+            "fuzz:engine_open:crash-0a1b",
+            "fuzz:engine_open:oom-2c",
+            "fuzz:syntax_resolve",
+            "fuzz:t4:crash-a",
+            "fuzz:t4",
+        ]
+    );
+    assert!(found.iter().all(|f| f.label == "crash"));
+    assert_eq!(
+        found[0].title,
+        "nightly: fuzz target engine_open crashed: crash-0a1b"
+    );
+    assert!(
+        found[0]
+            .detail
+            .contains("`cargo fuzz run engine_open fuzz/artifacts/engine_open/crash-0a1b`"),
+        "{}",
+        found[0].detail
+    );
+    assert!(found[0].detail.contains("1200 s"), "{}", found[0].detail);
+    assert_eq!(
+        found[2].title,
+        "nightly: fuzz target syntax_resolve crashed"
+    );
+    assert!(
+        found[2].detail.contains("0 artifacts copied, 0 of them"),
+        "{}",
+        found[2].detail
+    );
+    assert!(
+        found[4].detail.contains("5 artifacts copied, 4 of them"),
+        "{}",
+        found[4].detail
+    );
+    // No name outside the set reaches any text.
+    for f in &found {
+        for bad in ["crash b", "Crash-c", "crash-d", "Bad", "crash-e"] {
+            assert!(!f.title.contains(bad) && !f.detail.contains(bad), "{bad}");
+        }
+    }
+    // A fuzz pass that failed as a tool still files its failed targets; a skipped pass or
+    // none files nothing.
+    let failed = FuzzResult {
+        error: Some("SECRET-ERROR".into()),
+        ..fuzz("failed", vec![target("engine_open", false, &[])])
+    };
+    let found = extra_findings(None, Some(&failed));
+    assert_eq!(sigs(&found), ["fuzz:engine_open"]);
+    assert!(!found[0].detail.contains("SECRET"));
+    assert!(extra_findings(None, Some(&fuzz("skipped", Vec::new()))).is_empty());
+    assert!(extra_findings(None, None).is_empty());
+}
+
+#[test]
+fn a_name_in_a_signature_has_one_to_max_name_allowed_bytes() {
+    let at = "a".repeat(MAX_NAME);
+    let over = "a".repeat(MAX_NAME + 1);
+    assert!(safe_name(&at) && safe_name("crash-0_9"));
+    for bad in [
+        "",
+        over.as_str(),
+        "A",
+        "a b",
+        "a:b",
+        "a/b",
+        "a.b",
+        "a`b",
+        "é",
+    ] {
+        assert!(!safe_name(bad), "{bad:?}");
+    }
+    assert_eq!(MAX_NAME, 100);
+    // At the limit an artifact is filed by name; one past it, only its target.
+    let t = |n: &str| fuzz("crash", vec![target("t", false, &[&format!("fuzz/t/{n}")])]);
+    assert_eq!(
+        sigs(&extra_findings(None, Some(&t(&at)))),
+        [format!("fuzz:t:{at}")]
+    );
+    assert_eq!(sigs(&extra_findings(None, Some(&t(&over)))), ["fuzz:t"]);
+}
+
+#[test]
+fn only_a_bench_timeout_is_a_perf_finding() {
+    let found = extra_findings(Some(&bench("timeout")), None);
+    assert_eq!(sigs(&found), ["bench:timeout"]);
+    assert_eq!(found[0].label, "perf");
+    assert_eq!(found[0].title, "nightly: the bench ran out of time");
+    let d = &found[0].detail;
+    assert!(
+        d.contains("20 regress files") && d.contains("signal 9, 1200000 ms"),
+        "{d}"
+    );
+    for st in ["ok", "skipped", "failed"] {
+        assert!(extra_findings(Some(&bench(st)), None).is_empty(), "{st}");
+    }
+}
+
+#[test]
+fn the_night_files_limits_and_regress_findings_then_fuzz_then_bench() {
+    let f = fuzz("crash", vec![target("engine_open", false, &[])]);
+    let found = night_findings(
+        &[case("big-xref", "crash")],
+        None,
+        Some(&[night_file(A, ["crash", "ok", "ok", "ok", "ok"])]),
+        Some(&bench("timeout")),
+        Some(&f),
+    );
+    assert_eq!(
+        sigs(&found),
+        [
+            "limits:big-xref",
+            &format!("regress:{A}"),
+            "fuzz:engine_open",
+            "bench:timeout",
+        ]
+    );
+}
+
+#[test]
+fn a_perf_finding_lists_perf_issues_and_a_repeat_night_comments() {
+    let found = extra_findings(Some(&bench("timeout")), None);
+    let mut gh = FakeGh::default();
+    let d = file(&mut gh, &found, "night 1", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert_eq!((d.created, d.commented), (1, 0));
+    let heads: Vec<String> = gh
+        .calls
+        .iter()
+        .map(|c| c[..2].join(" ") + " " + &c[5])
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            "issue list bug",
+            "issue list crash",
+            "issue list perf",
+            "issue create perf"
+        ]
+    );
+    assert!(
+        gh.issues[0]
+            .3
+            .contains(&format!("{SIGNATURE}bench:timeout\n"))
+    );
+    // Night 2 finds the open `perf` issue (only that list has it) and comments on it.
+    let d = file(&mut gh, &found, "night 2", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert_eq!((d.created, d.commented), (0, 1));
+    assert_eq!(gh.issues.len(), 1);
+    // A night without a perf finding doesn't list `perf` (pinned for crash findings above).
+    let mut gh = FakeGh::default();
+    let found = extra_findings(None, Some(&fuzz("crash", vec![target("t", false, &[])])));
+    file(&mut gh, &found, "n", MAX_WRITES, LIST_LIMIT).unwrap();
+    assert!(gh.calls.iter().all(|c| c[5] != "perf"));
 }
