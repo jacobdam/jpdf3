@@ -260,7 +260,11 @@ the #25 harness size formula, and the #317 filter-bucket test, which the templat
 - Making a limit exact with a final whole-token check → the in-loop checks that stop a hostile token early (the
   memory bound) now look redundant and no result-based test notices their removal. Test the early stop: an
   over-long token with no terminator must fail with the limit error after a few lexed bytes
-  ([journal](journal/2026-11-21.md), PR #140).
+  ([journal](journal/2026-11-21.md), PR #140). The lexing budget is checked only before each token, so a parse that
+  answers from its last token (a look-ahead that classifies bytes, an early `Unsupported` or `Malformed`) leaves those
+  bytes unchecked: check the budget once before every answer, on all exit paths at once, with an exact-boundary test
+  per path (PR #540 patched one path per round: S2.1, then S3.1,
+  [journal](journal/2026-11-28/1448-78-lenient-read.md)).
 - Writing a memory budget (a "defaults fit" check, or a rule for a caller that doesn't exist yet) → summing the
   charged limits proves nothing: require an itemized reserve (or say plainly there is none), and before round 1 walk
   every allocation on the path (`Vec::new`/`collect`/`with_capacity`, decryption, each filter stage, the shrink copy,
