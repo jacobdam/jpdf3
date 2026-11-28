@@ -85,10 +85,11 @@ that a stall costs a day, not a week.
    the count under measurement stays at 3 or fewer and no two items under measurement share a
    success number (so each number moves for one known reason). An item may be extended once
    (a new 7-day window, same slot); at its second verdict it is kept or reverted.
-6. **The weekly part stays weekly.** Each record's second line is `Kind: daily` or
-   `Kind: weekly`, and its third `Period: YYYY-MM-DD..YYYY-MM-DD` (UTC days, both inclusive).
-   A retro is weekly when its period's last day is 7 or more UTC days after the last day of the
-   newest weekly record's period; a record with no `Kind:` line (retros 0001–0003 under
+6. **The weekly part stays weekly.** Each record's second line is `Kind: daily`,
+   `Kind: weekly` or `Kind: incident`, and its third `Period: YYYY-MM-DD..YYYY-MM-DD` (UTC
+   days, both inclusive), or `Period: none` for an incident record (below). A retro is weekly
+   when its period's last day is 7 or more UTC days after the last day of the newest weekly
+   record's period; a record with no `Kind:` line (retros 0001–0003 under
    today's TICK) counts as weekly, with its period's last day the UTC day before its commit.
    The weekly retro does what today's TICK §7 does beyond the three questions: the
    review-convergence numbers, the review-deferral re-read, `ops/LESSONS.md` curation, the
@@ -102,8 +103,10 @@ in two daily periods, whenever a record merges. A weekly retro's period starts t
 the previous weekly record's `Period:` end (normally 7 days); it overlaps the daily periods on
 purpose, and every rule that counts weekly retros (clause 6) reads it, never a daily period.
 An incident retro on a day whose period would be empty (it would start after yesterday,
-because a retro already ran today) writes `Period: none (incident)`, reports today so far for
-the incident only, and is skipped when the next retro looks for the newest dated `Period:`.
+because a retro already ran today) writes `Kind: incident` and `Period: none`, reports today
+so far for the incident only, and is skipped by both lookups (the newest dated `Period:` for a
+daily period, the newest weekly record for a weekly one). An incident retro whose period is
+not empty is an ordinary daily or weekly retro.
 `cargo xtask metrics`' default `--since` changes from the last record's commit day to these
 rules (task 3).
 
@@ -131,8 +134,9 @@ classified by the first rule that matches:
 1. *unknown:* no pick is logged for it (below). Counted, never guessed from duration;
 2. *idle:* its pick is `idle`, or the scheduler exited 2;
 3. *rework:* its pick's first line is `worker main-red run <id>`, `worker own-pr #N` or
-   `design-technical needs-design #N` (a broken-scheduler run, exit neither 0 nor 2, falls to
-   *process*: the session fixes the scheduler);
+   `design-technical needs-design #N` (a broken-scheduler run that logs a line with an exit
+   code neither 0 nor 2 is *process*: the session fixes the scheduler; one that logs nothing,
+   such as a panic before the append, is *unknown* by rule 1);
 4. *records:* its pick is `worker design-window #N`, or its journal record is on a PR that
    changes only record paths (ops/TICK.md §4 step 6). Its journal record is the journal file
    whose `Session:` line equals its pick and whose `HHMM` minute (`HH:MM:00` to `HH:MM:59`)
@@ -196,15 +200,18 @@ first of these kinds that matches it:
    `ready` on #423 at 04:54:15 UTC fell inside a Worker session's window (started 04:53:29),
    which is why "outside every session window" is not the test;
 4. a label change, milestone change, close or merge by the account outside every session
-   window (index.tsv: start time to start time plus duration), except the agent's own
-   after-effects: the merge of a tagged PR whose timeline has an `auto_merge_enabled`,
-   `auto_squash_enabled` or `auto_rebase_enabled` event before it, that PR's own `merged` and
-   `closed` events (one action, not counted), and the close of each issue whose `ClosedEvent`
-   names that PR as its `closer` (GraphQL; the REST event's `commit_id` is null for these).
-   PR #464 (`auto_squash_enabled` at 06:07:48) merged at 06:12:18 UTC and closed #461 at
-   06:12:21, two seconds after its session ended; none of the three events counts. An owner
-   action inside a window is missed (an undercount, stated in the report);
-5. a commit on main by the owner (`owner/` branches, AUTOMATION.md §6.1).
+   window (index.tsv: start time to start time plus duration). A merge is one action with the
+   PR's own `closed` event and the close of each issue whose `ClosedEvent` names that PR as
+   its `closer` (GraphQL; the REST event's `commit_id` is null for these), and with its squash
+   commit under kind 5. It is the agent's own after-effect, not counted, when the PR is tagged
+   and the newest `auto_merge_enabled`, `auto_squash_enabled` or `auto_rebase_enabled` event
+   before the merge falls inside a session window; an auto-merge the owner enabled outside
+   every window counts. PR #464's `auto_squash_enabled` (06:07:48) fell inside its session
+   (05:53:01 to 06:08:08); it merged at 06:12:18 UTC and closed #461 at 06:12:21, after that
+   session had ended: not counted. An owner action inside a window is missed (an undercount,
+   stated in the report);
+5. a commit on main by the owner (`owner/` branches, AUTOMATION.md §6.1) that no merge above
+   already counts.
 
 By this count 2026-11-28 had 10 interventions before this design session started (06:53:30
 UTC), counted by hand from the day's comments and the `ready` events on #423 and #440 (label
@@ -254,8 +261,9 @@ next weekly retro (clause 6), whatever its number.
    work waiting, and the owner-intervention count, against the 2026-11-28 baseline (about 1.4
    idle hours before the owner stepped in, 10 interventions by 06:53 UTC).
 4. **Reviewer vigilance:** P7 in `docs/PRINCIPLES.md` (below), for clauses 3, 5 and 6, which
-   no tool checks: a retro changes no label or milestone on another issue, its action items stay within 3
-   under measurement with distinct numbers, and every record answers the three questions.
+   no tool checks: a retro changes no label or milestone on another issue, its action items stay
+   within 3 under measurement with distinct numbers, and every record answers the three
+   questions.
 
 ## Verification
 - Task 1's scheduler fixtures: the UTC-day boundary (the `23:59:59Z` / `00:00:00Z` pair
@@ -281,12 +289,17 @@ next weekly retro (clause 6), whatever its number.
   `human` issue with an untagged owner comment (one intervention); a deferral whose condition
   came true after the newest Planner record (not stale) and one before it (stale); a record
   whose `Period:` ends 2 days before yesterday (the next period starts the day after it); an
-  incident retro after a daily one the same day (`Period: none`, skipped by the next); a
-  weekly period of 7 days next to a daily one of 1; a journal file `1621-…` joined to a
-  session that started at 16:21:36 (joined) and to one that started at 16:22:00 (not: the
-  16:21 minute ends before that window opens); an `auto_squash_enabled` PR and the issue its `ClosedEvent.closer` names
-  (not counted) next to a merge with no auto-merge event (counted); a `human` label at 60 s
-  (kind 1) and at 61 s (not kind 1).
+  incident retro after a daily one the same day (`Kind: incident`, `Period: none`, skipped by
+  the next daily and weekly lookups); a weekly period of 7 days next to a daily one of 1; the
+  minute join: `1621-…` with a session that started at 16:21:36 (joined), with one that
+  started at 16:22:00 (not: the 16:21 minute ends before that window opens), `0555-…` with
+  the session 05:53:01 to 06:08:08 (joined: a later minute inside the window, which a
+  start-minute join misses), and `0610-…` with a session 05:53:01 to 06:08:08 (not: after the
+  window's end); an `auto_squash_enabled` PR enabled inside a window, with the issue its
+  `ClosedEvent.closer` names (one action, not counted), the same PR enabled outside every
+  window (one action, counted) and a manual merge outside every window (one action,
+  counted); a broken-scheduler pick line with exit 1 (*process*) and a session with no line
+  (*unknown*); a `human` label at 60 s (kind 1) and at 61 s (not kind 1).
 - What no fixture catches: a session that changes a label by hand inside a retro (clause 3),
   owner actions inside a session window (kind 4 of the intervention list) and a forged pick
   line. The first is P7's reviewer check, the others undercount or misclass one session each.
@@ -310,10 +323,10 @@ next weekly retro (clause 6), whatever its number.
 | 5 | `cargo xtask metrics` R13 part 3: owner interventions (the five kinds, first match, the two exempt kinds, the auto-merge exclusion, the undercount note), over every comment, review and issue in the period (read commands; not `ops/driver/owner-issues.sh`, which lists only pending items). Its untagged test restates the feed's (body not starting with the tag after leading whitespace), and its fixtures run the same cases through the feed's jq filter so the two can't drift. Strict lane: it reads who counts as the owner (ops/TICK.md §4 Lanes) | #463, task 3 |
 
 Each task issue carries `Designed in: #463` and `Depends on:` lines (ops/TICK.md §8 step 5).
-The lane of tasks 2–4 is set at their PR by ADR 0012 §1; tasks 1 and 5 are strict. The same-day stall alarm (#463's
-"out of scope": the driver notifies after N idle sessions in a row) is not filed: with a daily
-retro and ADR 0015, a stall costs at most a day; if the idle hours with work waiting stay above
-0 for 7 days, a retro files it as an action item (a driver proposal).
+The lane of tasks 2–4 is set at their PR by ADR 0012 §1; tasks 1 and 5 are strict. The same-day
+stall alarm (#463's "out of scope": the driver notifies after N idle sessions in a row) is not
+filed: with a daily retro and ADR 0015, a stall costs at most a day; if the idle hours with work
+waiting stay above 0 for 7 days, a retro files it as an action item (a driver proposal).
 
 ## What reviewers check against
 P7, added to `docs/PRINCIPLES.md` by this ADR:
@@ -344,8 +357,8 @@ The full entry (its invariant, enforcement and "Reviewers check" lines) is in
   the owner's clicks become numbers with a target of 0; the retro's verdicts rest on 7-day
   windows, so a daily cadence doesn't turn into churn.
 - **Harder:** one retro session a day (step 7 outranks ready work), a retro PR a day to review
-  (records plus the action items it lands, within clause 5's 3), and up to 365 records a year under `docs/retros/`.
-  The scheduler gains its first write (a local log line).
+  (records plus the action items it lands, within clause 5's 3), and up to 365 records a year
+  under `docs/retros/`. The scheduler gains its first write (a local log line).
 - **Not covered:** owner actions inside a driver session window other than `ready` adds
   (undercounted); sessions before the pick log exists (*unknown*, with the duration note);
   whether an action item caused the change in its number (the 3-item cap and distinct numbers

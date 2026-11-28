@@ -152,13 +152,13 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   process; idle hours and idle hours with work waiting), and where the owner stepped in (one
   action, one intervention; target 0, exempt kinds counted apart), plus the skip-label table
   and the quality floor. Daily periods neither overlap nor skip a day; a weekly period spans
-  the days since the previous weekly one, and rules that count weekly retros read it. `cargo xtask next-session`
-  makes the retro due when no retro record is dated today (UTC). On any issue or PR but its
-  own `retro` issue and PR and the issues it files, a retro adds or removes no label and moves
-  no milestone; it never edits `ops/QUEUE.md` or reorders a PLAN.md task. Each stall it finds
-  is one `discovery` + `stall` issue in the current milestone, without `ready`, one open per
-  cause. At most 3 action items are under measurement at a time, each on a distinct number,
-  each judged on the 7 UTC days after its merge day, extended at most once.
+  the days since the previous weekly one, and rules that count weekly retros read it.
+  `cargo xtask next-session` makes the retro due when no retro record is dated today (UTC). On
+  any issue or PR but its own `retro` issue and PR and the issues it files, a retro adds or
+  removes no label and moves no milestone; it never edits `ops/QUEUE.md` or reorders a PLAN.md
+  task. Each stall it finds is one `discovery` + `stall` issue in the current milestone, without
+  `ready`, one open per cause. At most 3 action items are under measurement at a time, each on a
+  distinct number, each judged on the 7 UTC days after its merge day, extended at most once.
 - **Decided in:** ADR 0018 (amending ADR 0011 §1's Retro row, §2's read-only bullet, §5's
   area cycle, §6's "two retros in a row" and its Success check, and ADR 0012 §2 and its
   Success check).
@@ -166,7 +166,10 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   `cargo xtask metrics` (tasks 3–5); the rest is reviewer vigilance.
 - **Reviewers check:** a retro session ran no label or milestone write on another issue and no
   QUEUE.md write; its record has every section with numbers from the tool (not by hand once
-  the tool computes them) and a `Period:` that starts the day after the previous record's;
+  the tool computes them) and a `Period:` as ADR 0018 sets it (a daily one starts the day
+  after the newest dated `Period:` end, a weekly one the day after the previous weekly end,
+  both end yesterday; an incident record with an empty period writes `Kind: incident` and
+  `Period: none`);
   a new action item keeps the count under measurement at 3 or fewer with a number no other
   item uses; a verdict cites the item's 7-day window; a change to the session classes or the
   intervention kinds updates both ADR 0018's definitions and the metrics fixtures.
