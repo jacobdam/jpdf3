@@ -141,6 +141,12 @@ impl<'a, 'b> Lexer<'a, 'b> {
         self.budget.check()
     }
 
+    /// Fails if the per-document lexing budget is spent. `next_token` checks it before each
+    /// token, so a caller that decides from the last token it read checks it again here.
+    pub(crate) fn check_budget(&self) -> Result<(), SyntaxError> {
+        self.check()
+    }
+
     /// Fails once a string or name being decoded exceeds the remaining room for this parse.
     fn check_string(&self, out: &[u8]) -> Result<(), SyntaxError> {
         if out.len() > self.string_room {

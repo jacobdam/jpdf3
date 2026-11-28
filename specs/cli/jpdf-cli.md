@@ -37,9 +37,37 @@ After validation every command except `info` exits **3** (not implemented) witho
 - a classic cross-reference table found through the last `startxref` in the final 64 KiB
   (§7.5.5; trailing junk is tolerated), with `/Prev` chains (§7.5.6);
 - an unencrypted document;
-- a catalog `/Pages` node whose `/Kids` are all distinct `/Type /Page` leaves (§7.7.3). A
+- a catalog `/Pages` node whose `/Kids` are all distinct `/Page` leaves (§7.7.3). A
   `/Count` that disagrees with the kids is read leniently (CONSTITUTION 17): the number of
   kids found wins; a missing or non-integer `/Count` is ignored the same way.
+
+Lenient reads (CONSTITUTION 17, #78; audit 0001):
+- **Update trailers that omit entries.** §7.5.6 says an update's trailer should repeat the
+  previous trailer's entries, and real writers often leave `/Root` or `/Size` out. While
+  walking `/Prev`, the engine keeps, for each of `/Root` (a reference) and `/Size` (an
+  integer), the value from the newest trailer that has a usable one, so `<< /Size 4 /Prev N >>`
+  takes `/Root` from the older trailer. A trailer whose `/Root` is not a reference counts as
+  having none. If no trailer in the chain has one, the error is
+  `trailer /Root is not a reference` as before.
+- **Page leaves without `/Type`.** A kid whose `/Type` is missing or not a name is inferred
+  from its shape: with a non-null `/Kids` entry it is an intermediate node (so exit 3, `nested
+  page trees`), without one (or with `/Kids null`, which §7.3.7 makes the same as no entry) a page. A kid whose `/Type` is a name other than `/Page` or `/Pages`
+  stays malformed (`page tree kid has no valid /Type`).
+- **Offsets past the end of the file.** An in-use xref entry (`n`) whose offset is at or
+  beyond the file's length can't resolve, so it is read as free and a reference to it is the
+  null object (§7.3.10), the same as an offset beyond `u32`. An offset one byte inside the
+  file is in use and is checked against the object header there.
+- **`startxref` (or `/Prev`) not at `xref`.** Only an indirect object `N G obj << … /Type
+  /XRef … >>` at that offset, a cross-reference stream (§7.5.8), is `not implemented:
+  cross-reference streams` (exit 3). Anything else there (an integer that starts no object,
+  another object, bytes that fail to lex or parse at or after that offset, other bytes) is
+  malformed: `expected 'xref'` at that offset (exit 2). A limit hit while reading that object
+  (nesting depth, string bytes, the lexing budget) is reported as that limit, exit 2.
+- **Hybrid files** (§7.5.8.4: a classic table whose trailer has `/XRefStm`). They are built so
+  that a reader without cross-reference streams uses the table alone, and this engine does:
+  `/XRefStm` is ignored, so objects listed only in the stream (in object streams) resolve to
+  null. Once cross-reference streams are read (M1, PLAN §8), the stream's entries must be
+  merged in as §7.5.8.4 says.
 
 `--password` is accepted and ignored for unencrypted files.
 
@@ -76,7 +104,7 @@ Not applicable (read-only).
 | FILE larger than `max_file_size` | 2 | `jpdf-cli: limit exceeded: file size` |
 | malformed file (no `startxref`, bad xref, object header mismatch, overlapping objects, bad page tree, …) | 2 | `jpdf-cli: malformed PDF: <what>[ at byte <offset>]` (offset when the lexer knows it) |
 | a limit exceeded | 2 | `jpdf-cli: limit exceeded: <which>` |
-| unsupported structure (xref stream, hybrid `/XRefStm`, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
+| unsupported structure (xref stream, `/Encrypt`, nested page tree) | 3 | `jpdf-cli: not implemented: <what>` |
 | any non-`info` command | 3 | `jpdf-cli: not implemented: <command>` |
 
 No other exit code is ever produced; panics are bugs (no `catch_unwind` that would hide them
@@ -145,7 +173,7 @@ is given to these defaults, so a caller can only tighten them (specs/core/limits
 
 Memory: the CLI reserves exactly the file size before reading (no doubling); xref entries are
 packed into a sorted `Vec` of 12-byte records (newest entry per object number); the stored
-trailer keeps only the first usable `/Root` and `/Size` (at most 2 entries, since #109); the
+trailer keeps one usable `/Root` and one usable `/Size`, each from the newest trailer in the `/Prev` chain that has one (#78; at most 2 entries, since #109); the
 page-tree walk keeps at most one uncached parsed object alive. Since #107 the resolve cache
 (specs/core/resolve-cache.md) keeps every resolved object that fits
 `max_retained_bytes_per_document`, so the catalog, `/Pages` and the kid dictionaries can stay
@@ -209,6 +237,27 @@ Self-check (#77):
   copied (a counting global allocator is banned by CONSTITUTION 3); review covers it, and the
   adversarial memory harness (#25) is the long-term check. The 4 GiB sparse-file case is
   covered by the ordering test above instead of an RSS measurement.
+- Lenient reads (#78). What broken implementation still passes? Taking `/Root` from the
+  oldest trailer instead of the newest fails `update_trailer_takes_missing_entries_from_older_trailers`
+  (four of its five cases); `<=` instead of `<` at the end-of-file offset fails both offset tests
+  (offset `len`); treating any `/Type` name, or any `N G obj` without the dictionary check, as
+  a stream fails the startxref tests; inferring every untyped kid as a page fails the kid test's
+  untyped `/Kids` cases (each checked by a hand mutant before review). Still passing: an
+  untyped kid whose `/Kids` is any non-null value is an intermediate node (`/Kids 5` too, which is
+  then reported as `nested page trees`, exit 3, rather than malformed); the stricter answer
+  would need the nested-tree walk, which doesn't exist yet. The xref-stream check parses one
+  object at the section offset through the normal `Parser`, so every per-parse limit and the
+  lexing budget apply to it, the bytes of its last token included: the lexer checks the budget
+  before each token, so the section-offset classification checks it once more before any
+  answer (the stream, a header mismatch, a dictionary that fails to parse, a first token that
+  fails to lex, a keyword), so none of these answers is given with the budget spent; a limit
+  error that the lexer or parser already returned (nesting depth, string bytes) comes back
+  unchanged, even when the budget is also spent (`12 0 obj [` with depth 0 and an 11-byte
+  budget is `nesting depth`; with the default depth it is the budget's error). It adds no
+  arithmetic. A look-ahead that maps every error to
+  `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
+  that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
+  `u32` widened to `usize` and the slice length, with no arithmetic.
 - Residual: once opened, the descriptor is fixed, so a swap after the `fstat` changes nothing;
   a swap between `stat` and `open` opens non-blocking and the `fstat` check refuses it.
 
@@ -248,6 +297,35 @@ resolves only the catalog, the page-tree root and its kids.
   loops, lenient `/Count`, deep nesting, overflow numbers, unsupported structures, file-size and
   page limits, objects nested in strings and kids sharing one body (overlap rejection),
   overlapping `/Prev` sections (rejected), per-document object budget, out-of-range xref offsets (read as free).
+  The lenient reads of #78, each with its near miss: `update_trailer_without_root_uses_the_older_root`
+  (no usable `/Root` anywhere stays malformed), `kid_without_type_is_inferred_from_its_shape` (a
+  wrong `/Type` name stays malformed), `xref_offset_past_end_of_file_reads_as_null` (offsets
+  `len`, `len + 1` and `u32::MAX` are null; `len - 1` is checked against its header),
+  `startxref_at_a_non_xref_object_is_malformed` (an `/XRef` stream object stays unsupported),
+  `hybrid_file_is_read_through_its_table` (`/XRefStm` points at a real cross-reference stream
+  that marks object 3 free and lists object 4 as compressed in a real object stream, in two
+  fixtures: with both pages in use in the table, the object stream holds an intermediate
+  `/Pages` node as object 4, so an override would lose page 3 or report nested page trees, and
+  the count is 2; with object 4's table record a complete free record, the object stream holds
+  a complete page as object 4, so filling the free slot would count 2 pages, and the kid stays
+  null).
+- `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
+  (five old/new trailer pairs, the kept entries, their order and exact capacity),
+  `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
+  (one `/XRef` dictionary against thirteen near misses: another `/Type`, a string `XRef`, another
+  key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
+  dictionary, and four that fail to lex or parse: a truncated dictionary, an unterminated
+  string after the integer and as the first token, a non-name key; the `/Prev` test repeats
+  the two unterminated strings, and one after leading whitespace, at offsets 9 and 19, each
+  answer naming the section offset; plus limit
+  cases that stay limit errors: nesting depth in the dictionary, string bytes in the first,
+  second and third token),
+  `section_offset_look_ahead_is_inside_the_lexing_budget` (seven outcomes, each at the exact
+  number of bytes it lexes and one byte under it: the stream at 28, a header mismatch at 9, a
+  dictionary that fails to parse at 22, a non-dictionary object at 22, a keyword at 6, a first
+  token that fails to lex (a lone `>`) at 3, a token after the integer that fails to lex
+  (`12 0 >`) at 8), `offset_at_end_of_file_reads_as_free` (the same
+  offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.

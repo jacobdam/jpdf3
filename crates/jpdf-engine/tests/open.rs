@@ -568,3 +568,196 @@ fn out_of_range_xref_offset_reads_as_null() {
         })
     );
 }
+
+/// #78: an incremental update whose trailer omits `/Root` (§7.5.6 says it should repeat it; real
+/// writers don't) takes it from the older trailer.
+#[test]
+fn update_trailer_without_root_uses_the_older_root() {
+    let (mut file, first_xref) = build(b"%PDF-1.7\n", 1, &page_tree(1), "");
+    let update = |file: &[u8], trailer: &str| {
+        let mut out = file.to_vec();
+        let page_at = out.len();
+        out.extend(b"4 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n");
+        let pages_at = out.len();
+        out.extend(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n");
+        let xref_at = out.len();
+        out.extend(
+            format!("xref\n2 1\n{pages_at:010} 00000 n\r\n4 1\n{page_at:010} 00000 n\r\n")
+                .as_bytes(),
+        );
+        out.extend(
+            format!("trailer\n<< {trailer} /Prev {first_xref} >>\nstartxref\n{xref_at}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
+    };
+    assert_eq!(open(&update(&file, "/Size 5")), Ok(2));
+    assert_eq!(open(&update(&file, "")), Ok(2));
+    assert_eq!(open(&update(&file, "/Size 5 /Root 9")), Ok(2));
+    // Near miss: no trailer in the chain has a usable /Root.
+    let (no_root, _) = build(b"%PDF-1.7\n", 1, &page_tree(1), "");
+    let no_root = String::from_utf8_lossy(&no_root).replace("/Root 1 0 R", "/Root 1    ");
+    file = no_root.into_bytes();
+    assert_eq!(
+        open(&update(&file, "/Size 5")),
+        Err(EngineError::Malformed {
+            what: "trailer /Root is not a reference",
+            offset: None,
+        })
+    );
+}
+
+/// #78: a page tree kid without a `/Type` name is a page unless it has `/Kids`; a wrong name is
+/// still malformed.
+#[test]
+fn kid_without_type_is_inferred_from_its_shape() {
+    let with_kid = |kid: &str| {
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            kid.to_string(),
+            "<< /Type /Page /Parent 3 0 R >>".to_string(),
+        ];
+        open(&build(b"%PDF-1.7\n", 1, &objs, "").0)
+    };
+    assert_eq!(
+        with_kid("<< /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+        Ok(1)
+    );
+    assert_eq!(with_kid("<< /Type 7 /Parent 2 0 R >>"), Ok(1));
+    assert_eq!(with_kid("<< /Type (Page) /Parent 2 0 R >>"), Ok(1));
+    assert_eq!(with_kid("<< /Type /Page /Kids [4 0 R] >>"), Ok(1));
+    assert_eq!(with_kid("<< /Parent 2 0 R /Kids null >>"), Ok(1));
+    assert_eq!(
+        with_kid("<< /Parent 2 0 R /Kids [4 0 R] /Count 1 >>"),
+        Err(EngineError::Unsupported("nested page trees"))
+    );
+    assert_eq!(
+        with_kid("<< /Parent 2 0 R /Kids 5 >>"),
+        Err(EngineError::Unsupported("nested page trees"))
+    );
+    for wrong in [
+        "<< /Type /Catalog >>",
+        "<< /Type /Foo /Parent 2 0 R >>",
+        "<< /Type /page >>",
+    ] {
+        assert_eq!(
+            with_kid(wrong),
+            Err(EngineError::Malformed {
+                what: "page tree kid has no valid /Type",
+                offset: None,
+            }),
+            "{wrong}"
+        );
+    }
+}
+
+/// #78: the only page's xref offset in `u32` but at or past the end of the file reads as free,
+/// so the kid is null; one byte before the end it is in use and its header is checked.
+#[test]
+fn xref_offset_past_end_of_file_reads_as_null() {
+    let good = minimal_pdf(1);
+    let marker = b" 00000 n\r\n";
+    let entry_at = good
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .unwrap()
+        - 10;
+    let pointing_at = |offset: usize| {
+        let mut bad = good.clone();
+        bad[entry_at..entry_at + 10].copy_from_slice(format!("{offset:010}").as_bytes());
+        open(&bad)
+    };
+    let len = good.len();
+    let null_kid = Err(EngineError::Malformed {
+        what: "page tree kid is not a dictionary",
+        offset: None,
+    });
+    assert_eq!(pointing_at(len), null_kid);
+    assert_eq!(pointing_at(len + 1), null_kid);
+    assert_eq!(pointing_at(4_294_967_295), null_kid);
+    assert_eq!(
+        pointing_at(len - 1),
+        Err(EngineError::Malformed {
+            what: "object header does not match xref",
+            offset: Some(len - 1),
+        })
+    );
+}
+
+/// #78: `startxref` at an integer that starts no cross-reference stream is malformed (exit 2),
+/// not unsupported (exit 3).
+#[test]
+fn startxref_at_a_non_xref_object_is_malformed() {
+    let (pdf, xref_at) = build(b"%PDF-1.7\n", 1, &page_tree(1), "");
+    let tail = format!("startxref\n{xref_at}\n");
+    let at_catalog = String::from_utf8_lossy(&pdf).replace(&tail, "startxref\n9\n");
+    assert_eq!(
+        open(at_catalog.as_bytes()),
+        Err(EngineError::Malformed {
+            what: "expected 'xref'",
+            offset: Some(9),
+        })
+    );
+    let mut stream = b"%PDF-1.7\n".to_vec();
+    stream.extend(
+        b"1 0 obj\n<< /Type /XRef /Size 2 /W [1 2 1] /Length 0 >>\nstream\n\nendstream\nendobj\n",
+    );
+    stream.extend(b"startxref\n9\n%%EOF\n");
+    assert_eq!(
+        open(&stream),
+        Err(EngineError::Unsupported("cross-reference streams"))
+    );
+}
+
+/// #78: a hybrid file (§7.5.8.4) is read through its classic table; `/XRefStm` is ignored, so
+/// the stream can neither override a table entry nor fill a free one.
+#[test]
+fn hybrid_file_is_read_through_its_table() {
+    // Object 5 is a real cross-reference stream (§7.5.8), `/W [1 1 1]`, `/Index [3 2]`: object 3
+    // free (type 0) and object 4 compressed in object stream 6 at index 0 (type 2). Object 6 is
+    // that object stream (§7.5.7), holding `compressed` as object 4. `/XRefStm` points at object
+    // 5 (its offset doesn't depend on the trailer).
+    let hybrid = |compressed: &str| {
+        let body = format!("4 0 {compressed}");
+        let mut objs = page_tree(2);
+        objs.push(
+            b"<< /Type /XRef /Size 7 /Index [3 2] /W [1 1 1] /Length 6 >>\nstream\n\x00\x00\x00\x02\x06\x00\nendstream"
+                .to_vec(),
+        );
+        objs.push(
+            format!(
+                "<< /Type /ObjStm /N 1 /First 4 /Length {} >>\nstream\n{body}\nendstream",
+                body.len()
+            )
+            .into_bytes(),
+        );
+        let (probe, _) = build(b"%PDF-1.7\n", 1, &objs, "");
+        let stream_at = probe.windows(8).position(|w| w == b"5 0 obj\n").unwrap();
+        let extra = format!("/XRefStm {stream_at}");
+        let (pdf, _) = build(b"%PDF-1.7\n", 1, &objs, &extra);
+        assert_eq!(pdf.len(), probe.len() + extra.len());
+        pdf
+    };
+    // The table lists both pages in use, and the stream would make object 3 free and object 4 an
+    // intermediate node: a reader that let either stream entry override the table would lose
+    // page 3 or report nested page trees.
+    assert_eq!(open(&hybrid("<< /Type /Pages /Kids [] /Count 0 >>")), Ok(2));
+    // Object 4's table record replaced by a complete free record (next free object 0,
+    // generation 1), with a complete compressed page in the stream: a reader that filled free
+    // table slots from the stream would count 2 pages. The kid is null instead.
+    let pdf = hybrid("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>");
+    let text = String::from_utf8_lossy(&pdf).into_owned();
+    let entries: Vec<usize> = text.match_indices(" 00000 n\r\n").map(|(i, _)| i).collect();
+    assert_eq!(entries.len(), 6);
+    let record = entries[3] - 10;
+    let mut only_in_stream = pdf.clone();
+    only_in_stream[record..record + 18].copy_from_slice(b"0000000000 00001 f");
+    assert_eq!(
+        open(&only_in_stream),
+        Err(EngineError::Malformed {
+            what: "page tree kid is not a dictionary",
+            offset: None,
+        })
+    );
+}

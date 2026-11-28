@@ -76,14 +76,21 @@ pub fn flat_page_count(doc: &XrefDocument<'_>, limits: &Limits) -> Result<usize,
             return Err(CosError::Malformed("page tree node appears twice"));
         }
         let node = doc.resolve(r)?;
-        let node_type = node
+        let dict = node
             .as_dict()
-            .ok_or(CosError::Malformed("page tree kid is not a dictionary"))?
-            .get(b"Type")
-            .and_then(Object::as_name);
+            .ok_or(CosError::Malformed("page tree kid is not a dictionary"))?;
+        // §7.7.3.2–§7.7.3.3 require /Type; real writers omit it. Read leniently
+        // (CONSTITUTION 17, #78): with no name there, a node with /Kids is an intermediate
+        // node, one without is a page (a null value is no entry, §7.3.7). A name other than
+        // these two stays malformed.
+        let node_type = match dict.get(b"Type").and_then(Object::as_name) {
+            Some(name) => name,
+            None if !matches!(dict.get(b"Kids"), None | Some(Object::Null)) => b"Pages",
+            None => b"Page",
+        };
         match node_type {
-            Some(b"Page") => {}
-            Some(b"Pages") => return Err(CosError::Unsupported("nested page trees")),
+            b"Page" => {}
+            b"Pages" => return Err(CosError::Unsupported("nested page trees")),
             _ => return Err(CosError::Malformed("page tree kid has no valid /Type")),
         }
     }

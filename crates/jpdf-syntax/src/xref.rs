@@ -57,7 +57,7 @@ impl<'a> XrefDocument<'a> {
         let mut offset = find_startxref(data, limits, &budget)?;
         let mut entries: Vec<Entry> = Vec::new();
         let mut spans: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut trailer: Option<Dict> = None;
+        let mut trailer = TrailerParts::default();
         let mut visited = HashSet::new();
         let mut total_entries: usize = 0;
         loop {
@@ -84,11 +84,9 @@ impl<'a> XrefDocument<'a> {
                 return Err(malformed("cross-reference sections overlap", offset));
             }
             spans.insert(offset, end);
-            if section_trailer.get(b"XRefStm").is_some() {
-                return Err(SyntaxError::Unsupported(
-                    "hybrid cross-reference (/XRefStm)",
-                ));
-            }
+            // ISO 32000-2 §7.5.8.4: a hybrid file's table is complete for readers without
+            // cross-reference streams, so `/XRefStm` is ignored and objects listed only in that
+            // stream resolve to null. Merge its entries here once streams are read (#78).
             if section_trailer.get(b"Encrypt").is_some() {
                 return Err(SyntaxError::Unsupported("encrypted documents"));
             }
@@ -101,15 +99,13 @@ impl<'a> XrefDocument<'a> {
                 ),
                 Some(_) => return Err(malformed("/Prev is not an integer", offset)),
             };
-            if trailer.is_none() {
-                trailer = Some(trim_trailer(section_trailer));
-            }
+            trailer.fill_from(section_trailer);
             match prev {
                 None => break,
                 Some(p) => offset = p,
             }
         }
-        let trailer = trailer.ok_or_else(|| malformed("no trailer", data.len()))?;
+        let trailer = trailer.into_dict();
         // ISO 32000-2 §7.5.6: sections were read newest first; the stable sort keeps that order
         // among equal numbers and `dedup` keeps the first, so the newest entry wins.
         entries.sort_by_key(|e| e.num);
@@ -126,8 +122,8 @@ impl<'a> XrefDocument<'a> {
         })
     }
 
-    /// The newest trailer dictionary, trimmed to the entries the engine uses (`/Root` as a
-    /// reference, `/Size` as an integer).
+    /// The trailer entries the engine uses (`/Root` as a reference, `/Size` as an integer), each
+    /// from the newest trailer in the `/Prev` chain that has a usable one.
     pub fn trailer(&self) -> &Dict {
         &self.trailer
     }
@@ -277,30 +273,43 @@ fn overlaps(spans: &BTreeMap<usize, usize>, start: usize, end: Option<usize>) ->
     inside_earlier || covers_later
 }
 
-/// Keeps only the trailer entries the engine reads (ISO 32000-2 §7.5.5, Table 15), so a hostile
-/// trailer full of junk does not stay in memory while the rest of the document is parsed. Keys
-/// are unique in a well-formed dictionary (§7.3.7); with duplicates, only the first usable
-/// `/Root` (a reference) and the first usable `/Size` (an integer) are kept, which is what
-/// `Dict::get` returned before, so the trimmed trailer holds at most 2 entries in an exact
-/// buffer (specs/core/memory-budget.md).
-fn trim_trailer(trailer: Dict) -> Dict {
-    let mut root = None;
-    let mut size = None;
-    for (k, v) in trailer.0 {
-        match (k.as_slice(), &v) {
-            (b"Root", Object::Ref(_)) if root.is_none() => root = Some((k, v)),
-            (b"Size", Object::Integer(_)) if size.is_none() => size = Some((k, v)),
-            _ => {}
+/// The trailer entries the engine reads (ISO 32000-2 §7.5.5, Table 15), so a hostile trailer full
+/// of junk does not stay in memory while the rest of the document is parsed.
+#[derive(Default)]
+struct TrailerParts {
+    root: Option<(Vec<u8>, Object)>,
+    size: Option<(Vec<u8>, Object)>,
+}
+
+impl TrailerParts {
+    /// Takes from `trailer` each entry still missing. Sections are read newest first, so each
+    /// entry comes from the newest trailer that has a usable one: §7.5.6 says an update's
+    /// trailer should repeat the earlier entries, and real writers leave `/Root` out (#78).
+    /// Keys are unique in a well-formed dictionary (§7.3.7); with duplicates, the first usable
+    /// `/Root` (a reference) and the first usable `/Size` (an integer) win, so at most 2 entries
+    /// are kept, each key in an exact buffer (specs/core/memory-budget.md).
+    fn fill_from(&mut self, trailer: Dict) {
+        for (mut k, v) in trailer.0 {
+            let slot = match (k.as_slice(), &v) {
+                (b"Root", Object::Ref(_)) => &mut self.root,
+                (b"Size", Object::Integer(_)) => &mut self.size,
+                _ => continue,
+            };
+            if slot.is_none() {
+                k.shrink_to_fit();
+                *slot = Some((k, v));
+            }
         }
     }
-    let mut kept: Vec<(Vec<u8>, Object)> = Vec::new();
-    let n = usize::from(root.is_some()).saturating_add(usize::from(size.is_some()));
-    kept.reserve_exact(n);
-    kept.extend(root.into_iter().chain(size).map(|(mut k, v)| {
-        k.shrink_to_fit();
-        (k, v)
-    }));
-    Dict(kept)
+
+    /// `/Root` then `/Size`, in an exact buffer.
+    fn into_dict(self) -> Dict {
+        let mut kept: Vec<(Vec<u8>, Object)> = Vec::new();
+        let n = usize::from(self.root.is_some()).saturating_add(usize::from(self.size.is_some()));
+        kept.reserve_exact(n);
+        kept.extend(self.root.into_iter().chain(self.size));
+        Dict(kept)
+    }
 }
 
 /// ISO 32000-2 §7.5.5: the last `startxref` keyword and the byte offset after it.
@@ -336,12 +345,27 @@ fn parse_section(
     total_entries: &mut usize,
 ) -> Result<(Dict, usize), SyntaxError> {
     let mut p = Parser::new(data, offset, limits, budget);
-    match p.lexer.next_token()? {
+    // Bytes that don't lex at a section offset are not a section either (#78): only a limit
+    // error is returned as it is.
+    let first = match p.lexer.next_token() {
+        Err(SyntaxError::Malformed { .. }) => None,
+        other => other?,
+    };
+    match first {
         Some(Token::Keyword(b"xref")) => {}
-        Some(Token::Integer(_)) => {
-            return Err(SyntaxError::Unsupported("cross-reference streams"));
+        not_xref => {
+            let stream = matches!(not_xref, Some(Token::Integer(_))) && is_xref_stream(&mut p)?;
+            // `next_token` checks the lexing budget before each token, so the bytes of the last
+            // one read here were charged but not checked: check them before any answer (S2.1,
+            // S3.1), so a spent budget is always a limit error. A limit error that the look-ahead
+            // already returned (nesting depth, string bytes) comes back unchanged (S5.1).
+            p.lexer.check_budget()?;
+            return Err(if stream {
+                SyntaxError::Unsupported("cross-reference streams")
+            } else {
+                malformed("expected 'xref'", offset)
+            });
         }
-        _ => return Err(malformed("expected 'xref'", offset)),
     }
     loop {
         let at = p.lexer.pos();
@@ -373,11 +397,23 @@ fn parse_section(
             let parsed = match entry {
                 (Some(Token::Integer(o)), Some(Token::Integer(g)), Some(Token::Keyword(k))) => {
                     match (u32::try_from(o), u16::try_from(g), k) {
-                        (Ok(offset), Ok(generation), b"n") => Some(Entry {
+                        (Ok(offset), Ok(generation), b"n")
+                            if usize::try_from(offset).is_ok_and(|o| o < data.len()) =>
+                        {
+                            Some(Entry {
+                                num,
+                                offset,
+                                generation,
+                                in_use: true,
+                            })
+                        }
+                        // An offset at or past the end of the file cannot resolve either: read it
+                        // as free (a reference to it is null, ISO 32000-2 §7.3.10), as below (#78).
+                        (Ok(_), Ok(generation), b"n") => Some(Entry {
                             num,
-                            offset,
+                            offset: 0,
                             generation,
-                            in_use: true,
+                            in_use: false,
                         }),
                         // An offset beyond any accepted file cannot resolve: read it as free
                         // (a reference to it is null, ISO 32000-2 §7.3.10) instead of failing.
@@ -413,6 +449,28 @@ fn parse_section(
     match p.parse_object()? {
         Object::Dict(d) => Ok((d, p.lexer.pos())),
         _ => Err(malformed("trailer is not a dictionary", at)),
+    }
+}
+
+/// After the integer at a section offset: whether `G obj << … /Type /XRef … >>` follows, the
+/// start of a cross-reference stream (ISO 32000-2 §7.5.8.2). Anything else at a `startxref` or
+/// `/Prev` offset is not a cross-reference section at all (#78), and that includes bytes that
+/// fail to lex or parse there: a malformed look-ahead is `false`, so the caller reports
+/// `expected 'xref'`. A limit error is returned as it is.
+fn is_xref_stream(p: &mut Parser<'_, '_>) -> Result<bool, SyntaxError> {
+    let found = (|| {
+        match (p.lexer.next_token()?, p.lexer.next_token()?) {
+            (Some(Token::Integer(_)), Some(Token::Keyword(b"obj"))) => {}
+            _ => return Ok(false),
+        }
+        Ok(match p.parse_object()? {
+            Object::Dict(d) => d.get(b"Type").and_then(Object::as_name) == Some(&b"XRef"[..]),
+            _ => false,
+        })
+    })();
+    match found {
+        Err(SyntaxError::Malformed { .. }) => Ok(false),
+        other => other,
     }
 }
 
@@ -939,6 +997,252 @@ mod tests {
         assert_eq!(
             XrefDocument::parse(data, &l).map(|_| ()),
             Err(SyntaxError::Unsupported("cross-reference streams"))
+        );
+    }
+
+    /// #78: only `N G obj << /Type /XRef >>` at the `startxref` offset is a cross-reference
+    /// stream (Unsupported). An integer that starts something else is malformed, at the offset.
+    #[test]
+    fn only_an_xref_stream_object_at_startxref_is_unsupported() {
+        let l = Limits::default();
+        let at = |body: &[u8]| {
+            let mut data = body.to_vec();
+            data.extend(b"\nstartxref\n0\n%%EOF");
+            XrefDocument::parse(&data, &l).map(|_| ())
+        };
+        let stream = Err(SyntaxError::Unsupported("cross-reference streams"));
+        let not_xref = Err(malformed("expected 'xref'", 0));
+        assert_eq!(
+            at(b"1 0 obj << /Size 3 /Type /XRef /W [1 2 1] >> stream"),
+            stream
+        );
+        assert_eq!(
+            at(b"12 0 obj << /Type /Catalog /Pages 2 0 R >> endobj"),
+            not_xref
+        );
+        assert_eq!(at(b"12 0 obj << /Type (XRef) >> endobj"), not_xref);
+        assert_eq!(at(b"12 0 obj << /Kind /XRef >> endobj"), not_xref);
+        assert_eq!(at(b"12 0 obj [/Type /XRef] endobj"), not_xref);
+        assert_eq!(at(b"12 0 R"), not_xref);
+        assert_eq!(at(b"12 /XRef obj << /Type /XRef >>"), not_xref);
+        assert_eq!(at(b"12 junk"), not_xref);
+        assert_eq!(at(b"12"), not_xref);
+        assert_eq!(at(b"<< /Type /XRef >>"), not_xref);
+        // Bytes that fail to lex or parse after the integer are not a section either (R1.1).
+        assert_eq!(at(b"12 0 obj << /Type /XRef"), not_xref);
+        assert_eq!(at(b"12 (abc"), not_xref);
+        assert_eq!(at(b"12 0 obj << 5 /XRef >>"), not_xref);
+        // A limit hit during the look-ahead stays a limit error.
+        let tight = Limits {
+            max_nesting_depth: 2,
+            ..Limits::default()
+        };
+        let mut deep = b"12 0 obj << /Type /XRef /A [[[1]]] >>".to_vec();
+        deep.extend(b"\nstartxref\n0\n%%EOF");
+        assert_eq!(
+            XrefDocument::parse(&deep, &tight).map(|_| ()),
+            Err(SyntaxError::LimitExceeded("nesting depth"))
+        );
+        // ... and so does one hit while reading the tokens after the integer (S2.4), and one hit
+        // on the first token.
+        let tight = Limits {
+            max_string_bytes_per_parse: 3,
+            ..Limits::default()
+        };
+        for body in [&b"12 (abcd)"[..], b"(abcd)", b"12 0 (abcd)"] {
+            let mut data = body.to_vec();
+            data.extend(b"\nstartxref\n0\n%%EOF");
+            assert_eq!(
+                XrefDocument::parse(&data, &tight).map(|_| ()),
+                Err(SyntaxError::LimitExceeded("string bytes in one object"))
+            );
+        }
+        assert_eq!(at(b"(abc"), not_xref);
+    }
+
+    /// S2.1, S3.1: the lexing budget covers the whole look-ahead, its last token included, on
+    /// every outcome: the stream, a header mismatch, a dictionary that fails to parse, a first
+    /// token that fails to lex and a keyword. Each file lexes `n` bytes up to the answer: a
+    /// budget of `n - 1` fails with the limit, `n` gives the answer.
+    #[test]
+    fn section_offset_look_ahead_is_inside_the_lexing_budget() {
+        let stream = SyntaxError::Unsupported("cross-reference streams");
+        let not_xref = malformed("expected 'xref'", 0);
+        for (body, n, answer) in [
+            (&b"12 0 obj << /Type /XRef >>"[..], 28, &stream),
+            (b"12 0 >>", 9, &not_xref),
+            (b"12 0 obj << /Type >>", 22, &not_xref),
+            (b"12 0 obj 7", 22, &not_xref),
+            (b"junk", 6, &not_xref),
+            // A first token that fails to lex (a lone `>`), and one after the integer (R4.1).
+            (b">", 3, &not_xref),
+            (b"12 0 >", 8, &not_xref),
+        ] {
+            let mut data = body.to_vec();
+            data.extend(b"\nstartxref\n0\n%%EOF");
+            let with_slack = |slack| {
+                let l = Limits {
+                    lex_budget_factor: 0,
+                    lex_budget_slack: slack,
+                    ..Limits::default()
+                };
+                XrefDocument::parse(&data, &l).map(|_| ())
+            };
+            let name = String::from_utf8_lossy(body);
+            assert_eq!(
+                with_slack(n - 1),
+                Err(SyntaxError::LimitExceeded("bytes lexed per document")),
+                "{name}"
+            );
+            assert_eq!(with_slack(n), Err(answer.clone()), "{name}");
+        }
+        // Two limits spent at once: the parser's nesting-depth error comes back unchanged, not
+        // the budget's (S5.1). With the default depth, the same slack is the budget's error.
+        let mut data = b"12 0 obj [".to_vec();
+        data.extend(b"\nstartxref\n0\n%%EOF");
+        for (depth, limit) in [
+            (0, "nesting depth"),
+            (
+                Limits::default().max_nesting_depth,
+                "bytes lexed per document",
+            ),
+        ] {
+            let l = Limits {
+                lex_budget_factor: 0,
+                lex_budget_slack: 11,
+                max_nesting_depth: depth,
+                ..Limits::default()
+            };
+            let got = XrefDocument::parse(&data, &l).map(|_| ());
+            assert_eq!(got, Err(SyntaxError::LimitExceeded(limit)), "depth {depth}");
+        }
+    }
+
+    /// The same test for a `/Prev` offset: the newest section parses, and the error names the
+    /// older one's offset.
+    #[test]
+    fn only_an_xref_stream_object_at_prev_is_unsupported() {
+        let l = Limits::default();
+        for (body, expected) in [
+            (
+                &b"1 0 obj << /Type /XRef /Size 1 >> stream\n"[..],
+                SyntaxError::Unsupported("cross-reference streams"),
+            ),
+            (
+                &b"1 0 obj << /Type /Catalog >> endobj\n"[..],
+                malformed("expected 'xref'", 9),
+            ),
+            // Bytes that fail to lex, first token or after the integer, at a non-zero offset.
+            (&b"(abc\n"[..], malformed("expected 'xref'", 9)),
+            (&b"12 (abc\n"[..], malformed("expected 'xref'", 9)),
+            // Whitespace first: the answer names the section offset, not the token's (S4.4).
+            (&b"  (abc\n"[..], malformed("expected 'xref'", 9)),
+        ] {
+            // At two offsets (R3.4): after the header, and after a padding comment; a malformed
+            // answer names the offset `/Prev` gives.
+            for prefix in [&b"%PDF-1.7\n"[..], b"%PDF-1.7\n% padding\n"] {
+                let mut data = prefix.to_vec();
+                data.extend(body);
+                let xref_at = data.len();
+                data.extend(b"xref\n0 1\n0000000000 65535 f\r\n");
+                let prev = prefix.len();
+                data.extend(
+                    format!("trailer\n<< /Size 1 /Prev {prev} >>\nstartxref\n{xref_at}\n%%EOF")
+                        .as_bytes(),
+                );
+                let expected = match &expected {
+                    SyntaxError::Malformed { what, .. } => malformed(what, prev),
+                    other => other.clone(),
+                };
+                assert_eq!(XrefDocument::parse(&data, &l).map(|_| ()), Err(expected));
+            }
+        }
+    }
+
+    /// Object 1, then an old section with `old` as its trailer and a newer section with `new`
+    /// (which gets `/Prev`), as in an incremental update (ISO 32000-2 §7.5.6).
+    fn updated(old: &str, new: &str) -> Vec<u8> {
+        let mut data = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n".to_vec();
+        let first = data.len();
+        data.extend(b"xref\n0 2\n0000000000 65535 f\r\n0000000009 00000 n\r\n");
+        data.extend(format!("trailer\n<< {old} >>\n").as_bytes());
+        let second = data.len();
+        data.extend(b"xref\n0 1\n0000000000 65535 f\r\n");
+        data.extend(
+            format!("trailer\n<< {new} /Prev {first} >>\nstartxref\n{second}\n%%EOF\n").as_bytes(),
+        );
+        data
+    }
+
+    /// #78: each of `/Root` and `/Size` comes from the newest trailer with a usable one, kept in
+    /// an exact two-entry buffer in that order.
+    #[test]
+    fn update_trailer_takes_missing_entries_from_older_trailers() {
+        let root = |n| (b"Root".to_vec(), Object::Ref(obj(n)));
+        let size = |n| (b"Size".to_vec(), Object::Integer(n));
+        let cases = [
+            // The audit's case: the update omits /Root.
+            ("/Size 2 /Root 1 0 R", "/Size 4", vec![root(1), size(4)]),
+            // It omits /Size; the newer /Root wins.
+            ("/Size 2 /Root 1 0 R", "/Root 5 0 R", vec![root(5), size(2)]),
+            // A newer /Root that isn't a reference and a /Size that isn't an integer count as
+            // missing.
+            (
+                "/Root 1 0 R /Size 2",
+                "/Root 7 /Size (x)",
+                vec![root(1), size(2)],
+            ),
+            // Nothing omitted: the newest of both, the old trailer ignored.
+            (
+                "/Size 2 /Root 1 0 R",
+                "/Size 9 /Root 3 0 R",
+                vec![root(3), size(9)],
+            ),
+            // No trailer has /Root: only /Size is kept.
+            ("/Size 2 /Root (x)", "/Size 3", vec![size(3)]),
+        ];
+        for (old, new, expected) in cases {
+            let data = updated(old, new);
+            let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
+            let t = &doc.trailer().0;
+            assert_eq!(t, &expected, "{old} | {new}");
+            assert_eq!(t.capacity(), expected.len(), "{old} | {new}");
+            assert!(t.iter().all(|(k, _)| k.capacity() == 4), "{old} | {new}");
+        }
+    }
+
+    /// #78: an in-use entry whose offset is at or past the end of the file reads as free, so
+    /// the reference is null; one byte before the end it is in use and checked against the
+    /// header there.
+    #[test]
+    fn offset_at_end_of_file_reads_as_free() {
+        let l = Limits::default();
+        let with_entry = |offset: usize| {
+            let mut data = b"%PDF-1.7\n".to_vec();
+            let xref_at = data.len();
+            data.extend(b"xref\n0 2\n0000000000 65535 f\r\n");
+            // The file length doesn't depend on the offset's value: it is written in 10 digits.
+            data.extend(format!("{offset:010} 00000 n\r\n").as_bytes());
+            data.extend(
+                format!("trailer\n<< /Size 2 >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes(),
+            );
+            data
+        };
+        let len = with_entry(0).len();
+        for offset in [len, len + 1, usize::try_from(u32::MAX).expect("fits")] {
+            let data = with_entry(offset);
+            let doc = XrefDocument::parse(&data, &l).expect("parses");
+            assert_eq!(
+                *doc.resolve(obj(1)).expect("null"),
+                Object::Null,
+                "{offset}"
+            );
+        }
+        let data = with_entry(len - 1);
+        let doc = XrefDocument::parse(&data, &l).expect("parses");
+        assert_eq!(
+            doc.resolve(obj(1)),
+            Err(malformed("object header does not match xref", len - 1))
         );
     }
 }
