@@ -137,6 +137,13 @@ impl<'a> XrefDocument<'a> {
         self.retained.get()
     }
 
+    /// Bytes lexed so far and object spans recorded (tests: proves whether a resolve read the
+    /// file).
+    #[cfg(test)]
+    pub(crate) fn read_state(&self) -> (usize, usize) {
+        (self.budget.used(), self.spans.borrow().len())
+    }
+
     /// Resolves an indirect reference. ISO 32000-2 §7.3.10: a reference to a free or missing
     /// object is the null object.
     ///
