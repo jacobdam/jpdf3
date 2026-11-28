@@ -132,7 +132,7 @@ git log -5 --format='%h %cs %s' origin/main -- $(grep -v '^#' ops/judge/protecte
 ```
 A design PR whose 24-hour window has passed, or that the owner `/approve`d (§8 step 5), is the
 scheduler's step 3 pick `worker design-window #N` (#314, #372): file the ADR's tasks (§8 step 5,
-#478), then enable auto-merge on it and remove `owner-todo` from its issue, and record the
+#478; a `docs/PRODUCT.md` PR has none, so nothing is filed or posted), then enable auto-merge on it and remove `owner-todo` from its issue, and record the
 session (§5) in a records PR.
 
 ## 2. Pick exactly one thing (strict priority)
@@ -198,7 +198,8 @@ c. **Your own open PR** failing CI or review, or in conflict with its base (merg
    decision, a protected change, an infra fix only the owner can make); otherwise close it. Review
    rounds follow §4's cap (4 rounds, ADR 0010). A `worker design-window #N` pick (#314) is
    your own design PR past its 24-hour window or approved by the owner's `/approve` (§8 step 5,
-   #372; the `Rule:` line says which): file the ADR's tasks (§8 step 5, #478), then
+   #372; the `Rule:` line says which): file the ADR's tasks (§8 step 5, #478; none for a
+   `docs/PRODUCT.md` PR), then
    `gh pr merge N --auto --squash`, remove `owner-todo` from its issue, and record the session.
 d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`** (not
    `owner-todo`, §0). Every
@@ -738,7 +739,7 @@ specs/tooling/design-technical.md.
       the escalated one, labeled `design-product` (plus `ready` unless it was v1's: the
       scheduler's v1 term reads the ones without `ready`), with `Designed in: #<escalated
       issue>` and `Depends on: #<design issue>`, so it waits for the ADR, starts its own review
-      count, and step 5 skips it. The tasks are filed in step 5, after the review.
+      count, and step 5 skips it. The tasks are filed when the design is accepted (step 5).
    3. **ruling:** post `🤖 jpdf-agent **Design ruling**` on the PR, one line per open finding,
       `<ID>: out of scope by <PRINCIPLES.md entry or ADR §>: <why>`, and a last line
       `Next review: one design final check (ops/TICK.md §8)`. No ruling may cover a blocker, a
@@ -785,18 +786,21 @@ specs/tooling/design-technical.md.
    **The tasks are filed when the design is accepted** (owner, #478), not when it is reviewed, so
    a revised or rejected ADR leaves no stale tasks. The session that enables auto-merge on a
    `design` PR (the `design-window` pick, or a record-only update below) first files the tasks
-   the ADR lists (skip any already filed with its `Designed in:` line), each sized by §0,
+   the ADR lists (skip any already filed, open, with its `Designed in:` line; a closed one is
+   filed again), each sized by §0,
    without `ready` (the Planner adds it, §9), with `Designed in: #<escalated or design issue>`
    and `Depends on: #<design issue>`, each a sub-issue of the design issue (§0), so they exist
-   when the ADR merges and closes the design issue. Then it comments on the design issue
+   when the ADR merges and closes the design issue. A Planner run between the filing and the
+   merge readies them through §9 step 2 (a named open dependency doesn't stop step 2); with none,
+   step 11's rerun counts them once the merge closes the design issue. Then it comments on the design issue
    `🤖 jpdf-agent tasks filed: #A, #B (PR #N)` (`tasks filed: none (PR #N)` when the ADR lists
-   none). A `docs/PRODUCT.md` PR (§10) has no tasks. The owner may also merge the PR with
+   none). A `docs/PRODUCT.md` PR (§10) has no tasks and gets no such comment. The owner may also merge the PR with
    GitHub's own buttons (an approving review, the merge button), which no session sees before
    the merge (owner, #478): then the Planner files them (§9 step 1b). An approving review alone
    is not an `/approve`: it doesn't end the window.
    **A rejected design closes its tasks** (#478): when a PR labeled `design` closes unmerged,
-   each open task filed for it (the issues its `tasks filed:` comment lists; for tasks filed
-   before #478, the open sub-issues of its design issue with `Depends on: #<design issue>`) is
+   each open task filed for it (the issues its `tasks filed:` comment lists; for PR #465, whose
+   tasks #467–#477 are the only ones filed before #478, those issues) is
    closed as not planned with a tagged comment naming the PR, except that a PR closed by §8
    output 1 passes its tasks to the split PR (the split issue is the design issue from then on;
    the split PR posts the `tasks filed:` comment). The session that closes the PR does it;
@@ -844,6 +848,9 @@ specs/tooling/design-technical.md.
    labeled `design`** (a fix, a merge resolution that edits another file) starts with
    `gh pr merge N --disable-auto` if auto-merge is on, and after the new `ai-review` success
    (its own triage comment) the PR goes through this step again (`owner-todo`, a new window,
+   and, when a `tasks filed:` comment for the PR exists, the pushing session closes the tasks it
+   lists as not planned with a tagged comment naming the push, so the next window's end files
+   them from the changed ADR,
    and an earlier `/approve` no longer counts: the new triage is later), so the owner always
    gets 24 hours, or an approval, on what merges: a record-only update doesn't change that.
    A design PR that conflicts or loses its `ai-review` success in its window is rule c's
@@ -927,8 +934,10 @@ gate them.
    `design` PR with GitHub's buttons, which no session sees (§8 step 5). List the PRs labeled
    `design` merged or closed in the last 14 days
    (`gh pr list --state all --label design --search "closed:>=<14 days ago>" --json number,state,body`).
-   For each merged one that closes a design issue (labeled `design`), look for a tagged
-   `🤖 jpdf-agent tasks filed:` comment by `jacobdam` on that issue naming the PR; with none,
+   For each merged one, unless the issue it closes is labeled `design-product` (a §10
+   `docs/PRODUCT.md` PR, no tasks; a §8 output 1 split issue of a design PR carries no `design`
+   label and still counts), look for a tagged
+   `🤖 jpdf-agent tasks filed:` comment by `jacobdam` on the issue it closes naming the PR; with none,
    file the tasks its ADR lists as §8 step 5 says (skip any already filed with its
    `Designed in:` line), post that comment, and gate them through step 2 in this run. For each
    one closed unmerged, close its open tasks as §8 step 5's "A rejected design closes its
