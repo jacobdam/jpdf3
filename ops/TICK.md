@@ -619,7 +619,8 @@ session.
   logs or reports such events); (3) it is `crash` or `security` (rule d and ADR 0009; a latent
   high goes in the milestone where its path appears, `deferred`, rule d's latent-high line);
   (4) it is an owner pick for that milestone (below); or (6) a `Pulled from Ops:` comment (a
-  tagged comment by `jacobdam`, §9 step 2) holds it there. (Term 5, ADR 0018 clause 4's `stall` issues, is added here by #480.)
+  tagged comment by `jacobdam`, §9 step 2) holds it there. (Term 5, ADR 0018 clause 4's `stall`
+  issues, is added here by #480.)
   **A strict-list subject** (§4 Lanes: the guard, the owner feed, `ops/proposals/`, the judge,
   the review rules) **chooses no milestone**: such an issue goes to `Ops` unless a term holds,
   and its PR is in the strict lane wherever the issue sits (§4 Lanes). Moving it changes when it
@@ -679,10 +680,12 @@ session.
   milestone; §9 step 2 makes the pull). Open the link of every `Owner pick:` marker on an open
   issue (`gh search issues --repo jacobdam/jpdf3 --state open '"Owner pick:" in:comments'`) and
   check it as §9 step 2 does; and list every open issue that a `Pulled from Ops:` comment by
-  `jacobdam` holds, with the pull it names. A marker the Planner honored that fails the check, a
-  pull that none of §9 step 2's pulls allows, and an open issue outside the milestone its owner
-  pick names (a valid marker or an owner statement on the issue, read as §9 step 2 does) are
-  findings for the Planner.
+  `jacobdam` holds, with the pull it names. Read the untagged `jacobdam` comments of every open
+  issue in the current milestone and in `Ops` for owner statements (§9 step 2). A marker the
+  Planner honored that fails the check, a pull that none of §9 step 2's pulls allows, and an
+  open issue outside the milestone its owner pick names (a valid marker or an owner statement on
+  the issue, read as §9 step 2 does) are findings for the Planner, except a pick that §9 step
+  1a moved under ADR 0009 (term 3) with a comment naming the pick.
 - **Record:** write `docs/audits/NNNN.md`.
 
 ## 7. RETRO session (process, not product)
@@ -1028,8 +1031,8 @@ gate them.
    `#pullrequestreview-<id>`), and honor it only when that comment is by `jacobdam`, untagged
    by the owner feed's test (§5 Discoveries), and names the issue by number and a milestone for
    it; the pick is the milestone that comment names, and a marker whose `<Mn>` differs from it
-   fails the check. A marker that fails the check, or whose link you can't read, is ignored: say so in a tagged
-   comment on the issue (the owner can restate the pick there). Order the statements by the
+   fails the check. A marker that fails the check, or whose link you can't read, is ignored:
+   say so in a tagged comment on the issue (the owner can restate the pick there). Order the statements by the
    owner comment's `created_at`, never the marker's; the newest decides.
    **Pulls from `Ops`** (ADR 0019 clause 4): an `Ops` issue moves into the current milestone
    only when term 1 or 2 now holds for it, an audit asked for it (a tagged `jacobdam` comment on
@@ -1038,9 +1041,10 @@ gate them.
    `docs/retros/NNNN.md` on main that names the issue and the current milestone), or step 3's
    overlap pull finds it. No pull takes an owner pick for `Ops` out of `Ops`, and an audit's or
    a retro's request older than the issue's newest owner statement (by `created_at`; for a
-   retro, its merge on main) doesn't count. Make the move and post a tagged comment on the issue whose first line is
-   `🤖 jpdf-agent Pulled from Ops: <Mn> (<the pull and its reason>)`; that comment keeps it in
-   `<Mn>` (term 6) until it closes or a newer owner statement moves it. **Once, on the first run after ADR 0012
+   retro, its merge on main) doesn't count. Make the move and post a tagged comment on the
+   issue whose first line is `🤖 jpdf-agent Pulled from Ops: <Mn> (<the pull and its reason>)`;
+   that comment keeps it in `<Mn>` (term 6) until it closes or a newer owner statement moves it.
+   **Once, on the first run after ADR 0012
    merges:** create the `Ops` milestone if it is missing (`gh api
    repos/jacobdam/jpdf3/milestones -f title=Ops -f description="Process work that no milestone
    gate needs (ADR 0012 §2)"`) and make ADR 0012 §3's and §4's moves (#308 and #248 to M1, with
