@@ -60,7 +60,7 @@ Lenient reads (CONSTITUTION 17, #78; audit 0001):
 - **`startxref` (or `/Prev`) not at `xref`.** Only an indirect object `N G obj << … /Type
   /XRef … >>` at that offset, a cross-reference stream (§7.5.8), is `not implemented:
   cross-reference streams` (exit 3). Anything else there (an integer that starts no object,
-  another object, bytes that fail to lex or parse after the integer, other bytes) is
+  another object, bytes that fail to lex or parse at or after that offset, other bytes) is
   malformed: `expected 'xref'` at that offset (exit 2). A limit hit while reading that object
   (nesting depth, string bytes, the lexing budget) is reported as that limit, exit 2.
 - **Hybrid files** (§7.5.8.4: a classic table whose trailer has `/XRefStm`). They are built so
@@ -247,7 +247,9 @@ Self-check (#77):
   then reported as `nested page trees`, exit 3, rather than malformed); the stricter answer
   would need the nested-tree walk, which doesn't exist yet. The xref-stream check parses one
   object at the section offset through the normal `Parser`, so every per-parse limit and the
-  lexing budget apply to it; it adds no arithmetic. A look-ahead that maps every error to
+  lexing budget apply to it, the bytes of its last token included (the lexer checks the budget
+  before each token, so the look-ahead checks it once more after the dictionary); it adds no
+  arithmetic. A look-ahead that maps every error to
   `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
   that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
   `u32` widened to `usize` and the slice length, with no arithmetic.
@@ -295,14 +297,21 @@ resolves only the catalog, the page-tree root and its kids.
   wrong `/Type` name stays malformed), `xref_offset_past_end_of_file_reads_as_null` (offsets
   `len`, `len + 1` and `u32::MAX` are null; `len - 1` is checked against its header),
   `startxref_at_a_non_xref_object_is_malformed` (an `/XRef` stream object stays unsupported),
-  `hybrid_file_is_read_through_its_table` (an entry free in the table stays null).
+  `hybrid_file_is_read_through_its_table` (`/XRefStm` points at a real cross-reference stream
+  that lists page 4 as compressed in a real object stream; with page 4 free in the table the
+  kid stays null).
 - `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
   (five old/new trailer pairs, the kept entries, their order and exact capacity),
   `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
-  (one `/XRef` dictionary against twelve near misses: another `/Type`, a string `XRef`, another
+  (one `/XRef` dictionary against thirteen near misses: another `/Type`, a string `XRef`, another
   key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
-  dictionary, and three that fail to lex or parse: a truncated dictionary, an unterminated
-  string, a non-name key; plus a nesting-depth case that stays a limit error), `offset_at_end_of_file_reads_as_free` (the same offset boundary at the xref layer).
+  dictionary, and four that fail to lex or parse: a truncated dictionary, an unterminated
+  string after the integer and as the first token, a non-name key; the `/Prev` test repeats
+  the two unterminated strings at offset 9; plus limit cases that stay limit errors: nesting
+  depth in the dictionary, string bytes after the integer and in the first token),
+  `xref_stream_look_ahead_is_inside_the_lexing_budget` (a budget of 27 bytes fails with the
+  limit, 28 reads the stream as unsupported), `offset_at_end_of_file_reads_as_free` (the same
+  offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
 - E2E test IDs: none.
