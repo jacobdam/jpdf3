@@ -193,8 +193,10 @@ them; a routed PR is picked by the same test as rule c.**
    session each hour), or an unrouted owner issue has no time in the feed, or an unrouted item
    suspends a pick (invariant 3: on a route that step 1.2 would pick without it; invariant 5: an
    older item on the PR of a pending review body); the last two are picked at once. An item on a
-   route that wouldn't be picked anyway (a green or parked routed PR, a parked route issue, or one
-   whose linking PR is green or parked) waits for the quiet period like any other.
+   route that step 1.2 wouldn't pick even without it waits for the quiet period like any other:
+   a green or parked routed PR, a parked route issue that no open PR links, or a route issue
+   whose linking PR is green or parked (by the shared test, so a design PR in its window is not
+   parked by its issue's `owner-todo`).
    The brief lists every unrouted item, oldest first, at most 25 (the rest wait for the next
    pick), and notes the items waiting for the quiet period when it doesn't pick;
 4. the closed owner issues of today's `owner-done` term, read as unrouted items of (3): a closed
@@ -254,7 +256,9 @@ keep the full run (main red, rule b, reads them).
     (`owner-feed` at once, the PR not picked by step 1 or step 3 meanwhile; once the session
     routes that comment into the PR's body, the PR is picked as `worker owner-routed #<PR>` and
     no new route issue exists) and on one whose linking PR is green (it waits for the quiet
-    period); a comment on a green routed PR (it waits for the quiet period); a comment on issue
+    period); a comment on a route issue labeled `owner-todo` whose linking design PR is in its
+    window, not a draft and failing (`owner-feed` at once), and on a route issue labeled
+    `owner-todo` that no open PR links (it waits for the quiet period); a comment on a green routed PR (it waits for the quiet period); a comment on issue
     #5 while the route is #52, and on #520 (no suspension);
   - review bodies: an owner review body on an agent PR (picked at once as `worker owner-comment`,
     and never in the `owner-feed` brief); the same with a tagged `jacobdam` `done:` naming it
