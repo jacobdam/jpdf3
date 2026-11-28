@@ -1070,8 +1070,9 @@ gate them.
    - **Close** (a Planner run whose step 4 finds the window ended or an `/approve` counting; or
      the session that takes a counting `/approve` under rule a): check again that `Mn` has no
      open issue, that no issue in `Mn` was closed at or after the start of the `Checklist run:` minute (an issue
-     filed and fixed since then holds work no gate judged; one closed before it either came
-     with a commit that (a) would have refused or is listed in (c)), and that (c) finds no issue
+     filed and fixed since then holds work no gate judged; one closed before it was closed
+     by the judged commit or an earlier one, or by a commit that (a) would have refused, or is
+     listed in (c)), and that (c) finds no issue
      that left after the notice was filed. If a check fails, close the notice with a tagged
      comment saying which, and stop: the next empty backlog runs the checklist again.
      Otherwise tag the judged commit (`git tag mN <judged commit>`, `git push origin mN`),
