@@ -236,7 +236,7 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   elsewhere naming the issue and the milestone, which a tagged `jacobdam` marker
   `🤖 jpdf-agent Owner pick: <Mn> (<URL>)` on the issue points to; the marker counts only once
   the Planner has read the linked comment and found it so, and statements are ordered by the
-  owner comment's `updated_at`, never the marker's. No §9 step 2 move takes a pick out; ADR
+  owner comment's `created_at`, never the marker's. No §9 step 2 move takes a pick out; ADR
   0009's latent-high moves still apply, naming the pick for the owner. An `Ops` issue enters a
   numbered milestone only by one of clause 4's pulls (term 1 or 2 holds, an overlap found when
   the milestone is planned, an audit's request, a retro's request), recorded in a tagged
@@ -249,6 +249,7 @@ improvising, ADR 0011 §6): isolation of the engine from the apps (#223).
   clause 1's terms and adds none without an ADR; it doesn't file a strict-list follow-up in a
   numbered milestone on its subject alone; a rule that reads an owner pick reads it only from
   `jacobdam` comments, untagged as the owner feed tests it, or from the `Owner pick:` marker
-  after reading its link, ordered by the owner comment's time; no Planner text moves an owner pick or pulls an `Ops` issue into a milestone
-  by overlap except when the milestone is planned.
+  after reading its link, ordered by the owner comment's `created_at`; no Planner text moves an
+  owner pick or pulls an `Ops` issue into a milestone by overlap except when the milestone is
+  planned.
 - **Paths:** `ops/TICK.md`, `AUTOMATION.md`, `ops/QUEUE.md`.
