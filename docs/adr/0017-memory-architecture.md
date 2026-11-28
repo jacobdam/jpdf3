@@ -206,7 +206,12 @@ measurement catches what is left.
   case is built to #165's measured profile whatever `--mib` is: an uncached object of 2^20 slots
   resolved often enough that #165's growth (about 34 MB per resolve) would pass the 2 GiB −
   64 MiB ceiling (at least 64 resolves), so today's retention shows against the ceiling, not
-  only against a baseline recorded with it.
+  only against a baseline recorded with it. `jpdf-cli` can't lower the retained budget (#165's
+  probe set it to 0), so the case must keep the object out of the resolve cache another way (for
+  example by filling the 128 MiB retained budget with other objects first; an object that fits
+  is cached on its first resolve, specs/core/resolve-cache.md) and make the file large enough for
+  64 re-parses under the lexing budget (4 × file + 1 MiB); task 9's spec says how, and the case
+  checks that the object really was parsed at least 64 times.
 - The fuzz targets install `CappedAlloc` at their `H` (1024 MiB, §1), so an allocation past the
   cap is a refused charge or a saved crash. The nightly also replays each target's corpus with a
   `--sanitizer none` build under `ulimit -v 2097152`: AddressSanitizer reserves terabytes of
@@ -295,7 +300,7 @@ peak got worse.
   boundary with fake runs: a counted peak of exactly `baseline + baseline / 10 + 1 MiB` passes (with a baseline not
   divisible by 10, so the rounding is pinned) and one byte
   more fails, an OS peak (and a macOS footprint) of exactly 2 GiB − 64 MiB passes and one byte
-  more fails, a footprint of exactly `baseline + baseline / 4 + 16 MiB` passes and one byte more fails,
+  more fails, a footprint of exactly `baseline + baseline / 4 + 16 MiB` passes (with a baseline not divisible by 4) and one byte more fails,
   and a counted peak of 0 fails while 1 byte passes; a baseline looked up under the wrong
   platform or `--mib` key fails a test too. Still passing: a hostile allocation history that no
   case reproduces. The cases come from findings (§ the process rule) and the fuzzers explore the
@@ -326,7 +331,7 @@ peak got worse.
 | 6 | `cargo xtask mem-lint` (§3) in `cargo xtask ci linux`: `--lib --bins --no-deps` with the default features, the configuration, one fixture per denied method (a library and a binary fixture, so a skipped target fails), the crate list, spec `specs/tooling/mem-lint.md`. About 600 lines. | task 5 |
 | 7 | `crates/jpdf-alloc`: `CappedAlloc` (count, peak, refusal at `H`), its `Gauge` impl; installed in jpdf-cli with `JPDF_MEM_CAP_MIB` (lower only, its boundary tests as in Verification) and `JPDF_MEM_REPORT` (the counted peak, and `VmPeak` on Linux, on stderr); tests as in Verification; an exit-2 test with a lowered cap; added to the dependency gate. About 600 lines. | task 3, task 5 |
 | 8 | `cargo xtask limits`: both peaks per case in `limits.json`, the baseline `ops/metrics/limits-peaks.json` keyed by platform and `--mib`, the failure rules of §4 with their exact-boundary tests (Verification), the `memory-cap`, #146 and `many-small` cases, and a `--mib 64` run in `cargo xtask ci linux`; specs/tooling/limits.md, ci-linux.md and nightly.md, and the gate's lift condition in specs/core/memory-budget.md and specs/tooling/cli-dependency-gate.md. Closes #146. About 1000 lines. | task 7 |
-| 9 | macOS measurement: `cargo xtask ci macos` runs the harness at `--mib 64` with the footprint from `/usr/bin/time -l` and the macOS failure rules of §4 (ceiling and footprint baseline), plus #165's re-resolve case; spec updates. Closes #165. About 500 lines. | task 8 |
+| 9 | macOS measurement: `cargo xtask ci macos` runs the harness at `--mib 64` with the footprint from `/usr/bin/time -l` and the macOS failure rules of §4 (ceiling and footprint baseline), plus #165's re-resolve case; spec updates. Closes #165 only if the #165 case passes (else as in the #165 row). About 500 lines. | task 8 |
 | 10 | Fuzz: every target installs `CappedAlloc` at its `H` of 1024 MiB (§1); the nightly replays each corpus with a `--sanitizer none` build under `ulimit -v 2097152` and reports aborts as crashes; specs/tooling/fuzz.md and nightly.md. About 500 lines. | task 7 |
 | 11 | Remove the model: rewrite specs/core/memory-budget.md (the cap, the charging rule, the measurement, the per-call bounds that stay, the requirements list), delete `MemoryBudget` (crates/jpdf-syntax/src/budget.rs) and its tests, update P7's "Enforced by". `ImageInputBudget`, `charge_output` and `alloc_bytes` stay (§2). Mostly deletions, about 400 added lines. | task 6, task 8 |
 
