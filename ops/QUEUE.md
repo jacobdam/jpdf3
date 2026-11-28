@@ -14,20 +14,21 @@ None open. #420 (tests of applied ops/proposals) closed with ADR 0014; its tasks
 ## Ready, in pick order (step 10: lowest number first, dependencies closed)
 No `area:` labels exist yet (#308, M1), so no issue counts as a product issue and step 10 picks
 lowest number first.
-1. #15 Metrics dashboard umbrella. Readied in this run: its parts #305, #306, #353 and #369 are
-   closed, so what is left is to check its Deliverables against main and close it.
-2. #16 Backend selection umbrella. Readied in this run: its parts #303, #413 and #304 are
-   closed (ADR in PR #444); check and close.
-3. #19 Nightly umbrella. Readied in this run: its parts #300, #301, #302 and #383 are closed;
+1. #16 Backend selection umbrella. Readied in this run: its parts #303, #413 and #304 are
+   closed (ADR in PR #444), so what is left is to check its Deliverables against main and close
+   it.
+2. #19 Nightly umbrella. Readied in this run: its parts #300, #301, #302 and #383 are closed;
    check and close. Closing it unblocks #21.
-4. #195 Proposal test-policy.sh: catch later `-c permissions` arguments and indirect writes.
-   Readied in this run: ADR 0014's issue table keeps it as "workable now" (the test runs
-   against the live `ops/driver/codex-review.sh`), with no dependency on #424's move.
-5. #424 ADR 0014 task 2: `cargo xtask protected-tests`, the manifest, and the tests moved to
+3. #195 Proposal test-policy.sh: catch later `-c permissions` arguments and indirect writes
+   (R3.1, R3.2), and audit 0005's CX.4, which a comment on the issue folds into the same fix
+   (read the grant list declaratively instead of running the extracted block). Readied in this
+   run: ADR 0014's issue table keeps it as "workable now" (the test runs against the live
+   `ops/driver/codex-review.sh`), with no dependency on #424's move.
+4. #424 ADR 0014 task 2: `cargo xtask protected-tests`, the manifest, and the tests moved to
    `ops/protected-tests/`. Readied in this run (#420, #366 and #423 closed). Strict lane.
-6. #431 Dashboard contrast test: opacity, text-fill color and pseudo-element content. Readied in
+5. #431 Dashboard contrast test: opacity, text-fill color and pseudo-element content. Readied in
    this run (a PR #430 review deferral, under 100 lines; `apps/web/`).
-7. #442 `supply-chain/config.toml` imports `isrg`, which CONSTITUTION 9 doesn't list. Readied
+6. #442 `supply-chain/config.toml` imports `isrg`, which CONSTITUTION 9 doesn't list. Readied
    in this run: the work is an `ops/proposals/` file (protected path); `owner-todo` only once
    that proposal PR merges (ops/TICK.md §0).
 
@@ -41,6 +42,9 @@ lowest number first.
 None besides this Planner PR.
 
 ## Not workable now
+- #15: the metrics dashboard umbrella. Its parts #305, #306, #353 and #369 are closed, but #431
+  bears on its Deliverable "Charts accessible (labels, contrast, dark mode)", so it closes after
+  #431 (PR #460 R1.1; `ready` removed again, with a comment on #15).
 - #208: the owner's drill steps, a sub-issue of #21. All are done. The PR for #21 records them
   in docs/retros/0000-pilot.md, closes #21, and closes #208 with it.
 - Set aside (`deferred`): #146.
