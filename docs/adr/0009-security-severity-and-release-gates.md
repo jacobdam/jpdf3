@@ -43,13 +43,18 @@ as high all the same; this section says where it lives and when it is worked.
 1. **Milestone and deferral.** A latent high goes in the **milestone where its path appears**,
    never later than M4 (the owner-preview gate, above), and is labeled `deferred` with
    `Undefer when: milestone Mn is current`, or `Undefer when: #A closed` when one issue adds the
-   path or the design it depends on (TICK §5, Deferring an issue). The comment that files,
-   regrades or defers it names the missing path. A high whose path exists on main today is not
+   path or the design it depends on (TICK §5, Deferring an issue). A `#A` that is only a design
+   lifts the label once the design merges, before the path's code exists; choose it when the
+   fix itself is a design question. The comment that files, regrades or defers it names the
+   missing path. A high whose path exists on main today is not
    latent: it stays in the current milestone without `deferred`, and rule d picks it at once.
 2. **Who decides.** The session that files or regrades the issue says, in that comment, why the
-   path is missing and where it appears. The Planner checks it on its next run (TICK §9 step 2's
-   milestone moves). When unsure whether the path exists, choose the current milestone without
-   `deferred`, as "when unsure, pick the higher" does for the severity.
+   path is missing and where it appears. The Planner checks it on every run (TICK §9 step 1a,
+   which loads every `deferred` issue in any milestone; step 2 skips them): a high whose path
+   exists on main, or that names no path, loses `deferred` and moves to the current milestone;
+   one in another milestone than its path's moves there (M4 at the latest). A milestone or
+   condition the owner set in an untagged comment stays. When unsure whether the path exists,
+   choose the current milestone without `deferred`, as "when unsure, pick the higher" does for the severity.
 3. **Rule d unchanged.** It still picks every high that is not `deferred` (or under another skip
    label), in any milestone. The `Undefer when:` line, which the Planner re-checks on every run
    (TICK §9 step 1a), is what brings a latent high back, so none is forgotten; once lifted it is
@@ -57,11 +62,13 @@ as high all the same; this section says where it lives and when it is worked.
 4. **One-time pass (2026-11-28).** The open `sev:critical`/`sev:high` issues when this section
    was written: only #146 (the parse heap high-water mark next to decode and raster buffers; its
    path appears when decode or raster first runs on the `jpdf-cli` path, M2 by PLAN §8). It is
-   already `deferred` with `Undefer when: #474 closed` and `Depends on: #236`. The owner chose
-   its milestone and condition on PR #465 (the memory ADR, still open): the milestone of that
-   ADR's task 8, #474, which gates the measured peaks. That instruction overrides the move to M2
-   that #466 proposed, so this pass doesn't move it. #231, which #466 also named, was closed as
-   not planned before this pass.
+   already `deferred` with `Undefer when: #474 closed` and `Depends on: #236`, and in M0 today.
+   The owner chose its milestone and condition on PR #465 (the memory ADR, open and on the
+   owner's `/hold`): the milestone of that ADR's task 8, #474, which gates the measured peaks
+   (M1 in that ADR's Tasks table; #474 itself is in M0 until then). That instruction overrides
+   the move to M2 that #466 proposed, so this pass doesn't move it; it moves with PR #465.
+   Until then it holds M0's backlog open, as the owner chose. #231, which #466 also named, was
+   closed as not planned before this pass.
 
 Initial classification (2026-11-22): high #109 (closed by PR #142 the same day), #146; medium #114, #116, #117, #141; low #83,
 #122, #132, #134, #136, #137. #116 and #117 are suites (low by the table) raised to medium: their

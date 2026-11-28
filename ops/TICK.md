@@ -206,7 +206,8 @@ d. **`crash` issues, and `security` issues labeled `sev:critical` or `sev:high`*
    wait for the release gate and are not picked before then. A **latent** `sev:critical` /
    `sev:high` issue, one whose failure path doesn't exist on main yet, goes in the milestone
    where the path appears (never later than M4), labeled `deferred` with its `Undefer when:`
-   line (§5), and the filing comment names the missing path; when unsure, the current milestone
+   line (§5). The comment that files, regrades or defers it says why the path is missing and
+   where it appears, and the Planner checks it (§9 step 1a); when unsure, the current milestone
    without `deferred` (ADR 0009, Latent highs). An unlabeled `security` issue →
    label it first (higher level when unsure).
 e. **Ratchet regressions, nightly findings, `flaky` tests** (fix flaky within 5 sessions).
@@ -885,6 +886,16 @@ gate them.
    the issue body when the label came without a comment). If that text names no condition,
    leave the label and list the issue in `ops/QUEUE.md` under `## Deferred without a
    condition` for the next retro (§7 step 1).
+
+   **Latent highs** (ADR 0009, owner #466): for each `deferred` issue labeled `sev:critical` or
+   `sev:high` whose condition doesn't hold, check that its body or a comment names the missing
+   failure path and the milestone where it appears, and that the path is still missing on main.
+   An issue whose milestone or condition the owner set in an untagged comment keeps them; put a
+   doubt about it in a comment for the owner instead. Otherwise, if the path exists on main, or
+   nothing names it, or you are unsure: remove `deferred`, move it to the
+   current milestone and comment `🤖 jpdf-agent Undeferred: not latent (<the path on main, or
+   no path named>)`, so rule d picks it. If it is in a milestone other than the one the path
+   appears in, or later than M4, move it there (M4 at the latest) with a comment saying why.
 2. **Gate into `ready`:** for each open issue in the milestone without `ready`, `owner-todo`,
    `blocked`, `deferred`, `design` or `design-pending`, add `ready` when it is workable: its
    scope says what is done, it fits the §0 sizing rule (else split it into numbered parts first,
