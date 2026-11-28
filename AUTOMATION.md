@@ -430,10 +430,13 @@ empty and the gate passes (TICK §9 step 4, #508):
 1. a pre-close checklist, recorded in `docs/milestones/mN.md` with evidence: the gate judged
    origin/main's head (or only record commits follow it), PLAN §8's deliverables and non-metric
    exit criteria on main, and every issue that left the milestone with its reason
-2. notify the owner: a close notice issue (`owner-todo`) opens a 24-hour window, ended early by
-   an owner `/approve` and stopped by `/hold`; M4 (the owner preview) closes only on `/approve`
-3. tag `mN` on the judged commit and close the milestone
+2. notify the owner: once that record is on main, a close notice issue (`owner-todo`) opens a
+   24-hour window, ended early by an owner `/approve` and stopped by `/hold` until `/release`;
+   M4 (the owner preview), and any milestone the owner asks for, closes only on `/approve`
+3. tag `mN` on the judged commit and close the milestone, after a re-check
 4. generate the next backlog
+
+M0 closes without steps 1 and 2 (owner, #508); its checklist is recorded afterwards (#527).
 
 ## 10. Audit sessions (self-correction)
 
