@@ -120,32 +120,33 @@ them; a routed PR is picked by the same test as rule c.**
    - a **route**: file a tagged issue with the `Owner instruction:` line and `owner-work` (plus
      `design` or `design-product` when the work is a design), or add `owner-work` to an untagged
      owner issue, or, for rework of an open agent PR asked in a comment or an inline review
-     comment on it, add the line to the PR's body, disable its auto-merge and post `ai-review`
-     failure with a link to the item. It doesn't turn the PR into a draft: the failing required
-     check already stops the merge, and a draft would change which branch of step 3's test
-     applies (a design PR's window `owner-todo` parks a draft, below).
+     comment on it or on the route issue it links (`Closes #N`), add the line to the PR's body
+     (no new route issue: the PR is already the route issue's work), disable its auto-merge and
+     post `ai-review` failure with a link to the item. It doesn't turn the PR into a draft: the
+     failing required check already stops the merge, and a draft would change which branch of
+     step 3's test applies (a design PR's window `owner-todo` parks a draft, below).
 3. **Routed work keeps rule a's priority, by rule c's own test for PRs.** Precedence step 1 picks
    the routes after the review bodies (invariant 5) and before every other step: an open
    `owner-work` issue that no open PR links and that carries no skip label, as `worker
    owner-routed #N` (`design-technical owner-routed #N` with `design`, `design owner-routed #N`
    with `design-product`); an open routed PR, or an open PR that links (`Closes #N`) an open
-   route issue of either kind, that step 3's failing-own-PR term would pick, as `worker owner-routed #<PR>`.
-   That test is shared, not copied (task 1 extracts it from the closure in `choose` into one
-   function that both steps call): failing, not held, not on an `owner/` branch, not
-   `needs-design`, and no skip label on the PR or on the issue it closes, except that the issue's
-   `owner-todo` doesn't park a design PR that is not a draft (its 24-hour window's own label,
-   #372). So one skip label parks a routed PR for step 1 and step 3 alike, and removing it brings
-   back one pick, the route; a design PR reworked in its window stays a route that is picked,
-   since the rework route doesn't draft it (invariant 2). While a route is parked or green its
-   item stays routed (no owner feed pick for it); it moves again when the label goes or the PR
-   fails. A route is not picked while an unrouted owner item sits on it (a comment or an inline
-   review comment on the route issue or PR, or on an open PR that links the route issue; the
-   scheduler reads where an item sits from the `/issues/<n>` or `/pull/<n>` segment of its URL,
-   matched as a whole number): that item may change the work, so the owner feed session reads it
-   first, and it is picked without the quiet period (below). A review body on a route waits
-   behind an older unrouted item on the same PR (invariant 5). When the route closes or merges,
-   the item is unrouted again, and the next owner feed session posts its `done:` (or routes it
-   again when the PR closed unmerged).
+   route issue of either kind, that step 3's failing-own-PR term would pick, as `worker
+   owner-routed #<PR>`. That test is shared, not copied (task 1 extracts it from the closure in
+   `choose` into one function that both steps call): failing, not held, not on an `owner/`
+   branch, not `needs-design`, and no skip label on the PR or on the issue it closes, except that
+   the issue's `owner-todo` doesn't park a design PR that is not a draft (its 24-hour window's
+   own label, #372). So one skip label parks a routed PR for step 1 and step 3 alike, and
+   removing it brings back one pick, the route; a design PR reworked in its window stays a route
+   that is picked, since the rework route doesn't draft it (invariant 2). While a route is parked
+   or green its item stays routed (no owner feed pick for it); it moves again when the label goes
+   or the PR fails. A route is not picked while an unrouted owner item sits on it (a comment or
+   an inline review comment on the route issue or PR, or on an open PR that links the route
+   issue; the scheduler reads where an item sits from the `/issues/<n>` or `/pull/<n>` segment of
+   its URL, matched as a whole number): that item may change the work, so the owner feed session
+   reads it first, and it is picked without the quiet period (below). A review body on a route
+   waits behind an older unrouted item on the same PR (invariant 5). When the route closes or
+   merges, the item is unrouted again, and the next owner feed session posts its `done:` (or
+   routes it again when the PR closed unmerged).
 4. **Reactions are display, never state.** The owner feed session (and any session that routes
    or handles an item) adds 👀 to a routed item and 🚀 to a handled one where GitHub allows a
    reaction (issues, issue comments, inline review comments). No script reads a reaction, and a
@@ -192,8 +193,8 @@ them; a routed PR is picked by the same test as rule c.**
    session each hour), or an unrouted owner issue has no time in the feed, or an unrouted item
    suspends a pick (invariant 3: on a route that step 1.2 would pick without it; invariant 5: an
    older item on the PR of a pending review body); the last two are picked at once. An item on a
-   route that wouldn't be picked anyway (a green or parked routed PR, a route issue whose linking
-   PR is green or parked) waits for the quiet period like any other.
+   route that wouldn't be picked anyway (a green or parked routed PR, a parked route issue, or one
+   whose linking PR is green or parked) waits for the quiet period like any other.
    The brief lists every unrouted item, oldest first, at most 25 (the rest wait for the next
    pick), and notes the items waiting for the quiet period when it doesn't pick;
 4. the closed owner issues of today's `owner-done` term, read as unrouted items of (3): a closed
@@ -236,23 +237,25 @@ keep the full run (main red, rule b, reads them).
   - routed PRs, by the shared test: every fixture of step 3's failing-own-PR term rerun with the
     PR as a route picks `worker owner-routed #N` exactly when step 3 picks the PR. Named among
     them: green (no pick), failing (picked), held (no pick), `needs-design` (no pick), on an
-    `owner/` branch (no pick); its closed issue labeled `owner-todo`, `blocked` or `deferred`
-    (no pick by step 1 or step 3), and the same with the label removed (one pick, the route); a
-    route issue labeled `owner-todo` that a failing PR links (no pick of either); a failing PR
-    that links an open route issue while main is red (picked as `worker owner-routed #<PR>`,
-    ahead of main red), the same with an untagged owner issue labeled `owner-work` as the route
-    issue (picked the same way), and the same PR green (no pick); a routed design PR in its window, not a
-    draft, failing after the rework route, its issue with the window's `owner-todo` (picked), and
-    the same PR as a draft (no pick by step 1 or step 3);
+    `owner/` branch (no pick); its closed issue labeled `owner-todo`, `blocked` or `deferred` (no
+    pick by step 1 or step 3), and the same with the label removed (one pick, the route); a route
+    issue labeled `owner-todo` that a failing PR links (no pick of either); a failing PR that
+    links an open route issue while main is red (picked as `worker owner-routed #<PR>`, ahead of
+    main red), the same with an untagged owner issue labeled `owner-work` as the route issue
+    (picked the same way), and the same PR green (no pick); a routed design PR in its window, not
+    a draft, failing after the rework route, its issue with the window's `owner-todo` (picked),
+    and the same PR as a draft (no pick by step 1 or step 3);
   - items: an owner issue labeled `owner-todo`, `blocked` or `deferred` (no item; one pick after
     the label goes); a pre-floor owner comment updated within the last 14 days, so the feed
     still shows it (never an item);
   - suspension: a route with an unrouted owner comment on it, an inline review comment, and a
     comment on the PR that links it (no route pick, `owner-feed` at once); the same comment once
     handled (the route is picked again); a comment on a route issue whose linking PR is failing
-    (`owner-feed` at once, the PR not picked by step 1 or step 3 meanwhile) and on one whose
-    linking PR is green (it waits for the quiet period); a comment on a green routed PR (it waits
-    for the quiet period); a comment on issue #5 while the route is #52, and on #520 (no suspension);
+    (`owner-feed` at once, the PR not picked by step 1 or step 3 meanwhile; once the session
+    routes that comment into the PR's body, the PR is picked as `worker owner-routed #<PR>` and
+    no new route issue exists) and on one whose linking PR is green (it waits for the quiet
+    period); a comment on a green routed PR (it waits for the quiet period); a comment on issue
+    #5 while the route is #52, and on #520 (no suspension);
   - review bodies: an owner review body on an agent PR (picked at once as `worker owner-comment`,
     and never in the `owner-feed` brief); the same with a tagged `jacobdam` `done:` naming it
     (no pick); named by the body of an open agent PR that is green (no pick) or failing (picked);
