@@ -695,10 +695,15 @@ fn a_failed_fuzz_target_files_each_named_artifact_or_itself() {
         "crash",
         vec![
             // Two artifacts, by name order, each its own finding.
+            // A slow unit next to them is not filed by name (R1.2).
             target(
                 "engine_open",
                 false,
-                &["fuzz/engine_open/crash-0a1b", "fuzz/engine_open/oom-2c"],
+                &[
+                    "fuzz/engine_open/crash-0a1b",
+                    "fuzz/engine_open/oom-2c",
+                    "fuzz/engine_open/slow-unit-3d",
+                ],
             ),
             // A clean target's artifacts (slow units) are not filed.
             target("engine_objects", true, &["fuzz/engine_objects/slow-unit-9"]),
@@ -733,6 +738,9 @@ fn a_failed_fuzz_target_files_each_named_artifact_or_itself() {
         ]
     );
     assert!(found.iter().all(|f| f.label == "crash"));
+    // A failed target with only a slow unit is filed as the target itself.
+    let slow = fuzz("crash", vec![target("t", false, &["fuzz/t/slow-unit-1"])]);
+    assert_eq!(sigs(&extra_findings(None, Some(&slow))), ["fuzz:t"]);
     assert_eq!(
         found[0].title,
         "nightly: fuzz target engine_open crashed: crash-0a1b"

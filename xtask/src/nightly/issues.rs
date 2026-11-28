@@ -150,6 +150,8 @@ pub fn findings(
 
 /// Most bytes in a fuzz target or artifact name that goes into a signature.
 pub const MAX_NAME: usize = 100;
+/// libFuzzer's prefix for an input that was only slow: never a finding of its own.
+pub const SLOW_UNIT: &str = "slow-unit-";
 
 /// A name a signature may hold (spec item 16): 1 to [`MAX_NAME`] bytes of ASCII lowercase
 /// letters, digits, `_` and `-`.
@@ -165,7 +167,9 @@ pub fn safe_name(n: &str) -> bool {
 /// the set of [`safe_name`], by name order, and one for the target itself when it has no such
 /// artifact or any other; then a `perf` finding when the bench ended `timeout`. A target whose
 /// own name is outside the set is never filed; a target that ran clean is not filed for its
-/// artifacts.
+/// artifacts, and libFuzzer's `slow-unit-` files are never filed by name (they are not crashes).
+/// The signature holds libFuzzer's input hash, so a crash found again through another input
+/// files a new issue (spec item 16).
 pub fn extra_findings(bench: Option<&BenchResult>, fuzz: Option<&FuzzResult>) -> Vec<Finding> {
     let mut out = Vec::new();
     let targets = fuzz.map_or(&[][..], |f| f.targets.as_slice());
@@ -176,6 +180,7 @@ pub fn extra_findings(bench: Option<&BenchResult>, fuzz: Option<&FuzzResult>) ->
             .artifacts
             .iter()
             .map(|a| a.strip_prefix(&prefix).unwrap_or(""))
+            .filter(|n| !n.starts_with(SLOW_UNIT))
             .partition(|n| safe_name(n));
         for n in &named {
             out.push(Finding {
@@ -198,7 +203,8 @@ pub fn extra_findings(bench: Option<&BenchResult>, fuzz: Option<&FuzzResult>) ->
                 detail: format!(
                     "- Fuzz target `{}`, {seconds} s (specs/tooling/nightly.md item 13): \
                      crashed, hung or ran out of memory; {} artifacts copied, {} of them \
-                     not named here (no artifact, or a name outside the allowed set)\n\
+                     not named here for a name outside the allowed set (slow units are \
+                     not named either)\n\
                      - Reproduce: `cargo xtask fuzz --target {} --seconds {seconds}`\n",
                     t.name,
                     t.artifacts.len(),

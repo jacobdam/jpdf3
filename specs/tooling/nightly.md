@@ -300,9 +300,12 @@ fuzz pass and the bench (#383))
     `timeout-<hex>`): a target whose name is outside that set is never filed, and an artifact
     whose name is outside it (or whose path is not `fuzz/<target>/<name>`) is counted in the
     target's `fuzz:<target>` finding, not named. A target that ran clean is not filed for its
-    artifacts (libFuzzer also writes `slow-unit-` files), and a fuzz pass that failed as a tool
+    artifacts, and a `slow-unit-` file (libFuzzer's slow input, not a crash) is never filed by
+    name, so a failed target with only such files is its `fuzz:<target>` finding. The
+    signature holds libFuzzer's input hash, so the same bug found again through another input
+    files a new issue rather than a comment (the write cap bounds them per night), and a fuzz pass that failed as a tool
     (item 13) still files the failed targets that started. The fuzz and bench findings come
-    only from a night that reached the fuzz pass's end (a stop before it, item 10, leaves
+    only from a night that reached the fuzz pass's end (a stop before it, item 15, leaves
     them out). A drop in the bench's numbers from one night to the next is not a finding:
     the nightly is not given the previous night's `bench.json` (only `regress.json`, item 9),
     so there is nothing to compare. Signatures hold only ASCII lowercase letters, digits,
@@ -572,7 +575,7 @@ write after the fuzz pass, with the bench's and fuzz pass's results handed to `s
 #352's case, a failed removal as its own entry when the write succeeds) and `xtask/src/steps.rs` (the `exit_code` table, the
 `JUDGE-INFRA-FAILURE` line, the log). The `issues` step (item 16): `xtask/src/nightly/issues/tests.rs`
 (the findings, the fuzz and bench findings (#383: named and unnamed artifacts, a clean target,
-a target name outside the set, a failed pass, each bench status, the filing order, and the
+a target name outside the set, slow units, a failed pass, each bench status, the filing order, and the
 `perf` list on a bench-timeout night only, with its repeat night), the bodies, the fake `gh`'s repeat night and near misses, both caps, a `gh`
 failure mid-way, the night label, and the real runner with fake `gh` scripts: arguments,
 exit codes, a hang killed at its limit, a missing program, non-UTF-8 output), and in
