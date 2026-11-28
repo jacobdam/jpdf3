@@ -354,8 +354,8 @@ fuzz pass and the bench (#383))
     not `Infra`: a rerun of the whole night would not be cheaper than the next night. So with
     `--file-issues`, a night without network that also has a finding (a failed limits case)
     exits 1, not the fetch's 75 (item 10: `Failed` beats `Infra`).
-    The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN`; it
-    needs `--file-issues` added to its command (ops/proposals/nightly-file-issues.md).
+    The CI job (`.github/workflows/ci.yml`, protected) has `issues: write` and `GH_TOKEN` and
+    passes `--file-issues` (ops/proposals/nightly-file-issues.md, applied).
 
 ## Persistence
 No document persistence. GitHub issues and comments (item 16, only with `--file-issues`).

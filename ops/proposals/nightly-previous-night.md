@@ -39,18 +39,24 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
 +          key: nightly-regress-${{ github.run_id }}-${{ github.run_attempt }}
 +          restore-keys: nightly-regress-
        - name: "cargo xtask nightly (agent-owned - long fuzz, regress corpus, bench, files issues)"
++        id: nightly
          working-directory: pr
          env:
            GH_TOKEN: ${{ github.token }}
 -        run: cargo xtask nightly --out ../nightly --file-issues
-+        run: cargo xtask nightly --out ../nightly --previous ../prev-nightly/regress.json --file-issues
++        run: |
++          set +e
++          cargo xtask nightly --out ../nightly --previous ../prev-nightly/regress.json --file-issues
++          code=$?
++          echo "exit=$code" >> "$GITHUB_OUTPUT"
++          exit "$code"
 +      - name: Keep this night's regress results for the next night
-+        if: always() && hashFiles('nightly/regress.json') != ''
++        if: always() && (steps.nightly.outputs.exit == '0' || steps.nightly.outputs.exit == '4') && hashFiles('nightly/regress.json') != ''
 +        run: |
 +          mkdir -p prev-nightly
 +          cp nightly/regress.json prev-nightly/regress.json
 +      - name: Save this night's regress results
-+        if: always() && hashFiles('nightly/regress.json') != ''
++        if: always() && (steps.nightly.outputs.exit == '0' || steps.nightly.outputs.exit == '4') && hashFiles('nightly/regress.json') != ''
 +        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
 +        with:
 +          path: prev-nightly/regress.json
@@ -60,10 +66,8 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
 +        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
 +        with:
 +          name: nightly-report
-+          path: |
-+            nightly/*.json
-+            nightly/fuzz
-+          retention-days: 30
++          path: nightly/*.json
++          retention-days: 14
 ```
 
 ## What it changes
@@ -75,19 +79,33 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
   under its branch, which `main` never reads. Pull-request jobs can't write entries that
   `main` restores (GitHub scopes caches by ref).
 - **The first night** finds nothing: no file at `../prev-nightly/regress.json` is the
-  documented "no previous" case (item 9: `"previous":null` and a "no diff" line), not an error.
-- **Which night is saved.** The runner starts with an empty `nightly/`, so a
-  `nightly/regress.json` there is this night's: the nightly writes it once the runs started,
-  even when it then exits 1 or 75 (item 10). A night that fails before the runs saves
-  nothing, and the next night diffs against the last night that ran. A night with download
-  failures (exit 75) is saved too, with those files `missing`; the next night then sees
-  `missing` → `ok` for them (a change, not a finding), and can't report an `ok` → `error`
-  regression on them for one night.
+  documented "no previous" case (item 9), not an error: `regress-diff.json` holds
+  `"previous":null` with the note `no previous results at ../prev-nightly/regress.json`
+  (xtask/src/nightly.rs `load_previous`).
+- **Which night is saved.** The run step records the nightly's exit code as the step output
+  `exit`, and the keep and save steps run only for 0 or 4 (item 10: the runs finished; 4 is a
+  failed limits case, not a regress problem) with a `nightly/regress.json` present. The runner
+  starts with an empty `nightly/`, so that file is this night's. A night that exits 1 (a tool
+  failure) or 75 (corpus downloads failed, rerun by item 10's rule), or that is cancelled or
+  times out (no output), saves nothing, so a rerun of it restores the last saved night, not
+  its own first attempt, and the next night diffs against the last night that finished.
+- **What a saved night still hides.** A night that ran out of `--max-minutes` exits 0 with
+  `complete:false` and `not_run` runs (item 7), and a night with up to `max(1, ⌊N/100⌋)`
+  files not downloaded exits 0 with them `missing`. Both are saved; the next night sees
+  `not_run` or `missing` → its status for those runs, a change but not a finding, so an
+  `ok` → `error` regression on them goes unreported for one night. A rerun of a night that
+  exited 0 or 4 restores that night's own first attempt and diffs against it.
 - **The artifact** `nightly-report` keeps the night's JSON reports (`regress.json`,
-  `regress-diff.json`, `limits.json`, `bench.json`, `nightly.json`) and the fuzz crashes the
-  nightly copied to `nightly/fuzz/` (item 13, at most 100 per target) for 30 days. It holds no
-  corpus bytes: `bench-corpus/` and `work/` are left out. The regress report is a few megabytes
-  (5250 files, five runs each).
+  `regress-diff.json`, `limits.json`, `bench.json`, `nightly.json`) for 14 days. It holds no
+  corpus bytes (`bench-corpus/` and `work/` are left out) and no fuzz crash inputs
+  (`nightly/fuzz/` is left out, so no reproducer of an unfixed crash is downloadable from this
+  public repository). The nightly's `crash` issue names the target and the artifact; the
+  input itself is lost with the runner, as it is today, and has to be found again with
+  `cargo xtask fuzz --target <target>`. Keeping it for the owner alone needs another store
+  and is not in this proposal. `regress.json` keeps the last 4 KiB of stderr of
+  `crash` and `timeout` runs (item 5); those runs are on public corpus files whose bytes
+  anyone can already fetch, and the 14-day retention bounds how long the tails stay up. The
+  regress report is a few megabytes (5250 files, five runs each).
 - `project-nightly` is not in `judge-verdict`'s `needs`, so none of these steps can turn a PR
   or `main` red. The job needs no new permission: the cache and artifact steps use the runner's
   own runtime token, as the corpus caches and the other uploads already do.
@@ -96,11 +114,11 @@ already uses: `actions/cache/restore` and `actions/cache/save` come from the sam
 
 - **A stale format blocks every night.** The nightly checks the previous file before the build
   (item 9) and fails with exit 1 on one it can't read. A later change to `regress.json`'s
-  format that drops reading the saved one (schema 1) would fail every night before the runs,
-  so no new file would be saved, and the restore step keeps finding the old one (a restore
-  counts as use, so the 7-day eviction never comes). A change to the format must keep reading
-  the saved one, or treat an unknown `schema` as "no previous"; that is the code's rule
-  (specs/tooling/nightly.md), not this file's. Recovery if it happens: delete the entries
+  format that bumps its `schema` would fail every night before the runs (item 9 rejects a
+  `schema` other than 1, and the code does too), so no new file would be saved, and the
+  restore step keeps finding the old one (a restore counts as use, so the 7-day eviction never
+  comes). Nothing prevents this today: #500 proposes that an unknown `schema` counts as "no
+  previous". Recovery if it happens: delete the entries
   (`gh cache list --key nightly-regress-` and `gh cache delete <id>`), and the next night
   starts without a diff.
 - **Eviction.** The repository's cache is shared with the corpus caches (10 GB, least recently
@@ -118,11 +136,20 @@ night's results, and #19 stays open.
 
 1. After the merge, run the workflow by hand on `main` (`gh workflow run ci.yml --ref main`).
 2. In the `project-nightly` job: the restore step logs `Cache not found for input keys: …` (no earlier entry), the
-   nightly step logs `nightly: no --previous results given: no diff` (no file there), the save
+   nightly step logs `nightly: no previous results at ../prev-nightly/regress.json: no diff`
+   (not `no --previous results given`, which would mean the flag is missing), the save
    step logs `Cache saved with key: nightly-regress-<run id>-1`, and the run has a
    `nightly-report` artifact holding `regress.json` and `regress-diff.json`.
 3. Run it by hand again on `main`. The restore step logs
    `Cache restored from key: nightly-regress-<first run id>-1`, the nightly step logs
    `nightly: regress diff: <C> changes, <N> new crash/timeout, <F> fixed`, and this run's
    `regress-diff.json` names `../prev-nightly/regress.json` as `previous`.
-4. `gh cache list --key nightly-regress-` lists both entries, both on `refs/heads/main`.
+4. Run it a third time. Its restore step logs `Cache restored from key:
+   nightly-regress-<second run id>-1` (not the first run's: the keep step copied this night's
+   file). Download the second and third runs' `nightly-report` artifacts and check three of
+   the third run's `regress-diff.json` `changes` against them: each `before` is the second
+   run's status for that blob and op, each `after` the third run's.
+5. `gh cache list --key nightly-regress-` lists the three entries, all on `refs/heads/main`.
+
+The plan doesn't exercise a night that exits 1 or 75, or a regression filed end to end; those
+paths depend only on the step output and on the nightly's own tests (specs/tooling/nightly.md).
