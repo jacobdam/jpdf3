@@ -114,8 +114,9 @@ The missing decision: **a pending owner item has two text states the scheduler c
 ## Enforcement
 1. **types:** not available: the states live on GitHub, written by sessions through `gh`.
 2. **a lint or gate:** the scheduler is the gate (ADR 0011 §2). It computes the three states
-   from `feed.jsonl` and two new inputs (the open issues labeled `owner-work` with author, body
-   and labels; the bodies of open PRs, which `prs.json` already has), so an item counts as routed
+   from `feed.jsonl` and new inputs (the open issues labeled `owner-work` with author, body and
+   labels; the bodies of open PRs, which `prs.json` already has; the reviews and conversation
+   comments of each closed PR whose review a route line names, invariant 1), so an item counts as routed
    only when a `jacobdam` route with the exact line and label exists; a stranger's tagged issue,
    a closed route or a line in a comment route nothing. Tested offline with `--from` fixtures
    (task 1, task 2). The guard needs one protected change to allow the reaction writes
