@@ -37,8 +37,11 @@ templates. Part 2 (#275) adds precedence step 6 to `cargo xtask next-session`
 - **Resuming:** a design session first finishes what a dead one started (the missing escalation
   comment, an existing ruling and its final check, an existing design issue and ADR PR); it never
   rules twice on one PR.
-- **Design PR merge** (ADR 0011 §7): after `ai-review` success the tasks are filed, then
-  `owner-todo`; a later session's §1 enables auto-merge once 24 hours have passed since the
+- **Design PR merge** (ADR 0011 §7): after `ai-review` success, `owner-todo`; a later session's
+  §1 (the `worker design-window #N` pick) files the ADR's tasks and then enables auto-merge
+  (#478; when the owner merges with GitHub's buttons instead, the Planner files them, and a
+  `design` PR closed unmerged gets its filed tasks closed, ops/TICK.md §8 step 5, §9 step 1b)
+  once 24 hours have passed since the
   latest of: marked ready, last `ai-review` success, the owner's last `/release`; and no `/hold`
   after the last `/release`. A push to a `design` PR turns auto-merge off first and restarts the
   window after the next `ai-review` success. A `design` PR finished by output 1 or 3 waits out

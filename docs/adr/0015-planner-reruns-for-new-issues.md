@@ -67,7 +67,9 @@ could not have seen**.
    applies and at least one issue is *new*. An issue is new when it is open, in the current
    milestone (step 10's: the lowest open `M<digits>`), has no `ready`, no skip label
    (`owner-todo`, `blocked`, `deferred`) and none of `in-progress`, `design`,
-   `design-pending`, `design-product`, is not in flight (no open agent PR links it), and was
+   `design-pending`, `design-product`, is not in flight (no open agent PR links it), has every
+   issue on its `Depends on:` line closed (step 10's test; added by owner issue #478, so a
+   design ADR's task waiting for its ADR spends no rerun), and was
    created at or after the end of the minute of today's newest Planner record. That
    record's minute is the `HHMM` at the start of its file name (`ops/journal/<day>/HHMM-<slug>.md`,
    ops/TICK.md §5). A name that doesn't start with four digits forming a valid time

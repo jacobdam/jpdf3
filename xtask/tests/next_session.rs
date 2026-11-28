@@ -1081,6 +1081,51 @@ fn step11_rerun_needs_an_issue_that_is_new() {
 }
 
 #[test]
+fn step11_rerun_needs_every_dependency_closed() {
+    // #478: step 10's test. #146 is open in base(); #9999 isn't in issues.json, so closed.
+    let t = "2026-11-24T01:00:00Z";
+    let on = |body: &str| {
+        let i = set_created(
+            &full_issue(702, "SECRET title", &[], body, M0),
+            &format!("{t:?}"),
+        );
+        rerun(&["0004-planner.md"], &[i])
+    };
+    assert_eq!(on("Depends on: #146"), "idle");
+    assert_eq!(on("Depends on: #9999, #146"), "idle");
+    assert_eq!(on("**Depends on:** #146"), "idle");
+    // Near misses: the dependency closed, none named, the phrase mid-line (names nothing).
+    assert_eq!(on("Depends on: #9999"), "planner new-issues");
+    assert_eq!(on("Refs #146"), "planner new-issues");
+    assert_eq!(on("x. Depends on: #146"), "planner new-issues");
+    // The issue it waits on is itself new: only that one starts the rerun, and is listed.
+    let dep = set_created(
+        &full_issue(703, "SECRET title", &[], "Depends on: #702", M0),
+        &format!("{t:?}"),
+    );
+    let o = run_with(&[
+        set(
+            "records.txt",
+            format!(
+                "{}{}",
+                base_records(),
+                records(&[(
+                    "ops/journal/2026-11-24/0004-planner.md",
+                    "- Session: planner"
+                )])
+            ),
+        ),
+        plus("issues.json", &[filed(702, &[], M0, t), dep]),
+    ])
+    .unwrap();
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        out.contains("new since its newest run: #702): the Planner again"),
+        "{out}"
+    );
+}
+
+#[test]
 fn step11_rerun_cap_counts_distinct_planner_files_today() {
     let new = [filed(702, &[], M0, "2026-11-24T01:00:00Z")];
     // Two runs today: a rerun; three: idle. The base's `planners` and `Planner` files dated
