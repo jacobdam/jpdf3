@@ -425,11 +425,15 @@ The judge is the hard backstop.
 Each milestone's exit criteria (PLAN §8) are encoded in `ops/judge/gates.toml`
 (protected, written in M0). It holds thresholds on judge metrics, exam-corpus scores
 and the milestone's journeys. The nightly judge writes the verdict to `gates/gates.json` in the `judge-report` artifact (TICK
-rule j reads it; there is no `cargo xtask gate` command yet). On pass:
-1. tag `mN`
-2. `docs/milestones/mN.md` report
-3. generate the next backlog
-4. notify the owner (weekly-digest-style issue)
+rule j reads it; there is no `cargo xtask gate` command yet). When the milestone's backlog is
+empty and the gate passes (TICK §9 step 4, #508):
+1. a pre-close checklist, recorded in `docs/milestones/mN.md` with evidence: the gate judged
+   origin/main's head (or only record commits follow it), PLAN §8's deliverables and non-metric
+   exit criteria on main, and every issue that left the milestone with its reason
+2. notify the owner: a close notice issue (`owner-todo`) opens a 24-hour window, ended early by
+   an owner `/approve` and stopped by `/hold`; M4 (the owner preview) closes only on `/approve`
+3. tag `mN` on the judged commit and close the milestone
+4. generate the next backlog
 
 ## 10. Audit sessions (self-correction)
 
