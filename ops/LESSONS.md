@@ -8,7 +8,8 @@ Retro 0002 promoted the checker/filter/parser/loop-rule lessons into the specs/_
 dropped entries TICK §0 and §4 already state (background waits, "not proven" findings, post triggers).
 Retro 0003 promoted the sizing-after-rustfmt lesson into ops/TICK.md §0 and the "walk a rule over GitHub state
 through every case before round 1" lessons (PRs #289, #312, #479, #524, #528) into ops/TICK.md §3 step 2, and
-dropped stale bootstrap entries (judge calibration, the skipped-job verdict, settings bootstrap, "last X" from git).
+dropped stale or restated entries (judge calibration, the skipped-job verdict, settings bootstrap, "last X" from git,
+the #25 harness size formula, and the #317 filter-bucket test, which the template's "replace each term with `true`" states).
 
 ## Tooling & environment
 - A merge of origin/main that brings a protected-path change from main → the guard blocks the merge, and once it

@@ -60,7 +60,7 @@ GitHub (public repo jacobdam/jpdf3)
 | `ops/areas.toml` | the areas behind the `area:` labels: name, product or process, the paths each owns (ADR 0011 §4; checked by `cargo xtask issue-lint`) | agent |
 | `ops/QUEUE.md` | the Planner's plan for the current milestone: `Milestone:` line (read by `cargo xtask next-session` step 8), ready list, waits, critical path, design ahead (ops/TICK.md §9) | agent (Planner sessions) |
 | `docs/PRODUCT.md` | what jpdf is for: users, jobs, scope by job with its journeys, non-goals, promises, platforms (ADR 0011 §1; v1 is #311) | agent (Design: product sessions, ops/TICK.md §10); v1 merges only on the owner's approval, later changes after a 24-hour `/hold` window |
-| `ops/LESSONS.md` | curated lessons learned (situation → what to do), read by every session whose pick is not `idle` (ops/TICK.md §1), ≤ 60 entries | agent; curated by retros |
+| `ops/LESSONS.md` | curated lessons learned (situation → what to do), read every session, ≤ 60 entries | agent; curated by retros |
 | `docs/adr/NNNN-*.md` | decisions + reasons | agent |
 | `ops/proposals/*.md` | proposed changes to protected files (never blocking) | agent |
 | `docs/retros/NNNN.md` | retrospectives + action items (§11) | agent |
@@ -122,7 +122,7 @@ mechanical trigger, the context it loads, its allowed outputs, one exit artifact
 Audit and other cadences count product merges only; `area:`/`origin:` labels make problem
 groups visible; an area over its threshold is frozen (`design-pending`) and designed; a PR over
 ADR 0010's review cap goes to a design session before it goes to the owner. Tasks 1a and 1b
-are in: ops/TICK.md §1 runs `cargo xtask next-session` and §2 acts on its pick (specs/tooling/next-session.md),
+are in: ops/TICK.md §2 runs `cargo xtask next-session` (specs/tooling/next-session.md),
 which decides precedence steps 1–5 (rules a–f) from the owner feed, GitHub lists, main's CI runs
 and the local worktrees, step 7 (rules g, h: audit, then retro, from main's first-parent history,
 tags, the judge alarm and `blocked` label events; the audit counts product merges, ADR 0011 §3)
