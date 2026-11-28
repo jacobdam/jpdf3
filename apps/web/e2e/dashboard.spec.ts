@@ -589,8 +589,10 @@ test("the dashboard has the CSP meta tag first and no inline script", async ({ p
 /** WCAG 2 contrast ratio of two computed `rgb(...)` colors. */
 function contrast(a: string, b: string): number {
   const lum = (c: string) => {
-    const m = /^rgba?\((\d+), (\d+), (\d+)/.exec(c);
+    // An opaque color only: a translucent one would need blending first (#369 R1.1, R1.2).
+    const m = /^rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)$/.exec(c);
     if (m === null) throw new Error(`not an rgb color: ${c}`);
+    if (m[4] !== undefined && Number(m[4]) < 1) throw new Error(`a translucent color: ${c}`);
     const [r, g, bl] = [m[1], m[2], m[3]].map((x) => {
       const v = Number(x) / 255;
       return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
@@ -601,16 +603,67 @@ function contrast(a: string, b: string): number {
   return (x + 0.05) / (y + 0.05);
 }
 
+/**
+ * Every element of the page matching one of `selectors`, and each of its descendants that
+ * holds text, as its selector, text color and effective background (the nearest
+ * ancestor-or-self background that isn't transparent).
+ */
+async function textColors(
+  page: Page,
+  selectors: readonly string[],
+): Promise<{ sel: string; color: string; bg: string }[]> {
+  return page.evaluate((sels) => {
+    const bgOf = (el: Element | null): string => {
+      for (let e = el; e !== null; e = e.parentElement) {
+        const style = getComputedStyle(e);
+        // A background image has no one color, so `contrast` refuses it, except a gradient
+        // whose every stop is fully transparent (MUI's dark-mode Paper overlay at elevation 0).
+        const img = style.backgroundImage;
+        const clear = /^linear-gradient\((rgba\(\d+, \d+, \d+, 0\)(, )?)+\)$/.test(img);
+        if (img !== "none" && !clear) return `image: ${img}`;
+        const c = style.backgroundColor;
+        if (c !== "transparent" && !/^rgba\(.*, 0\)$/.test(c)) return c;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    // The matched element and every descendant that holds text of its own (#369 R1.3).
+    const texts = (el: Element): Element[] => [
+      el,
+      ...[...el.querySelectorAll("*")].filter((d) =>
+        [...d.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()),
+      ),
+    ];
+    return sels.flatMap((sel) =>
+      [...document.querySelectorAll(sel)].flatMap(texts).map((el) => ({
+        sel,
+        color: getComputedStyle(el).color,
+        bg: bgOf(el),
+      })),
+    );
+  }, selectors);
+}
+
+/** `textColors` with at least one element per selector, each at 4.5:1 or more. */
+async function expectReadable(page: Page, selectors: readonly string[]): Promise<void> {
+  const found = await textColors(page, selectors);
+  for (const sel of selectors)
+    expect(found.filter((f) => f.sel === sel).length, `${sel} on the page`).toBeGreaterThan(0);
+  for (const f of found)
+    expect(contrast(f.color, f.bg), `${f.sel}: ${f.color} on ${f.bg}`).toBeGreaterThanOrEqual(4.5);
+}
+
 for (const scheme of ["light", "dark"] as const) {
   test(`text and bars have enough contrast (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await serve(page, snapshot());
+    // The truncation warning is on, so its Alert is checked too.
+    await serve(page, snapshot({ truncated: ["issues"] }));
     await page.goto("./dashboard/");
     // A bar with a non-zero value (a 0 bar has no height, so it isn't visible).
     const bar = page
       .getByRole("img", { name: "Merged PRs per week" })
       .locator('rect[data-bar="Week of 2026-11-16"]');
     await expect(bar).toBeVisible();
+    await expect(page.getByText("may be cut off: issues.")).toBeVisible();
     const colors = await page.evaluate(() => {
       const css = (sel: string, prop: string) => {
         const el = document.querySelector(sel);
@@ -619,9 +672,6 @@ for (const scheme of ["light", "dark"] as const) {
       };
       return {
         bg: css("body", "background-color"),
-        h1: css("h1", "color"),
-        cell: css("td", "color"),
-        secondary: css("main p", "color"),
         bar: css(
           'svg[aria-label="Merged PRs per week"] rect[data-bar="Week of 2026-11-16"]',
           "fill",
@@ -629,8 +679,27 @@ for (const scheme of ["light", "dark"] as const) {
       };
     });
     expect(colors.bg).toBe(scheme === "dark" ? "rgb(18, 18, 18)" : "rgb(245, 245, 245)");
-    for (const text of [colors.h1, colors.cell, colors.secondary])
-      expect(contrast(text, colors.bg)).toBeGreaterThanOrEqual(4.5);
+    // Every text style: headings, the secondary text, header and body cells, the Alert.
+    await expectReadable(page, ["h1", "h2", "main p", "th", "td", '[role="alert"]']);
     expect(contrast(colors.bar, colors.bg)).toBeGreaterThanOrEqual(3);
+  });
+
+  test(`the invalid state's warning has enough contrast (${scheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await serve(page, snapshot({ version: 2 }));
+    await page.goto("./dashboard/");
+    await expect(page.getByText(INVALID)).toBeVisible();
+    await expectReadable(page, ["h1", '[role="alert"]']);
+  });
+
+  test(`the invalid judge report's warning has enough contrast (${scheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await serveReport(page, report({ tier: "exam" }));
+    await serve(page, snapshot());
+    await page.goto("./dashboard/");
+    await expect(
+      page.getByText("Invalid: the judge report doesn't have the expected format."),
+    ).toBeVisible();
+    await expectReadable(page, ['[role="alert"]']);
   });
 }

@@ -257,7 +257,11 @@ Not applicable (a generated report; `git checkout` the previous snapshot).
 ## Accessibility
 Every chart has an `aria-label` and a table with the same values; text and bars meet 4.5:1
 (text) and 3:1 (bars) against the background in light and dark mode (`prefers-color-scheme`),
-checked by the Playwright test from computed colors. Headings are in order (h1, then h2).
+checked by the Playwright test from computed colors: every `h1`, `h2`, `main p`, `th`, `td`
+and `Alert` (the truncation warning, the invalid snapshot, the invalid judge report), and
+each of their descendants that holds text, against its own effective background (an `Alert`
+has a tinted one); a translucent color or a background image fails the test, since it has no
+one color to measure. One bar is checked against the page. Headings are in order (h1, then h2).
 
 ## Platforms
 The snapshot: any machine with `gh` and `git` (a session's). The page: web (GitHub Pages).
@@ -275,7 +279,9 @@ and without an index, journal entry counting and its histogram, blocked ages, mi
 and forecast (window ends, `open` 0, `closed_28d` 0, past 9999-12-31), truncation at 999/1000,
 the pinned command arguments, bad inputs, flags, and a `--from` run end to end (missing inputs
 fail, a missing index doesn't), and the snapshot copy (no page, exactly 1 MiB, 1 MiB + 1, not
-a regular file, no snapshot).
+a regular file, no snapshot). `xtask/src/ci_linux.rs` tests that `ci linux` runs the copy after
+the web build, into `DIR/site/dashboard/`, and that its error fails the run
+(specs/tooling/ci-linux.md).
 - `xtask/src/dashboard.rs` judge history tests: run choice per week (newest first, ties by
   id, the 7-run cap, runs outside every week and after `--until` ignored), a failed download
   falling back to the next run, missing keys as `null`, `smoke_*` not `exam_*`, bad
@@ -306,5 +312,5 @@ a regular file, no snapshot).
 that isn't text, a `superseded` that isn't a boolean, text that isn't JSON, a body of exactly
 4 MiB read and one of 4 MiB + 1 refused), the committed `ops/metrics/dashboard.json`
   rendering without the invalid state (so the writer and the validator agree), contrast in
-  light and dark mode, and the shared fixture checks (no console errors, CSP violations or
+  light and dark mode (every text style, each of the three `Alert`s; Accessibility), and the shared fixture checks (no console errors, CSP violations or
   foreign requests).

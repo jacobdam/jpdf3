@@ -4,6 +4,7 @@
 mod admit;
 mod arlington;
 mod bench;
+mod ci_linux;
 mod dashboard;
 mod fuzz;
 mod issue_lint;
@@ -41,54 +42,9 @@ fn main() -> ExitCode {
         args.first().map(String::as_str),
         args.get(1).map(String::as_str),
     ) {
-        (Some("ci"), Some("linux")) => {
-            // Run every check even if an earlier one failed, so one run shows all problems.
-            // Like check-specs, the web build uses the current directory as the repo root.
-            let web = match web::ci(Path::new("."), &out) {
-                Ok(()) => {
-                    eprintln!("xtask: web: ok");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("xtask: web: {e}");
-                    ExitCode::from(1)
-                }
-            };
-            // specs/tooling/dashboard.md: the committed snapshot next to the dashboard page.
-            let dash = match dashboard::copy_into_site(Path::new("."), &out.join("site")) {
-                Ok(dashboard::Copied::Yes) => ExitCode::SUCCESS,
-                Ok(dashboard::Copied::NoPage) => {
-                    eprintln!("xtask: dashboard: no page, nothing copied");
-                    ExitCode::SUCCESS
-                }
-                Ok(dashboard::Copied::NoSnapshot) => {
-                    eprintln!("xtask: dashboard: no snapshot, nothing copied");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("xtask: dashboard: {e}");
-                    ExitCode::from(1)
-                }
-            };
-            let specs = check_specs(Path::new("."));
-            // PLAN §6.3: a short fuzz run on every PR (specs/tooling/fuzz.md).
-            let fuzz = match fuzz::ci(Path::new(".")) {
-                Ok(()) => {
-                    eprintln!("xtask: fuzz: no crash");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("xtask: fuzz: {e}");
-                    ExitCode::from(1)
-                }
-            };
-            // specs/tooling/arlington.md: the vendored model still matches the pins, parses, checks and compiles (offline).
-            let arl = arlington_cmd(Path::new("."));
-            [web, dash, specs, fuzz, arl]
-                .into_iter()
-                .find(|c| *c != ExitCode::SUCCESS)
-                .unwrap_or(ExitCode::SUCCESS)
-        }
+        // specs/tooling/ci-linux.md: every check runs, in the order `ci_linux::drive` fixes.
+        // Like check-specs, the web build uses the current directory as the repo root.
+        (Some("ci"), Some("linux")) => ci_linux::run(Path::new("."), &out),
         (Some("ci"), Some("macos")) => match macos::ci(Path::new("."), &out) {
             // specs/ui-macos/app-skeleton.md. check-specs runs in `ci linux`.
             Ok(()) => {
