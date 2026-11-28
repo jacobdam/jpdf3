@@ -1,5 +1,6 @@
 //! `CosError`'s own text and source (#87 item 7). The CLI prints the `EngineError` a
-//! `CosError` becomes, which crates/jpdf-engine/tests/boundaries.rs pins.
+//! `CosError` becomes: crates/jpdf-engine/tests/boundaries.rs pins `EngineError`'s text, and
+//! crates/jpdf-engine/tests/open.rs the conversion.
 
 use std::error::Error;
 

@@ -21,9 +21,9 @@ fn parse(src: &[u8]) -> Result<Object, SyntaxError> {
     parse_with(src, &Limits::default())
 }
 
-/// `SyntaxError`'s own text. The CLI prints the `EngineError` it becomes, which keeps this text
-/// for every variant (crates/jpdf-engine/tests/boundaries.rs and tools/jpdf-cli/tests/messages.rs
-/// pin that path, ops/judge/CONTRACT.md §1).
+/// `SyntaxError`'s own text. The CLI prints the `EngineError` it becomes (ops/judge/CONTRACT.md
+/// §1): crates/jpdf-engine/tests/boundaries.rs pins `EngineError`'s text, open.rs there the
+/// conversion of each variant, and tools/jpdf-cli/tests/messages.rs one full stderr line.
 #[test]
 fn display_text_of_every_variant() {
     let cases = [
@@ -190,17 +190,33 @@ fn resolve_checks_both_header_numbers() {
 }
 
 /// A reference whose generation differs from the xref entry's is the null object, without
-/// reading the object (ISO 32000-2 §7.3.10). The entry points at bytes that are no object, so
-/// any read fails: on a fresh document the other generation is null, and the matching one,
-/// which is read, fails on the header.
+/// reading the object (ISO 32000-2 §7.3.10). The document is parsed with the smallest lexing
+/// budget that parse needs, so lexing even one more byte fails: the other generation is still
+/// null on a fresh document, while the matching one, which is read, runs out of budget. With
+/// the default budget the matching one reads the object.
 #[test]
 fn resolve_with_another_generation_is_null() {
-    let data = xref_file(b"%PDF-1.7\n", &[b"garbage"], &[3]);
+    let data = xref_file(b"%PDF-1.7\n", &[b"1 3 obj 7 endobj"], &[3]);
+    let with_slack = |lex_budget_slack| Limits {
+        lex_budget_factor: 0,
+        lex_budget_slack,
+        ..Limits::default()
+    };
+    let needed = (0..=data.len())
+        .find(|s| XrefDocument::parse(&data, &with_slack(*s)).is_ok())
+        .expect("parses within the file length");
+    let limits = with_slack(needed);
+    let doc = XrefDocument::parse(&data, &limits).expect("parses");
+    assert_eq!(doc.resolve(r(1, 0)).map(|o| (*o).clone()), Ok(Object::Null));
+    assert_eq!(
+        doc.resolve(r(1, 3)).map(|o| (*o).clone()),
+        Err(SyntaxError::LimitExceeded("bytes lexed per document"))
+    );
     let doc = XrefDocument::parse(&data, &Limits::default()).expect("parses");
     assert_eq!(doc.resolve(r(1, 0)).map(|o| (*o).clone()), Ok(Object::Null));
     assert_eq!(
         doc.resolve(r(1, 3)).map(|o| (*o).clone()),
-        Err(err("object header does not match xref", 9))
+        Ok(Object::Integer(7))
     );
 }
 
