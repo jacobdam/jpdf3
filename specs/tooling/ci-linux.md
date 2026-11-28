@@ -41,7 +41,8 @@ own results (specs/tooling/dashboard.md, Errors): a missing snapshot or a missin
 
 ## Limits
 No new limit. Each check keeps its own (specs/tooling/dashboard.md: the 1 MiB snapshot copy,
-boundary-tested in `xtask/src/ci_linux.rs`, where the copy lives, #433). The driver runs a fixed five steps, no loop.
+boundary-tested in `xtask/src/ci_linux.rs`, where the copy lives, #433). The driver runs a
+fixed five steps, no loop.
 
 ## Security
 Inputs are the repository's own files; nothing comes from the network beyond what each check

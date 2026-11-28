@@ -21,8 +21,8 @@ history (a shallow checkout without credentials):
    the web app's CSP meta tag and toolchain (TypeScript strict, Biome, the license check). After
    the web build copied `dist/` to `DIR/site/`, `ci linux` copies the committed snapshot to
    `DIR/site/dashboard/data.json` (`copy_into_site` in `xtask/src/ci_linux.rs`, a strict-lane
-   file, since the judge runs it: #433, ADR 0012 §1). Pages serves it at `<site>/dashboard/`. The page fetches
-   `./data.json` (same origin, `connect-src 'self'`) and renders it.
+   file, since the judge runs it: #433, ADR 0012 §1). Pages serves it at `<site>/dashboard/`.
+   The page fetches `./data.json` (same origin, `connect-src 'self'`) and renders it.
 3. **Judge metrics** (#306): the product metrics come from two places, because the deployed
    site holds only the current judge report. The `pages` job runs on pushes to main only and
    copies that run's `judge-report` artifact to `site/judge/`; a push run's artifact has only
