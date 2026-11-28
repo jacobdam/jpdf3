@@ -708,6 +708,14 @@ fn run_with(changes: &[(&str, Option<String>)]) -> std::io::Result<Output> {
 
 /// `cargo xtask <command> --from <dir>` on base() with `changes` (`None` removes a file).
 fn run_command(command: &str, changes: &[(&str, Option<String>)]) -> std::io::Result<Output> {
+    let dir = fixture_dir(changes)?;
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args([command, "--from", &dir.to_string_lossy()])
+        .output()
+}
+
+/// A fresh `--from` directory holding base() with `changes` applied (`None` removes a file).
+fn fixture_dir(changes: &[(&str, Option<String>)]) -> std::io::Result<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "next-session-{}-{}",
         std::process::id(),
@@ -726,9 +734,7 @@ fn run_command(command: &str, changes: &[(&str, Option<String>)]) -> std::io::Re
     for (name, text) in &files {
         fs::write(dir.join(name), text)?;
     }
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args([command, "--from", &dir.to_string_lossy()])
-        .output()
+    Ok(dir)
 }
 
 /// The first line printed, or a description of the failure (so the caller's assertion shows it).
@@ -2266,13 +2272,16 @@ fn usage_and_live_failure() {
         let o = xtask().args(args).output().unwrap();
         assert_eq!(o.status.code(), Some(1), "{args:?}");
     }
-    // Live mode in a directory without the feed script: the command can't run, exit 2.
+    // Live mode in a directory without the feed script: the command can't run, exit 2. Git is
+    // kept out of the checkout above it, so the run can't append to its pick log (ADR 0018
+    // task 2); pick_log_* below test the log.
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("next-session-live");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let o = xtask()
         .arg("next-session")
         .current_dir(&dir)
+        .env("GIT_CEILING_DIRECTORIES", env!("CARGO_TARGET_TMPDIR"))
         .output()
         .unwrap();
     assert_eq!(
@@ -5754,4 +5763,225 @@ fn status_fails_closed() {
         err.contains("xtask: status: unknown:") && err.contains("gh"),
         "{err}"
     );
+}
+
+/// rerun()'s inputs, the whole stdout (or the failure, so the assertion shows it).
+fn rerun_brief(planner_files: &[&str], extra: &[String]) -> String {
+    let lines: Vec<(String, &str)> = planner_files
+        .iter()
+        .map(|f| (format!("{DAY_DIR}{f}"), "- Session: planner"))
+        .collect();
+    let refs: Vec<(&str, &str)> = lines.iter().map(|(p, l)| (p.as_str(), *l)).collect();
+    match run_with(&[
+        set(
+            "records.txt",
+            format!("{}{}", base_records(), records(&refs)),
+        ),
+        plus("issues.json", extra),
+    ]) {
+        Ok(o) if o.status.code() == Some(0) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) => format!("exit {:?}", o.status.code()),
+        Err(e) => format!("io error: {e}"),
+    }
+}
+
+#[test]
+fn step11_idle_lists_the_issues_waiting_for_a_planner_run() {
+    // ADR 0018 task 2: the day's 3 Planner runs are spent and two issues are new since the
+    // newest one, so the pick is idle and the brief lists them (numbers only, lowest first).
+    let three = ["0004-planner.md", "0030-planner.md", "0040-planner.md"];
+    let new = [
+        filed(703, &[], M0, "2026-11-24T01:00:00Z"),
+        filed(702, &[], M0, "2026-11-24T01:00:00Z"),
+    ];
+    let out = rerun_brief(&three, &new);
+    assert!(out.starts_with("idle\n"), "{out}");
+    assert!(
+        out.contains(
+            "\n- waiting for a Planner run (new since its newest run, but the Planner ran 3 of at most 3 times today): #702, #703\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("SECRET"), "{out}");
+    // Near misses: no new issue (one filed before the newest run), and an issue whose
+    // dependency is open (step 11 doesn't count it as new, #478): idle with no waiting line.
+    let old = [filed(702, &[], M0, "2026-11-24T00:39:00Z")];
+    let dep = [set_created(
+        &full_issue(702, "r", &[], "Depends on: #146", M0),
+        "\"2026-11-24T01:00:00Z\"",
+    )];
+    for extra in [&old[..], &dep[..]] {
+        let out = rerun_brief(&three, extra);
+        assert!(out.starts_with("idle\n"), "{out}");
+        assert!(!out.contains("waiting for a Planner run"), "{out}");
+    }
+    // Runs left: the same issues are a rerun, not a waiting list.
+    let out = rerun_brief(&three[..2], &new);
+    assert!(out.starts_with("planner new-issues\n"), "{out}");
+    assert!(!out.contains("waiting for a Planner run"), "{out}");
+}
+
+/// A fresh git repository at `CARGO_TARGET_TMPDIR/<name>-…/main` with one commit; returns its
+/// parent, which callers pass as `GIT_CEILING_DIRECTORIES` so git never looks above it.
+fn git_repo(name: &str) -> std::io::Result<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "{name}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    let main = dir.join("main");
+    fs::create_dir_all(&main)?;
+    for args in [
+        &["init", "-q"][..],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c",
+        ],
+    ] {
+        let o = Command::new("git")
+            .args(args)
+            .current_dir(&main)
+            .env("GIT_CEILING_DIRECTORIES", &dir)
+            .output()?;
+        if !o.status.success() {
+            return Err(std::io::Error::other(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            )));
+        }
+    }
+    Ok(dir)
+}
+
+/// `cargo xtask next-session` live (no feed script there, so exit 2) in `cwd`, with git kept
+/// inside `ceiling`.
+fn live(cwd: &std::path::Path, ceiling: &std::path::Path) -> std::io::Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("next-session")
+        .current_dir(cwd)
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .output()
+}
+
+/// Whether `line` is the pick log line of a run that failed with exit 2: `<UTC time>\t2\t\t`.
+fn is_exit2_line(line: &str) -> bool {
+    let f: Vec<&str> = line.split('\t').collect();
+    let time = f.first().is_some_and(|t| {
+        t.len() == 20
+            && t.bytes().enumerate().all(|(i, c)| match i {
+                4 | 7 => c == b'-',
+                10 => c == b'T',
+                13 | 16 => c == b':',
+                19 => c == b'Z',
+                _ => c.is_ascii_digit(),
+            })
+    });
+    time && f.get(1..) == Some(&["2", "", ""][..])
+}
+
+#[test]
+fn pick_log_live_runs_append_a_line_each() {
+    // ADR 0018 task 2: each live run appends one line, whatever its outcome; the pick and the
+    // exit code are unchanged.
+    let dir = git_repo("pick-log-live").unwrap();
+    let main = dir.join("main");
+    for n in 1..=2 {
+        let o = live(&main, &dir).unwrap();
+        assert_eq!(
+            o.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(o.stdout.is_empty());
+        let log = fs::read_to_string(main.join("ops/state/picks.tsv")).unwrap();
+        assert!(log.ends_with('\n'), "{log:?}");
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), n, "{log:?}");
+        assert!(lines.iter().all(|l| is_exit2_line(l)), "{log:?}");
+    }
+}
+
+#[test]
+fn pick_log_from_a_worktree_goes_to_the_main_checkout() {
+    let dir = git_repo("pick-log-worktree").unwrap();
+    let (main, wt) = (dir.join("main"), dir.join("wt"));
+    let o = Command::new("git")
+        .args(["worktree", "add", "-q", "--detach", &wt.to_string_lossy()])
+        .current_dir(&main)
+        .env("GIT_CEILING_DIRECTORIES", &dir)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    // From a subdirectory of the worktree, too.
+    fs::create_dir_all(wt.join("sub")).unwrap();
+    for cwd in [wt.clone(), wt.join("sub")] {
+        assert_eq!(live(&cwd, &dir).unwrap().status.code(), Some(2));
+    }
+    let log = fs::read_to_string(main.join("ops/state/picks.tsv")).unwrap();
+    assert_eq!(log.lines().count(), 2, "{log:?}");
+    assert!(log.lines().all(is_exit2_line), "{log:?}");
+    // Near miss: nothing in the worktree's own ops/state/.
+    assert!(!wt.join("ops/state/picks.tsv").exists());
+    assert!(!wt.join("sub/ops").exists());
+}
+
+#[test]
+fn pick_log_failure_warns_and_keeps_the_exit_code() {
+    // ops/state is a file, so the log can't be written: a warning, and the same exit 2 with
+    // nothing on stdout. Outside any repository (git can't find one): the same.
+    let dir = git_repo("pick-log-fail").unwrap();
+    let main = dir.join("main");
+    fs::create_dir_all(main.join("ops")).unwrap();
+    fs::write(main.join("ops/state"), "not a dir").unwrap();
+    let plain = dir.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    for cwd in [&main, &plain] {
+        let o = live(cwd, &dir).unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(2), "{err}");
+        assert!(o.stdout.is_empty());
+        assert!(
+            err.contains("xtask: next-session: warning: pick log not written:"),
+            "{err}"
+        );
+        assert!(err.contains("xtask: next-session: unknown:"), "{err}");
+    }
+    assert!(!plain.join("ops").exists());
+}
+
+#[test]
+fn pick_log_from_runs_write_nothing() {
+    // `--from` (every fixture test) never writes the log, even from inside a repository.
+    let dir = git_repo("pick-log-from").unwrap();
+    let main = dir.join("main");
+    let fixture = fixture_dir(&[]).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["next-session", "--from", &fixture.to_string_lossy()])
+        .current_dir(&main)
+        .env("GIT_CEILING_DIRECTORIES", &dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(String::from_utf8_lossy(&o.stdout).starts_with("planner\n"));
+    assert!(
+        o.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(!main.join("ops").exists());
+    assert!(!fixture.join("ops").exists());
 }
