@@ -85,8 +85,9 @@ vet step would go red on main.
 ```
 
 Edit both by hand rather than letting an unlocked `cargo vet` rewrite the lock: an unlocked run
-fetches every imported source again and writes whatever changed upstream since these probes
-into the file, so the commit would hold more than the `isrg` lines. The hand edit gives the
+fetches every imported source again and, for entries already in the lock (the miniz_oxide
+proposal applied first), writes whatever changed upstream since these probes into the file,
+so the commit would hold more than the `isrg` lines. The hand edit gives the
 right file in either order with `vet-imports-miniz-oxide.md`, since it touches only the `isrg`
 lines:
 
