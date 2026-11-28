@@ -711,17 +711,17 @@ fn startxref_at_a_non_xref_object_is_malformed() {
 }
 
 /// #78: a hybrid file (§7.5.8.4) is read through its classic table; `/XRefStm` is ignored, so
-/// an object listed only in the stream resolves to null.
+/// the stream can neither override a table entry nor fill a free one.
 #[test]
 fn hybrid_file_is_read_through_its_table() {
-    // Object 5 is a real cross-reference stream (§7.5.8): one type-2 entry (`/W [1 1 1]`,
-    // `/Index [4 1]`) puts object 4 in object stream 6, index 0. Object 6 is that object stream
-    // (§7.5.7), holding a valid page 4. `/XRefStm` points at object 5 (its offset doesn't depend
-    // on the trailer).
-    let page = "4 0 << /Type /Page /Parent 2 0 R >>";
+    // Object 5 is a real cross-reference stream (§7.5.8), `/W [1 1 1]`, `/Index [3 2]`: object 3
+    // free (type 0) and object 4 compressed in object stream 6 at index 0 (type 2). Object 6 is
+    // that object stream (§7.5.7), holding a complete page 4. `/XRefStm` points at object 5 (its
+    // offset doesn't depend on the trailer).
+    let page = "4 0 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>";
     let mut objs = page_tree(2);
     objs.push(
-        b"<< /Type /XRef /Size 7 /Index [4 1] /W [1 1 1] /Length 3 >>\nstream\n\x02\x06\x00\nendstream"
+        b"<< /Type /XRef /Size 7 /Index [3 2] /W [1 1 1] /Length 6 >>\nstream\n\x00\x00\x00\x02\x06\x00\nendstream"
             .to_vec(),
     );
     objs.push(
@@ -738,14 +738,18 @@ fn hybrid_file_is_read_through_its_table() {
         pdf.len(),
         probe.len() + format!("/XRefStm {stream_at}").len()
     );
+    // The table lists both pages in use: a reader that let the stream override it would lose
+    // page 3 (free in the stream).
     assert_eq!(open(&pdf), Ok(2));
-    // Object 4 marked free in the table (entry 4 of 6): it is now listed only in the stream, as
-    // a compressed object, so the kid is null.
+    // Object 4's table record replaced by a complete free record (next free object 0,
+    // generation 1): it is now listed only in the stream, as a compressed page, and a reader that
+    // filled free table slots from the stream would count 2 pages. The kid is null instead.
     let text = String::from_utf8_lossy(&pdf).into_owned();
     let entries: Vec<usize> = text.match_indices(" 00000 n\r\n").map(|(i, _)| i).collect();
     assert_eq!(entries.len(), 6);
+    let record = entries[3] - 10;
     let mut only_in_stream = pdf.clone();
-    only_in_stream[entries[3] + 7] = b'f';
+    only_in_stream[record..record + 18].copy_from_slice(b"0000000000 00001 f");
     assert_eq!(
         open(&only_in_stream),
         Err(EngineError::Malformed {

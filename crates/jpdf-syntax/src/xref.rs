@@ -353,10 +353,18 @@ fn parse_section(
     };
     match first {
         Some(Token::Keyword(b"xref")) => {}
-        Some(Token::Integer(_)) if is_xref_stream(&mut p)? => {
-            return Err(SyntaxError::Unsupported("cross-reference streams"));
+        not_xref => {
+            let stream = matches!(not_xref, Some(Token::Integer(_))) && is_xref_stream(&mut p)?;
+            // `next_token` checks the lexing budget before each token, so the bytes of the last
+            // one read here were charged but not checked: check them before any answer (S2.1,
+            // S3.1), so a spent budget is always the limit error.
+            p.lexer.check_budget()?;
+            return Err(if stream {
+                SyntaxError::Unsupported("cross-reference streams")
+            } else {
+                malformed("expected 'xref'", offset)
+            });
         }
-        _ => return Err(malformed("expected 'xref'", offset)),
     }
     loop {
         let at = p.lexer.pos();
@@ -454,13 +462,10 @@ fn is_xref_stream(p: &mut Parser<'_, '_>) -> Result<bool, SyntaxError> {
             (Some(Token::Integer(_)), Some(Token::Keyword(b"obj"))) => {}
             _ => return Ok(false),
         }
-        let stream = match p.parse_object()? {
+        Ok(match p.parse_object()? {
             Object::Dict(d) => d.get(b"Type").and_then(Object::as_name) == Some(&b"XRef"[..]),
             _ => false,
-        };
-        // The closing `>>` was charged but not checked against the budget (S2.1).
-        p.lexer.check_budget()?;
-        Ok(stream)
+        })
     })();
     match found {
         Err(SyntaxError::Malformed { .. }) => Ok(false),
@@ -1043,7 +1048,7 @@ mod tests {
             max_string_bytes_per_parse: 3,
             ..Limits::default()
         };
-        for body in [&b"12 (abcd)"[..], b"(abcd)"] {
+        for body in [&b"12 (abcd)"[..], b"(abcd)", b"12 0 (abcd)"] {
             let mut data = body.to_vec();
             data.extend(b"\nstartxref\n0\n%%EOF");
             assert_eq!(
@@ -1054,27 +1059,39 @@ mod tests {
         assert_eq!(at(b"(abc"), not_xref);
     }
 
-    /// S2.1: the lexing budget covers the whole look-ahead, its closing `>>` included. The file
-    /// lexes 28 bytes up to the classification: a budget of 27 fails with the limit, 28 doesn't.
+    /// S2.1, S3.1: the lexing budget covers the whole look-ahead, its last token included, on
+    /// every outcome: the stream, a header mismatch, a dictionary that fails to parse, a first
+    /// token that fails to lex and a keyword. Each file lexes `n` bytes up to the answer: a
+    /// budget of `n - 1` fails with the limit, `n` gives the answer.
     #[test]
-    fn xref_stream_look_ahead_is_inside_the_lexing_budget() {
-        let data = b"12 0 obj << /Type /XRef >>\nstartxref\n0\n%%EOF";
-        let with_slack = |slack| {
-            let l = Limits {
-                lex_budget_factor: 0,
-                lex_budget_slack: slack,
-                ..Limits::default()
+    fn section_offset_look_ahead_is_inside_the_lexing_budget() {
+        let stream = SyntaxError::Unsupported("cross-reference streams");
+        let not_xref = malformed("expected 'xref'", 0);
+        for (body, n, answer) in [
+            (&b"12 0 obj << /Type /XRef >>"[..], 28, &stream),
+            (b"12 0 >>", 9, &not_xref),
+            (b"12 0 obj << /Type >>", 22, &not_xref),
+            (b"12 0 obj 7", 22, &not_xref),
+            (b"junk", 6, &not_xref),
+        ] {
+            let mut data = body.to_vec();
+            data.extend(b"\nstartxref\n0\n%%EOF");
+            let with_slack = |slack| {
+                let l = Limits {
+                    lex_budget_factor: 0,
+                    lex_budget_slack: slack,
+                    ..Limits::default()
+                };
+                XrefDocument::parse(&data, &l).map(|_| ())
             };
-            XrefDocument::parse(data, &l).map(|_| ())
-        };
-        assert_eq!(
-            with_slack(27),
-            Err(SyntaxError::LimitExceeded("bytes lexed per document"))
-        );
-        assert_eq!(
-            with_slack(28),
-            Err(SyntaxError::Unsupported("cross-reference streams"))
-        );
+            let name = String::from_utf8_lossy(body);
+            assert_eq!(
+                with_slack(n - 1),
+                Err(SyntaxError::LimitExceeded("bytes lexed per document")),
+                "{name}"
+            );
+            assert_eq!(with_slack(n), Err(answer.clone()), "{name}");
+        }
     }
 
     /// The same test for a `/Prev` offset: the newest section parses, and the error names the
@@ -1095,14 +1112,24 @@ mod tests {
             (&b"(abc\n"[..], malformed("expected 'xref'", 9)),
             (&b"12 (abc\n"[..], malformed("expected 'xref'", 9)),
         ] {
-            let mut data = b"%PDF-1.7\n".to_vec();
-            data.extend(body);
-            let xref_at = data.len();
-            data.extend(b"xref\n0 1\n0000000000 65535 f\r\n");
-            data.extend(
-                format!("trailer\n<< /Size 1 /Prev 9 >>\nstartxref\n{xref_at}\n%%EOF").as_bytes(),
-            );
-            assert_eq!(XrefDocument::parse(&data, &l).map(|_| ()), Err(expected));
+            // At two offsets (R3.4): after the header, and after a padding comment; a malformed
+            // answer names the offset `/Prev` gives.
+            for prefix in [&b"%PDF-1.7\n"[..], b"%PDF-1.7\n% padding\n"] {
+                let mut data = prefix.to_vec();
+                data.extend(body);
+                let xref_at = data.len();
+                data.extend(b"xref\n0 1\n0000000000 65535 f\r\n");
+                let prev = prefix.len();
+                data.extend(
+                    format!("trailer\n<< /Size 1 /Prev {prev} >>\nstartxref\n{xref_at}\n%%EOF")
+                        .as_bytes(),
+                );
+                let expected = match &expected {
+                    SyntaxError::Malformed { what, .. } => malformed(what, prev),
+                    other => other.clone(),
+                };
+                assert_eq!(XrefDocument::parse(&data, &l).map(|_| ()), Err(expected));
+            }
         }
     }
 

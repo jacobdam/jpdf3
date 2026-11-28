@@ -247,8 +247,10 @@ Self-check (#77):
   then reported as `nested page trees`, exit 3, rather than malformed); the stricter answer
   would need the nested-tree walk, which doesn't exist yet. The xref-stream check parses one
   object at the section offset through the normal `Parser`, so every per-parse limit and the
-  lexing budget apply to it, the bytes of its last token included (the lexer checks the budget
-  before each token, so the look-ahead checks it once more after the dictionary); it adds no
+  lexing budget apply to it, the bytes of its last token included: the lexer checks the budget
+  before each token, so the section-offset classification checks it once more before any
+  answer (the stream, a header mismatch, a dictionary that fails to parse, a first token that
+  fails to lex, a keyword), and a spent budget is always the limit error. It adds no
   arithmetic. A look-ahead that maps every error to
   `expected 'xref'` (a limit too) fails the startxref unit test's nesting-depth case, and one
   that passes malformed errors through fails its truncated-input cases. The end-of-file comparison is between a
@@ -298,8 +300,9 @@ resolves only the catalog, the page-tree root and its kids.
   `len`, `len + 1` and `u32::MAX` are null; `len - 1` is checked against its header),
   `startxref_at_a_non_xref_object_is_malformed` (an `/XRef` stream object stays unsupported),
   `hybrid_file_is_read_through_its_table` (`/XRefStm` points at a real cross-reference stream
-  that lists page 4 as compressed in a real object stream; with page 4 free in the table the
-  kid stays null).
+  that marks page 3 free and lists page 4, complete, as compressed in a real object stream:
+  with both pages in use in the table the count is 2, so the stream overrides nothing; with
+  page 4's record a complete free record the kid stays null, so the stream fills nothing).
 - `crates/jpdf-syntax/src/xref.rs` unit tests for #78: `update_trailer_takes_missing_entries_from_older_trailers`
   (five old/new trailer pairs, the kept entries, their order and exact capacity),
   `only_an_xref_stream_object_at_startxref_is_unsupported` and `..._at_prev_is_unsupported`
@@ -307,10 +310,12 @@ resolves only the catalog, the page-tree root and its kids.
   key, an array, `12 0 R`, a non-integer generation, a keyword, a lone integer, a bare
   dictionary, and four that fail to lex or parse: a truncated dictionary, an unterminated
   string after the integer and as the first token, a non-name key; the `/Prev` test repeats
-  the two unterminated strings at offset 9; plus limit cases that stay limit errors: nesting
-  depth in the dictionary, string bytes after the integer and in the first token),
-  `xref_stream_look_ahead_is_inside_the_lexing_budget` (a budget of 27 bytes fails with the
-  limit, 28 reads the stream as unsupported), `offset_at_end_of_file_reads_as_free` (the same
+  the two unterminated strings at offsets 9 and 19, each answer naming its offset; plus limit
+  cases that stay limit errors: nesting depth in the dictionary, string bytes in the first,
+  second and third token),
+  `section_offset_look_ahead_is_inside_the_lexing_budget` (five outcomes, each at the exact
+  number of bytes it lexes and one byte under it: the stream at 28, a header mismatch at 9, a
+  dictionary that fails to parse at 22, a non-dictionary object at 22, a keyword at 6), `offset_at_end_of_file_reads_as_free` (the same
   offset boundary at the xref layer).
 - Deterministic property test (seeded xorshift; the workspace has no admitted `proptest` yet,
   see #16): thousands of random byte strings and mutated/truncated valid files never panic.
