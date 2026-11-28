@@ -83,9 +83,10 @@ improvising, ADR 0011 §6): the memory budget (#236), isolation of the engine fr
   (the full order, one run per failing step); for the nightly, `drive` in
   `xtask/src/nightly.rs` and `xtask/src/nightly/tests/driver.rs` (ADR 0013 task 1, #360). The
   real adapters and `run`'s wiring stay reviewer vigilance. The nightly holds it since ADR 0013
-  task 2 (#361: the bench, the fuzz pass and `nightly.json` are steps of their own);
-  `cargo xtask ci linux` stays the known exception until a PR changes its checks (ADR 0013,
-  Requirements on future callers).
+  task 2 (#361: the bench, the fuzz pass and `nightly.json` are steps of their own), and
+  `cargo xtask ci linux` since #369 (`drive` in `xtask/src/ci_linux.rs` and its tests;
+  specs/tooling/ci-linux.md), which ADR 0013's Requirements on future callers had left as the
+  known exception.
 - **Reviewers check:** a new or moved step is called by the driver, not by `run` or another
   step; its real adapter maps every error of the function it wraps to `Failed` or `Infra` as
   the spec's exit codes say, and decides nothing about order; no step's result is folded into
