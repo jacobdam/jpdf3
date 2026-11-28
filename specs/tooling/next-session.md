@@ -407,7 +407,9 @@ runs a UTC day.
       - **`planner new-issues`** when fewer than 3 such files exist and at least one issue is
         *new*: in `issues.json` (open), its milestone the current milestone (step 10's, exact
         title; none means none is new), without `ready` and without a skip label, `in-progress`,
-        `design`, `design-pending` or `design-product` (exact names), not in flight, and with a
+        `design`, `design-pending` or `design-product` (exact names), not in flight, with no
+        issue on its `Depends on:` line open (step 10's test, #478: a design ADR's task that
+        waits for the ADR starts no rerun), and with a
         `createdAt` at or after the *rerun time* (text comparison, both in GitHub's form). The
         rerun time is the end of the minute in the newest file's name: of the files' names, each
         read as the minute `HH × 60 + MM` of its first four characters when they are ASCII
@@ -671,7 +673,8 @@ never 2 (no command ran).
     instead of `>=` (00:05:00 exactly), dropping the `+ 1` minute, each filter of *new* (each
     label, the milestone, in flight), skipping a name without a time instead of reading it as
     the end of the day, a dropped `-` or digit check, `MM` = 60 accepted, any word
-    `planner`, any day, and an unchecked `createdAt`. Equivalent ones: taking the last file
+    `planner`, any day, an unchecked `createdAt`, and dropping the dependency filter (#478: an
+    issue whose `Depends on:` names an open issue). Equivalent ones: taking the last file
     instead of the newest (the files are a set sorted by path, and a path's day directory is
     fixed, so the last is the newest minute; a last-*listed* rule is caught by the bracketing
     fixture listed newer first), and `HH` = 24 accepted (it reads past the day's end, so no
@@ -707,7 +710,10 @@ of inputs where no step before 11 applies (→ `planner`):
   `ready` (with an open dependency, so step 10 doesn't take it), the skip labels,
   `in-progress`, `design`, `design-pending` and `design-product` stops it, and other labels
   (`bug`, `discovery`, `readyx`, `Design`, `design-products`) don't; an `Ops` issue, an `M1`
-  issue and one with no milestone; in flight (an open PR) and not (a merged one); a ready issue
+  issue and one with no milestone; in flight (an open PR) and not (a merged one); a
+  `Depends on:` line naming an open issue (alone, with a closed one, in bold) stops it, and a
+  closed one, no line and the phrase mid-line don't, and of two new issues where one depends on
+  the other only the one it depends on is listed (#478); a ready issue
   and an owner issue outrank it; 2 Planner files today rerun and 3 are `idle` (the base's
   `planners` and `Planner` files don't count), one file listed twice or holding two records
   counts once, yesterday's file doesn't count, and `planner due` and `planner new-issues` are
