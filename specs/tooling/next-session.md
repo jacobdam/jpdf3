@@ -19,11 +19,13 @@ part 3 (#314) adds step 3's third term: an own design PR past its 24-hour window
 which TICK §1 checked by hand before. #373 counts that term's `ai-review` success from the
 triage comment it links, so a record-only update doesn't restart the window. #372 adds the
 owner's `/approve`, which ends that window early, and lets step 3's first term pick a design
-PR that fails in its window.
+PR that fails in its window. ADR 0015 task 1 (#440) adds step 11's rerun: on a day the Planner
+already ran, `planner new-issues` for an issue filed after its newest run, at most 3 Planner
+runs a UTC day.
 
 - **Output.** Exit 0 and, on stdout, a first line (the **pick**) and a brief:
   - first line: `<type> <step> <reference>`, `audit due`, `retro due`, `planner due`,
-    `planner` or `idle`.
+    `planner`, `planner new-issues` or `idle`.
     Its first word is the session type: `worker`, `design-technical`, `audit`, `retro`,
     `planner`, `design` (Design: product, TICK §10), or `idle` (no session: exit at once).
     Steps and references:
@@ -39,7 +41,7 @@ PR that fails in its window.
     | 7 | g, h | `audit due`, `retro due` (the reason is on the `Rule:` line) |
     | 8 | j, k | `planner due` (the reason is on the `Rule:` line), then `design product v1`, `design product v1 #N`, `design product #N` |
     | 10 | i | `worker ready #N` |
-    | 11 | j | `planner`, `idle` |
+    | 11 | j | `planner`, `planner new-issues` (ADR 0015), `idle` |
 
   - then a blank line and the brief: a `Rule:` line (the TICK letter, or `step 6`, which has
     none, and why this item was picked), a `Load:` list (the commands and files to read, one per line, `- ` first), and a
@@ -47,8 +49,8 @@ PR that fails in its window.
     and each one on an `owner/` branch, which step 3 doesn't pick; an active judge alarm;
     worktrees whose branch's PR is merged or closed, which can be removed; a due audit or
     retro that step 7 didn't pick because its PR is open, and a due Design: product term that
-    step 8 didn't pick for the same reason; on a `planner` or `planner due` pick, last, the
-    work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
+    step 8 didn't pick for the same reason; on a `planner`, `planner due` or `planner new-issues`
+    pick, last, the work-mix reading, which the Planner copies into `ops/QUEUE.md`, TICK §9).
 - **Inputs.** It runs only read commands from the current directory (the main checkout). Each
   has a file name; `--from DIR` reads that file from `DIR` instead and runs no command, so every
   pick can be tested offline:
@@ -110,8 +112,9 @@ PR that fails in its window.
       must be `YYYY-MM-DDTHH:MM:SSZ`), written as `[{"number":N,"events":[…]}, …]` (#314). With
       no such PR it is `[]` and no command runs.
 
-  `issues.json` (input 6) also reads `body` and `milestone`:
-  `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone`.
+  `issues.json` (input 6) also reads `body`, `milestone` and `createdAt` (step 11's rerun,
+  ADR 0015):
+  `gh issue list --state open --limit 1000 --json number,title,labels,body,milestone,createdAt`.
 
   Nothing is written anywhere: not to GitHub, git or the file system.
 - **Common terms.**
@@ -390,13 +393,35 @@ PR that fails in its window.
       work mix is below 70%: the lowest-numbered ready product issue in the current milestone
       with its dependencies closed, this one)`, or `…, none, so the lowest-numbered ready
       issue)`.
-  11. **Planner or idle** (rule j; ADR 0011 §1, the Planner's bound): nothing above applies.
-      `idle` when `records.txt` has a line whose path is `ops/journal/<today>/<name>.md` (today:
-      the UTC day of `now`; `<name>` without `/`) and whose text after `- Session: ` has
-      `planner` as its first whitespace-separated word (case matters; `planner due` counts): the
-      Planner ran today, so the session exits at once and writes nothing. Otherwise `planner`:
-      a Planner session (TICK §9), whose record says `- Session: planner`. A Planner record on a closed unmerged PR is not on any listed ref,
-      so it doesn't count (that run's labels may still stand; a second run that day is harmless).
+  11. **Planner or idle** (rule j; ADR 0011 §1, the Planner's bound, as ADR 0015 amends it):
+      nothing above applies. A *Planner file of today* is a path `ops/journal/<today>/<name>.md`
+      (today: the UTC day of `now`; `<name>` without `/`) with a `records.txt` line whose text
+      after `- Session: ` has `planner` as its first whitespace-separated word (case matters;
+      `planner due` and `planner new-issues` count, `planners` and `Planner` don't). Each path
+      counts once, however many lines or refs list it. With none: `planner`, a Planner session
+      (TICK §9), whose record says `- Session: planner`. With one or more (the Planner ran
+      today):
+      - **`planner new-issues`** when fewer than 3 such files exist and at least one issue is
+        *new*: in `issues.json` (open), its milestone the current milestone (step 10's, exact
+        title; none means none is new), without `ready` and without a skip label, `in-progress`,
+        `design`, `design-pending` or `design-product` (exact names), not in flight, and with a
+        `createdAt` at or after the *rerun time* (text comparison, both in GitHub's form). The
+        rerun time is the end of the minute in the newest file's name: of the files' names, each
+        read as the minute `HH × 60 + MM` of its first four characters when they are ASCII
+        digits followed by `-` with `HH` < 24 and `MM` < 60, the largest, plus one minute, on
+        today's date (`2359-…` gives 00:00:00 of tomorrow). A name without such a time reads as
+        the end of its day: when any of today's files has one, no issue is new. The `Rule:`
+        line is `j (nothing applies, the Planner ran <n> of at most 3 times today, and these
+        issues are new since its newest run: #A, #B): the Planner again, ADR 0015`, lowest
+        number first, numbers only; the brief loads what `planner` loads. Its record says
+        `- Session: planner new-issues`, which moves the rerun time to its own minute;
+      - otherwise **`idle`**: the session exits at once and writes nothing.
+
+      A Planner record on a closed unmerged PR is not on any listed ref, so it doesn't count
+      (that run's labels may still stand; one more run that day is harmless). The rerun sits at
+      step 11, after step 10: the Planner orders work, it doesn't interrupt it (ADR 0015
+      Consequences). Step 8 is unchanged: once any Planner file of today exists, its terms are
+      off for the day.
 - **Exit codes** (ADR 0011 §2 Failure):
   - **0**: a pick was printed.
   - **2**: unknown. A command could not start, failed or printed too much (gh or network
@@ -438,7 +463,7 @@ PR that fails in its window.
   a number `number` and `milestone` null or an object with a string `title`. `areas.toml`:
   `cargo xtask issue-lint`'s parser and rules (specs/tooling/issue-lint.md; its `process` and
   `records` areas included). `issues.json`: `body` a string, `milestone` null or an object with a
-  string `title`. Unix seconds (`now.txt`, the alarm file after trimming whitespace, the log,
+  string `title`, `createdAt` a string in the form `YYYY-MM-DDTHH:MM:SSZ` (on every issue). Unix seconds (`now.txt`, the alarm file after trimming whitespace, the log,
   the tags) are digits only, within the years 1970–9999 (`cargo xtask metrics`' rule).
 
 ## Persistence
@@ -510,6 +535,12 @@ never 2 (no command ran).
   window covers only `records.txt`'s 7 days: with fewer than 20 records in them the budget is
   not measured, so a slow week can't breach it. Until #308 gives issues `area:` labels, no
   issue is a product issue, so step 10's order doesn't change; step 8's term still applies.
+- Step 11's rerun (ADR 0015): at most 3 Planner sessions a UTC day, counted over the files
+  `records.txt` lists. A record that leaves that list (a Planner records PR closed unmerged, a
+  blob that can't be read, a session that dies before it pushes) allows one run beyond the cap,
+  and if it was the newest, the issues it judged count as new again: the exposure the once-a-day
+  bound had (one more Planner run that day). Issues the Planner files during its own run, after
+  its record's minute, are new for the next run; that costs at most one rerun, inside the cap.
 - No loop runs on a count from the input except over the parsed lists themselves.
 
 ## Security
@@ -570,13 +601,19 @@ never 2 (no command ran).
   which only reads. It writes no file.
 - **Session records are self-reported** (ADR 0011 §3). Any session (or anyone who can push a
   branch with a tagged open PR) can write a `- Session: planner` line dated today and turn the
-  rest of the day's fallback picks into `idle`, and turn step 8 off: both of its terms for that
+  rest of the day's fallback picks into `idle` or `planner new-issues` (step 11), and turn step 8 off: both of its terms for that
   day, and the 7-day term for 7 days. The cost is bounded: `idle` happens only when steps 1–10
   found nothing, the milestone term comes back the next UTC day, and the 7-day term after 7
   days (a forged record delays a Planner run by at most that long; step 11 still runs it
   whenever nothing is ready). Forged records also move the work-mix reading: they can make the
   Planner due once a day or reorder step 10 between ready issues, never block or hide one (the
-  budget only orders). An `area:` label is set by the agent account too (ADR 0011
+  budget only orders). Step 11's rerun (ADR 0015): a forged record can't add a run, since a
+  visible record only raises the day's count or moves the rerun time later. A record named
+  `2359-…` (or with no valid time), or 3 forged files dated today, stop reruns for the rest of
+  the day: the once-a-day bound, so at most until 00:00 UTC. An issue is new only in the current
+  milestone, and setting a milestone needs triage access (only the shared account has it), so
+  an outsider's issue never triggers a rerun; an agent session that files issues on every run
+  can trigger at most 2 reruns a day. The brief prints new issues' numbers, never their titles. An `area:` label is set by the agent account too (ADR 0011
   Consequences), so a session can mark an issue product; the journal shows the pick. A branch name from `prs.json`
   goes to git only as `refs/remotes/origin/<name>`, so it can't be read as an option, and git's
   ref-name rules forbid `:` (no `<ref>:<path>` reads). Record lines are matched, never printed.
@@ -584,7 +621,10 @@ never 2 (no command ran).
   - Arithmetic: the 14-day and 7-day subtractions from today and the records window's first
     day (`i64` days since 1970, checked), step 8's `today - day` (only when `day <= today`;
     both are days of the years 0000–9999, so it can't overflow), the day of `now` for `records.txt` (`now / 86 400`, a checked conversion to `i64`), `now` minus a commit time (checked; both are bounded by the years 1970–9999),
-    and `since + 1` (saturating). The work mix: `counted × 100` and `70 × 20` (a count of at
+    and `since + 1` (saturating). Step 11's rerun time: `today × 86 400 + (minute + 1) × 60`
+    (`checked_mul` and `checked_add`; `today` is a day of the years 1970–9999 and the minute is
+    below 1 440, so neither fails; a failure would make no issue new); the name's digits are
+    read from a fixed-length slice pattern, never indexed. The work mix: `counted × 100` and `70 × 20` (a count of at
     most 20 records and constants), `counted × 100 / 20`, and the window's first index
     `len − 20`, taken only when `len ≥ 20`.
   - What broken implementation still passes? The records window's day list is
@@ -621,6 +661,20 @@ never 2 (no command ran).
     `<` and the Planner-only note each fail a test. What the tests can't see: the two live `gh`
     command lines (checked by hand on 2026-11-24: `files` holds `path`, the scheduler ran live
     with exit 0).
+  - Step 11's rerun: what broken implementation still passes? Each is a hand mutant that fails
+    a test: comparing the creation day instead of the minute (an issue at 00:04:59 after a
+    record at 00:04), the oldest record's minute (two records bracketing the issue), counting
+    lines instead of files (one file listed twice, one file with two records), `<=` 3, `>`
+    instead of `>=` (00:05:00 exactly), dropping the `+ 1` minute, each filter of *new* (each
+    label, the milestone, in flight), skipping a name without a time instead of reading it as
+    the end of the day, a dropped `-` or digit check, `MM` = 60 accepted, any word
+    `planner`, any day, and an unchecked `createdAt`. Equivalent ones: taking the last file
+    instead of the newest (the files are a set sorted by path, and a path's day directory is
+    fixed, so the last is the newest minute; a last-*listed* rule is caught by the bracketing
+    fixture listed newer first), and `HH` = 24 accepted (it reads past the day's end, so no
+    issue created by `now` is new, as for a name without a time). What the tests can't see:
+    the live `createdAt` field (checked by hand on the live command, see the PR), and whether
+    the Planner readies the issue (TICK §9 step 2).
   - Labels and `Depends on:` lines are written by the agent account, so a session can move work
     up or down the queue by editing them (ADR 0011 Consequences); the journal shows the pick.
 
@@ -643,6 +697,24 @@ of inputs where no step before 11 applies (→ `planner`):
 - precedence: all steps apply, then each is removed in turn and the next one is picked;
 - exit 1 for each malformed input and a missing `--from` file; exit 0 with a missing
   `judge-alarm-since`; exit 1 for a usage error;
+- step 11's rerun (ADR 0015): with a record `0004-planner.md`, an M0 issue created at
+  `00:04:59` is `idle` and at `00:05:00` is `planner new-issues` (also later that day; not one
+  of yesterday), with the whole brief (two new issues, lowest first, no title); a Planner record
+  only yesterday is `planner`; `planner due` counts (at `03:00:59` and `03:01:00`); each of
+  `ready` (with an open dependency, so step 10 doesn't take it), the skip labels,
+  `in-progress`, `design`, `design-pending` and `design-product` stops it, and other labels
+  (`bug`, `discovery`, `readyx`, `Design`, `design-products`) don't; an `Ops` issue, an `M1`
+  issue and one with no milestone; in flight (an open PR) and not (a merged one); a ready issue
+  and an owner issue outrank it; 2 Planner files today rerun and 3 are `idle` (the base's
+  `planners` and `Planner` files don't count), one file listed twice or holding two records
+  counts once, yesterday's file doesn't count, and `planner due` and `planner new-issues` are
+  among the 3; two records bracketing the issue, in both list orders (the newer decides); ten
+  names without a valid time (`planner.md`, `2460-`, `0060-`, `2400-`, no `-`, three or five
+  digits, `0500.md`, a letter, a leading `-`), alone and next to a valid one, are the end of the
+  day, and `0000-`, `0500-`, `0558-`, `0559-` and `2359-` are read; a `createdAt` missing,
+  null, a number, empty, with a space or without the `Z` exits 1, also when step 1 picks; the
+  precedence test has a `planner new-issues` entry between step 10 and `idle`; a unit test
+  reads the minute and the day's count;
 - step 11: `idle` from a Planner record dated today in any line order, `planner` without one;
   near misses: a Planner record dated yesterday or tomorrow, `planners`, `Planner`, `planner`
   as a later word, a worker record, an empty file (which is `planner due` since step 8: no Planner record in 7 days); the day boundary at midnight UTC and one
@@ -749,7 +821,7 @@ of inputs where no step before 11 applies (→ `planner`):
   the file's text; the current milestone moving to M1; no current milestone; the 7-day term at
   6 and 7 days and a record dated tomorrow, `planner due` as a Planner record and the other
   kinds as near misses, the window at the last second of a day and at midnight; the once-a-day
-  bound (a `planner due` record today turns both terms off and step 11 into `idle`, and step
+  bound (a `planner due` record today turns both terms off and step 11 into `idle` when no issue is new since it, and step
   10 picks again); step 8 after steps 1 to 7 and before step 10 (a second pass of the precedence
   test without the `idle` entry and with no `queue.md`); a `queue.md` that isn't UTF-8 is exit 1;
 - step 8's Design: product (#249): `design product v1` with the base log minus its

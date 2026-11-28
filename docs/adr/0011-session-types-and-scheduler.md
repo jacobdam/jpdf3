@@ -3,7 +3,9 @@
 Status: accepted (owner issue #238, 2026-11-22; the owner approved PR #239, merged in 662bde6).
 Absorbs #224 (the architect role becomes the **design: technical** session type; #224 is closed
 into #245). Implementation tasks: §9, filed as #242–#251 (task 4 split in two: #246, #247).
-Amended by ADR 0012 (light-lane PRs: §1 triggers and §9 tasks).
+Amended by ADR 0012 (light-lane PRs: §1 triggers and §9 tasks) and ADR 0015 (§1's Planner bound:
+at most 3 runs a UTC day, a run after the first only for an issue filed after the day's last
+run; the table's "at most once a day" holds for step 8's terms only).
 
 ## Context
 The loop discovers and fixes, one issue per session, and each session picks its own work from

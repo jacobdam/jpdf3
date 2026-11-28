@@ -32,12 +32,36 @@ fn issue(n: u64, title: &str, l: &[&str]) -> String {
     full_issue(n, title, l, "", "null")
 }
 
-/// An issue with a body and a milestone (`milestone`: JSON, `null` or `{"title":"M0"}`).
+/// An issue with a body and a milestone (`milestone`: JSON, `null` or `{"title":"M0"}`),
+/// created before every record of the fixtures (so step 11's rerun never sees it as new).
 fn full_issue(n: u64, title: &str, l: &[&str], body: &str, milestone: &str) -> String {
     format!(
-        r#"{{"number":{n},"title":{title:?},"labels":{},"body":{body:?},"milestone":{milestone}}}"#,
+        r#"{{"number":{n},"title":{title:?},"labels":{},"body":{body:?},"milestone":{milestone},"createdAt":"{OLD}"}}"#,
         labels(l)
     )
+}
+
+const OLD: &str = "2026-11-20T00:00:00Z";
+
+/// The same issue object with its `createdAt` (always last) replaced by the JSON `value`, or
+/// removed when `value` is empty.
+fn set_created(issue_json: &str, value: &str) -> String {
+    let key = format!(r#","createdAt":"{OLD}""#);
+    assert!(
+        issue_json.contains(&key),
+        "issue object without createdAt: {issue_json}"
+    );
+    let head = issue_json.rsplit_once(&key).map_or(issue_json, |(h, _)| h);
+    if value.is_empty() {
+        format!("{head}}}")
+    } else {
+        format!(r#"{head},"createdAt":{value}}}"#)
+    }
+}
+
+/// An issue in milestone `m` (JSON) with labels `l`, created at `at` (step 11's rerun).
+fn filed(n: u64, l: &[&str], m: &str, at: &str) -> String {
+    set_created(&full_issue(n, "SECRET title", l, "", m), &format!("{at:?}"))
 }
 
 /// A `ready` issue in milestone `m` with this body.
@@ -874,6 +898,366 @@ fn step11_records_malformed_exit_1() {
     assert_eq!(o.status.code(), Some(1));
 }
 
+/// Step 11's rerun (ADR 0015): NOW is 2026-11-24T06:00:00Z. `planners` (0200) and `Planner`
+/// (0400) in the base records are dated today and never count as Planner runs.
+const M0: &str = r#"{"title":"M0","number":1}"#;
+const DAY_DIR: &str = "ops/journal/2026-11-24/";
+
+/// base_records() plus Planner records in these files of today's directory, then the
+/// scheduler on base() plus these issues.
+fn rerun(planner_files: &[&str], extra: &[String]) -> String {
+    let lines: Vec<(String, &str)> = planner_files
+        .iter()
+        .map(|f| (format!("{DAY_DIR}{f}"), "- Session: planner"))
+        .collect();
+    let refs: Vec<(&str, &str)> = lines.iter().map(|(p, l)| (p.as_str(), *l)).collect();
+    pick(&[
+        set(
+            "records.txt",
+            format!("{}{}", base_records(), records(&refs)),
+        ),
+        plus("issues.json", extra),
+    ])
+}
+
+#[test]
+fn step11_reruns_the_planner_for_an_issue_filed_after_its_run() {
+    // The ADR's example: a record at 00:04, so an issue is new from 00:05:00.
+    let at = |t: &str| vec![filed(702, &[], M0, t)];
+    assert_eq!(
+        rerun(&["0004-planner.md"], &at("2026-11-24T00:04:59Z")),
+        "idle"
+    );
+    assert_eq!(
+        rerun(&["0004-planner.md"], &at("2026-11-24T00:05:00Z")),
+        "planner new-issues"
+    );
+    assert_eq!(
+        rerun(&["0004-planner.md"], &at("2026-11-23T23:59:59Z")),
+        "idle"
+    );
+    // The minute, not the day: an issue later on the same day as the record is new, an issue
+    // of the same day before it isn't (above).
+    assert_eq!(
+        rerun(&["0004-planner.md"], &at("2026-11-24T05:59:59Z")),
+        "planner new-issues"
+    );
+    // The whole brief: numbers only, in order, never a title (Security); the mix note.
+    let o = run_with(&[
+        set(
+            "records.txt",
+            format!(
+                "{}{}",
+                base_records(),
+                records(&[(
+                    "ops/journal/2026-11-24/0004-planner.md",
+                    "- Session: planner"
+                )])
+            ),
+        ),
+        plus(
+            "issues.json",
+            &[
+                filed(703, &[], M0, "2026-11-24T01:00:00Z"),
+                filed(702, &[], M0, "2026-11-24T00:05:00Z"),
+            ],
+        ),
+    ])
+    .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let out = String::from_utf8(o.stdout).unwrap();
+    assert_eq!(
+        out,
+        "planner new-issues\n\nRule: j (nothing applies, the Planner ran 1 of at most 3 times today, \
+         and these issues are new since its newest run: #702, #703): the Planner again, ADR 0015\n\
+         Load:\n- ops/TICK.md §9\n- ops/QUEUE.md\n- PLAN.md §8\n\
+         Notes:\n- worktree on t/298-x: its PRs (#299) are merged or closed; remove it\n\
+         - work mix: not measured (6 of the 20 session records it needs)\n"
+    );
+    assert!(!out.contains("SECRET"));
+    // The Planner record dated yesterday (the base's 2350-a): no rerun, step 11's first run.
+    assert_eq!(
+        pick(&[plus("issues.json", &at("2026-11-24T00:05:00Z"))]),
+        "planner"
+    );
+    // A `planner due` record counts as a run and as the newest minute.
+    let due = |t: &str| {
+        pick(&[
+            set(
+                "records.txt",
+                format!(
+                    "{}{}",
+                    base_records(),
+                    records(&[("ops/journal/2026-11-24/0300-p.md", "- Session: planner due")])
+                ),
+            ),
+            plus("issues.json", &at(t)),
+        ])
+    };
+    assert_eq!(due("2026-11-24T03:00:59Z"), "idle");
+    assert_eq!(due("2026-11-24T03:01:00Z"), "planner new-issues");
+}
+
+#[test]
+fn step11_rerun_needs_an_issue_that_is_new() {
+    let t = "2026-11-24T01:00:00Z";
+    let on = |i: String| rerun(&["0004-planner.md"], &[i]);
+    assert_eq!(on(filed(702, &[], M0, t)), "planner new-issues");
+    // Labels: ready (with an open dependency, so step 10 doesn't take it), each skip label,
+    // in-progress, design (without ready: not step 6's), design-pending, design-product
+    // (without ready: not step 8's). Near misses: other labels.
+    let dep = set_created(
+        &full_issue(702, "r", &["ready"], "Depends on: #146", M0),
+        &format!("{t:?}"),
+    );
+    assert_eq!(on(dep), "idle", "ready");
+    for l in [
+        "owner-todo",
+        "blocked",
+        "deferred",
+        "in-progress",
+        "design",
+        "design-pending",
+        "design-product",
+    ] {
+        assert_eq!(on(filed(702, &[l], M0, t)), "idle", "{l}");
+    }
+    for l in ["bug", "discovery", "readyx", "Design", "design-products"] {
+        assert_eq!(on(filed(702, &[l], M0, t)), "planner new-issues", "{l}");
+    }
+    // Milestones: Ops, a later M<n>, none.
+    for m in [r#"{"title":"Ops"}"#, r#"{"title":"M1"}"#, "null"] {
+        assert_eq!(on(filed(702, &[], m, t)), "idle", "{m}");
+    }
+    // In flight: an open agent PR links it. A merged one doesn't.
+    let with_pr = |state: &str| {
+        pick(&[
+            set(
+                "records.txt",
+                format!(
+                    "{}{}",
+                    base_records(),
+                    records(&[(
+                        "ops/journal/2026-11-24/0004-planner.md",
+                        "- Session: planner"
+                    )])
+                ),
+            ),
+            plus("issues.json", &[filed(702, &[], M0, t)]),
+            plus(
+                "prs.json",
+                &[pr(310, state, "Closes #702", "t/702-x", &[], GREEN)],
+            ),
+        ])
+    };
+    assert_eq!(with_pr("OPEN"), "idle");
+    assert_eq!(with_pr("MERGED"), "planner new-issues");
+    // An earlier step outranks the rerun: a ready issue (step 10), an owner issue (step 1).
+    assert_eq!(
+        rerun(
+            &["0004-planner.md"],
+            &[filed(702, &[], M0, t), ready(700, "M0", &[], "")]
+        ),
+        "worker ready #700"
+    );
+    assert_eq!(
+        pick(&[
+            set(
+                "records.txt",
+                format!(
+                    "{}{}",
+                    base_records(),
+                    records(&[(
+                        "ops/journal/2026-11-24/0004-planner.md",
+                        "- Session: planner"
+                    )])
+                ),
+            ),
+            plus("issues.json", &[filed(702, &[], M0, t)]),
+            feed_plus(&[feed_issue(250)]),
+        ]),
+        "worker owner-issue #250"
+    );
+}
+
+#[test]
+fn step11_rerun_cap_counts_distinct_planner_files_today() {
+    let new = [filed(702, &[], M0, "2026-11-24T01:00:00Z")];
+    // Two runs today: a rerun; three: idle. The base's `planners` and `Planner` files dated
+    // today don't count, so two real runs plus those two are still two.
+    assert_eq!(
+        rerun(&["0004-planner.md", "0030-planner.md"], &new),
+        "planner new-issues"
+    );
+    assert_eq!(
+        rerun(
+            &["0004-planner.md", "0030-planner.md", "0040-planner.md"],
+            &new
+        ),
+        "idle"
+    );
+    // One file on two refs (listed twice) counts once, and so does a file with two records.
+    let twice = rerun(
+        &["0004-planner.md", "0030-planner.md", "0030-planner.md"],
+        &new,
+    );
+    assert_eq!(twice, "planner new-issues");
+    let two_lines = pick(&[
+        set(
+            "records.txt",
+            format!(
+                "{}{}",
+                base_records(),
+                records(&[
+                    (
+                        "ops/journal/2026-11-24/0004-planner.md",
+                        "- Session: planner"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0030-planner.md",
+                        "- Session: planner"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0030-planner.md",
+                        "- Session: planner due"
+                    ),
+                ])
+            ),
+        ),
+        plus("issues.json", &new),
+    ]);
+    assert_eq!(two_lines, "planner new-issues");
+    // A Planner file of yesterday doesn't count toward today's cap (the base has one, 2350-a).
+    let yesterday = pick(&[
+        set(
+            "records.txt",
+            format!(
+                "{}{}",
+                base_records(),
+                records(&[
+                    (
+                        "ops/journal/2026-11-23/0001-planner.md",
+                        "- Session: planner"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0004-planner.md",
+                        "- Session: planner"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0030-planner.md",
+                        "- Session: planner"
+                    ),
+                ])
+            ),
+        ),
+        plus("issues.json", &new),
+    ]);
+    assert_eq!(yesterday, "planner new-issues");
+    // A `planner due` file is one of the three.
+    let with_due = pick(&[
+        set(
+            "records.txt",
+            format!(
+                "{}{}",
+                base_records(),
+                records(&[
+                    (
+                        "ops/journal/2026-11-24/0004-planner.md",
+                        "- Session: planner due"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0030-planner.md",
+                        "- Session: planner"
+                    ),
+                    (
+                        "ops/journal/2026-11-24/0040-planner.md",
+                        "- Session: planner new-issues"
+                    ),
+                ])
+            ),
+        ),
+        plus("issues.json", &new),
+    ]);
+    assert_eq!(with_due, "idle");
+}
+
+#[test]
+fn step11_rerun_reads_the_newest_record_minute() {
+    // Two records bracket the issue (02:00): the newer one (03:00) decides, whichever is
+    // listed first. Listed newer first, as two refs can list them (main before an open PR's
+    // branch), so taking the last-listed record (00:04) would make it new.
+    let issue = |t: &str| vec![filed(702, &[], M0, t)];
+    for files in [
+        ["0300-planner.md", "0004-planner.md"],
+        ["0004-planner.md", "0300-planner.md"],
+    ] {
+        assert_eq!(
+            rerun(&files, &issue("2026-11-24T02:00:00Z")),
+            "idle",
+            "{files:?}"
+        );
+        assert_eq!(
+            rerun(&files, &issue("2026-11-24T03:01:00Z")),
+            "planner new-issues",
+            "{files:?}"
+        );
+    }
+    // A name without a valid time reads as the end of its day: no issue is new, also next to a
+    // valid one. Near misses: valid times.
+    let late = issue("2026-11-24T05:59:00Z");
+    for bad in [
+        "planner.md",
+        "2460-p.md",
+        "0060-p.md",
+        "2400-p.md",
+        "0500p.md",
+        "500-p.md",
+        "05000-p.md",
+        "0500.md",
+        "05a0-p.md",
+        "-500-p.md",
+    ] {
+        assert_eq!(rerun(&[bad], &late), "idle", "{bad}");
+        assert_eq!(rerun(&["0004-planner.md", bad], &late), "idle", "{bad}");
+    }
+    for good in ["0000-p.md", "0559-p.md", "0500-.md", "2359-p.md"] {
+        let want = if good == "2359-p.md" {
+            "idle"
+        } else {
+            "planner new-issues"
+        };
+        // 0559: new from 06:00:00, so an issue at 05:59 is not new; 0558 makes it new.
+        let want = if good == "0559-p.md" { "idle" } else { want };
+        assert_eq!(rerun(&[good], &late), want, "{good}");
+    }
+    assert_eq!(rerun(&["0558-p.md"], &late), "planner new-issues");
+}
+
+#[test]
+fn issues_created_at_malformed_exit_1() {
+    let i = full_issue(702, "t", &[], "", M0);
+    for v in [
+        "",
+        "null",
+        "1",
+        r#""2026-11-24 00:05:00""#,
+        r#""2026-11-24T00:05:00""#,
+        r#""""#,
+    ] {
+        let text = format!("[{}]", set_created(&i, v));
+        let o = run_with(&[set("issues.json", text.clone())]).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{text}");
+        assert!(o.stdout.is_empty(), "{text}");
+        // Parsed whatever is picked.
+        let o = run_with(&[
+            set("issues.json", text.clone()),
+            feed_plus(&[feed_issue(250)]),
+        ])
+        .unwrap();
+        assert_eq!(o.status.code(), Some(1), "{text}");
+    }
+}
+
 #[test]
 fn step1_owner_issue() {
     // An owner issue missing from owner-open.json counts as pending.
@@ -1665,6 +2049,16 @@ fn precedence_removes_each_step_in_turn() {
             vec![],
             vec![ready(700, "M0", &[], "")],
             vec![],
+        ),
+        // ADR 0015: an issue filed after today's Planner run; the same record as `idle`'s.
+        (
+            "planner new-issues",
+            vec![],
+            vec![filed(702, &[], M0, "2026-11-24T05:01:00Z")],
+            vec![(
+                "records.txt",
+                records(&[("ops/journal/2026-11-24/0500-p.md", "- Session: planner")]),
+            )],
         ),
         (
             "idle",

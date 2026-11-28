@@ -1,0 +1,9 @@
+## 05:07 UTC #440 next-session reruns the Planner for issues filed after the day's run (ADR 0015 task 1)
+- Session: worker ready #440
+- Picked: rule i because #440 was the lowest-numbered ready M0 issue with its dependency (#438) closed (work mix below 70%, no ready product issue)
+- Did: PR #459. `cargo xtask next-session` step 11 picks `planner new-issues` when the Planner ran today, fewer than 3 journal files dated today hold a `- Session: planner…` record, and an M0 issue is new (open, no `ready`, skip, `in-progress` or design labels, not in flight, created at or after the end of the minute in the newest record's `HHMM-` file name). `issues.json` reads `createdAt`. Spec, TICK §2 and §9, AUTOMATION.md, ADR 0011 status, P6 updated. Fixtures for every near miss in ADR 0015, a precedence entry and a unit test; 19 hand mutants run, 2 equivalent (noted in the spec). Live run exits 0. Also: added `owner-todo` to #445 with the ready-for-owner comment (PR #444 merged at 03:33Z), and removed the merged t/423-test-codex worktree (scheduler note).
+- Result: `ai-review` success posted on this commit, auto-merge on. Once merged, the open M0 issues #424–#427, #431 and #442 (filed after today's 00:04 Planner run) make the next session that has nothing else to do a `planner new-issues` rerun.
+- Cost: about 45% of the context; review rounds 2/4 (strict; round 1: 1 major, 1 minor, 1 nit, all fixed, all docs; round 2: 1 minor, 2 nits, wording, fixed); regraded 0, overturned by the next reviewer 0; deferred: none
+- Codex: skipped (no `crates/` or `tools/` path)
+- Lesson: none new. A hand mutant on a duplicated check (`approvals()` validates owner-command `createdAt` again) survives because the copy catches it. Check for a second copy before filing a survivor as a test gap.
+- Ignored: none
